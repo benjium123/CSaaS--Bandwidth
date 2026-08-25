@@ -17,6 +17,34 @@ demonstrate end-to-end, not a horizontal layer.
 
 ---
 
+## Track R — Brand & Campaign Registration (runs in PARALLEL from day 1)
+
+**Highest-priority non-code task.** See `docs/BRAND_REGISTRATION.md`.
+
+Registration is a **wall-clock wait, not a work item** — days to weeks of third-party
+vetting that no engineering speed makes faster. It does not belong at P4 in sequence; the
+*automation* belongs at P4, but **the first brand and campaign must be submitted manually
+through the Bandwidth dashboard now, in parallel with P0.**
+
+Consequences of being late:
+- Unregistered numbers get Bandwidth error **`4476` blocked-unregistered** — rejected, not queued.
+- **Throughput is Trust-Score-driven since March 2026**, not a flat 1 MPS. Late or sloppy
+  registration permanently caps send rate.
+- **Toll-free verification is a separate 3–6 week track.** 10DLC approval does not cover it.
+
+---
+
+## Toolchain constraints on the dev machine (measured 2026-08-26)
+
+| | Found | Consequence |
+|---|---|---|
+| Python | **3.10.10** | **Pipecat needs 3.11/3.12.** Upgrade is a tracked risk with a P7 deadline. P0 targets what's installed. |
+| Node | v22.19.0 | fine |
+| **Docker** | **not installed** | P0 cannot rely on Compose locally. Test strategy must work without it; Compose still ships for the VPS. |
+| **Postgres/psql** | **not installed** | Local test DB strategy is decided in `docs/plans/phase-0-plan.md`; a real-Postgres CI job is mandatory so Postgres-only SQL can't slip through. |
+
+---
+
 ## P0 — Foundation
 **WS:** 0, 10 · **Deploy:** yes (skeleton) · **Blocker risk:** R1
 

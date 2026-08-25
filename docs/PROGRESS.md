@@ -20,6 +20,19 @@
 
 ---
 
+## Track R — Brand & Campaign Registration (parallel, highest-priority non-code task)
+
+Full detail and the live status table: **`docs/BRAND_REGISTRATION.md`**.
+
+Registration is a wall-clock wait of days-to-weeks. The **first brand + campaign are
+submitted manually via the Bandwidth dashboard NOW, in parallel with P0** — P4 only
+automates it for future brands. Toll-free verification is a separate **3–6 week** track.
+Unregistered numbers get error `4476` and are rejected, not queued.
+
+**Track R status: 🔴 blocked on R1** (Bandwidth account path to production).
+
+---
+
 ## Phase status
 
 | Phase | Name | Status | Gate passed | Deployed | Commit |
@@ -73,6 +86,7 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 | R5 | 10DLC + TFV vetting takes days–weeks; throughput is Trust-Score-driven, not flat 1 MPS | ⬜ open | start P4 early |
 | R6 | `<StartStream>` frame size undocumented; DTMF does **not** arrive over the media WS | ⬜ open | P7 |
 | R7 | Bandwidth conference caps (20 participants / 24 h / 6 verbs) and **you cannot StartStream a conference room** | ⬜ open | P12 design |
+| R8 | **Local Python is 3.10.10; Pipecat needs 3.11/3.12.** Also no Docker and no Postgres on the dev machine. | 🟡 known, planned around | Python upgrade by **P7**; test strategy in `docs/plans/phase-0-plan.md` |
 
 ---
 

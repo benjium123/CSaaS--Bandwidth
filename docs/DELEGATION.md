@@ -11,9 +11,33 @@ codebase**, so a new session doesn't have to re-derive it.
 | 2 | **Opus 5** | Reviews implementer test results → approve / precise fix / escalate. Code review of delegated output. Multi-step debugging that isn't architectural. |
 | 3 | **DeepSeek V4 Pro** (`delegate.py deepseek`) | **Primary implementer** while OpenAI balance is on hold. Heavy codegen, CRUD, adapters, long-file transforms. |
 | 3 | **Sonnet 5** (`Agent model: sonnet`) | In-repo multi-file mechanical edits where external delegation can't run tools locally. |
-| 4 | **Haiku 4.5** / **DeepSeek Flash** | Reading, summarizing, research, docs, boilerplate unit tests, log digestion. |
+| 4 | **Haiku 4.5** / **DeepSeek V4 Flash** | Reading, summarizing, research, docs, boilerplate unit tests, log digestion. |
 
 ⚠ **GPT 5.6 Terra / Luna are ON HOLD** — no OpenAI balance. Route to DeepSeek V4 Pro.
+
+## DeepSeek model IDs — verified, do not pin a date
+
+`GET https://api.deepseek.com/models` on **2026-08-26** returns exactly three IDs:
+
+```
+deepseek-v4-pro
+deepseek-v4-flash
+deepseek-v4-flash-vision-exp
+```
+
+**These undated aliases are the only callable IDs.** Dated build labels seen in changelogs
+(`0731`, `0813`, `0831`, …) are the builds *behind* these aliases — they are **not** model
+IDs and passing one returns 404. The alias always resolves to the newest build, so pinning a
+date would be both broken and, if it worked, older.
+
+`delegate.py` already uses the correct undated aliases (`deepseek-v4-pro`,
+`deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`). No script change needed when DeepSeek
+ships a new build.
+
+Legacy names `deepseek-chat` and `deepseek-reasoner` are sunset — **never use them.**
+
+In this repo the aliases are surfaced as `DEEPSEEK_MODEL_PRO`, `DEEPSEEK_MODEL_FLASH`,
+`DEEPSEEK_MODEL_VISION` in `.env`.
 
 ## Per-phase routing
 
