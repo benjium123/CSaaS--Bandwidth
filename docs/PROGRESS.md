@@ -5,13 +5,15 @@
 > is right.
 
 **Last updated:** 2026-08-26 — P0 implementation
-**Current phase:** P0 — **code complete, tests green locally.** Not yet signed off.
+**Current phase:** P0 — **code complete, local + CI/Postgres green.** Awaiting R1 + VPS deploy.
 **Current blocker:** R1 — confirm Bandwidth account path to production
 
 ### P0 remaining before sign-off (all need the user, not more code)
 1. **R1** — confirm the Bandwidth account reaches production. Blocks Track R and P1.
-2. **CI verification** — pushed; confirm all three GitHub Actions jobs are green.
-   `test-postgres` is the merge gate and is the first real run against Postgres.
+2. ~~CI verification~~ — ✅ **DONE.** All 4 jobs green on `5c73dc9`: lint, test-sqlite (3.10),
+   test-sqlite (3.12), and **test-postgres** (the merge gate) — which ran
+   `alembic upgrade head / downgrade base / upgrade head` on real Postgres 16 and passed the
+   full suite including the `pg_only` tenant-isolation test.
 3. **VPS deploy** — **deliberately not executed autonomously.** The box runs live
    production services for other businesses. `deploy/deploy.sh` is written, pre-flight
    guarded and idempotent, but it requires (a) Docker present on the box and (b) the
@@ -46,7 +48,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 
 | Phase | Name | Status | Gate passed | Deployed | Commit |
 |---|---|---|---|---|---|
-| P0 | Foundation | 🔵 in review | local ✅ / VPS ⬜ | ⬜ pending | (see git log) |
+| P0 | Foundation | 🔵 in review | local ✅ / CI+PG ✅ / VPS ⬜ | ⬜ pending | `5c73dc9` |
 | P1 | Carrier layer + first SMS | ⬜ not started | — | — | — |
 | P2 | Contacts / conversations / inbox | ⬜ not started | — | — | — |
 | P3 | MMS + compliance core | ⬜ not started | — | — | — |
