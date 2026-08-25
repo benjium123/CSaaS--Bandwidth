@@ -1,0 +1,43 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# node
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# data / media
+media/
+recordings/
+uploads/
+*.wav
+*.mp3
+*.sqlite3
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# local infra
+docker/data/
+pgdata/
+miniodata/
+*.log
