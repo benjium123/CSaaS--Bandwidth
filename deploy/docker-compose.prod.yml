@@ -1,0 +1,44 @@
+# The VPS runs OTHER businesses' production services. Everything here is namespaced to
+# `csaas`, nothing binds a public interface, and no port collides with the existing
+# Postgres instances on 5433 / 5544.
+name: csaas
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    env_file: [../.env]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://csaas:${CSAAS_DB_PASSWORD:?set CSAAS_DB_PASSWORD in .env}@db:5432/csaas
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db: {condition: service_healthy}
+    # Loopback ONLY. Public exposure is a later phase's nginx concern.
+    ports: ["127.0.0.1:8080:8080"]
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: csaas
+      POSTGRES_PASSWORD: ${CSAAS_DB_PASSWORD:?set CSAAS_DB_PASSWORD in .env}
+      POSTGRES_DB: csaas
+    # No published port. Reachable only on the compose network.
+    volumes: ["csaas_pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U csaas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # No published port. Present for parity; unused by P0 code.
+    volumes: ["csaas_redisdata:/data"]
+
+volumes:
+  csaas_pgdata:
+  csaas_redisdata:

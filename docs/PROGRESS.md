@@ -4,9 +4,18 @@
 > and whenever a decision or a blocker changes. If it disagrees with your memory, this file
 > is right.
 
-**Last updated:** 2026-08-26 — planning session
-**Current phase:** P0 (not started)
+**Last updated:** 2026-08-26 — P0 implementation
+**Current phase:** P0 — **code complete, tests green locally.** Not yet signed off.
 **Current blocker:** R1 — confirm Bandwidth account path to production
+
+### P0 remaining before sign-off (all need the user, not more code)
+1. **R1** — confirm the Bandwidth account reaches production. Blocks Track R and P1.
+2. **CI verification** — pushed; confirm all three GitHub Actions jobs are green.
+   `test-postgres` is the merge gate and is the first real run against Postgres.
+3. **VPS deploy** — **deliberately not executed autonomously.** The box runs live
+   production services for other businesses. `deploy/deploy.sh` is written, pre-flight
+   guarded and idempotent, but it requires (a) Docker present on the box and (b) the
+   operator to create `/opt/csaas/.env` by hand. Run it when you're ready to watch it.
 
 ---
 
@@ -37,7 +46,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 
 | Phase | Name | Status | Gate passed | Deployed | Commit |
 |---|---|---|---|---|---|
-| P0 | Foundation | ⬜ not started | — | — | — |
+| P0 | Foundation | 🔵 in review | local ✅ / VPS ⬜ | ⬜ pending | (see git log) |
 | P1 | Carrier layer + first SMS | ⬜ not started | — | — | — |
 | P2 | Contacts / conversations / inbox | ⬜ not started | — | — | — |
 | P3 | MMS + compliance core | ⬜ not started | — | — | — |
@@ -61,7 +70,7 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 
 | WS | Workstream | Status | Notes |
 |---|---|---|---|
-| WS-0 | Foundation | ⬜ | |
+| WS-0 | Foundation | 🔵 code complete — tenancy, RBAC, settings, auth, errors, logging | |
 | WS-1 | Carrier Abstraction Layer | ⬜ | |
 | WS-2 | Messaging | ⬜ | |
 | WS-3 | Voice Core | ⬜ | |
@@ -71,7 +80,7 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 | WS-7 | Console | ⬜ | |
 | WS-8 | Compliance | ⬜ | |
 | WS-9 | Platform Services | ⬜ | |
-| WS-10 | DevOps | ⬜ | |
+| WS-10 | DevOps | 🔵 CI + Dockerfile + compose + deploy.sh written; deploy not yet run | |
 
 ---
 
@@ -98,7 +107,10 @@ Decisions live in `docs/ARCHITECTURE.md`. This is the index with dates.
 |---|---|---|
 | 2026-08-26 | D1 | Hybrid transport — AI on Bandwidth bidirectional WS media, humans on WebRTC. Not building a SIP stack for latency (transport is 3–15% of the budget). |
 | 2026-08-26 | D2 | Carrier abstraction modelled Telnyx-shaped (event in → async command out); Bandwidth adapter serializes down to BXML. |
-| 2026-08-26 | D3 | FastAPI + Postgres + Redis + React/Vite/TS/Tailwind/shadcn, scaffolded from `full-stack-fastapi-template`. |
+| 2026-08-26 | D3 | FastAPI + Postgres + Redis + React/Vite/TS/Tailwind/shadcn. **Amended at P0 (DR-5): we do NOT fork `full-stack-fastapi-template`** — its Docker-first loop, superuser/user binary and bundled frontend are exactly what we'd delete. Layout used as reference; ~30 lean files written instead. |
+| 2026-08-26 | D9 | **Tenant isolation is enforced at the SQLAlchemy session layer**, not by query discipline: a `do_orm_execute` hook injects `org_id` into every tenant-scoped read and *raises* when no org context is set; a `before_flush` hook blocks cross-tenant writes. Forgetting the filter is impossible, not merely unlikely. |
+| 2026-08-26 | D10 | **Local tests run on SQLite, Postgres CI is the merge gate.** Three guards stop Postgres-only SQL slipping past the local suite: portable `GUID`/`PortableJSON` types, a Ruff banned-api rule on `sqlalchemy.dialects.postgresql` outside `db/types.py` + `migrations/`, and a strict `pg_only` marker. |
+| 2026-08-26 | D11 | **2FA moved P0 → P2** (SPEC deviation). With no console there is no enrolment surface, so P0 2FA would be untestable end-to-end. |
 | 2026-08-26 | D4 | Cascaded STT→LLM→TTS, not speech-to-speech. p50 ≤ 700 ms target. |
 | 2026-08-26 | D5 | Audio-pipeline law carried forward: shed only per-frame-silent frames; `rt=1.0` proves nothing; conversation-replay test gates audio commits. |
 | 2026-08-26 | D6 | All webhook handlers idempotent + state-based. Both carriers retry unordered. |
@@ -137,3 +149,50 @@ Open decisions:
 Next step:
 Blockers:
 ```
+
+---
+
+## Session log
+
+### Session 2026-08-26 — planning + P0 implementation
+**Phase:** P0
+
+**Did:**
+- Full plan: ARCHITECTURE (D1–D11), SPEC, PHASES (P0–P14), WORKSTREAMS (WS-0..10),
+  BRAND_REGISTRATION (Track R), DELEGATION, COSTS, and 7 research docs.
+- Fable refined `docs/plans/phase-0-plan.md` before implementation (DR-1..DR-6).
+- Implemented P0: settings validation + secret redaction, structured logging + error
+  taxonomy, orgs/users/roles/memberships schema, session-level tenant isolation,
+  argon2id + PyJWT auth, RBAC with a real deny path, `/healthz`, Alembic migration,
+  3-job CI, Dockerfile + compose + guarded `deploy.sh`.
+
+**Tests (actual output):**
+```
+$ python -m pytest -q
+...............................s                    [100%]
+31 passed, 1 skipped in 2.87s          # the skip is pg_only, by design
+
+$ python -m ruff check .
+All checks passed!
+
+$ DATABASE_URL=postgresql+asyncpg://... alembic upgrade head --sql
+CREATE TABLE orgs ( id UUID NOT NULL, ... )   # native UUID on PG — GUID variant works
+
+$ curl -i http://127.0.0.1:8099/healthz
+HTTP/1.1 200 OK   x-request-id: 9366c0f5-...
+{"status":"ok","env":"development","version":"0.1.0","db":"ok"}
+```
+
+**Verified by hand:** provider report prints missing VARIABLE NAMES only, no values.
+
+**Gotcha found:** OS environment variables override `.env`. A provider can report
+`enabled=true` with a blank `.env` line if the var is exported in the shell (DEEPSEEK_API_KEY
+is, on this machine). Correct precedence, surprising output — documented in README.
+
+**Next step:** P1 — carrier layer + first SMS round-trip. Have Fable refine
+`phase-1-plan.md` first. **P1 needs R1 answered** (a real Bandwidth account) to reach its
+gate; the adapter and webhook-ingest code can be built and unit-tested against fixtures
+before that.
+
+**Blockers:** R1 (Bandwidth account → production). VPS deploy not run — deliberately left
+for a supervised run since the box is production for other businesses.

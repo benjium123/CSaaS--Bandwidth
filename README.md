@@ -37,6 +37,34 @@ The keys you need first, in order:
 3. `JWT_SECRET`, `SESSION_SECRET`, `CREDENTIAL_ENCRYPTION_KEY` (generation commands are in the file)
 4. `PUBLIC_BASE_URL` — a tunnel in dev, your domain in prod. **Carriers POST webhooks here.**
 
+## Run it locally
+
+No Docker or Postgres needed for development — that is deliberate (see
+`docs/plans/phase-0-plan.md` DR-1).
+
+```bash
+python -m venv .venv
+./.venv/Scripts/python.exe -m pip install -e "backend[dev]"    # Windows
+# source .venv/bin/activate && pip install -e "backend[dev]"   # macOS/Linux
+
+cd backend
+python -m pytest -q      # SQLite in-memory; pg_only tests skip
+python -m ruff check .   # includes the Postgres-dialect import ban
+
+DATABASE_URL="sqlite+aiosqlite:///./dev.db" \
+JWT_SECRET="$(openssl rand -hex 32)" \
+SESSION_SECRET="$(openssl rand -hex 32)" \
+python -m uvicorn app.main:app --factory --port 8080
+# -> http://localhost:8080/healthz
+```
+
+**Note on config precedence:** OS environment variables override `.env`. If a provider
+reports as enabled when its `.env` line is blank, check your shell environment.
+
+**Postgres is the merge gate, not SQLite.** CI runs the whole suite against a real
+`postgres:16` container plus `alembic upgrade head` / `downgrade base` / `upgrade head`.
+SQLite is only a fast local proxy.
+
 ## The one-paragraph architecture
 
 FastAPI + Postgres + Redis + S3, React/Vite console. All carrier traffic goes through a
