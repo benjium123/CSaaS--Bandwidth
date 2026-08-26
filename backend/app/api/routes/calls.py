@@ -6,24 +6,33 @@ from typing import Annotated
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api.routes.numbers import to_e164
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, get_current_user, require_permission
 from app.errors import (
     ConflictError,
     FeatureUnavailableError,
     NotFoundError,
     ValidationFailedError,
 )
-from app.models import Call, CallLeg, CallRecording, OrgNumber
+from app.models import Call, CallLeg, CallRecording, OrgNumber, User
+from app.models.voice import TERMINAL_CALL_STATUSES
 from app.providers.voice import as_voice_carrier
 from app.services import calls as calls_svc
 from app.services import recordings as recordings_svc
+from app.voice_plane import service as voice_service
+from app.voice_plane.livekit_api import LiveKitApiError, mint_access_token
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
 
 _MACHINE_DETECTION_MODES = frozenset({"off", "async"})
+_VIA_MODES = frozenset({"carrier", "room"})
+#: The SIP trunk configured in livekit-sip dials out on this carrier only (single trunk
+#: today, findings 10/11) - a room call FROM a number on any other carrier cannot actually
+#: place a call, no matter how "active" the OrgNumber row says it is.
+_ROOM_TRUNK_CARRIER = "telnyx"
 
 
 class CallIn(BaseModel):
@@ -36,6 +45,9 @@ class CallIn(BaseModel):
     tag: str = Field(default="", max_length=128)
     #: F3a: opt in to StartRecording on answer (see webhooks.py::_outbound_answer_commands).
     record: bool = False
+    #: P6: "carrier" dials through the existing carrier-webhook path (P5, unchanged);
+    #: "room" creates a LiveKit room + outbound SIP participant instead (voice_plane).
+    via: str = "carrier"
 
     model_config = {"populate_by_name": True}
 
@@ -208,26 +220,97 @@ async def _resolve_outbound(
     raise ValidationFailedError("No active voice-capable number is available on this org")
 
 
+async def _resolve_room_from_number(session, org_id: uuid.UUID, payload: CallIn) -> str:  # noqa: ANN001
+    """via="room" number resolution (findings 10+11): NO carrier-adapter registry lookup at
+    all - a LiveKit-only deploy has none registered, and requiring one would make room
+    calls impossible on exactly the deployment this feature is for. An explicit `from` only
+    needs to be active and org-owned; auto-picking one only ever picks a number the SIP
+    trunk can actually dial out on (single trunk today: carrier == _ROOM_TRUNK_CARRIER).
+
+    Finding 10: an explicit `from` on any OTHER carrier is refused outright (422) rather
+    than silently dialed - the trunk would reject it as caller-id spoofing.
+    """
+    if payload.from_:
+        from_norm = to_e164(payload.from_)
+        number = (
+            await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == from_norm))
+        ).scalar_one_or_none()
+        if number is None or not number.is_active:
+            raise ValidationFailedError(f"{from_norm} is not an active number on this org")
+        if number.carrier != _ROOM_TRUNK_CARRIER:
+            raise ValidationFailedError(
+                f"number {from_norm} is on {number.carrier}; the SIP trunk dials out via "
+                f"{_ROOM_TRUNK_CARRIER} - pick a {_ROOM_TRUNK_CARRIER} number or add a "
+                f"trunk for {number.carrier}"
+            )
+        return from_norm
+
+    candidate = (
+        await session.execute(
+            sa.select(OrgNumber).where(
+                OrgNumber.is_active.is_(True), OrgNumber.carrier == _ROOM_TRUNK_CARRIER
+            )
+        )
+    ).scalars().first()
+    if candidate is None:
+        raise ValidationFailedError(
+            f"No active {_ROOM_TRUNK_CARRIER} number is available on this org for a room call"
+        )
+    return candidate.e164
+
+
 @router.post("/calls", response_model=CallDetailOut, status_code=201)
 async def create_call(
     payload: CallIn,
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
-) -> CallDetailOut:
+    user: Annotated[User, Depends(get_current_user)],
+) -> CallDetailOut | Response:
     if payload.machine_detection not in _MACHINE_DETECTION_MODES:
         raise ValidationFailedError("machine_detection must be 'off' or 'async'")
+    if payload.via not in _VIA_MODES:
+        raise ValidationFailedError("via must be 'carrier' or 'room'")
 
     to_norm = to_e164(payload.to)
-    registry = getattr(request.app.state, "carriers", None)
-    carrier_name, from_norm = await _resolve_outbound(ctx.session, registry, ctx.org.id, payload)
 
+    if payload.via == "room":
+        settings = request.app.state.settings
+        api = getattr(request.app.state, "livekit", None)
+        if api is None:
+            raise FeatureUnavailableError("LiveKit is not configured")
+        if not settings.livekit_sip_outbound_trunk_id:
+            # (finding 12) configured LiveKit but no outbound trunk yet - inbound-only
+            # deploys are valid, but this route can never succeed without one.
+            raise FeatureUnavailableError("No LiveKit SIP outbound trunk is configured")
+        from_norm = await _resolve_room_from_number(ctx.session, ctx.org.id, payload)
+        bus = request.app.state.event_bus
+        call, _leg, room, token = await voice_service.start_room_call(
+            ctx.session,
+            api,
+            settings,
+            bus,
+            org_id=ctx.org.id,
+            to=to_norm,
+            from_e164=from_norm,
+            identity=f"user-{user.id}",
+            name=user.email,
+            tag=payload.tag,
+        )
+        detail = await _detail_out(ctx.session, request, call)
+        body = detail.model_dump(mode="json")
+        url = settings.livekit_public_url or settings.livekit_url
+        body.update({"room": room, "token": token, "url": url})
+        return JSONResponse(status_code=201, content=body)
+
+    registry = getattr(request.app.state, "carriers", None)
+    _carrier_name, from_norm = await _resolve_outbound(ctx.session, registry, ctx.org.id, payload)
     call, _leg = await calls_svc.create_outbound_call(
         ctx.session,
         registry,
         ctx.org.id,
         to=to_norm,
         from_=from_norm,
-        carrier_name=carrier_name,
+        carrier_name=_carrier_name,
         machine_detection=payload.machine_detection,
         tag=payload.tag,
         record=payload.record,
@@ -264,18 +347,70 @@ async def get_call(
     return await _detail_out(ctx.session, request, call)
 
 
+class SoftphoneAnswerOut(BaseModel):
+    url: str
+    token: str
+    room: str
+
+
+@router.post("/calls/{call_id}/answer", response_model=SoftphoneAnswerOut)
+async def answer_call(
+    call_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+    user: Annotated[User, Depends(get_current_user)],
+) -> SoftphoneAnswerOut:
+    """The browser softphone's counterpart to /softphone/token for an INBOUND room call:
+    same token payload, but reached from the call itself (the UI has a ringing Call, not a
+    room name) and gated on the call still being live."""
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+
+    room = (call.extra or {}).get("room") if call.extra.get("via") == "livekit" else None
+    if room is None:
+        raise ConflictError("This call is not a LiveKit room call")
+    if call.status in TERMINAL_CALL_STATUSES:
+        raise ConflictError("This call has already ended")
+
+    settings = request.app.state.settings
+    token = mint_access_token(
+        api_key=settings.livekit_api_key,
+        api_secret=settings.livekit_api_secret.get_secret_value(),
+        identity=f"user-{user.id}",
+        name=user.email,
+        room=room,
+    )
+    return SoftphoneAnswerOut(
+        url=settings.livekit_public_url or settings.livekit_url, token=token, room=room
+    )
+
+
 @router.post("/calls/{call_id}/transfer", response_model=CallDetailOut)
 async def transfer_call(
     call_id: uuid.UUID,
     payload: TransferIn,
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
-) -> CallDetailOut:
+) -> CallDetailOut | Response:
     call = await ctx.session.get(Call, call_id)
     if call is None:
         raise NotFoundError("Call not found")
 
     to_norm = to_e164(payload.to)
+
+    if (call.extra or {}).get("via") == "livekit":
+        api = getattr(request.app.state, "livekit", None)
+        bus = request.app.state.event_bus
+        try:
+            await voice_service.transfer_room_call(ctx.session, api, bus, call, to_norm)
+        except LiveKitApiError as exc:
+            return JSONResponse(
+                status_code=502,
+                content={"error": {"code": "livekit_transfer_failed", "message": str(exc)}},
+            )
+        return await _detail_out(ctx.session, request, call)
+
     registry = getattr(request.app.state, "carriers", None)
     try:
         await calls_svc.start_blind_transfer(ctx.session, registry, call, to_norm)
@@ -296,6 +431,12 @@ async def hangup_call(
     if call is None:
         raise NotFoundError("Call not found")
 
+    if (call.extra or {}).get("via") == "livekit":
+        api = getattr(request.app.state, "livekit", None)
+        bus = request.app.state.event_bus
+        await voice_service.hangup_room_call(ctx.session, api, bus, call)
+        return await _detail_out(ctx.session, request, call)
+
     registry = getattr(request.app.state, "carriers", None)
     try:
         await calls_svc.hangup_active_leg(ctx.session, registry, call)
@@ -314,6 +455,12 @@ async def gather_call(
     call = await ctx.session.get(Call, call_id)
     if call is None:
         raise NotFoundError("Call not found")
+
+    if (call.extra or {}).get("via") == "livekit":
+        raise ConflictError(
+            "Room-call DTMF is sent by the browser directly; server-side gather is "
+            "carrier-path only"
+        )
 
     registry = getattr(request.app.state, "carriers", None)
     try:

@@ -23,15 +23,18 @@ from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
 from app.api.routes import registration as registration_routes
 from app.api.routes import routing as routing_routes
+from app.api.routes import softphone as softphone_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
 from app.api.routes import webhooks as webhook_routes
 from app.config import Settings, load_settings
 from app.db.session import dispose_engine, init_engine
 from app.errors import CsaasError
+from app.events.bus import EventBus
 from app.logging import configure_logging
 from app.providers.registry import build_registry
 from app.storage.base import build_store
+from app.voice_plane import service as voice_service
 
 VERSION = "0.1.0"
 
@@ -65,6 +68,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.media_store = build_store(
             settings.media_store_backend, root=settings.media_local_root
         )
+        # P6: media plane, not a carrier - app.state.livekit is None when unconfigured
+        # (settings.livekit_url / livekit_api_secret unset), and every route/webhook that
+        # needs it 503s or 404s on that None rather than crashing boot.
+        app.state.event_bus = EventBus()
+        # (finding 15d) built ONCE, eagerly below - never rebuilt here, so there is only
+        # ever one LiveKitApi (and one owned httpx client) to close, right next to the
+        # carrier registry's own aclose().
         structlog.get_logger("startup").info(
             "carrier_configured",
             carrier=getattr(app.state.carrier, "name", None),
@@ -89,6 +99,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             registry = getattr(app.state, "carriers", None)
             if registry is not None:
                 await registry.aclose()
+            livekit_api = getattr(app.state, "livekit", None)
+            if livekit_api is not None:
+                await livekit_api.aclose()
             await dispose_engine()
 
     app = FastAPI(
@@ -103,6 +116,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.media_store = build_store(
         settings.media_store_backend, root=settings.media_local_root
     )
+    app.state.event_bus = EventBus()
+    app.state.livekit = voice_service.make_api(settings)
 
     if settings.cors_origin_list:
         app.add_middleware(
@@ -182,6 +197,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(template_routes.router)
     app.include_router(message_routes.router)
     app.include_router(call_routes.router)
+    app.include_router(softphone_routes.router)
     app.include_router(webhook_routes.router)
     return app
 

@@ -161,6 +161,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/calls/{call_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer Call
+         * @description The browser softphone's counterpart to /softphone/token for an INBOUND room call:
+         *     same token payload, but reached from the call itself (the UI has a ringing Call, not a
+         *     room name) and gated on the call still being live.
+         */
+        post: operations["answer_call_api_v1_calls__call_id__answer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/calls/{call_id}/gather": {
         parameters: {
             query?: never;
@@ -952,6 +974,23 @@ export interface paths {
         patch: operations["update_policy_api_v1_routing_policy_patch"];
         trace?: never;
     };
+    "/api/v1/softphone/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Softphone Token */
+        post: operations["softphone_token_api_v1_softphone_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tags": {
         parameters: {
             query?: never;
@@ -1135,6 +1174,23 @@ export interface paths {
         put?: never;
         /** Bandwidth Voice Disconnect */
         post: operations["bandwidth_voice_disconnect_api_v1_webhooks_bandwidth_voice_disconnect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhooks/livekit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Livekit Webhook */
+        post: operations["livekit_webhook_api_v1_webhooks_livekit_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1337,6 +1393,11 @@ export interface components {
             tag: string;
             /** To */
             to: string;
+            /**
+             * Via
+             * @default carrier
+             */
+            via: string;
         };
         /** CallLegOut */
         CallLegOut: {
@@ -1983,6 +2044,29 @@ export interface components {
             /** Window Start */
             window_start?: string | null;
         };
+        /** SoftphoneAnswerOut */
+        SoftphoneAnswerOut: {
+            /** Room */
+            room: string;
+            /** Token */
+            token: string;
+            /** Url */
+            url: string;
+        };
+        /** SoftphoneTokenIn */
+        SoftphoneTokenIn: {
+            /** Room */
+            room: string;
+        };
+        /** SoftphoneTokenOut */
+        SoftphoneTokenOut: {
+            /** Room */
+            room: string;
+            /** Token */
+            token: string;
+            /** Url */
+            url: string;
+        };
         /** StatusIn */
         StatusIn: {
             /** Error */
@@ -2482,6 +2566,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CallDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    answer_call_api_v1_calls__call_id__answer_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SoftphoneAnswerOut"];
                 };
             };
             /** @description Validation Error */
@@ -4431,6 +4548,41 @@ export interface operations {
             };
         };
     };
+    softphone_token_api_v1_softphone_token_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SoftphoneTokenIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SoftphoneTokenOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_tags_api_v1_tags_get: {
         parameters: {
             query?: never;
@@ -4808,6 +4960,26 @@ export interface operations {
         };
     };
     bandwidth_voice_disconnect_api_v1_webhooks_bandwidth_voice_disconnect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    livekit_webhook_api_v1_webhooks_livekit_post: {
         parameters: {
             query?: never;
             header?: never;

@@ -1,0 +1,31 @@
+# LiveKit SFU config for the csaas media plane (D17).
+# Keys come from LIVEKIT_KEYS in the compose environment - never write them into this file.
+port: 7880
+bind_addresses:
+  - ""
+rtc:
+  port_range_start: 50700
+  port_range_end: 51199
+  tcp_port: 7881
+  # The VPS has a static public IP; advertising it directly beats STUN round-trips.
+  use_external_ip: true
+redis:
+  # The main stack's redis, reachable because the livekit service joins the same
+  # compose project network. livekit-sip (host network) uses 127.0.0.1 via sip.yaml.
+  address: redis:6379
+logging:
+  level: info
+  json: true
+room:
+  # The backend creates outbound rooms explicitly and the SIP dispatch rule creates
+  # inbound ones; nothing legitimate needs implicit creation. With auto_create off, an
+  # over-broad or leaked join token cannot be used as a room-creation primitive.
+  auto_create: false
+# Webhooks: LiveKit posts room/participant lifecycle to the backend, signed with the same
+# API key/secret (Authorization: JWT whose sha256 claim hashes the body).
+webhook:
+  api_key: csaas-media
+  urls:
+    # "api" is the backend service name on the shared compose network; 127.0.0.1
+    # here would be the SFU container talking to itself.
+    - http://api:8080/api/v1/webhooks/livekit

@@ -22,6 +22,8 @@ from app.providers.bandwidth import webhooks as bw_webhooks
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
 from app.services import calls as calls_svc
 from app.services import messaging as svc
+from app.voice_plane import service as voice_service
+from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 log = structlog.get_logger("webhooks")
@@ -370,3 +372,42 @@ async def carrier_voice(
     """Every carrier's voice ingestion other than Bandwidth's three named subpaths above -
     each verifies with its own scheme, same reasoning as carrier_messaging."""
     return await _handle_voice_webhook(carrier_name, request, session)
+
+
+# ==================================================================================
+# P6 addition - LiveKit (media plane, not a carrier: see voice_plane/service.py header)
+# ==================================================================================
+@router.post("/livekit")
+async def livekit_webhook(
+    request: Request, session: Annotated[AsyncSession, Depends(get_session)]
+) -> Response:
+    settings = request.app.state.settings
+    if getattr(request.app.state, "livekit", None) is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": {"code": "carrier_not_configured", "message": "livekit"}},
+        )
+
+    raw = await request.body()
+    event = livekit_verify_webhook(
+        request.headers,
+        raw,
+        api_key=settings.livekit_api_key,
+        api_secret=settings.livekit_api_secret.get_secret_value(),
+    )
+    if event is None:
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"code": "unauthenticated", "message": "Invalid webhook signature"}},
+        )
+
+    bus = request.app.state.event_bus
+    try:
+        await voice_service.handle_livekit_event(session, bus, event)
+    except Exception:
+        # F4's LiveKit sibling: one bad event must never fail the ack - LiveKit has no
+        # documented retry contract to lean on here, so swallowing (not 500ing) is the
+        # safer default rather than inviting an infinite redelivery loop.
+        log.exception("livekit_webhook_event_failed", event_type=event.get("event"))
+
+    return JSONResponse(status_code=200, content={"status": "ok"})

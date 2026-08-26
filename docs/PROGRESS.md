@@ -59,7 +59,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P3b | Carrier routing fabric (pulled fwd from P14) | 🔵 in review | local ✅ (252) | n/a | `ffd370f` |
 | P4 | Numbers + 10DLC + TFV | 🔵 in review (backend) | local ✅ (273) | 🔴 blocked on R1 | — |
 | P5 | Voice core | 🔵 in review | local ✅ (354) | 🔴 blocked on R1 + trunk | — |
-| P6 | Browser softphone | ⬜ not started | — | — | — |
+| P6 | LiveKit media plane + softphone | 🔵 in review | local ✅ (405) | 🔴 needs trunk + VPS bring-up | — |
 | P7 | Media streaming + echo bot | ⬜ not started | — | — | — |
 | P8 | AI voice agent v1 | ⬜ not started | — | — | — |
 | P9 | AI voice agent v2 | ⬜ not started | — | — | — |

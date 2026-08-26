@@ -371,6 +371,11 @@
             "minLength": 3,
             "title": "To",
             "type": "string"
+          },
+          "via": {
+            "default": "carrier",
+            "title": "Via",
+            "type": "string"
           }
         },
         "required": [
@@ -2086,6 +2091,67 @@
         "title": "SettingsIn",
         "type": "object"
       },
+      "SoftphoneAnswerOut": {
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "token",
+          "room"
+        ],
+        "title": "SoftphoneAnswerOut",
+        "type": "object"
+      },
+      "SoftphoneTokenIn": {
+        "properties": {
+          "room": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Room",
+            "type": "string"
+          }
+        },
+        "required": [
+          "room"
+        ],
+        "title": "SoftphoneTokenIn",
+        "type": "object"
+      },
+      "SoftphoneTokenOut": {
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "token",
+          "room"
+        ],
+        "title": "SoftphoneTokenOut",
+        "type": "object"
+      },
       "StatusIn": {
         "properties": {
           "error": {
@@ -3109,6 +3175,71 @@
           }
         ],
         "summary": "Get Call",
+        "tags": [
+          "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}/answer": {
+      "post": {
+        "description": "The browser softphone's counterpart to /softphone/token for an INBOUND room call:\nsame token payload, but reached from the call itself (the UI has a ringing Call, not a\nroom name) and gated on the call still being live.",
+        "operationId": "answer_call_api_v1_calls__call_id__answer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoftphoneAnswerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Answer Call",
         "tags": [
           "calls"
         ]
@@ -6950,6 +7081,70 @@
         ]
       }
     },
+    "/api/v1/softphone/token": {
+      "post": {
+        "operationId": "softphone_token_api_v1_softphone_token_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SoftphoneTokenIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoftphoneTokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Softphone Token",
+        "tags": [
+          "softphone"
+        ]
+      }
+    },
     "/api/v1/tags": {
       "get": {
         "operationId": "list_tags_api_v1_tags_get",
@@ -7631,6 +7826,25 @@
           }
         },
         "summary": "Bandwidth Voice Disconnect",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/livekit": {
+      "post": {
+        "operationId": "livekit_webhook_api_v1_webhooks_livekit_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Livekit Webhook",
         "tags": [
           "webhooks"
         ]

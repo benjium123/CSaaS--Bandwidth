@@ -1,0 +1,46 @@
+# LiveKit media plane (D17): SFU + SIP bridge for the softphone (P6) and the AI agent (P7+).
+#
+# Run TOGETHER with the main stack:
+#   docker compose -f deploy/docker-compose.prod.yml -f deploy/livekit/docker-compose.livekit.yml up -d
+#
+# UNLIKE the api/db services, the media plane MUST bind public interfaces: Telnyx has to
+# reach SIP signaling (5060/udp) and the SFU has to reach browsers over UDP. Every port
+# here is chosen to avoid the other tenants on this VPS; the RTP range is deliberately
+# narrow (500 ports) because this box shares CPU with other businesses.
+#
+# Firewall (ufw) additions required:
+#   7880/tcp   LiveKit signal/API (nginx proxies wss:// to it; can stay loopback if proxied)
+#   7881/tcp   ICE/TCP fallback
+#   50700-51199/udp  WebRTC RTP
+#   5060/udp   SIP signaling (restrict to Telnyx signaling IPs in ufw where possible)
+#   10000-10499/udp  SIP RTP
+name: csaas
+
+services:
+  livekit:
+    image: livekit/livekit-server:v1.8
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      # Key id is the FIXED string "csaas-media"; only the secret is secret.
+      LIVEKIT_KEYS: "csaas-media: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}"
+    ports:
+      - "127.0.0.1:7880:7880"           # signal/API - nginx terminates TLS and proxies
+      - "7881:7881"                      # ICE over TCP fallback
+      - "50700-51199:50700-51199/udp"   # WebRTC RTP
+    depends_on:
+      - redis
+
+  livekit-sip:
+    image: livekit/sip:v1.8
+    restart: unless-stopped
+    command: --config /etc/sip.yaml
+    volumes:
+      - ./sip.yaml:/etc/sip.yaml:ro
+    environment:
+      LIVEKIT_API_KEY: csaas-media
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?}
+    network_mode: host   # SIP + RTP need the real host address in SDP; NAT rewriting inside
+                         # docker bridge networks is exactly the one-way-audio machine.

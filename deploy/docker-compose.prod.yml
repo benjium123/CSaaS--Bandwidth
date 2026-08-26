@@ -36,7 +36,9 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # No published port. Present for parity; unused by P0 code.
+    # Loopback publish on 6380 (not 6379 - other tenants may hold it): livekit-sip runs
+    # with network_mode: host and reaches this redis via 127.0.0.1:6380 (deploy/livekit/).
+    ports: ["127.0.0.1:6380:6379"]
     volumes: ["csaas_redisdata:/data"]
 
 volumes:

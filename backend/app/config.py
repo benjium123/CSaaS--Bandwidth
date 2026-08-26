@@ -94,6 +94,16 @@ class Settings(BaseSettings):
     telnyx_voice_connection_id: str = ""
     telnyx_default_number: str = ""
 
+    # ---- LiveKit media plane (D17: one media plane for softphone + AI agent) ----------
+    #: e.g. ws://127.0.0.1:7880 self-hosted; the browser needs the wss:// public form.
+    livekit_url: str = ""
+    #: Public URL the softphone connects to (behind nginx TLS); falls back to livekit_url.
+    livekit_public_url: str = ""
+    livekit_api_key: str = ""
+    livekit_api_secret: SecretStr = SecretStr("")
+    #: SIP trunk id configured in livekit-sip for OUTBOUND calls (lk sip outbound create).
+    livekit_sip_outbound_trunk_id: str = ""
+
     signalwire_enabled: bool = False
     signalwire_project_id: str = ""
     signalwire_api_token: SecretStr = SecretStr("")
@@ -276,6 +286,14 @@ class Settings(BaseSettings):
             },
         )
         keyed("cartesia", {"CARTESIA_API_KEY": self.cartesia_api_key})
+        keyed(
+            "livekit",
+            {
+                "LIVEKIT_URL": self.livekit_url,
+                "LIVEKIT_API_SECRET": self.livekit_api_secret,
+                "LIVEKIT_SIP_OUTBOUND_TRUNK_ID": self.livekit_sip_outbound_trunk_id,
+            },
+        )
         keyed(
             "s3",
             {
