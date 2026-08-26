@@ -66,8 +66,8 @@ async def wait_for_remote_audio_track(room: rtc.Room) -> rtc.AudioTrack:
 
     try:
         return await asyncio.wait_for(found, timeout=30)
-    except asyncio.TimeoutError:
-        raise RuntimeError("No remote audio track found")
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError("No remote audio track found") from exc
 
 
 async def entrypoint(ctx: JobContext) -> None:

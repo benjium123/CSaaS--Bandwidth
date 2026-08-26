@@ -122,12 +122,15 @@ describe("CallsPage", () => {
     const listRow = { ...CALL_1, id: "call-4", status: "bridged" };
     const client = makeStubClient({
       "/api/v1/numbers": [],
+      // Must be registered BEFORE the generic "/api/v1/calls" entry: makeStubClient
+      // matches routes via path.startsWith(key) in object key order, and this path
+      // (correctly, post-F-pre-existing-bug-fix) starts with "/api/v1/calls" too.
+      "/api/v1/calls/call-4/agent": { dispatched: "ai", room: "call-call-4", id: "disp-1" },
       "/api/v1/calls": (path: string, init: RequestInit & { json?: unknown }) => {
         if (init.method === "POST") return detail;
         if (/^\/api\/v1\/calls(\?|$)/.test(path)) return [listRow];
         return detail;
       },
-      "/api/v1/call-4/agent": { dispatched: "ai", room: "call-call-4", id: "disp-1" },
     });
     renderWithProviders(<CallsPage />, client);
 
@@ -135,9 +138,9 @@ describe("CallsPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Send AI agent" }));
 
     await waitFor(() =>
-      expect(client.calls.some((c) => c.path === "/api/v1/call-4/agent")).toBe(true),
+      expect(client.calls.some((c) => c.path === "/api/v1/calls/call-4/agent")).toBe(true),
     );
-    const dispatchCall = client.calls.find((c) => c.path === "/api/v1/call-4/agent");
+    const dispatchCall = client.calls.find((c) => c.path === "/api/v1/calls/call-4/agent");
     expect(dispatchCall?.init.method).toBe("POST");
     expect(dispatchCall?.init.json).toEqual({ agent_name: "ai" });
     expect(await screen.findByText(/AI agent joined room call-call-4/)).toBeInTheDocument();
@@ -148,12 +151,14 @@ describe("CallsPage", () => {
     const listRow = { ...CALL_1, id: "call-5", status: "bridged" };
     const client = makeStubClient({
       "/api/v1/numbers": [],
+      // See the ordering note in the previous test - the specific dispatch route must
+      // come before the generic "/api/v1/calls" prefix match.
+      "/api/v1/calls/call-5/agent": new Error("Agents can only join room calls (via=room)"),
       "/api/v1/calls": (path: string, init: RequestInit & { json?: unknown }) => {
         if (init.method === "POST") return detail;
         if (/^\/api\/v1\/calls(\?|$)/.test(path)) return [listRow];
         return detail;
       },
-      "/api/v1/call-5/agent": new Error("Agents can only join room calls (via=room)"),
     });
     renderWithProviders(<CallsPage />, client);
 

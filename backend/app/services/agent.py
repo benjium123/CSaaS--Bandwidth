@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import uuid
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 
 import jwt
 import sqlalchemy as sa
@@ -23,10 +24,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY
-from app.errors import NotFoundError
-from app.models import AgentProfile, Call, CallTranscriptSegment, Org
+from app.errors import ConflictError, NotFoundError
+from app.models import (
+    AgentProfile,
+    Appointment,
+    Call,
+    CallTranscriptSegment,
+    Contact,
+    ContactTag,
+    Message,
+    MessageThread,
+    Org,
+    Tag,
+)
+from app.models.voice import TERMINAL_CALL_STATUSES
+from app.services import calls as calls_svc
+from app.services import contacts as contacts_svc
 
 log = structlog.get_logger("agent")
+
+#: Maps the internal Message.direction vocabulary ("outbound"/"inbound") to the short
+#: worker-facing one the contact-lookup seam's contract fixes ("out"/"in").
+_DIRECTION_OUT: dict[str, str] = {"outbound": "out", "inbound": "in"}
+MAX_LAST_MESSAGES = 5
 
 #: Fixed identity the worker signs its JWT `sub` claim as. Never a real user - the seams
 #: it calls take no OrgContext at all.
@@ -43,6 +63,7 @@ DEFAULT_AGENT_FIELDS: dict = {
     "voice_id": "",
     "llm_provider": "",
     "llm_model": "",
+    "voicemail_message": "",
     "extra_rules": [],
 }
 
@@ -189,6 +210,7 @@ async def resolve_context(session: AsyncSession, call: Call) -> dict:
             voice_id=profile.voice_id,
             llm_provider=profile.llm_provider,
             llm_model=profile.llm_model,
+            voicemail_message=profile.voicemail_message,
             extra_rules=list((profile.extra or {}).get("rules", [])),
         )
 
@@ -259,3 +281,161 @@ async def set_default_profile(session: AsyncSession, profile_id: uuid.UUID) -> A
     profile.is_default = True
     await session.flush()
     return profile
+
+
+# ----------------------------------------------------------------------------------
+# P9 machine seam: contact lookup (worker-auth; org resolved from the Call row).
+# ----------------------------------------------------------------------------------
+async def get_contact_context(session: AsyncSession, e164: str) -> dict:
+    """What `lookup_contact` needs mid-call: the contact's name/tags (empty if this
+    number has no Contact yet) and up to MAX_LAST_MESSAGES most-recent messages with
+    this number, across every thread. Requires `set_org_context` to already be bound."""
+    name = ""
+    tags: list[str] = []
+
+    found = await contacts_svc.find_contact_by_phone(session, e164)
+    if found is not None:
+        contact: Contact = found[0]
+        name = contact.display_name
+        tags = list(
+            (
+                await session.execute(
+                    sa.select(Tag.name)
+                    .join(ContactTag, ContactTag.tag_id == Tag.id)
+                    .where(ContactTag.contact_id == contact.id)
+                    .order_by(Tag.name)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    rows = (
+        await session.execute(
+            sa.select(Message)
+            .join(MessageThread, MessageThread.id == Message.thread_id)
+            .where(MessageThread.contact_e164 == e164)
+            .order_by(Message.created_at.desc())
+            .limit(MAX_LAST_MESSAGES)
+        )
+    ).scalars().all()
+    last_messages = [
+        {
+            "direction": _DIRECTION_OUT.get(m.direction, m.direction),
+            "body": m.body or "",
+            "at": m.created_at.isoformat(),
+        }
+        for m in rows
+    ]
+
+    return {"name": name, "tags": tags, "last_messages": last_messages}
+
+
+# ----------------------------------------------------------------------------------
+# P9 machine seam + human-facing CRUD: appointments.
+# ----------------------------------------------------------------------------------
+def _parse_scheduled_for(raw_when: str) -> datetime | None:
+    """ONLY datetime.fromisoformat, per contract - the LLM's own "tomorrow at 3" style
+    normalization is never trusted. A trailing 'Z' is rewritten to '+00:00' first since
+    fromisoformat historically rejects it; anything else that fails to parse yields None
+    and the raw string is kept verbatim on the row (the model docstring's whole point).
+
+    A parse that comes back NAIVE (no tzinfo) also yields None: an un-anchored
+    wall-clock time is exactly the guess we do not trust - raw_when carries the truth,
+    and an org timezone (to anchor a naive time against) is a future schema decision,
+    not something to assume here.
+    """
+    candidate = raw_when.strip()
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+async def book_appointment(
+    session: AsyncSession, call: Call, *, contact_e164: str, raw_when: str, notes: str
+) -> Appointment:
+    appt = Appointment(
+        id=uuid.uuid4(),
+        org_id=call.org_id,
+        call_id=call.id,
+        contact_e164=contact_e164,
+        raw_when=raw_when,
+        scheduled_for=_parse_scheduled_for(raw_when),
+        notes=notes,
+        status="booked",
+        created_by="ai",
+    )
+    session.add(appt)
+    await session.flush()
+    return appt
+
+
+async def list_appointments(
+    session: AsyncSession, org_id: uuid.UUID, status: str | None = None
+) -> list[Appointment]:
+    stmt = sa.select(Appointment).order_by(Appointment.created_at.desc())
+    if status:
+        stmt = stmt.where(Appointment.status == status)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_appointment(session: AsyncSession, appointment_id: uuid.UUID) -> Appointment:
+    appt = await session.get(Appointment, appointment_id)
+    if appt is None:
+        raise NotFoundError("Appointment not found")
+    return appt
+
+
+async def update_appointment(
+    session: AsyncSession, appointment_id: uuid.UUID, **fields
+) -> Appointment:
+    appt = await get_appointment(session, appointment_id)
+    for key, value in fields.items():
+        setattr(appt, key, value)
+    await session.flush()
+    return appt
+
+
+# ----------------------------------------------------------------------------------
+# P9 machine seam: warm handoff. Publishes only - no DB write.
+# ----------------------------------------------------------------------------------
+def publish_handoff(bus, call: Call, *, reason: str, summary: str) -> None:
+    """Raises ConflictError if this call cannot be handed off: it must be a live LiveKit
+    room call (a carrier-path call has no room a human softphone could join)."""
+    room = (call.extra or {}).get("room") if (call.extra or {}).get("via") == "livekit" else None
+    if room is None or call.status in TERMINAL_CALL_STATUSES:
+        raise ConflictError("This call cannot be handed off")
+
+    bus.publish(
+        call.org_id,
+        {
+            "type": "call.handoff",
+            "call_id": str(call.id),
+            "room": room,
+            "reason": reason,
+            "summary": summary,
+            "contact": call.contact_e164,
+        },
+    )
+
+
+# ----------------------------------------------------------------------------------
+# P9 machine seam: async AMD verdict. Monotonic - first write on a leg wins.
+# ----------------------------------------------------------------------------------
+async def set_amd_result(session: AsyncSession, call: Call, result: str) -> bool:
+    """Same monotonic rule as the webhook-driven AMD path in services/calls.py: the
+    ACTIVE leg's amd_result is set only if it is currently None. Returns whether the
+    write happened."""
+    legs = await calls_svc.load_legs(session, call.id)
+    leg = calls_svc.active_leg(legs)
+    if leg is None or leg.amd_result is not None:
+        return False
+    leg.amd_result = result
+    await session.flush()
+    return True

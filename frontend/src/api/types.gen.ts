@@ -4,6 +4,57 @@
  */
 
 export interface paths {
+    "/api/v1/agent/amd": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Agent Amd */
+        post: operations["post_agent_amd_api_v1_agent_amd_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/appointments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Agent Appointment */
+        post: operations["post_agent_appointment_api_v1_agent_appointments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/contact/{e164}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Contact */
+        get: operations["get_agent_contact_api_v1_agent_contact__e164__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent/context/{call_id}": {
         parameters: {
             query?: never;
@@ -13,6 +64,40 @@ export interface paths {
         };
         /** Get Agent Context */
         get: operations["get_agent_context_api_v1_agent_context__call_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Agent Handoff */
+        post: operations["post_agent_handoff_api_v1_agent_handoff_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/kb/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Kb Search */
+        get: operations["get_agent_kb_search_api_v1_agent_kb_search_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -89,6 +174,40 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/appointments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Appointments */
+        get: operations["list_appointments_api_v1_appointments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/appointments/{appointment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Appointment */
+        patch: operations["patch_appointment_api_v1_appointments__appointment_id__patch"];
         trace?: never;
     };
     "/api/v1/auth/2fa/activate": {
@@ -242,6 +361,29 @@ export interface paths {
         get: operations["get_call_api_v1_calls__call_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calls/{call_id}/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispatch Agent
+         * @description Dispatch a named agent worker (P7 echo agent, P8 AI agent) into a live room call.
+         *
+         *     Room calls only: an agent is a room participant, and carrier-path calls have no room
+         *     for it to join.
+         */
+        post: operations["dispatch_agent_api_v1_calls__call_id__agent_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -591,6 +733,42 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kb/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Kb Documents */
+        get: operations["list_kb_documents_api_v1_kb_documents_get"];
+        put?: never;
+        /** Create Kb Document */
+        post: operations["create_kb_document_api_v1_kb_documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kb/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Kb Document */
+        get: operations["get_kb_document_api_v1_kb_documents__document_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Kb Document */
+        delete: operations["delete_kb_document_api_v1_kb_documents__document_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1333,29 +1511,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/{call_id}/agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dispatch Agent
-         * @description Dispatch a named agent worker (P7 echo agent, P8 AI agent) into a live room call.
-         *
-         *     Room calls only: an agent is a room participant, and carrier-path calls have no room
-         *     for it to join.
-         */
-        post: operations["dispatch_agent_api_v1__call_id__agent_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1387,6 +1542,78 @@ export interface components {
              * @default echo
              */
             agent_name: string;
+        };
+        /** AmdIn */
+        AmdIn: {
+            /**
+             * Call Id
+             * Format: uuid
+             */
+            call_id: string;
+            /** Result */
+            result: string;
+        };
+        /** AppointmentBookIn */
+        AppointmentBookIn: {
+            /**
+             * Call Id
+             * Format: uuid
+             */
+            call_id: string;
+            /** Contact E164 */
+            contact_e164: string;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /** Raw When */
+            raw_when: string;
+        };
+        /** AppointmentBookOut */
+        AppointmentBookOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Raw When */
+            raw_when: string;
+            /** Scheduled For */
+            scheduled_for: string | null;
+            /** Status */
+            status: string;
+        };
+        /** AppointmentOut */
+        AppointmentOut: {
+            /** Call Id */
+            call_id: string | null;
+            /** Contact E164 */
+            contact_e164: string;
+            /** Created By */
+            created_by: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Notes */
+            notes: string;
+            /** Raw When */
+            raw_when: string;
+            /** Scheduled For */
+            scheduled_for: string | null;
+            /** Status */
+            status: string;
+        };
+        /** AppointmentPatch */
+        AppointmentPatch: {
+            /** Notes */
+            notes?: string | null;
+            /** Scheduled For */
+            scheduled_for?: string | null;
+            /** Status */
+            status?: ("booked" | "canceled" | "done") | null;
         };
         /** AssignIn */
         AssignIn: {
@@ -1711,32 +1938,14 @@ export interface components {
              */
             phones: components["schemas"]["PhoneIn"][];
         };
-        /** ContactOut */
-        ContactOut: {
-            /** Attributes */
-            attributes: {
-                [key: string]: unknown;
-            };
-            /** Company Id */
-            company_id: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Display Name */
-            display_name: string;
-            /** First Name */
-            first_name: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Last Name */
-            last_name: string | null;
-            /** Phones */
-            phones: components["schemas"]["PhoneOut"][];
+        /** ContactMessageOut */
+        ContactMessageOut: {
+            /** At */
+            at: string;
+            /** Body */
+            body: string;
+            /** Direction */
+            direction: string;
         };
         /** ContactPatch */
         ContactPatch: {
@@ -1775,6 +1984,8 @@ export interface components {
             system_prompt: string;
             /** Voice Id */
             voice_id: string;
+            /** Voicemail Message */
+            voicemail_message: string;
         };
         /** CustomFieldIn */
         CustomFieldIn: {
@@ -1832,6 +2043,80 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HandoffIn */
+        HandoffIn: {
+            /**
+             * Call Id
+             * Format: uuid
+             */
+            call_id: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+        };
+        /** HandoffOut */
+        HandoffOut: {
+            /** Published */
+            published: boolean;
+        };
+        /** KbChunkOut */
+        KbChunkOut: {
+            /** Seq */
+            seq: number;
+            /** Text */
+            text: string;
+        };
+        /** KbDocumentDetailOut */
+        KbDocumentDetailOut: {
+            /** Chunks */
+            chunks: components["schemas"]["KbChunkOut"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Source */
+            source: string;
+            /** Title */
+            title: string;
+        };
+        /** KbDocumentIn */
+        KbDocumentIn: {
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
+        };
+        /** KbDocumentOut */
+        KbDocumentOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Source */
+            source: string;
+            /** Title */
+            title: string;
+        };
+        /** KbSearchChunkOut */
+        KbSearchChunkOut: {
+            /** Score */
+            score: number;
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
+        };
+        /** KbSearchOut */
+        KbSearchOut: {
+            /** Chunks */
+            chunks: components["schemas"]["KbSearchChunkOut"][];
         };
         /** LabelsIn */
         LabelsIn: {
@@ -2103,6 +2388,11 @@ export interface components {
              * @default
              */
             voice_id: string;
+            /**
+             * Voicemail Message
+             * @default
+             */
+            voicemail_message: string;
         };
         /** ProfileOut */
         ProfileOut: {
@@ -2129,6 +2419,8 @@ export interface components {
             system_prompt: string;
             /** Voice Id */
             voice_id: string;
+            /** Voicemail Message */
+            voicemail_message: string;
         };
         /** ProfilePatch */
         ProfilePatch: {
@@ -2148,6 +2440,8 @@ export interface components {
             system_prompt?: string | null;
             /** Voice Id */
             voice_id?: string | null;
+            /** Voicemail Message */
+            voicemail_message?: string | null;
         };
         /** RecordingOut */
         RecordingOut: {
@@ -2484,12 +2778,48 @@ export interface components {
             /** Pending Token */
             pending_token: string;
         };
+        /** ContactOut */
+        app__api__routes__agent__ContactOut: {
+            /** Last Messages */
+            last_messages: components["schemas"]["ContactMessageOut"][];
+            /** Name */
+            name: string;
+            /** Tags */
+            tags: string[];
+        };
         /** NumberIn */
         app__api__routes__compliance__NumberIn: {
             /** E164 */
             e164: string;
             /** Reason */
             reason?: string | null;
+        };
+        /** ContactOut */
+        app__api__routes__contacts__ContactOut: {
+            /** Attributes */
+            attributes: {
+                [key: string]: unknown;
+            };
+            /** Company Id */
+            company_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Display Name */
+            display_name: string;
+            /** First Name */
+            first_name: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Name */
+            last_name: string | null;
+            /** Phones */
+            phones: components["schemas"]["PhoneOut"][];
         };
         /** NumberIn */
         app__api__routes__numbers__NumberIn: {
@@ -2512,6 +2842,107 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    post_agent_amd_api_v1_agent_amd_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AmdIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_agent_appointment_api_v1_agent_appointments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppointmentBookIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppointmentBookOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_contact_api_v1_agent_contact__e164__get: {
+        parameters: {
+            query: {
+                call_id: string;
+            };
+            header?: never;
+            path: {
+                e164: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__api__routes__agent__ContactOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_agent_context_api_v1_agent_context__call_id__get: {
         parameters: {
             query?: never;
@@ -2530,6 +2961,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContextOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_agent_handoff_api_v1_agent_handoff_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HandoffIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandoffOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_kb_search_api_v1_agent_kb_search_get: {
+        parameters: {
+            query: {
+                call_id: string;
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbSearchOut"];
                 };
             };
             /** @description Validation Error */
@@ -2732,6 +3228,76 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_appointments_api_v1_appointments_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppointmentOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_appointment_api_v1_appointments__appointment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                appointment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppointmentPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppointmentOut"];
                 };
             };
             /** @description Validation Error */
@@ -3047,6 +3613,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CallDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispatch_agent_api_v1_calls__call_id__agent_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentDispatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -3640,7 +4245,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactOut"][];
+                    "application/json": components["schemas"]["app__api__routes__contacts__ContactOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3675,7 +4280,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactOut"];
+                    "application/json": components["schemas"]["app__api__routes__contacts__ContactOut"];
                 };
             };
             /** @description Validation Error */
@@ -3708,7 +4313,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactOut"];
+                    "application/json": components["schemas"]["app__api__routes__contacts__ContactOut"];
                 };
             };
             /** @description Validation Error */
@@ -3776,7 +4381,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactOut"];
+                    "application/json": components["schemas"]["app__api__routes__contacts__ContactOut"];
                 };
             };
             /** @description Validation Error */
@@ -4003,6 +4608,136 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_kb_documents_api_v1_kb_documents_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbDocumentOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_kb_document_api_v1_kb_documents_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KbDocumentIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbDocumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_kb_document_api_v1_kb_documents__document_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbDocumentDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_kb_document_api_v1_kb_documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -5531,45 +6266,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dispatch_agent_api_v1__call_id__agent_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Org-Id"?: string | null;
-            };
-            path: {
-                call_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentDispatchIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
             /** @description Validation Error */

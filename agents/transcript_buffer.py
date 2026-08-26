@@ -93,7 +93,11 @@ class TranscriptBuffer:
     def due(self, now: float) -> bool:
         if len(self._segments) >= self.flush_after:
             return True
-        return bool(self._segments and self._oldest_buffered_since is not None and now - self._oldest_buffered_since >= self.max_age_seconds)
+        return bool(
+            self._segments
+            and self._oldest_buffered_since is not None
+            and now - self._oldest_buffered_since >= self.max_age_seconds
+        )
 
     def drain(self) -> list[Segment]:
         segments = self._segments

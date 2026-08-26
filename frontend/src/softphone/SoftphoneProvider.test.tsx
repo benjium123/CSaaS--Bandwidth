@@ -271,6 +271,52 @@ describe("SoftphoneProvider", () => {
     await waitFor(() => expect(screen.queryByTestId("ring-call-9")).toBeNull());
   });
 
+  it("clears one incoming card (not the other) on a call.handoff.claimed ws message", async () => {
+    const client = makeStubClient({ "/api/v1/auth/me": ME });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: "call-1",
+          room: "call-1",
+          from: "+19725550111",
+          to: "+12145550100",
+        }),
+      });
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: "call-2",
+          room: "call-2",
+          from: "+19725550222",
+          to: "+12145550100",
+        }),
+      });
+    });
+
+    expect(await screen.findByTestId("ring-call-1")).toBeInTheDocument();
+    expect(screen.getByTestId("ring-call-2")).toBeInTheDocument();
+
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({ type: "call.handoff.claimed", call_id: "call-1" }),
+      });
+    });
+
+    await waitFor(() => expect(screen.queryByTestId("ring-call-1")).toBeNull());
+    expect(screen.getByTestId("ring-call-2")).toBeInTheDocument();
+  });
+
   it("answers an inbound call by posting to /answer and connecting the returned room", async () => {
     const client = makeStubClient({
       "/api/v1/auth/me": ME,

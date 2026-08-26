@@ -212,6 +212,30 @@ async def test_context_default_profile_wins_over_nondefault(app_with_agent, sess
     assert body["org_name"] == "Org CTX1"
 
 
+async def test_context_carries_voicemail_message_to_the_worker(app_with_agent):
+    """The worker's voicemail drop reads context["voicemail_message"] - the two sides of
+    this seam were built by different implementers, and the field going missing here
+    silently disables voicemail drop for every org. Pin it end-to-end through the route."""
+    client, _app = app_with_agent
+    token, org, call_id = await _place_call(client, "ctxvm@example.com", "Org CTXVM")
+    h = auth_headers(token, org["id"])
+    created = await client.post(
+        "/api/v1/agent/profiles",
+        json={"name": "vm", "voicemail_message": "Sorry we missed you - call us back."},
+        headers=h,
+    )
+    assert created.status_code == 201, created.text
+    await client.post(
+        f"/api/v1/agent/profiles/{created.json()['id']}/default", headers=h
+    )
+
+    r = await client.get(
+        f"/api/v1/agent/context/{call_id}", headers=worker_headers(worker_token())
+    )
+    assert r.status_code == 200
+    assert r.json()["voicemail_message"] == "Sorry we missed you - call us back."
+
+
 async def test_context_no_profiles_returns_defaults(app_with_agent):
     client, _app = app_with_agent
     _token, _org, call_id = await _place_call(client, "ctx2@example.com", "Org CTX2")
@@ -433,3 +457,39 @@ async def test_transcript_scoped_to_the_calls_org(app_with_agent, session):
     ).scalars().all()
     assert len(a_rows) == 1
     assert a_rows[0].org_id == org_a_id
+
+
+# ==================================================================================
+# P9: voicemail_message on the agent profile (spoken after the beep on outbound drops).
+# ==================================================================================
+async def test_profile_voicemail_message_roundtrips_through_create_and_patch(app_with_agent):
+    client, _app = app_with_agent
+    token, org, _call_id = await _place_call(client, "vm1@example.com", "Org VM1")
+    h = auth_headers(token, org["id"])
+
+    r = await client.post(
+        "/api/v1/agent/profiles",
+        json={"name": "Main", "voicemail_message": "Sorry we missed you, call back soon."},
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["voicemail_message"] == "Sorry we missed you, call back soon."
+
+    r2 = await client.patch(
+        f"/api/v1/agent/profiles/{body['id']}",
+        json={"voicemail_message": "Please leave a message after the tone."},
+        headers=h,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["voicemail_message"] == "Please leave a message after the tone."
+
+
+async def test_profile_voicemail_message_defaults_empty(app_with_agent):
+    client, _app = app_with_agent
+    token, org, _call_id = await _place_call(client, "vm2@example.com", "Org VM2")
+    h = auth_headers(token, org["id"])
+
+    r = await client.post("/api/v1/agent/profiles", json={"name": "NoDrop"}, headers=h)
+    assert r.status_code == 201, r.text
+    assert r.json()["voicemail_message"] == ""

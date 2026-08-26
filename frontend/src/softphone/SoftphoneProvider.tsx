@@ -61,7 +61,17 @@ export type SoftphoneStatus =
 
 export type ActiveCall = { id: string; room: string; contact: string };
 
-export type IncomingRing = { callId: string; room: string; from: string; to: string };
+export type IncomingRing = {
+  callId: string;
+  room: string;
+  from: string;
+  to: string;
+  /** "handoff" is a P9 AI warm-transfer ring (call.handoff) - the room call already
+   * exists, so `answer` joins it exactly the same way as a plain inbound ring. */
+  kind?: "ring" | "handoff";
+  reason?: string;
+  summary?: string;
+};
 
 export type DeviceOption = { deviceId: string; label: string };
 
@@ -353,7 +363,17 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
         ws.close();
       };
       ws.onmessage = (event: MessageEvent) => {
-        let msg: { type?: string; call_id?: string; status?: string; room?: string; from?: string; to?: string };
+        let msg: {
+          type?: string;
+          call_id?: string;
+          status?: string;
+          room?: string;
+          from?: string;
+          to?: string;
+          reason?: string;
+          summary?: string;
+          contact?: string;
+        };
         try {
           msg = JSON.parse(event.data as string);
         } catch {
@@ -365,8 +385,27 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
             room: msg.room ?? "",
             from: msg.from ?? "",
             to: msg.to ?? "",
+            kind: "ring",
           };
           setIncoming((prev) => (prev.some((r) => r.callId === ring.callId) ? prev : [...prev, ring]));
+        } else if (msg.type === "call.handoff" && msg.call_id) {
+          const handoff: IncomingRing = {
+            callId: msg.call_id,
+            room: msg.room ?? "",
+            from: msg.contact ?? "",
+            to: "",
+            kind: "handoff",
+            reason: msg.reason ?? "",
+            summary: msg.summary ?? "",
+          };
+          setIncoming((prev) =>
+            prev.some((r) => r.callId === handoff.callId) ? prev : [...prev, handoff],
+          );
+        } else if (msg.type === "call.handoff.claimed" && msg.call_id) {
+          // F9: someone else already answered this ring/handoff - drop it from OUR
+          // incoming list too so a claimed card doesn't linger on every other
+          // operator's softphone.
+          setIncoming((prev) => prev.filter((r) => r.callId !== msg.call_id));
         } else if (msg.type === "call.status" && msg.call_id && msg.status) {
           const terminal = isTerminalCallStatus(msg.status);
           if (terminal) {

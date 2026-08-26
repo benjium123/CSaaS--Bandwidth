@@ -116,4 +116,67 @@ describe("AgentPage", () => {
     );
     expect(await screen.findByText("No agent profiles yet.")).toBeInTheDocument();
   });
+
+  it("creates and deletes a knowledge base document", async () => {
+    let documents: Record<string, unknown>[] = [];
+    let nextId = 1;
+
+    const client = makeStubClient({
+      "/api/v1/agent/profiles": [],
+      "/api/v1/kb/documents": (path: string, init: RequestInit & { json?: unknown }) => {
+        const method = init.method ?? "GET";
+        const idMatch = path.match(/^\/api\/v1\/kb\/documents\/([^/]+)$/);
+
+        if (idMatch && method === "DELETE") {
+          const id = idMatch[1];
+          documents = documents.filter((d) => d.id !== id);
+          return undefined;
+        }
+        if (idMatch) {
+          const id = idMatch[1];
+          const doc = documents.find((d) => d.id === id);
+          return { ...doc, chunks: [{ seq: 0, text: "We are open weekdays from 9 to 5." }] };
+        }
+        if (method === "POST") {
+          const body = init.json as Record<string, unknown>;
+          const created = { id: `d${nextId++}`, source: "pasted", title: body.title };
+          documents = [...documents, created];
+          return created;
+        }
+        return documents;
+      },
+    });
+
+    renderWithProviders(<AgentPage />, client);
+
+    expect(await screen.findByText("No documents yet.")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Document title"), "Hours");
+    await userEvent.type(
+      screen.getByLabelText("Document text"),
+      "We are open weekdays from 9 to 5.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add document" }));
+
+    expect(await screen.findByRole("button", { name: "Hours" })).toBeInTheDocument();
+    const createCall = client.calls.find(
+      (c) => c.path === "/api/v1/kb/documents" && c.init.method === "POST",
+    );
+    expect((createCall?.init.json as Record<string, unknown>).title).toBe("Hours");
+
+    // Expand to view chunks.
+    await userEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(await screen.findByText("We are open weekdays from 9 to 5.")).toBeInTheDocument();
+
+    // Delete.
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(
+        client.calls.some(
+          (c) => c.path === "/api/v1/kb/documents/d1" && c.init.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+    expect(await screen.findByText("No documents yet.")).toBeInTheDocument();
+  });
 });

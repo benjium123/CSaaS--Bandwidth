@@ -193,32 +193,57 @@ export function SoftphonePanel() {
         )}
       </div>
 
-      {softphone.incoming.map((ring) => (
-        <div key={ring.callId} className="space-y-2 border-b border-border p-3" role="alert">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <PhoneIncoming className="h-4 w-4 text-green-600" />
-            Incoming call — {formatPhone(ring.from)}
-          </div>
-          <p className="text-xs text-muted-foreground">to {formatPhone(ring.to)}</p>
-          <div className="flex gap-2">
+      {softphone.incoming.map((ring) =>
+        ring.kind === "handoff" ? (
+          <div
+            key={ring.callId}
+            className="space-y-2 border-b border-border bg-amber-50 p-3"
+            role="alert"
+            aria-label="AI handoff"
+          >
+            <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+              <PhoneIncoming className="h-4 w-4 text-amber-600" />
+              AI handoff — {formatPhone(ring.from)}
+            </div>
+            {ring.reason && (
+              <p className="text-xs font-medium text-amber-800">Reason: {ring.reason}</p>
+            )}
+            {ring.summary && <p className="text-xs text-amber-800">{ring.summary}</p>}
             <Button
               type="button"
-              className="flex-1"
+              className="w-full"
               onClick={() => softphone.answer(ring.callId)}
             >
-              Answer
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="flex-1"
-              onClick={() => softphone.decline(ring.callId)}
-            >
-              Decline
+              Join call
             </Button>
           </div>
-        </div>
-      ))}
+        ) : (
+          <div key={ring.callId} className="space-y-2 border-b border-border p-3" role="alert">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <PhoneIncoming className="h-4 w-4 text-green-600" />
+              Incoming call — {formatPhone(ring.from)}
+            </div>
+            <p className="text-xs text-muted-foreground">to {formatPhone(ring.to)}</p>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                className="flex-1"
+                onClick={() => softphone.answer(ring.callId)}
+              >
+                Answer
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="flex-1"
+                onClick={() => softphone.decline(ring.callId)}
+              >
+                Decline
+              </Button>
+            </div>
+          </div>
+        ),
+      )}
 
       {softphone.activeCall ? (
         <div className="space-y-3 p-3">

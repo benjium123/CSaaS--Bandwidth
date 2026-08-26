@@ -359,6 +359,7 @@ export type AgentProfileFields = {
   voice_id?: string;
   llm_provider?: string;
   llm_model?: string;
+  voicemail_message?: string;
 };
 
 export function useAgentProfiles(api: ApiClient) {
@@ -409,17 +410,95 @@ export function useSetDefaultAgentProfile(api: ApiClient) {
   });
 }
 
-/** POST /api/v1/{call_id}/agent - the P7 dispatch endpoint (path shape is existing,
- * pre-P8 API). agent_name="ai" is the real P8 pipeline; "echo" is P7's loop-back test
- * agent, unused by this console. */
+/** POST /api/v1/calls/{call_id}/agent - the P7 dispatch endpoint. agent_name="ai" is
+ * the real P8 pipeline; "echo" is P7's loop-back test agent, unused by this console. */
 export function useDispatchAgent(api: ApiClient) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { callId: string; agent_name?: string }) =>
       api.request<{ dispatched: string; room: string; id: string }>(
-        `/api/v1/${vars.callId}/agent`,
+        `/api/v1/calls/${vars.callId}/agent`,
         { method: "POST", json: { agent_name: vars.agent_name ?? "ai" } },
       ),
     onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ["call", vars.callId] }),
+  });
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Appointments + knowledge base (Phase 9)
+ * ------------------------------------------------------------------------------------- */
+
+export type AppointmentOut = {
+  id: string;
+  call_id: string | null;
+  contact_e164: string;
+  raw_when: string;
+  scheduled_for: string | null;
+  notes: string;
+  status: string;
+  created_by: string;
+};
+
+export function useAppointments(api: ApiClient, status?: string) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return useQuery({
+    queryKey: ["appointments", status ?? null],
+    queryFn: () => api.request<AppointmentOut[]>(`/api/v1/appointments${qs}`),
+  });
+}
+
+export function useUpdateAppointment(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: string;
+      status?: string;
+      scheduled_for?: string;
+      notes?: string;
+    }) => {
+      const { id, ...body } = vars;
+      return api.request<AppointmentOut>(`/api/v1/appointments/${id}`, {
+        method: "PATCH",
+        json: body,
+      });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["appointments"] }),
+  });
+}
+
+export type KbDocumentOut = { id: string; title: string; source: string };
+export type KbChunkOut = { seq: number; text: string };
+export type KbDocumentDetailOut = KbDocumentOut & { chunks: KbChunkOut[] };
+
+export function useKbDocuments(api: ApiClient) {
+  return useQuery({
+    queryKey: ["kb-documents"],
+    queryFn: () => api.request<KbDocumentOut[]>("/api/v1/kb/documents"),
+  });
+}
+
+export function useKbDocument(api: ApiClient, documentId: string | null) {
+  return useQuery({
+    queryKey: ["kb-document", documentId],
+    queryFn: () => api.request<KbDocumentDetailOut>(`/api/v1/kb/documents/${documentId}`),
+    enabled: Boolean(documentId),
+  });
+}
+
+export function useCreateKbDocument(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { title: string; text: string }) =>
+      api.request<KbDocumentOut>("/api/v1/kb/documents", { method: "POST", json: vars }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["kb-documents"] }),
+  });
+}
+
+export function useDeleteKbDocument(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.request<void>(`/api/v1/kb/documents/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["kb-documents"] }),
   });
 }

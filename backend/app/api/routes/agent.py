@@ -6,6 +6,7 @@ settings:read/settings:write - there is no dedicated agent:* permission yet).
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -13,12 +14,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
 from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, UnauthenticatedError
 from app.models import AgentProfile
 from app.services import agent as agent_svc
+from app.services import kb as kb_svc
 
 router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
 
@@ -41,6 +44,9 @@ class ContextOut(BaseModel):
     voice_id: str
     llm_provider: str
     llm_model: str
+    #: Spoken after the voicemail beep on outbound drops. The worker reads this key -
+    #: dropping it from the seam silently disables voicemail drop for every org.
+    voicemail_message: str
     extra_rules: list
 
 
@@ -88,6 +94,156 @@ async def post_agent_transcript(
     return {"accepted": accepted}
 
 
+class ContactMessageOut(BaseModel):
+    direction: str
+    body: str
+    at: str
+
+
+class ContactOut(BaseModel):
+    name: str
+    tags: list[str]
+    last_messages: list[ContactMessageOut]
+
+
+@router.get("/contact/{e164}", response_model=ContactOut)
+async def get_agent_contact(
+    e164: str,
+    call_id: uuid.UUID,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ContactOut:
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    set_org_context(session, call.org_id)
+    ctx = await agent_svc.get_contact_context(session, to_e164(e164))
+    return ContactOut(**ctx)
+
+
+class AppointmentBookIn(BaseModel):
+    call_id: uuid.UUID
+    contact_e164: str
+    raw_when: str = Field(min_length=1, max_length=255)
+    notes: str = Field(default="", max_length=2000)
+
+
+class AppointmentBookOut(BaseModel):
+    id: uuid.UUID
+    raw_when: str
+    scheduled_for: datetime | None
+    status: str
+
+
+@router.post("/appointments", response_model=AppointmentBookOut, status_code=201)
+async def post_agent_appointment(
+    payload: AppointmentBookIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AppointmentBookOut:
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, payload.call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    set_org_context(session, call.org_id)
+    appt = await agent_svc.book_appointment(
+        session,
+        call,
+        contact_e164=payload.contact_e164,
+        raw_when=payload.raw_when,
+        notes=payload.notes,
+    )
+    await session.commit()
+
+    bus = request.app.state.event_bus
+    bus.publish(
+        call.org_id,
+        {
+            "type": "appointment.booked",
+            "appointment_id": str(appt.id),
+            "contact_e164": appt.contact_e164,
+            "raw_when": appt.raw_when,
+        },
+    )
+    return AppointmentBookOut(
+        id=appt.id, raw_when=appt.raw_when, scheduled_for=appt.scheduled_for, status=appt.status
+    )
+
+
+class KbSearchChunkOut(BaseModel):
+    title: str
+    text: str
+    score: int
+
+
+class KbSearchOut(BaseModel):
+    chunks: list[KbSearchChunkOut]
+
+
+@router.get("/kb/search", response_model=KbSearchOut)
+async def get_agent_kb_search(
+    call_id: uuid.UUID,
+    q: str,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> KbSearchOut:
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    set_org_context(session, call.org_id)
+    chunks = await kb_svc.search(session, call.org_id, q)
+    return KbSearchOut(chunks=[KbSearchChunkOut(**c) for c in chunks])
+
+
+class HandoffIn(BaseModel):
+    call_id: uuid.UUID
+    reason: str = Field(max_length=500)
+    summary: str = Field(default="", max_length=2000)
+
+
+class HandoffOut(BaseModel):
+    published: bool
+
+
+@router.post("/handoff", response_model=HandoffOut)
+async def post_agent_handoff(
+    payload: HandoffIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> HandoffOut:
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, payload.call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    set_org_context(session, call.org_id)
+    bus = request.app.state.event_bus
+    agent_svc.publish_handoff(bus, call, reason=payload.reason, summary=payload.summary)
+    return HandoffOut(published=True)
+
+
+class AmdIn(BaseModel):
+    call_id: uuid.UUID
+    result: str = Field(pattern="^(machine|human)$")
+
+
+@router.post("/amd")
+async def post_agent_amd(
+    payload: AmdIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, payload.call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    set_org_context(session, call.org_id)
+    updated = await agent_svc.set_amd_result(session, call, payload.result)
+    await session.commit()
+    return {"updated": updated}
+
+
 # ==================================================================================
 # Human-facing agent-profile CRUD (OrgContext)
 # ==================================================================================
@@ -98,6 +254,8 @@ class ProfileIn(BaseModel):
     voice_id: str = Field(default="", max_length=64)
     llm_provider: str = Field(default="", max_length=16)
     llm_model: str = Field(default="", max_length=64)
+    #: P9: spoken after the voicemail beep on outbound drops. Empty = no drop.
+    voicemail_message: str = Field(default="", max_length=500)
     extra: dict = Field(default_factory=dict)
 
 
@@ -108,6 +266,7 @@ class ProfilePatch(BaseModel):
     voice_id: str | None = Field(default=None, max_length=64)
     llm_provider: str | None = Field(default=None, max_length=16)
     llm_model: str | None = Field(default=None, max_length=64)
+    voicemail_message: str | None = Field(default=None, max_length=500)
     extra: dict | None = None
 
 
@@ -119,6 +278,7 @@ class ProfileOut(BaseModel):
     voice_id: str
     llm_provider: str
     llm_model: str
+    voicemail_message: str
     is_default: bool
     extra: dict
 
@@ -132,6 +292,7 @@ def _profile_out(p: AgentProfile) -> ProfileOut:
         voice_id=p.voice_id,
         llm_provider=p.llm_provider,
         llm_model=p.llm_model,
+        voicemail_message=p.voicemail_message,
         is_default=p.is_default,
         extra=p.extra or {},
     )

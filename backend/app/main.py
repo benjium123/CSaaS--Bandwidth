@@ -24,6 +24,7 @@ from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
 from app.api.routes import registration as registration_routes
 from app.api.routes import routing as routing_routes
+from app.api.routes import scheduling as scheduling_routes
 from app.api.routes import softphone as softphone_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
@@ -199,6 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(message_routes.router)
     app.include_router(call_routes.router)
     app.include_router(agent_routes.router)
+    app.include_router(scheduling_routes.router)
     app.include_router(softphone_routes.router)
     app.include_router(webhook_routes.router)
     return app

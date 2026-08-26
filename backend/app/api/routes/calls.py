@@ -408,7 +408,10 @@ async def answer_call(
     if call is None:
         raise NotFoundError("Call not found")
 
-    room = (call.extra or {}).get("room") if call.extra.get("via") == "livekit" else None
+    # Pre-existing bug: `call.extra.get(...)` dereferences None when `extra` itself is
+    # None (e.g. a carrier-path call with no `extra` set at all) - every sibling check
+    # in this file guards with `(call.extra or {})` first.
+    room = (call.extra or {}).get("room") if (call.extra or {}).get("via") == "livekit" else None
     if room is None:
         raise ConflictError("This call is not a LiveKit room call")
     if call.status in TERMINAL_CALL_STATUSES:
@@ -421,6 +424,15 @@ async def answer_call(
         identity=f"user-{user.id}",
         name=user.email,
         room=room,
+    )
+    # F9: tell every OTHER operator's softphone this ring/handoff card is already
+    # claimed so it disappears from their incoming list too - cheap and harmless to
+    # publish unconditionally for every room-call answer (we already know this is a
+    # room call from the check above).
+    bus = request.app.state.event_bus
+    bus.publish(
+        call.org_id,
+        {"type": "call.handoff.claimed", "call_id": str(call.id)},
     )
     return SoftphoneAnswerOut(
         url=settings.livekit_public_url or settings.livekit_url, token=token, room=room
@@ -466,7 +478,7 @@ class AgentDispatchIn(BaseModel):
     agent_name: str = "echo"
 
 
-@router.post("/{call_id}/agent")
+@router.post("/calls/{call_id}/agent")
 async def dispatch_agent(
     call_id: uuid.UUID,
     payload: AgentDispatchIn,

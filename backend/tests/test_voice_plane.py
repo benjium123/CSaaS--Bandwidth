@@ -10,6 +10,7 @@ for LiveKitApi, so the Twirp request bodies it builds are genuinely exercised).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import Callable
@@ -533,6 +534,38 @@ async def test_answer_call_returns_room_scoped_token_for_inbound_room_call(
     assert claims["video"]["room"] == "call-sip-xyz"
     assert claims["sub"] == f"user-{user_id}"
     assert claims["name"] == "answer1@example.com"
+
+
+async def test_answer_call_publishes_handoff_claimed_for_the_org(app_with_room_calls, session):
+    """F9: answering a room call must tell every OTHER operator's softphone this
+    ring/handoff card is already claimed, so it disappears from their incoming list
+    too instead of staying visible for a call someone else already picked up."""
+    client, application, _fake_voice, _requests = app_with_room_calls
+    token, org, _ = await make_org_with_number(client, "answerclaim@example.com", "Org ANCL", OUR)
+    org_id = uuid.UUID(org["id"])
+    h = auth_headers(token, org["id"])
+
+    set_org_context(session, org_id)
+    call = Call(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        direction="inbound",
+        contact_e164=THEIRS,
+        our_e164=OUR,
+        carrier="telnyx",
+        status="ringing",
+        extra={"via": "livekit", "room": "call-sip-claim"},
+    )
+    session.add(call)
+    await session.commit()
+
+    bus = application.state.event_bus
+    async with bus.subscribe(org_id) as queue:
+        r = await client.post(f"/api/v1/calls/{call.id}/answer", headers=h)
+        assert r.status_code == 200, r.text
+        event = await asyncio.wait_for(queue.get(), timeout=1)
+
+    assert event == {"type": "call.handoff.claimed", "call_id": str(call.id)}
 
 
 async def test_answer_call_cross_org_is_404(app_with_room_calls, session):

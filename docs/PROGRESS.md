@@ -62,7 +62,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P6 | LiveKit media plane + softphone | 🔵 in review | local ✅ (405) | 🔴 needs trunk + VPS bring-up | — |
 | P7 | Media plane measured + echo agent | 🔵 code complete | metrics 6/6 local | 🔴 gate runs on VPS | — |
 | P8 | AI voice agent v1 | 🔵 code complete | backend 430 + agents 31 | 🔴 runtime gate on VPS | — |
-| P9 | AI voice agent v2 | ⬜ not started | — | — | — |
+| P9 | Agent v2: tools/handoff/KB/voicemail | 🔵 code complete | backend 484 + agents 70 | 🔴 runtime gate on VPS | — |
 | P10 | AI SMS agent | ⬜ not started | — | — | — |
 | P11 | Outbound engine | ⬜ not started | — | — | — |
 | P12 | IVR / queues / voicemail | ⬜ not started | — | — | — |
@@ -374,3 +374,6 @@ the evidence.
 **Still to do in P3:** media pipeline (upload, signed URLs, `fetch_pending_media` outside
 the webhook path), sweeper loop, API routes (compliance/media/templates), and the frontend
 surfaces (attachments, opt-out banner, compliance page).
+
+## Known issues
+- **`latest_consent` random tiebreak (pre-existing, found 2026-08-26 by the P9 fix round):** `compliance/service.py::latest_consent` orders by `created_at desc, id desc` where id is a random UUIDv4 — a same-timestamp opt-out/opt-in pair resolves by coin flip. Real correctness risk, not just test flake (`test_manual_optout_then_manual_optin_is_allowed` flakes under full-suite load). Fix needs a monotonic tiebreaker (sequence column) — Tier-1 schema change, FIRST ITEM next session.

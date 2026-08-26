@@ -12,6 +12,206 @@
         "title": "AgentDispatchIn",
         "type": "object"
       },
+      "AmdIn": {
+        "properties": {
+          "call_id": {
+            "format": "uuid",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "result": {
+            "pattern": "^(machine|human)$",
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "result"
+        ],
+        "title": "AmdIn",
+        "type": "object"
+      },
+      "AppointmentBookIn": {
+        "properties": {
+          "call_id": {
+            "format": "uuid",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "contact_e164": {
+            "title": "Contact E164",
+            "type": "string"
+          },
+          "notes": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Notes",
+            "type": "string"
+          },
+          "raw_when": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Raw When",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "contact_e164",
+          "raw_when"
+        ],
+        "title": "AppointmentBookIn",
+        "type": "object"
+      },
+      "AppointmentBookOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "raw_when": {
+            "title": "Raw When",
+            "type": "string"
+          },
+          "scheduled_for": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled For"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "raw_when",
+          "scheduled_for",
+          "status"
+        ],
+        "title": "AppointmentBookOut",
+        "type": "object"
+      },
+      "AppointmentOut": {
+        "properties": {
+          "call_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Call Id"
+          },
+          "contact_e164": {
+            "title": "Contact E164",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "raw_when": {
+            "title": "Raw When",
+            "type": "string"
+          },
+          "scheduled_for": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled For"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "call_id",
+          "contact_e164",
+          "raw_when",
+          "scheduled_for",
+          "notes",
+          "status",
+          "created_by"
+        ],
+        "title": "AppointmentOut",
+        "type": "object"
+      },
+      "AppointmentPatch": {
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "scheduled_for": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled For"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "booked",
+                  "canceled",
+                  "done"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "AppointmentPatch",
+        "type": "object"
+      },
       "AssignIn": {
         "properties": {
           "campaign_id": {
@@ -940,80 +1140,27 @@
         "title": "ContactIn",
         "type": "object"
       },
-      "ContactOut": {
+      "ContactMessageOut": {
         "properties": {
-          "attributes": {
-            "additionalProperties": true,
-            "title": "Attributes",
-            "type": "object"
-          },
-          "company_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Company Id"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
+          "at": {
+            "title": "At",
             "type": "string"
           },
-          "display_name": {
-            "title": "Display Name",
+          "body": {
+            "title": "Body",
             "type": "string"
           },
-          "first_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "First Name"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
+          "direction": {
+            "title": "Direction",
             "type": "string"
-          },
-          "last_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Name"
-          },
-          "phones": {
-            "items": {
-              "$ref": "#/components/schemas/PhoneOut"
-            },
-            "title": "Phones",
-            "type": "array"
           }
         },
         "required": [
-          "id",
-          "display_name",
-          "first_name",
-          "last_name",
-          "company_id",
-          "attributes",
-          "phones",
-          "created_at"
+          "direction",
+          "body",
+          "at"
         ],
-        "title": "ContactOut",
+        "title": "ContactMessageOut",
         "type": "object"
       },
       "ContactPatch": {
@@ -1133,6 +1280,10 @@
           "voice_id": {
             "title": "Voice Id",
             "type": "string"
+          },
+          "voicemail_message": {
+            "title": "Voicemail Message",
+            "type": "string"
           }
         },
         "required": [
@@ -1144,6 +1295,7 @@
           "voice_id",
           "llm_provider",
           "llm_model",
+          "voicemail_message",
           "extra_rules"
         ],
         "title": "ContextOut",
@@ -1251,6 +1403,179 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HandoffIn": {
+        "properties": {
+          "call_id": {
+            "format": "uuid",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          },
+          "summary": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "reason"
+        ],
+        "title": "HandoffIn",
+        "type": "object"
+      },
+      "HandoffOut": {
+        "properties": {
+          "published": {
+            "title": "Published",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "published"
+        ],
+        "title": "HandoffOut",
+        "type": "object"
+      },
+      "KbChunkOut": {
+        "properties": {
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "text"
+        ],
+        "title": "KbChunkOut",
+        "type": "object"
+      },
+      "KbDocumentDetailOut": {
+        "properties": {
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/KbChunkOut"
+            },
+            "title": "Chunks",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "source",
+          "chunks"
+        ],
+        "title": "KbDocumentDetailOut",
+        "type": "object"
+      },
+      "KbDocumentIn": {
+        "properties": {
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "text"
+        ],
+        "title": "KbDocumentIn",
+        "type": "object"
+      },
+      "KbDocumentOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "source"
+        ],
+        "title": "KbDocumentOut",
+        "type": "object"
+      },
+      "KbSearchChunkOut": {
+        "properties": {
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "text",
+          "score"
+        ],
+        "title": "KbSearchChunkOut",
+        "type": "object"
+      },
+      "KbSearchOut": {
+        "properties": {
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/KbSearchChunkOut"
+            },
+            "title": "Chunks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "chunks"
+        ],
+        "title": "KbSearchOut",
         "type": "object"
       },
       "LabelsIn": {
@@ -1880,6 +2205,12 @@
             "maxLength": 64,
             "title": "Voice Id",
             "type": "string"
+          },
+          "voicemail_message": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Voicemail Message",
+            "type": "string"
           }
         },
         "required": [
@@ -1927,6 +2258,10 @@
           "voice_id": {
             "title": "Voice Id",
             "type": "string"
+          },
+          "voicemail_message": {
+            "title": "Voicemail Message",
+            "type": "string"
           }
         },
         "required": [
@@ -1937,6 +2272,7 @@
           "voice_id",
           "llm_provider",
           "llm_model",
+          "voicemail_message",
           "is_default",
           "extra"
         ],
@@ -2028,6 +2364,18 @@
               }
             ],
             "title": "Voice Id"
+          },
+          "voicemail_message": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voicemail Message"
           }
         },
         "title": "ProfilePatch",
@@ -2944,6 +3292,35 @@
         "title": "VerifyIn",
         "type": "object"
       },
+      "app__api__routes__agent__ContactOut": {
+        "properties": {
+          "last_messages": {
+            "items": {
+              "$ref": "#/components/schemas/ContactMessageOut"
+            },
+            "title": "Last Messages",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "tags",
+          "last_messages"
+        ],
+        "title": "ContactOut",
+        "type": "object"
+      },
       "app__api__routes__compliance__NumberIn": {
         "properties": {
           "e164": {
@@ -2966,6 +3343,82 @@
           "e164"
         ],
         "title": "NumberIn",
+        "type": "object"
+      },
+      "app__api__routes__contacts__ContactOut": {
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "company_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
+          },
+          "phones": {
+            "items": {
+              "$ref": "#/components/schemas/PhoneOut"
+            },
+            "title": "Phones",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "first_name",
+          "last_name",
+          "company_id",
+          "attributes",
+          "phones",
+          "created_at"
+        ],
+        "title": "ContactOut",
         "type": "object"
       },
       "app__api__routes__numbers__NumberIn": {
@@ -3013,6 +3466,142 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/agent/amd": {
+      "post": {
+        "operationId": "post_agent_amd_api_v1_agent_amd_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AmdIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Agent Amd Api V1 Agent Amd Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Agent Amd",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/v1/agent/appointments": {
+      "post": {
+        "operationId": "post_agent_appointment_api_v1_agent_appointments_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointmentBookIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentBookOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Agent Appointment",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/v1/agent/contact/{e164}": {
+      "get": {
+        "operationId": "get_agent_contact_api_v1_agent_contact__e164__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "e164",
+            "required": true,
+            "schema": {
+              "title": "E164",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__routes__agent__ContactOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Contact",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
     "/api/v1/agent/context/{call_id}": {
       "get": {
         "operationId": "get_agent_context_api_v1_agent_context__call_id__get",
@@ -3051,6 +3640,99 @@
           }
         },
         "summary": "Get Agent Context",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/v1/agent/handoff": {
+      "post": {
+        "operationId": "post_agent_handoff_api_v1_agent_handoff_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Agent Handoff",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/v1/agent/kb/search": {
+      "get": {
+        "operationId": "get_agent_kb_search_api_v1_agent_kb_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KbSearchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Kb Search",
         "tags": [
           "agent"
         ]
@@ -3409,6 +4091,154 @@
         "summary": "Post Agent Transcript",
         "tags": [
           "agent"
+        ]
+      }
+    },
+    "/api/v1/appointments": {
+      "get": {
+        "operationId": "list_appointments_api_v1_appointments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AppointmentOut"
+                  },
+                  "title": "Response List Appointments Api V1 Appointments Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Appointments",
+        "tags": [
+          "scheduling"
+        ]
+      }
+    },
+    "/api/v1/appointments/{appointment_id}": {
+      "patch": {
+        "operationId": "patch_appointment_api_v1_appointments__appointment_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "appointment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Appointment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointmentPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Appointment",
+        "tags": [
+          "scheduling"
         ]
       }
     },
@@ -3920,6 +4750,83 @@
           }
         ],
         "summary": "Get Call",
+        "tags": [
+          "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}/agent": {
+      "post": {
+        "description": "Dispatch a named agent worker (P7 echo agent, P8 AI agent) into a live room call.\n\nRoom calls only: an agent is a room participant, and carrier-path calls have no room\nfor it to join.",
+        "operationId": "dispatch_agent_api_v1_calls__call_id__agent_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDispatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Dispatch Agent Api V1 Calls  Call Id  Agent Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dispatch Agent",
         "tags": [
           "calls"
         ]
@@ -5037,7 +5944,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/ContactOut"
+                    "$ref": "#/components/schemas/app__api__routes__contacts__ContactOut"
                   },
                   "title": "Response List Contacts Api V1 Contacts Get",
                   "type": "array"
@@ -5102,7 +6009,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactOut"
+                  "$ref": "#/components/schemas/app__api__routes__contacts__ContactOut"
                 }
               }
             },
@@ -5221,7 +6128,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactOut"
+                  "$ref": "#/components/schemas/app__api__routes__contacts__ContactOut"
                 }
               }
             },
@@ -5293,7 +6200,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactOut"
+                  "$ref": "#/components/schemas/app__api__routes__contacts__ContactOut"
                 }
               }
             },
@@ -5817,6 +6724,245 @@
         "summary": "Inbox Threads",
         "tags": [
           "inbox"
+        ]
+      }
+    },
+    "/api/v1/kb/documents": {
+      "get": {
+        "operationId": "list_kb_documents_api_v1_kb_documents_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/KbDocumentOut"
+                  },
+                  "title": "Response List Kb Documents Api V1 Kb Documents Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Kb Documents",
+        "tags": [
+          "scheduling"
+        ]
+      },
+      "post": {
+        "operationId": "create_kb_document_api_v1_kb_documents_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KbDocumentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KbDocumentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Kb Document",
+        "tags": [
+          "scheduling"
+        ]
+      }
+    },
+    "/api/v1/kb/documents/{document_id}": {
+      "delete": {
+        "operationId": "delete_kb_document_api_v1_kb_documents__document_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Kb Document",
+        "tags": [
+          "scheduling"
+        ]
+      },
+      "get": {
+        "operationId": "get_kb_document_api_v1_kb_documents__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KbDocumentDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Kb Document",
+        "tags": [
+          "scheduling"
         ]
       }
     },
@@ -8678,83 +9824,6 @@
         "summary": "Carrier Voice",
         "tags": [
           "webhooks"
-        ]
-      }
-    },
-    "/api/v1/{call_id}/agent": {
-      "post": {
-        "description": "Dispatch a named agent worker (P7 echo agent, P8 AI agent) into a live room call.\n\nRoom calls only: an agent is a room participant, and carrier-path calls have no room\nfor it to join.",
-        "operationId": "dispatch_agent_api_v1__call_id__agent_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "call_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Call Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Org-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Org-Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentDispatchIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Dispatch Agent Api V1  Call Id  Agent Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Dispatch Agent",
-        "tags": [
-          "calls"
         ]
       }
     },

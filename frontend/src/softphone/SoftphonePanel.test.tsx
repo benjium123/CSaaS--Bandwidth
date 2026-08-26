@@ -232,4 +232,54 @@ describe("SoftphonePanel", () => {
     );
     expect(await screen.findByRole("button", { name: /Hang up/ })).toBeInTheDocument();
   });
+
+  it("shows a priority AI handoff card and joins the room via the same answer flow as a ring", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/calls/call-42/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { url: "wss://lk.example.com", token: "tok-handoff", room: "call-room-42" };
+        }
+        throw new Error("unexpected request");
+      },
+    });
+
+    renderWithProviders(
+      <SoftphoneProvider>
+        <SoftphonePanel />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.handoff",
+          call_id: "call-42",
+          room: "call-room-42",
+          reason: "wants pricing",
+          summary: "caller asked about enterprise pricing",
+          contact: "+19725550111",
+        }),
+      });
+    });
+
+    const card = await screen.findByLabelText("AI handoff");
+    expect(card).toHaveTextContent("AI handoff");
+    expect(card).toHaveTextContent("(972) 555-0111");
+    expect(card).toHaveTextContent("wants pricing");
+    expect(card).toHaveTextContent("caller asked about enterprise pricing");
+    // A plain ring's Decline button must not appear on a handoff card.
+    expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Join call" }));
+
+    await waitFor(() =>
+      expect(client.calls.some((c) => c.path === "/api/v1/calls/call-42/answer")).toBe(true),
+    );
+    expect(await screen.findByRole("button", { name: /Hang up/ })).toBeInTheDocument();
+  });
 });

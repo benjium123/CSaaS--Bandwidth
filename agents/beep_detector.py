@@ -231,6 +231,14 @@ class VoicemailHeuristic:
             >= self._greeting_speech_seconds
         )
 
+    @property
+    def far_speech_active(self) -> bool:
+        """True while a continuous far-speech run is currently open (i.e. `feed_far`
+        has seen speech-level RMS with no `_gap_threshold`-sized silence gap yet, and
+        `note_our_speech` has not since closed it out). Exposes the existing private
+        run state read-only - does not change any detection behavior."""
+        return self._run_start is not None
+
 
 def _rms(pcm: bytes) -> float:
     num_samples = len(pcm) // 2

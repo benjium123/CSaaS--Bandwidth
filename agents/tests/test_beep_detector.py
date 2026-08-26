@@ -123,6 +123,18 @@ def test_voicemail_heuristic_short_far_speech() -> None:
     assert not heuristic.likely_machine
 
 
+def test_far_speech_active_true_while_run_open_and_cleared_by_our_speech() -> None:
+    sample_rate = 8000
+    heuristic = VoicemailHeuristic()
+    assert heuristic.far_speech_active is False
+
+    heuristic.feed_far(synth_tone(440.0, 1000, sample_rate), sample_rate, 0.0)
+    assert heuristic.far_speech_active is True
+
+    heuristic.note_our_speech(1.0)
+    assert heuristic.far_speech_active is False
+
+
 def test_voicemail_heuristic_our_speech_breaks_greeting() -> None:
     sample_rate = 8000
     heuristic = VoicemailHeuristic()

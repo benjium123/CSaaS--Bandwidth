@@ -3,7 +3,11 @@ import { useAuth } from "@/auth/AuthContext";
 import {
   useAgentProfiles,
   useCreateAgentProfile,
+  useCreateKbDocument,
   useDeleteAgentProfile,
+  useDeleteKbDocument,
+  useKbDocument,
+  useKbDocuments,
   useSetDefaultAgentProfile,
   useUpdateAgentProfile,
   type AgentProfileFields,
@@ -19,6 +23,7 @@ const EMPTY_FORM: AgentProfileFields = {
   voice_id: "",
   llm_provider: "",
   llm_model: "",
+  voicemail_message: "",
 };
 
 function formFromProfile(p: AgentProfileOut): AgentProfileFields {
@@ -29,6 +34,7 @@ function formFromProfile(p: AgentProfileOut): AgentProfileFields {
     voice_id: p.voice_id,
     llm_provider: p.llm_provider,
     llm_model: p.llm_model,
+    voicemail_message: p.voicemail_message,
   };
 }
 
@@ -216,6 +222,21 @@ export function AgentPage() {
             </div>
           </div>
 
+          <div className="space-y-1">
+            <label className="block text-xs text-muted-foreground" htmlFor="agent-voicemail-message">
+              Voicemail message
+            </label>
+            <textarea
+              id="agent-voicemail-message"
+              aria-label="Voicemail message"
+              rows={3}
+              placeholder="Spoken after the beep on outbound calls that hit voicemail. Leave empty to skip the drop."
+              className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
+              value={form.voicemail_message ?? ""}
+              onChange={(e) => field("voicemail_message")(e.target.value)}
+            />
+          </div>
+
           {error && (
             <p role="alert" className="text-sm text-destructive">
               {error}
@@ -248,7 +269,127 @@ export function AgentPage() {
             )}
           </div>
         </form>
+
+        <KbSection />
       </section>
     </div>
+  );
+}
+
+/** Paste-text knowledge base editor (P9): list documents, create by pasting a title +
+ * body (server chunks it), expand to view chunks, delete. */
+function KbSection() {
+  const { api } = useAuth();
+  const { data: documents, isLoading } = useKbDocuments(api);
+  const createDoc = useCreateKbDocument(api);
+  const deleteDoc = useDeleteKbDocument(api);
+
+  const [title, setTitle] = React.useState("");
+  const [text, setText] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [expandedId, setExpandedId] = React.useState<string | null>(null);
+  const { data: detail } = useKbDocument(api, expandedId);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await createDoc.mutateAsync({ title, text });
+      setTitle("");
+      setText("");
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function remove(id: string) {
+    setError(null);
+    try {
+      await deleteDoc.mutateAsync(id);
+      if (expandedId === id) setExpandedId(null);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  return (
+    <section className="mt-8 max-w-xl space-y-4 border-t border-border pt-6">
+      <h2 className="text-base font-semibold">Knowledge base</h2>
+      <p className="text-xs text-muted-foreground">
+        Text the AI agent can search mid-call. Pasted text is split into chunks
+        automatically.
+      </p>
+
+      <form className="space-y-2" onSubmit={create}>
+        <Input
+          aria-label="Document title"
+          placeholder="Title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          required
+        />
+        <textarea
+          aria-label="Document text"
+          rows={4}
+          placeholder="Paste the text to index…"
+          className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          required
+        />
+        <Button type="submit" size="sm" disabled={!title.trim() || !text.trim() || createDoc.isPending}>
+          Add document
+        </Button>
+      </form>
+
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+
+      {isLoading ? (
+        <Spinner label="Loading knowledge base" />
+      ) : (documents ?? []).length === 0 ? (
+        <p className="text-sm text-muted-foreground">No documents yet.</p>
+      ) : (
+        <ul aria-label="Knowledge base documents" className="divide-y divide-border rounded-md border border-border">
+          {(documents ?? []).map((doc) => (
+            <li key={doc.id} className="p-3">
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  className="text-left text-sm font-medium hover:underline"
+                  onClick={() => setExpandedId((prev) => (prev === doc.id ? null : doc.id))}
+                >
+                  {doc.title}
+                </button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => remove(doc.id)}
+                  disabled={deleteDoc.isPending}
+                >
+                  Delete
+                </Button>
+              </div>
+              {expandedId === doc.id && detail && detail.id === doc.id && (
+                <ul className="mt-2 space-y-2">
+                  {detail.chunks.map((chunk) => (
+                    <li
+                      key={chunk.seq}
+                      className="rounded-md bg-muted p-2 text-xs text-muted-foreground"
+                    >
+                      {chunk.text}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 
 import httpx
 import jwt
@@ -11,6 +12,16 @@ import jwt
 #: MAX_TRANSCRIPT_BATCH (agent_svc) - a chunk this size or smaller always clears that
 #: server-side cap regardless of how large `segments` grows.
 TRANSCRIPT_CHUNK_SIZE = 200
+
+
+def format_handoff_summary(transcript_tail: Iterable[tuple[str, str]]) -> str:
+    """Render (role, text) transcript entries as a "role: text" per-line summary for
+    the POST /api/v1/agent/handoff payload. Pure and livekit-free (unlike ai_agent.py,
+    which imports the SDK at module scope) so it is unit-testable under the plain
+    backend venv - `transcript_tail` only needs to be an iterable of (role, text)
+    pairs, e.g. the live call's `collections.deque(maxlen=6)`.
+    """
+    return "\n".join(f"{role}: {text}" for role, text in transcript_tail)
 
 
 class BackendClient:
@@ -86,6 +97,99 @@ class BackendClient:
             )
         except Exception:
             self._logger.exception("post_transcript call_id=%s failed", call_id)
+        return False
+
+    async def get_contact(self, call_id: str, e164: str) -> dict | None:
+        url = f"{self._base_url}/api/v1/agent/contact/{e164}"
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        try:
+            response = await self._client.get(
+                url, headers=headers, params={"call_id": call_id}
+            )
+            if response.status_code == 200:
+                return response.json()
+            self._logger.warning(
+                "get_contact call_id=%s e164=%s status=%s",
+                call_id,
+                e164,
+                response.status_code,
+            )
+        except Exception:
+            self._logger.exception(
+                "get_contact call_id=%s e164=%s failed", call_id, e164
+            )
+        return None
+
+    async def book_appointment(
+        self, call_id: str, contact_e164: str, raw_when: str, notes: str = ""
+    ) -> dict | None:
+        url = f"{self._base_url}/api/v1/agent/appointments"
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        payload = {
+            "call_id": call_id,
+            "contact_e164": contact_e164,
+            "raw_when": raw_when,
+            "notes": notes,
+        }
+        try:
+            response = await self._client.post(url, headers=headers, json=payload)
+            if response.status_code == 201:
+                return response.json()
+            self._logger.warning(
+                "book_appointment call_id=%s status=%s", call_id, response.status_code
+            )
+        except Exception:
+            self._logger.exception("book_appointment call_id=%s failed", call_id)
+        return None
+
+    async def kb_search(self, call_id: str, query: str) -> list:
+        url = f"{self._base_url}/api/v1/agent/kb/search"
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        try:
+            response = await self._client.get(
+                url, headers=headers, params={"call_id": call_id, "q": query}
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("chunks") or []
+            self._logger.warning(
+                "kb_search call_id=%s status=%s", call_id, response.status_code
+            )
+        except Exception:
+            self._logger.exception("kb_search call_id=%s failed", call_id)
+        return []
+
+    async def post_handoff(self, call_id: str, reason: str, summary: str) -> bool:
+        url = f"{self._base_url}/api/v1/agent/handoff"
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        payload = {"call_id": call_id, "reason": reason, "summary": summary}
+        try:
+            response = await self._client.post(url, headers=headers, json=payload)
+            if 200 <= response.status_code < 300:
+                return True
+            self._logger.warning(
+                "post_handoff call_id=%s status=%s", call_id, response.status_code
+            )
+        except Exception:
+            self._logger.exception("post_handoff call_id=%s failed", call_id)
+        return False
+
+    async def post_amd(self, call_id: str, result: str) -> bool:
+        url = f"{self._base_url}/api/v1/agent/amd"
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        payload = {"call_id": call_id, "result": result}
+        try:
+            response = await self._client.post(url, headers=headers, json=payload)
+            if 200 <= response.status_code < 300:
+                return True
+            self._logger.warning(
+                "post_amd call_id=%s status=%s result=%s",
+                call_id,
+                response.status_code,
+                result,
+            )
+        except Exception:
+            self._logger.exception("post_amd call_id=%s failed", call_id)
         return False
 
     async def aclose(self) -> None:
