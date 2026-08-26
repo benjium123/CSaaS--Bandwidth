@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -10,12 +12,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import auth as auth_routes
+from app.api.routes import compliance as compliance_routes
 from app.api.routes import contacts as contact_routes
 from app.api.routes import health as health_routes
 from app.api.routes import inbox as inbox_routes
+from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
 from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
+from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
 from app.api.routes import webhooks as webhook_routes
 from app.config import Settings, load_settings
@@ -23,6 +28,7 @@ from app.db.session import dispose_engine, init_engine
 from app.errors import CsaasError
 from app.logging import configure_logging
 from app.providers.base import build_carrier
+from app.storage.base import build_store
 
 VERSION = "0.1.0"
 
@@ -50,12 +56,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # None when Bandwidth is not configured — the app must still boot and serve
         # /healthz. Sending then answers 503 carrier_not_configured.
         app.state.carrier = build_carrier(settings)
-        structlog.get_logger("startup").info(
-            "carrier_configured", carrier=getattr(app.state.carrier, "name", None)
+        app.state.media_store = build_store(
+            settings.media_store_backend, root=settings.media_local_root
         )
+        structlog.get_logger("startup").info(
+            "carrier_configured",
+            carrier=getattr(app.state.carrier, "name", None),
+            media_store=app.state.media_store.name,
+        )
+
+        sweeper_task = None
+        if settings.sweeper_enabled:
+            from app.services.sweeper import sweeper_loop
+
+            sweeper_task = asyncio.create_task(
+                sweeper_loop(app, settings.sweeper_interval_seconds)
+            )
         try:
             yield
         finally:
+            if sweeper_task is not None:
+                sweeper_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await sweeper_task
             carrier = getattr(app.state, "carrier", None)
             if carrier is not None and hasattr(carrier, "aclose"):
                 await carrier.aclose()
@@ -69,6 +92,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     # Set eagerly too: tests drive the app without running lifespan, and override it.
     app.state.carrier = build_carrier(settings)
+    app.state.media_store = build_store(
+        settings.media_store_backend, root=settings.media_local_root
+    )
 
     if settings.cors_origin_list:
         app.add_middleware(
@@ -141,6 +167,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(number_routes.router)
     app.include_router(contact_routes.router)
     app.include_router(inbox_routes.router)
+    app.include_router(compliance_routes.router)
+    app.include_router(media_routes.router)
+    app.include_router(template_routes.router)
     app.include_router(message_routes.router)
     app.include_router(webhook_routes.router)
     return app

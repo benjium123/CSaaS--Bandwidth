@@ -118,6 +118,19 @@ class BandwidthMessagingCarrier:
             )
         return SendResult("rejected", None, error)
 
+    def media_auth(self, url: str) -> tuple[str, str] | None:
+        """Credentials for fetching carrier-hosted media - and ONLY for Bandwidth hosts.
+
+        Inbound MMS media on Bandwidth needs Basic auth. Sending our API credentials to a
+        foreign host because a payload said so would be a credential-leak primitive, so the
+        host is checked rather than trusted.
+        """
+        try:
+            host = httpx.URL(url).host or ""
+        except Exception:
+            return None
+        return self._auth if host.endswith("bandwidth.com") else None
+
     # -- webhook surface delegates to the pure module ------------------------------
     def verify_webhook(self, headers: Mapping[str, str], raw_body: bytes) -> bool:
         return webhooks.verify(headers, self._webhook_username, self._webhook_password)

@@ -134,6 +134,9 @@ class LoopbackCarrier:
             provider_id, msg = self._pending.pop(0)
             await self._dispatch(self._events_for(provider_id, msg))
 
+    def media_auth(self, url: str) -> tuple[str, str] | None:
+        return None
+
     # -- webhook surface is inert: nothing external ever posts to us ---------------
     def verify_webhook(self, headers: Mapping[str, str], raw_body: bytes) -> bool:
         return False

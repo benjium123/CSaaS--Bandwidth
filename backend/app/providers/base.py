@@ -26,6 +26,10 @@ class MessagingCarrier(Protocol):
 
     def parse_webhook(self, raw_body: bytes) -> list[CarrierEvent]: ...
 
+    def media_auth(self, url: str) -> tuple[str, str] | None:
+        """Credentials for fetching carrier-hosted media, or None. Host-checked."""
+        ...
+
 
 def build_carrier(settings) -> MessagingCarrier | None:  # noqa: ANN001
     """Build the configured carrier, or None when messaging is not usable.

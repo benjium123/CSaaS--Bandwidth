@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.compliance import gate
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ComplianceBlockedError, ValidationFailedError
+from app.models.compliance import MediaAsset
 from app.models.messaging import (
     EVENT_TO_STATUS,
     STATUS_RANK,
@@ -132,6 +133,8 @@ async def send_message(
     from_e164: str,
     body: str,
     exemption: str | None = None,
+    media_ids: list[uuid.UUID] | None = None,
+    media_urls: list[str] | None = None,
 ) -> Message:
     """Create and dispatch one outbound message.
 
@@ -152,6 +155,22 @@ async def send_message(
     deferred_until = getattr(verdict, "defer_until", None)
     if not verdict.allowed and deferred_until is None:
         raise ComplianceBlockedError(verdict.reason or "Blocked by compliance policy")
+
+    assets: list[MediaAsset] = []
+    if media_ids:
+        if len(media_ids) > 10:
+            raise ValidationFailedError("At most 10 media attachments per message")
+        assets = list(
+            (
+                await session.execute(
+                    sa.select(MediaAsset).where(
+                        MediaAsset.id.in_(media_ids), MediaAsset.status == "stored"
+                    )
+                )
+            ).scalars().all()
+        )
+        if len(assets) != len(set(media_ids)):
+            raise ValidationFailedError("One or more media attachments were not found")
 
     est = estimate(body)
     thread = await upsert_thread(session, org_id, from_e164, to_e164)
@@ -184,7 +203,7 @@ async def send_message(
     session.add(message)
     await session.commit()
 
-    return await _dispatch_to_carrier(session, org_id, carrier, message)
+    return await _dispatch_to_carrier(session, org_id, carrier, message, media_urls or [])
 
 
 async def _dispatch_to_carrier(
@@ -192,6 +211,7 @@ async def _dispatch_to_carrier(
     org_id: uuid.UUID,
     carrier,  # noqa: ANN001
     message: Message,
+    media_urls: list[str] | None = None,
 ) -> Message:
     """Hand one persisted message to the carrier and record the outcome.
 
@@ -204,6 +224,7 @@ async def _dispatch_to_carrier(
             from_=message.from_e164,
             text=message.body or "",
             tag=str(message.id),
+            media=tuple(media_urls or message.media or []),
         )
     )
 
@@ -373,27 +394,70 @@ async def _ingest_inbound(
         provider_message_id=event.provider_message_id,
         segment_count_carrier=event.segment_count,
     )
-    session.add(message)
-    session.add(
-        MessageEvent(
-            id=uuid.uuid4(),
-            org_id=org_id,
-            message_id=message.id,
-            carrier=carrier_name,
-            provider_message_id=event.provider_message_id,
-            event_type="message-received",
-            payload=event.raw,
-            event_time=event.event_time,
-            processed_at=_now(),
-        )
-    )
+    # The ENTIRE persist sequence is inside one try: the duplicate collision can surface
+    # at the parent flush or at the commit depending on which constraint fires first, and
+    # both must be handled as a dedupe rather than escaping as a 500.
     try:
+        session.add(message)
+        # Flush the parent BEFORE its children. A mixed flush is not guaranteed to order
+        # messages ahead of media_assets, and with foreign keys enforced that violation
+        # surfaced as an IntegrityError the dedupe handler mistook for a duplicate -
+        # silently dropping a real inbound MMS behind a 200 OK.
+        await session.flush()
+
+        # One pending asset per inbound media URL. Created here so a replayed webhook
+        # rolls them back with everything else - but NOT fetched here: the webhook path
+        # stays DB-only and 2xx-fast. The pending rows ARE the queue.
+        for url in event.media:
+            session.add(
+                MediaAsset(
+                    id=uuid.uuid4(),
+                    org_id=org_id,
+                    message_id=message.id,
+                    direction="inbound",
+                    source_url=url,
+                    status="pending",
+                )
+            )
+        session.add(
+            MessageEvent(
+                id=uuid.uuid4(),
+                org_id=org_id,
+                message_id=message.id,
+                carrier=carrier_name,
+                provider_message_id=event.provider_message_id,
+                event_type="message-received",
+                payload=event.raw,
+                event_time=event.event_time,
+                processed_at=_now(),
+            )
+        )
         await session.commit()
     except IntegrityError:
-        # Duplicate inbound (the carrier replayed it). Both the messages unique index and
-        # the events dedupe constraint can fire here; either way it is a no-op.
         await session.rollback()
-        return Outcome.DONE
+        set_org_context(session, org_id)
+        # Only a REAL duplicate counts as done. Confirm the row we would have written
+        # already exists; anything else is a genuine failure and must not be reported as
+        # success, or we would silently lose inbound messages behind a 200 OK.
+        existing = (
+            await session.execute(
+                sa.select(Message)
+                .where(
+                    Message.carrier == carrier_name,
+                    Message.provider_message_id == event.provider_message_id,
+                )
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return Outcome.DONE
+        log.exception(
+            "inbound_persist_failed",
+            provider_message_id=event.provider_message_id,
+            carrier=carrier_name,
+        )
+        # RETRY: the carrier redelivers, and we get another chance rather than dropping it.
+        return Outcome.RETRY
 
     # The carrier travels on the session, NOT in the signature. on_inbound's three-argument
     # shape is pinned by the P1/P2 seam tests, and those spies must keep working unmodified

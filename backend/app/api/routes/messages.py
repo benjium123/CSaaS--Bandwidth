@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.routes.numbers import to_e164
@@ -13,6 +13,7 @@ from app.auth.deps import OrgContext, require_permission
 from app.errors import NotFoundError
 from app.models import Message, MessageThread
 from app.providers.base import get_carrier
+from app.services import media as media_svc
 from app.services import messaging as svc
 from app.services.sender import select_sender
 
@@ -26,6 +27,7 @@ class SendIn(BaseModel):
     # Opt in to moving a conversation to a different number when its sticky number has
     # been retired. Without this the send fails loudly rather than silently jumping.
     allow_reassign: bool = False
+    media_ids: list[uuid.UUID] = []
 
     model_config = {"populate_by_name": True}
 
@@ -41,6 +43,7 @@ class MessageOut(BaseModel):
     segment_count_est: int | None
     segment_count_carrier: int | None
     error_code: str | None
+    hold_until: datetime | None
     created_at: datetime
 
 
@@ -63,6 +66,7 @@ def _out(m: Message) -> MessageOut:
         segment_count_est=m.segment_count_est,
         segment_count_carrier=m.segment_count_carrier,
         error_code=m.error_code,
+        hold_until=m.hold_until,
         created_at=m.created_at,
     )
 
@@ -70,6 +74,7 @@ def _out(m: Message) -> MessageOut:
 @router.post("/messages", response_model=MessageOut, status_code=201)
 async def send(
     payload: SendIn,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:send"))],
     carrier: Annotated[object, Depends(get_carrier)],
 ) -> MessageOut:
@@ -87,8 +92,27 @@ async def send(
         requested=to_e164(payload.from_) if payload.from_ else None,
         allow_reassign=payload.allow_reassign,
     )
+    settings = request.app.state.settings
+    # The carrier fetches MMS media from a URL, so attachments become long-lived signed
+    # links rather than being uploaded twice.
+    media_urls = [
+        media_svc.signed_url(
+            settings.public_base_url or "",
+            asset_id,
+            settings.jwt_secret.get_secret_value(),
+            media_svc.CARRIER_URL_TTL,
+        )
+        for asset_id in payload.media_ids
+    ]
     message = await svc.send_message(
-        ctx.session, ctx.org.id, carrier, to_e164=to_norm, from_e164=from_norm, body=payload.body
+        ctx.session,
+        ctx.org.id,
+        carrier,
+        to_e164=to_norm,
+        from_e164=from_norm,
+        body=payload.body,
+        media_ids=payload.media_ids,
+        media_urls=media_urls,
     )
     return _out(message)
 
