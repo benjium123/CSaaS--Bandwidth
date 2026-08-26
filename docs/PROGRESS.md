@@ -52,7 +52,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P0 | Foundation | 🔵 in review | local ✅ / CI+PG ✅ / VPS ⬜ | ⬜ pending | `5c73dc9` |
 | P1a | Carrier layer + ingestion (fixtures) | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `d6b5f59` |
 | P1b | Live SMS round-trip | 🔴 blocked on R1 | — | — | — |
-| P2a | Contacts, inbox console, sticky sender, 2FA | 🔵 in review | local ✅ | n/a | (see git log) |
+| P2a | Contacts, inbox console, sticky sender, 2FA | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `798245b` |
 | P2b | Console live on VPS | 🔴 blocked on R1 | — | — | — |
 | P3 | MMS + compliance core | ⬜ not started | — | — | — |
 | P4 | Numbers + 10DLC + TFV | ⬜ not started | — | — | — |
@@ -296,6 +296,19 @@ gen:api : regeneration is byte-identical across runs (drift gate is real)
 
 **Recorded deviations:** P1's ambiguous-from 422 became the sticky contract (plan DR-10);
 per-message tags deferred to P13 in favour of thread-level labels (DR-5).
+
+**CI:** all 5 jobs green on `798245b` — `lint`, `test-sqlite` (3.10 + 3.12),
+**`test-postgres`** and **`frontend`** (the two merge gates).
+
+**One Postgres-only failure worth remembering:** the first P2a run failed the Postgres gate
+because a SQLite capability check (`select sqlite_version()`) ran on Postgres. Nothing else
+failed there — every `pg_only` test passed first time.
+
+**Reading CI failures:** GitHub refuses job-log downloads via the API without admin rights
+even on a public repo, so the `test-postgres` job now re-emits the pytest summary as
+workflow **annotations**, which ARE readable unauthenticated:
+`GET /repos/{owner}/{repo}/commits/{sha}/check-runs` → each run's `annotations_url`.
+Use that instead of trying to fetch logs.
 
 **Next step:** P3 (MMS + compliance core) can start on P2a — it consumes the seam and the
 models. P2b needs R1.
