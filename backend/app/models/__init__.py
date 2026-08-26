@@ -1,3 +1,4 @@
+from app.models.agent import AgentProfile, CallTranscriptSegment
 from app.models.compliance import (
     CHANNELS,
     CONSENT_EVENTS,
@@ -36,6 +37,7 @@ from app.models.numbers import Brand, Campaign, TollFreeVerification
 from app.models.org import Org
 from app.models.rbac import PERMISSIONS, SYSTEM_ROLES, WILDCARD, OrgMembership, Role
 from app.models.routing import RoutingPolicy
+from app.models.scheduling import Appointment, KbChunk, KbDocument
 from app.models.user import User
 from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
@@ -44,11 +46,16 @@ __all__ = [
     "CHANNELS",
     "Campaign",
     "TollFreeVerification",
+    "AgentProfile",
+    "CallTranscriptSegment",
     "Call",
     "CallLeg",
     "CallRecording",
     "VoiceEvent",
     "RoutingPolicy",
+    "Appointment",
+    "KbChunk",
+    "KbDocument",
     "CONSENT_EVENTS",
     "CONSENT_SOURCES",
     "CUSTOM_FIELD_KINDS",
