@@ -15,6 +15,40 @@
         "title": "Body_upload_api_v1_media_post",
         "type": "object"
       },
+      "CarrierStatusOut": {
+        "properties": {
+          "capabilities": {
+            "additionalProperties": true,
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "consecutive_failures": {
+            "title": "Consecutive Failures",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "primary": {
+            "title": "Primary",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "primary",
+          "state",
+          "consecutive_failures",
+          "capabilities"
+        ],
+        "title": "CarrierStatusOut",
+        "type": "object"
+      },
       "CodeIn": {
         "properties": {
           "code": {
@@ -811,6 +845,97 @@
         "title": "PhoneOut",
         "type": "object"
       },
+      "PolicyIn": {
+        "properties": {
+          "allow_cross_carrier_failover": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Cross Carrier Failover"
+          },
+          "allow_intra_carrier_failover": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Intra Carrier Failover"
+          },
+          "pinned_carrier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned Carrier"
+          },
+          "preference": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preference"
+          }
+        },
+        "title": "PolicyIn",
+        "type": "object"
+      },
+      "PolicyOut": {
+        "properties": {
+          "allow_cross_carrier_failover": {
+            "title": "Allow Cross Carrier Failover",
+            "type": "boolean"
+          },
+          "allow_intra_carrier_failover": {
+            "title": "Allow Intra Carrier Failover",
+            "type": "boolean"
+          },
+          "pinned_carrier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned Carrier"
+          },
+          "preference": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Preference",
+            "type": "array"
+          }
+        },
+        "required": [
+          "preference",
+          "allow_intra_carrier_failover",
+          "allow_cross_carrier_failover",
+          "pinned_carrier"
+        ],
+        "title": "PolicyOut",
+        "type": "object"
+      },
       "RegisterIn": {
         "properties": {
           "email": {
@@ -913,6 +1038,18 @@
             "minLength": 1,
             "title": "Body",
             "type": "string"
+          },
+          "carrier": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Carrier"
           },
           "from": {
             "anyOf": [
@@ -1343,9 +1480,15 @@
       "app__api__routes__numbers__NumberIn": {
         "properties": {
           "carrier": {
-            "default": "bandwidth",
-            "title": "Carrier",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Carrier"
           },
           "e164": {
             "maxLength": 32,
@@ -3912,6 +4055,181 @@
         ]
       }
     },
+    "/api/v1/routing/carriers": {
+      "get": {
+        "description": "Which carriers this deployment can actually use, and how each one is behaving.\n\nNever includes a credential - only whether one is present and working.",
+        "operationId": "list_carriers_api_v1_routing_carriers_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CarrierStatusOut"
+                  },
+                  "title": "Response List Carriers Api V1 Routing Carriers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Carriers",
+        "tags": [
+          "routing"
+        ]
+      }
+    },
+    "/api/v1/routing/policy": {
+      "get": {
+        "operationId": "get_policy_api_v1_routing_policy_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Policy",
+        "tags": [
+          "routing"
+        ]
+      },
+      "patch": {
+        "operationId": "update_policy_api_v1_routing_policy_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Policy",
+        "tags": [
+          "routing"
+        ]
+      }
+    },
     "/api/v1/tags": {
       "get": {
         "operationId": "list_tags_api_v1_tags_get",
@@ -4536,6 +4854,51 @@
           }
         },
         "summary": "Bandwidth Messaging",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/{carrier_name}/messaging": {
+      "post": {
+        "description": "Ingestion for every carrier other than Bandwidth.\n\nEach adapter verifies with **its own** scheme - Bandwidth Basic auth, Telnyx Ed25519,\nSignalWire's Twilio-style HMAC over the URL. There is deliberately no shared verifier:\na common one would have to accept the weakest scheme for everybody, and \"the signature\npassed\" would stop meaning the same thing per carrier.\n\nBandwidth keeps its own explicit route above; this handles the rest, so the path an\noperator registers with a carrier always names the carrier.",
+        "operationId": "carrier_messaging_api_v1_webhooks__carrier_name__messaging_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "carrier_name",
+            "required": true,
+            "schema": {
+              "title": "Carrier Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Carrier Messaging Api V1 Webhooks  Carrier Name  Messaging Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Carrier Messaging",
         "tags": [
           "webhooks"
         ]

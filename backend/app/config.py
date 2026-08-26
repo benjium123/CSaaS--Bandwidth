@@ -94,6 +94,16 @@ class Settings(BaseSettings):
     telnyx_voice_connection_id: str = ""
     telnyx_default_number: str = ""
 
+    signalwire_enabled: bool = False
+    signalwire_project_id: str = ""
+    signalwire_api_token: SecretStr = SecretStr("")
+    #: e.g. "yourspace.signalwire.com"
+    signalwire_space_url: str = ""
+    #: The URL we REGISTERED with SignalWire. Twilio-compatible signatures cover the URL,
+    #: and it must not be reconstructed from an attacker-controllable Host header.
+    signalwire_webhook_url: str = ""
+    signalwire_default_number: str = ""
+
     # DEV/DEMO ONLY. See providers/loopback.py. The validator below refuses it in
     # production and refuses it alongside a real carrier.
     loopback_carrier_enabled: bool = False
@@ -225,6 +235,15 @@ class Settings(BaseSettings):
             "telnyx",
             self.telnyx_enabled,
             {"TELNYX_API_KEY": self.telnyx_api_key},
+        )
+        flagged(
+            "signalwire",
+            self.signalwire_enabled,
+            {
+                "SIGNALWIRE_PROJECT_ID": self.signalwire_project_id,
+                "SIGNALWIRE_API_TOKEN": self.signalwire_api_token,
+                "SIGNALWIRE_SPACE_URL": self.signalwire_space_url,
+            },
         )
 
         keyed("anthropic", {"ANTHROPIC_API_KEY": self.anthropic_api_key})

@@ -8,6 +8,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
+from app import routing
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
 from app.errors import NotFoundError
@@ -28,6 +29,9 @@ class SendIn(BaseModel):
     # been retired. Without this the send fails loudly rather than silently jumping.
     allow_reassign: bool = False
     media_ids: list[uuid.UUID] = []
+    #: "At will" carrier override. Honoured or refused - never silently substituted, so a
+    #: named carrier that is failing returns an error rather than quietly using another.
+    carrier: str | None = Field(default=None, max_length=16)
 
     model_config = {"populate_by_name": True}
 
@@ -85,13 +89,45 @@ async def send(
     resource rather than branching on HTTP status.
     """
     to_norm = to_e164(payload.to)
-    from_norm = await select_sender(
-        ctx.session,
-        ctx.org.id,
-        to_norm,
-        requested=to_e164(payload.from_) if payload.from_ else None,
-        allow_reassign=payload.allow_reassign,
-    )
+    registry = getattr(request.app.state, "carriers", None)
+
+    # One query, two uses: whether this contact has been spoken to decides both if a
+    # sticky sender exists and whether a carrier switch is permitted.
+    has_prior = await routing.has_prior_conversation(ctx.session, ctx.org.id, to_norm)
+
+    if payload.carrier and not payload.from_:
+        # An explicit carrier picks its own number: asking sticky-sender first would pick a
+        # number on the wrong carrier and then fail the two against each other.
+        plan = await routing.plan_route(
+            ctx.session,
+            ctx.org.id,
+            registry,
+            contact_e164=to_norm,
+            requested_carrier=payload.carrier,
+            is_reply_in_thread=has_prior,
+        )
+    else:
+        from_norm = await select_sender(
+            ctx.session,
+            ctx.org.id,
+            to_norm,
+            requested=to_e164(payload.from_) if payload.from_ else None,
+            allow_reassign=payload.allow_reassign,
+        )
+        plan = await routing.plan_route(
+            ctx.session,
+            ctx.org.id,
+            registry,
+            contact_e164=to_norm,
+            requested_from=to_e164(payload.from_) if payload.from_ else None,
+            requested_carrier=payload.carrier,
+            # Only a REAL prior conversation is sticky. For a new one select_sender has
+            # merely spread across the whole pool, and treating that spread as sticky would
+            # let it silently outrank the org's carrier preference.
+            thread_our_number=from_norm if has_prior else None,
+            is_reply_in_thread=has_prior,
+        )
+    from_norm = plan.primary.from_e164
     settings = request.app.state.settings
     # The carrier fetches MMS media from a URL, so attachments become long-lived signed
     # links rather than being uploaded twice.
@@ -113,6 +149,8 @@ async def send(
         body=payload.body,
         media_ids=payload.media_ids,
         media_urls=media_urls,
+        registry=registry,
+        plan=plan,
     )
     return _out(message)
 

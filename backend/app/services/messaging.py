@@ -135,6 +135,8 @@ async def send_message(
     exemption: str | None = None,
     media_ids: list[uuid.UUID] | None = None,
     media_urls: list[str] | None = None,
+    registry=None,  # noqa: ANN001 - CarrierRegistry; enables failover when given
+    plan=None,  # noqa: ANN001 - routing.RoutePlan
 ) -> Message:
     """Create and dispatch one outbound message.
 
@@ -203,7 +205,72 @@ async def send_message(
     session.add(message)
     await session.commit()
 
+    # Both present = phase-3b routing with failover. Absent = the P1 single-carrier path,
+    # unchanged, which is what the seam tests exercise.
+    if registry is not None and plan is not None:
+        return await dispatch_with_failover(
+            session, org_id, registry, plan, message, media_urls or []
+        )
     return await _dispatch_to_carrier(session, org_id, carrier, message, media_urls or [])
+
+
+async def dispatch_with_failover(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    registry,  # noqa: ANN001 - CarrierRegistry
+    plan,  # noqa: ANN001 - routing.RoutePlan
+    message: Message,
+    media_urls: list[str] | None = None,
+) -> Message:
+    """Try each route in turn, stopping at the first acceptance.
+
+    Only a RETRYABLE rejection moves to the next route. An invalid request or an
+    unregistered number will be rejected identically by every carrier, so retrying it
+    elsewhere just multiplies the damage across brands instead of surfacing the bug.
+
+    The route that actually sent is recorded on the message, because "which number did this
+    go out on" is the first question asked about any surprising delivery.
+    """
+    routes = plan.all_routes()
+    last: Message = message
+    for index, route in enumerate(routes):
+        carrier = registry.get(route.carrier_name)
+        if carrier is None:
+            continue
+        breaker = registry.health.breaker(route.carrier_name)
+        if not breaker.allows_send() and index < len(routes) - 1:
+            # Skip an open breaker unless this is the last thing we could try; refusing to
+            # send at all is worse than one probe against a carrier we think is unwell.
+            continue
+
+        set_org_context(session, org_id)
+        last = await session.get(Message, message.id)
+        if last.from_e164 != route.from_e164 or last.carrier != route.carrier_name:
+            log.info(
+                "route_switched",
+                message_id=str(message.id),
+                to_carrier=route.carrier_name,
+                to_number=route.from_e164,
+                reason=route.reason,
+            )
+            last.from_e164 = route.from_e164
+            last.carrier = route.carrier_name
+            await session.commit()
+
+        last = await _dispatch_to_carrier(session, org_id, carrier, last, media_urls)
+        if last.status == "accepted":
+            breaker.record_success()
+            return last
+
+        # The REAL error object, carried out of dispatch rather than reconstructed from
+        # the persisted columns - a rebuilt error loses `retryable`, and guessing it wrong
+        # either loops a permanent failure across every carrier or gives up on a blip.
+        error = getattr(last, "last_carrier_error", None)
+        breaker.record_failure(error)
+        if error is None or not error.retryable:
+            return last
+
+    return last
 
 
 async def _dispatch_to_carrier(
@@ -230,6 +297,9 @@ async def _dispatch_to_carrier(
 
     set_org_context(session, org_id)
     message = await session.get(Message, message.id)
+    # Transient, not a mapped column: the failover loop needs the full error (its
+    # `retryable` flag above all), and the DB only keeps a code and a string.
+    message.last_carrier_error = result.error
     if result.status == "accepted":
         message.status = "accepted"
         message.provider_message_id = result.provider_message_id

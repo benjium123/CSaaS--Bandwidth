@@ -208,12 +208,25 @@ def webhook_settings() -> Settings:
     )
 
 
+def _install(application, carrier) -> None:
+    """Put a test carrier in BOTH places the app looks.
+
+    Since phase-3b the registry is the source of truth and `state.carrier` is only the
+    primary shim. A fixture that set one and not the other would leave routing unable to
+    find a carrier for any number.
+    """
+    from app.providers.registry import CarrierRegistry
+
+    application.state.carriers = CarrierRegistry({carrier.name: carrier}, primary=carrier.name)
+    application.state.carrier = carrier
+
+
 @pytest.fixture
 async def app_with_carrier(engine, webhook_settings):
     """App wired with a FakeCarrier. Returns (client, fake_carrier)."""
     application = create_app(webhook_settings)
     fake = FakeCarrier()
-    application.state.carrier = fake
+    _install(application, fake)
     transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c, fake, application
@@ -271,7 +284,7 @@ async def app_with_loopback(engine, webhook_settings):
     """App wired with a deterministic LoopbackCarrier (auto=False → drive via drain())."""
     application = create_app(webhook_settings)
     carrier = LoopbackCarrier(auto=False)
-    application.state.carrier = carrier
+    _install(application, carrier)
     transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c, carrier, application

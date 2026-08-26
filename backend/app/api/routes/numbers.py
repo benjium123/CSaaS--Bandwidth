@@ -5,7 +5,7 @@ from typing import Annotated
 
 import phonenumbers
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -28,7 +28,10 @@ def to_e164(raw: str, region: str = "US") -> str:
 
 class NumberIn(BaseModel):
     e164: str = Field(min_length=3, max_length=32)
-    carrier: str = "bandwidth"
+    #: Which carrier actually hosts this DID. Defaults to the deployment's primary rather
+    #: than a hard-coded "bandwidth": a number recorded against a carrier that does not
+    #: host it is unroutable, and the error surfaces far from the mistake.
+    carrier: str | None = None
 
 
 class NumberOut(BaseModel):
@@ -41,13 +44,16 @@ class NumberOut(BaseModel):
 @router.post("", response_model=NumberOut, status_code=201)
 async def add_number(
     payload: NumberIn,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
 ) -> NumberOut:
     """Minimal seed endpoint. P4 owns real search/order/port; here numbers are entered by
     hand so P1 can send from something."""
     normalized = to_e164(payload.e164)
+    registry = getattr(request.app.state, "carriers", None)
+    carrier_name = payload.carrier or (registry.primary_name if registry else "") or "bandwidth"
     number = OrgNumber(
-        id=uuid.uuid4(), org_id=ctx.org.id, e164=normalized, carrier=payload.carrier
+        id=uuid.uuid4(), org_id=ctx.org.id, e164=normalized, carrier=carrier_name
     )
     ctx.session.add(number)
     try:

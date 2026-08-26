@@ -564,6 +564,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/routing/carriers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Carriers
+         * @description Which carriers this deployment can actually use, and how each one is behaving.
+         *
+         *     Never includes a credential - only whether one is present and working.
+         */
+        get: operations["list_carriers_api_v1_routing_carriers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/routing/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Policy */
+        get: operations["get_policy_api_v1_routing_policy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Policy */
+        patch: operations["update_policy_api_v1_routing_policy_patch"];
+        trace?: never;
+    };
     "/api/v1/tags": {
         parameters: {
             query?: never;
@@ -702,6 +742,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/webhooks/{carrier_name}/messaging": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Carrier Messaging
+         * @description Ingestion for every carrier other than Bandwidth.
+         *
+         *     Each adapter verifies with **its own** scheme - Bandwidth Basic auth, Telnyx Ed25519,
+         *     SignalWire's Twilio-style HMAC over the URL. There is deliberately no shared verifier:
+         *     a common one would have to accept the weakest scheme for everybody, and "the signature
+         *     passed" would stop meaning the same thing per carrier.
+         *
+         *     Bandwidth keeps its own explicit route above; this handles the rest, so the path an
+         *     operator registers with a carrier always names the carrier.
+         */
+        post: operations["carrier_messaging_api_v1_webhooks__carrier_name__messaging_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -730,6 +798,21 @@ export interface components {
         Body_upload_api_v1_media_post: {
             /** File */
             file: string;
+        };
+        /** CarrierStatusOut */
+        CarrierStatusOut: {
+            /** Capabilities */
+            capabilities: {
+                [key: string]: unknown;
+            };
+            /** Consecutive Failures */
+            consecutive_failures: number;
+            /** Name */
+            name: string;
+            /** Primary */
+            primary: boolean;
+            /** State */
+            state: string;
         };
         /** CodeIn */
         CodeIn: {
@@ -1039,6 +1122,28 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** PolicyIn */
+        PolicyIn: {
+            /** Allow Cross Carrier Failover */
+            allow_cross_carrier_failover?: boolean | null;
+            /** Allow Intra Carrier Failover */
+            allow_intra_carrier_failover?: boolean | null;
+            /** Pinned Carrier */
+            pinned_carrier?: string | null;
+            /** Preference */
+            preference?: string[] | null;
+        };
+        /** PolicyOut */
+        PolicyOut: {
+            /** Allow Cross Carrier Failover */
+            allow_cross_carrier_failover: boolean;
+            /** Allow Intra Carrier Failover */
+            allow_intra_carrier_failover: boolean;
+            /** Pinned Carrier */
+            pinned_carrier: string | null;
+            /** Preference */
+            preference: string[];
+        };
         /** RegisterIn */
         RegisterIn: {
             /**
@@ -1090,6 +1195,8 @@ export interface components {
             allow_reassign: boolean;
             /** Body */
             body: string;
+            /** Carrier */
+            carrier?: string | null;
             /** From */
             from?: string | null;
             /**
@@ -1239,11 +1346,8 @@ export interface components {
         };
         /** NumberIn */
         app__api__routes__numbers__NumberIn: {
-            /**
-             * Carrier
-             * @default bandwidth
-             */
-            carrier: string;
+            /** Carrier */
+            carrier?: string | null;
             /** E164 */
             e164: string;
         };
@@ -2613,6 +2717,103 @@ export interface operations {
             };
         };
     };
+    list_carriers_api_v1_routing_carriers_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CarrierStatusOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_policy_api_v1_routing_policy_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_policy_api_v1_routing_policy_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_tags_api_v1_tags_get: {
         parameters: {
             query?: never;
@@ -2945,6 +3146,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    carrier_messaging_api_v1_webhooks__carrier_name__messaging_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                carrier_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

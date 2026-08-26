@@ -67,3 +67,53 @@ async def bandwidth_messaging(
         return {"status": "retry"}
 
     return {"status": "ok", "events": len(outcomes)}
+
+
+@router.post("/{carrier_name}/messaging")
+async def carrier_messaging(
+    carrier_name: str,
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """Ingestion for every carrier other than Bandwidth.
+
+    Each adapter verifies with **its own** scheme - Bandwidth Basic auth, Telnyx Ed25519,
+    SignalWire's Twilio-style HMAC over the URL. There is deliberately no shared verifier:
+    a common one would have to accept the weakest scheme for everybody, and "the signature
+    passed" would stop meaning the same thing per carrier.
+
+    Bandwidth keeps its own explicit route above; this handles the rest, so the path an
+    operator registers with a carrier always names the carrier.
+    """
+    registry = getattr(request.app.state, "carriers", None)
+    carrier = registry.get(carrier_name) if registry else None
+    if carrier is None:
+        # 404, not 401: the carrier genuinely is not configured here, and telling it to
+        # retry for 24h against a route that will never exist helps nobody.
+        response.status_code = 404
+        return {"error": {"code": "carrier_not_configured", "message": carrier_name}}
+
+    raw = await request.body()
+    if not carrier.verify_webhook(request.headers, raw):
+        response.status_code = 401
+        return {"error": {"code": "unauthenticated", "message": "Invalid webhook signature"}}
+
+    body_text = raw.decode("utf-8", errors="replace")
+    try:
+        events = carrier.parse_webhook(raw)
+    except ValueError as exc:
+        await svc.dead_letter(session, carrier_name, "malformed", body_text)
+        log.warning("webhook_malformed", carrier=carrier_name, reason=str(exc))
+        return {"status": "dead_lettered"}
+
+    outcomes = []
+    for event in events:
+        outcomes.append(
+            await svc.ingest_event(session, carrier_name, event, body_text, carrier)
+        )
+
+    if svc.Outcome.RETRY in outcomes:
+        response.status_code = 500
+        return {"status": "retry"}
+    return {"status": "ok", "events": len(outcomes)}

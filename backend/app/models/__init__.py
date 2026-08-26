@@ -34,10 +34,12 @@ from app.models.messaging import (
 )
 from app.models.org import Org
 from app.models.rbac import PERMISSIONS, SYSTEM_ROLES, WILDCARD, OrgMembership, Role
+from app.models.routing import RoutingPolicy
 from app.models.user import User
 
 __all__ = [
     "CHANNELS",
+    "RoutingPolicy",
     "CONSENT_EVENTS",
     "CONSENT_SOURCES",
     "CUSTOM_FIELD_KINDS",

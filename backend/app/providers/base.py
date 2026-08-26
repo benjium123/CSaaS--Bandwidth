@@ -32,33 +32,18 @@ class MessagingCarrier(Protocol):
 
 
 def build_carrier(settings) -> MessagingCarrier | None:  # noqa: ANN001
-    """Build the configured carrier, or None when messaging is not usable.
+    """The PRIMARY carrier, or None when messaging is not usable.
+
+    Kept as a shim over the registry (phase-3b DR-4). P1/P2 seam tests are written against
+    this function; they are the evidence the carrier abstraction held, so they keep working
+    unmodified rather than being rewritten to suit a later design.
 
     Returning None rather than raising is deliberate: the app must boot and serve /healthz
-    with no carrier configured — that is the R1 reality today.
+    with no carrier configured - that is the R1 reality today.
     """
-    if getattr(settings, "loopback_carrier_enabled", False):
-        # The config validator has already refused production and the both-on case.
-        from app.providers.loopback import LoopbackCarrier
+    from app.providers.registry import build_registry
 
-        return LoopbackCarrier()
-
-    status = next((p for p in settings.provider_statuses() if p.name == "bandwidth"), None)
-    if status is None or not status.enabled:
-        return None
-    if not settings.bandwidth_messaging_application_id.strip():
-        return None
-
-    from app.providers.bandwidth.adapter import BandwidthMessagingCarrier
-
-    return BandwidthMessagingCarrier(
-        account_id=settings.bandwidth_account_id,
-        api_username=settings.bandwidth_api_username,
-        api_password=settings.bandwidth_api_password.get_secret_value(),
-        application_id=settings.bandwidth_messaging_application_id,
-        webhook_username=settings.bandwidth_webhook_username,
-        webhook_password=settings.bandwidth_webhook_password.get_secret_value(),
-    )
+    return build_registry(settings).primary()
 
 
 def get_carrier(request: Request) -> MessagingCarrier:
