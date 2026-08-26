@@ -184,6 +184,14 @@ class Settings(BaseSettings):
                     "LOOPBACK_CARRIER_ENABLED must be false in production - it is a fake "
                     "carrier that never touches the PSTN"
                 )
+            if self.bandwidth_enabled and (
+                _empty(self.bandwidth_webhook_username)
+                or _empty(self.bandwidth_webhook_password)
+            ):
+                problems.append(
+                    "BANDWIDTH_WEBHOOK_USERNAME / BANDWIDTH_WEBHOOK_PASSWORD are required "
+                    "when Bandwidth is enabled - voice webhooks fail closed without them"
+                )
 
         if self.loopback_carrier_enabled and self.bandwidth_enabled:
             problems.append(

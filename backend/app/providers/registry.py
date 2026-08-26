@@ -117,6 +117,17 @@ def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
             webhook_username=settings.bandwidth_webhook_username,
             webhook_password=settings.bandwidth_webhook_password.get_secret_value(),
         )
+        bw = carriers["bandwidth"]
+        # Voice attributes ride on the same adapter object; the voice mixin reads them
+        # via getattr so the messaging constructor (a frozen P1 seam) stays untouched.
+        bw.voice_application_id = settings.bandwidth_voice_application_id
+        bw.voice_callback_url = (
+            settings.public_base_url.rstrip("/") + "/api/v1/webhooks/bandwidth/voice"
+            if settings.public_base_url
+            else ""
+        )
+        bw.voice_webhook_username = settings.bandwidth_webhook_username
+        bw.voice_webhook_password = settings.bandwidth_webhook_password.get_secret_value()
 
     if enabled("telnyx"):
         from app.providers.telnyx.adapter import TelnyxMessagingCarrier
@@ -126,6 +137,7 @@ def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
             messaging_profile_id=settings.telnyx_messaging_profile_id,
             public_key=settings.telnyx_public_key.get_secret_value(),
         )
+        carriers["telnyx"].voice_connection_id = settings.telnyx_voice_connection_id
 
     if enabled("signalwire"):
         from app.providers.signalwire.adapter import SignalWireMessagingCarrier

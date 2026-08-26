@@ -27,10 +27,18 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     from app.db.session import get_sessionmaker
     from app.services import media as media_svc
     from app.services import messaging as messaging_svc
+    from app.services import recordings as recordings_svc
 
     store = getattr(app.state, "media_store", None)
     carrier = getattr(app.state, "carrier", None)
-    results = {"media_fetched": 0, "released": 0, "purged": 0, "reprocessed": 0}
+    registry = getattr(app.state, "carriers", None)
+    results = {
+        "media_fetched": 0,
+        "released": 0,
+        "purged": 0,
+        "reprocessed": 0,
+        "recordings_fetched": 0,
+    }
 
     if store is not None:
         try:
@@ -40,6 +48,18 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
                 )
         except Exception:
             log.exception("sweeper_media_fetch_failed")
+
+        if registry is not None:
+            # F6/F7/F16: the voice webhook path only upserts a `pending` CallRecording row
+            # - this is what actually fetches it, same "pending row IS the queue" shape as
+            # inbound media fetch above.
+            try:
+                async with get_sessionmaker()() as session:
+                    results["recordings_fetched"] = await recordings_svc.fetch_pending_recordings(
+                        session, store, registry
+                    )
+            except Exception:
+                log.exception("sweeper_recording_fetch_failed")
 
         try:
             async with get_sessionmaker()() as session:

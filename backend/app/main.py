@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import auth as auth_routes
+from app.api.routes import calls as call_routes
 from app.api.routes import compliance as compliance_routes
 from app.api.routes import contacts as contact_routes
 from app.api.routes import health as health_routes
@@ -180,6 +181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(media_routes.router)
     app.include_router(template_routes.router)
     app.include_router(message_routes.router)
+    app.include_router(call_routes.router)
     app.include_router(webhook_routes.router)
     return app
 

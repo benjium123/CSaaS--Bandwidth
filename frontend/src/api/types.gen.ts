@@ -126,6 +126,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Calls */
+        get: operations["list_calls_api_v1_calls_get"];
+        put?: never;
+        /** Create Call */
+        post: operations["create_call_api_v1_calls_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calls/{call_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Call */
+        get: operations["get_call_api_v1_calls__call_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calls/{call_id}/gather": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Gather Call */
+        post: operations["gather_call_api_v1_calls__call_id__gather_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calls/{call_id}/hangup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Hangup Call */
+        post: operations["hangup_call_api_v1_calls__call_id__hangup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calls/{call_id}/recordings/{recording_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Recording */
+        get: operations["get_recording_api_v1_calls__call_id__recordings__recording_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calls/{call_id}/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transfer Call */
+        post: operations["transfer_call_api_v1_calls__call_id__transfer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/companies": {
         parameters: {
             query?: never;
@@ -987,6 +1090,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/webhooks/bandwidth/voice/amd": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bandwidth Voice Amd */
+        post: operations["bandwidth_voice_amd_api_v1_webhooks_bandwidth_voice_amd_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhooks/bandwidth/voice/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bandwidth Voice Answer */
+        post: operations["bandwidth_voice_answer_api_v1_webhooks_bandwidth_voice_answer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhooks/bandwidth/voice/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bandwidth Voice Disconnect */
+        post: operations["bandwidth_voice_disconnect_api_v1_webhooks_bandwidth_voice_disconnect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/webhooks/{carrier_name}/messaging": {
         parameters: {
             query?: never;
@@ -1009,6 +1163,27 @@ export interface paths {
          *     operator registers with a carrier always names the carrier.
          */
         post: operations["carrier_messaging_api_v1_webhooks__carrier_name__messaging_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhooks/{carrier_name}/voice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Carrier Voice
+         * @description Every carrier's voice ingestion other than Bandwidth's three named subpaths above -
+         *     each verifies with its own scheme, same reasoning as carrier_messaging.
+         */
+        post: operations["carrier_voice_api_v1_webhooks__carrier_name__voice_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1103,6 +1278,127 @@ export interface components {
             name: string;
             /** Status */
             status: string;
+        };
+        /** CallDetailOut */
+        CallDetailOut: {
+            /** Answered At */
+            answered_at: string | null;
+            /** Carrier */
+            carrier: string;
+            /** Contact E164 */
+            contact_e164: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Direction */
+            direction: string;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Ended At */
+            ended_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Legs */
+            legs: components["schemas"]["CallLegOut"][];
+            /** Our E164 */
+            our_e164: string;
+            /** Recordings */
+            recordings: components["schemas"]["RecordingOut"][];
+            /** Status */
+            status: string;
+            /** Tag */
+            tag: string | null;
+        };
+        /** CallIn */
+        CallIn: {
+            /** Carrier */
+            carrier?: string | null;
+            /** From */
+            from?: string | null;
+            /**
+             * Machine Detection
+             * @default off
+             */
+            machine_detection: string;
+            /**
+             * Record
+             * @default false
+             */
+            record: boolean;
+            /**
+             * Tag
+             * @default
+             */
+            tag: string;
+            /** To */
+            to: string;
+        };
+        /** CallLegOut */
+        CallLegOut: {
+            /** Amd Result */
+            amd_result: string | null;
+            /** Answered At */
+            answered_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** From E164 */
+            from_e164: string;
+            /** Hangup Cause */
+            hangup_cause: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider Call Id */
+            provider_call_id: string | null;
+            /** Reason */
+            reason: string;
+            /** Status */
+            status: string;
+            /** To E164 */
+            to_e164: string;
+        };
+        /** CallOut */
+        CallOut: {
+            /** Answered At */
+            answered_at: string | null;
+            /** Carrier */
+            carrier: string;
+            /** Contact E164 */
+            contact_e164: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Direction */
+            direction: string;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Ended At */
+            ended_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Our E164 */
+            our_e164: string;
+            /** Status */
+            status: string;
+            /** Tag */
+            tag: string | null;
         };
         /** CampaignIn */
         CampaignIn: {
@@ -1301,6 +1597,34 @@ export interface components {
             provisioning_uri: string;
             /** Secret */
             secret: string;
+        };
+        /** GatherIn */
+        GatherIn: {
+            /**
+             * Action Tag
+             * @default
+             */
+            action_tag: string;
+            /**
+             * Max Digits
+             * @default 1
+             */
+            max_digits: number;
+            /**
+             * Prompt Text
+             * @default
+             */
+            prompt_text: string;
+            /**
+             * Terminating Digit
+             * @default #
+             */
+            terminating_digit: string;
+            /**
+             * Timeout Seconds
+             * @default 10
+             */
+            timeout_seconds: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1544,6 +1868,24 @@ export interface components {
             /** Preference */
             preference: string[];
         };
+        /** RecordingOut */
+        RecordingOut: {
+            /** Content Type */
+            content_type: string;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Size Bytes */
+            size_bytes: number | null;
+            /** Status */
+            status: string;
+            /** Url */
+            url?: string | null;
+        };
         /** RegisterIn */
         RegisterIn: {
             /**
@@ -1784,6 +2126,11 @@ export interface components {
              * @default bearer
              */
             token_type: string;
+        };
+        /** TransferIn */
+        TransferIn: {
+            /** To */
+            to: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -2031,6 +2378,251 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_calls_api_v1_calls_get: {
+        parameters: {
+            query?: {
+                contact_e164?: string | null;
+                status?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_call_api_v1_calls_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CallIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_call_api_v1_calls__call_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    gather_call_api_v1_calls__call_id__gather_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatherIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hangup_call_api_v1_calls__call_id__hangup_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_recording_api_v1_calls__call_id__recordings__recording_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                call_id: string;
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transfer_call_api_v1_calls__call_id__transfer_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallDetailOut"];
                 };
             };
             /** @description Validation Error */
@@ -4175,6 +4767,66 @@ export interface operations {
             };
         };
     };
+    bandwidth_voice_amd_api_v1_webhooks_bandwidth_voice_amd_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    bandwidth_voice_answer_api_v1_webhooks_bandwidth_voice_answer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    bandwidth_voice_disconnect_api_v1_webhooks_bandwidth_voice_disconnect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     carrier_messaging_api_v1_webhooks__carrier_name__messaging_post: {
         parameters: {
             query?: never;
@@ -4195,6 +4847,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    carrier_voice_api_v1_webhooks__carrier_name__voice_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                carrier_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

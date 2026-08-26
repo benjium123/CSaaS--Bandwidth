@@ -37,12 +37,17 @@ from app.models.org import Org
 from app.models.rbac import PERMISSIONS, SYSTEM_ROLES, WILDCARD, OrgMembership, Role
 from app.models.routing import RoutingPolicy
 from app.models.user import User
+from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
 __all__ = [
     "Brand",
     "CHANNELS",
     "Campaign",
     "TollFreeVerification",
+    "Call",
+    "CallLeg",
+    "CallRecording",
+    "VoiceEvent",
     "RoutingPolicy",
     "CONSENT_EVENTS",
     "CONSENT_SOURCES",

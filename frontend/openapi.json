@@ -213,6 +213,369 @@
         "title": "BrandOut",
         "type": "object"
       },
+      "CallDetailOut": {
+        "properties": {
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "carrier": {
+            "title": "Carrier",
+            "type": "string"
+          },
+          "contact_e164": {
+            "title": "Contact E164",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/CallLegOut"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "our_e164": {
+            "title": "Our E164",
+            "type": "string"
+          },
+          "recordings": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingOut"
+            },
+            "title": "Recordings",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
+          }
+        },
+        "required": [
+          "id",
+          "direction",
+          "contact_e164",
+          "our_e164",
+          "carrier",
+          "status",
+          "tag",
+          "answered_at",
+          "ended_at",
+          "duration_seconds",
+          "created_at",
+          "legs",
+          "recordings"
+        ],
+        "title": "CallDetailOut",
+        "type": "object"
+      },
+      "CallIn": {
+        "properties": {
+          "carrier": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Carrier"
+          },
+          "from": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From"
+          },
+          "machine_detection": {
+            "default": "off",
+            "title": "Machine Detection",
+            "type": "string"
+          },
+          "record": {
+            "default": false,
+            "title": "Record",
+            "type": "boolean"
+          },
+          "tag": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Tag",
+            "type": "string"
+          },
+          "to": {
+            "maxLength": 32,
+            "minLength": 3,
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "title": "CallIn",
+        "type": "object"
+      },
+      "CallLegOut": {
+        "properties": {
+          "amd_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amd Result"
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "from_e164": {
+            "title": "From E164",
+            "type": "string"
+          },
+          "hangup_cause": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hangup Cause"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "provider_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Call Id"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "to_e164": {
+            "title": "To E164",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider_call_id",
+          "to_e164",
+          "from_e164",
+          "status",
+          "reason",
+          "amd_result",
+          "answered_at",
+          "ended_at",
+          "hangup_cause",
+          "created_at"
+        ],
+        "title": "CallLegOut",
+        "type": "object"
+      },
+      "CallOut": {
+        "properties": {
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "carrier": {
+            "title": "Carrier",
+            "type": "string"
+          },
+          "contact_e164": {
+            "title": "Contact E164",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "our_e164": {
+            "title": "Our E164",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
+          }
+        },
+        "required": [
+          "id",
+          "direction",
+          "contact_e164",
+          "our_e164",
+          "carrier",
+          "status",
+          "tag",
+          "answered_at",
+          "ended_at",
+          "duration_seconds",
+          "created_at"
+        ],
+        "title": "CallOut",
+        "type": "object"
+      },
       "CampaignIn": {
         "properties": {
           "brand_id": {
@@ -753,6 +1116,44 @@
           "provisioning_uri"
         ],
         "title": "EnrollOut",
+        "type": "object"
+      },
+      "GatherIn": {
+        "properties": {
+          "action_tag": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Action Tag",
+            "type": "string"
+          },
+          "max_digits": {
+            "default": 1,
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Max Digits",
+            "type": "integer"
+          },
+          "prompt_text": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Prompt Text",
+            "type": "string"
+          },
+          "terminating_digit": {
+            "default": "#",
+            "maxLength": 1,
+            "title": "Terminating Digit",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 10,
+            "maximum": 120.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "title": "GatherIn",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1352,6 +1753,65 @@
           "pinned_carrier"
         ],
         "title": "PolicyOut",
+        "type": "object"
+      },
+      "RecordingOut": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "content_type",
+          "duration_seconds",
+          "size_bytes"
+        ],
+        "title": "RecordingOut",
         "type": "object"
       },
       "RegisterIn": {
@@ -1997,6 +2457,21 @@
         "title": "TokenOut",
         "type": "object"
       },
+      "TransferIn": {
+        "properties": {
+          "to": {
+            "maxLength": 32,
+            "minLength": 3,
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "title": "TransferIn",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -2397,6 +2872,529 @@
         "summary": "Register",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/v1/calls": {
+      "get": {
+        "operationId": "list_calls_api_v1_calls_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "contact_e164",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Contact E164"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CallOut"
+                  },
+                  "title": "Response List Calls Api V1 Calls Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Calls",
+        "tags": [
+          "calls"
+        ]
+      },
+      "post": {
+        "operationId": "create_call_api_v1_calls_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CallIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Call",
+        "tags": [
+          "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}": {
+      "get": {
+        "operationId": "get_call_api_v1_calls__call_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Call",
+        "tags": [
+          "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}/gather": {
+      "post": {
+        "operationId": "gather_call_api_v1_calls__call_id__gather_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatherIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Gather Call",
+        "tags": [
+          "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}/hangup": {
+      "post": {
+        "operationId": "hangup_call_api_v1_calls__call_id__hangup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Hangup Call",
+        "tags": [
+          "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}/recordings/{recording_id}": {
+      "get": {
+        "operationId": "get_recording_api_v1_calls__call_id__recordings__recording_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Recording Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Recording",
+        "tags": [
+          "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}/transfer": {
+      "post": {
+        "operationId": "transfer_call_api_v1_calls__call_id__transfer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Transfer Call",
+        "tags": [
+          "calls"
         ]
       }
     },
@@ -6581,6 +7579,63 @@
         ]
       }
     },
+    "/api/v1/webhooks/bandwidth/voice/amd": {
+      "post": {
+        "operationId": "bandwidth_voice_amd_api_v1_webhooks_bandwidth_voice_amd_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bandwidth Voice Amd",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/bandwidth/voice/answer": {
+      "post": {
+        "operationId": "bandwidth_voice_answer_api_v1_webhooks_bandwidth_voice_answer_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bandwidth Voice Answer",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/bandwidth/voice/disconnect": {
+      "post": {
+        "operationId": "bandwidth_voice_disconnect_api_v1_webhooks_bandwidth_voice_disconnect_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bandwidth Voice Disconnect",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
     "/api/v1/webhooks/{carrier_name}/messaging": {
       "post": {
         "description": "Ingestion for every carrier other than Bandwidth.\n\nEach adapter verifies with **its own** scheme - Bandwidth Basic auth, Telnyx Ed25519,\nSignalWire's Twilio-style HMAC over the URL. There is deliberately no shared verifier:\na common one would have to accept the weakest scheme for everybody, and \"the signature\npassed\" would stop meaning the same thing per carrier.\n\nBandwidth keeps its own explicit route above; this handles the rest, so the path an\noperator registers with a carrier always names the carrier.",
@@ -6621,6 +7676,47 @@
           }
         },
         "summary": "Carrier Messaging",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/{carrier_name}/voice": {
+      "post": {
+        "description": "Every carrier's voice ingestion other than Bandwidth's three named subpaths above -\neach verifies with its own scheme, same reasoning as carrier_messaging.",
+        "operationId": "carrier_voice_api_v1_webhooks__carrier_name__voice_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "carrier_name",
+            "required": true,
+            "schema": {
+              "title": "Carrier Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Carrier Voice",
         "tags": [
           "webhooks"
         ]

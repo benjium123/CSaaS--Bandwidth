@@ -14,6 +14,7 @@ import structlog
 
 from app.providers.bandwidth import errors as bw_errors
 from app.providers.bandwidth import webhooks
+from app.providers.bandwidth.voice import BandwidthVoiceMixin
 from app.providers.domain import (
     CarrierCapabilities,
     CarrierEvent,
@@ -26,7 +27,7 @@ log = structlog.get_logger("carrier.bandwidth")
 DEFAULT_BASE_URL = "https://messaging.bandwidth.com/api/v2"
 
 
-class BandwidthMessagingCarrier:
+class BandwidthMessagingCarrier(BandwidthVoiceMixin):
     name = "bandwidth"
 
     def __init__(

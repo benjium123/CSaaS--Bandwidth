@@ -6,6 +6,17 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApiClient } from "./client";
+import type { components } from "./types.gen";
+
+export type CallOut = components["schemas"]["CallOut"];
+export type CallDetailOut = components["schemas"]["CallDetailOut"];
+export type CallLegOut = components["schemas"]["CallLegOut"];
+export type RecordingOut = components["schemas"]["RecordingOut"];
+export type NumberOut = components["schemas"]["NumberOut"];
+export type AvailableNumberOut = components["schemas"]["SearchOut"];
+export type BrandOut = components["schemas"]["BrandOut"];
+export type CampaignOut = components["schemas"]["CampaignOut"];
+export type TollfreeOut = components["schemas"]["TfvOut"];
 
 export type InboxItem = {
   thread: {
@@ -146,7 +157,191 @@ export function useTags(api: ApiClient) {
 export function useNumbers(api: ApiClient) {
   return useQuery({
     queryKey: ["numbers"],
-    queryFn: () =>
-      api.request<{ id: string; e164: string; is_active: boolean }[]>("/api/v1/numbers"),
+    queryFn: () => api.request<NumberOut[]>("/api/v1/numbers"),
+  });
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Calls (Phase 5)
+ * ------------------------------------------------------------------------------------- */
+
+const CALL_POLL_MS = 5000;
+
+/** Mirrors TERMINAL_CALL_STATUSES in app/models/voice.py. */
+const TERMINAL_CALL_STATUSES = new Set(["completed", "failed", "busy", "no_answer", "canceled"]);
+
+export function isTerminalCallStatus(status: string): boolean {
+  return TERMINAL_CALL_STATUSES.has(status);
+}
+
+export type CallFilters = {
+  contact_e164?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export function callsQueryKey(filters: CallFilters) {
+  return ["calls", filters] as const;
+}
+
+/** Poll only while the tab is visible AND at least one listed call is still in flight. */
+export function useCalls(api: ApiClient, filters: CallFilters, enabled = true) {
+  const params = new URLSearchParams();
+  if (filters.contact_e164) params.set("contact_e164", filters.contact_e164);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.limit != null) params.set("limit", String(filters.limit));
+  if (filters.offset != null) params.set("offset", String(filters.offset));
+  const qs = params.toString();
+
+  return useQuery({
+    queryKey: callsQueryKey(filters),
+    queryFn: () => api.request<CallOut[]>(`/api/v1/calls${qs ? `?${qs}` : ""}`),
+    enabled,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== "visible") return false;
+      const data = query.state.data;
+      if (!data) return CALL_POLL_MS;
+      return data.some((c) => !isTerminalCallStatus(c.status)) ? CALL_POLL_MS : false;
+    },
+  });
+}
+
+export function useCall(api: ApiClient, callId: string | null) {
+  return useQuery({
+    queryKey: ["call", callId],
+    queryFn: () => api.request<CallDetailOut>(`/api/v1/calls/${callId}`),
+    enabled: Boolean(callId),
+    refetchInterval: (query) => {
+      if (document.visibilityState !== "visible") return false;
+      const data = query.state.data;
+      if (!data) return CALL_POLL_MS;
+      return isTerminalCallStatus(data.status) ? false : CALL_POLL_MS;
+    },
+  });
+}
+
+export function usePlaceCall(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      to: string;
+      from?: string;
+      carrier?: string;
+      machine_detection?: string;
+      tag?: string;
+    }) => api.request<CallDetailOut>("/api/v1/calls", { method: "POST", json: vars }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["calls"] }),
+  });
+}
+
+export function useTransferCall(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { callId: string; to: string }) =>
+      api.request<CallDetailOut>(`/api/v1/calls/${vars.callId}/transfer`, {
+        method: "POST",
+        json: { to: vars.to },
+      }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["call", vars.callId] });
+      qc.invalidateQueries({ queryKey: ["calls"] });
+    },
+  });
+}
+
+export function useHangupCall(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (callId: string) =>
+      api.request<CallDetailOut>(`/api/v1/calls/${callId}/hangup`, { method: "POST" }),
+    onSuccess: (_data, callId) => {
+      qc.invalidateQueries({ queryKey: ["call", callId] });
+      qc.invalidateQueries({ queryKey: ["calls"] });
+    },
+  });
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Numbers (Phase 4 upgrade) + registration lookups
+ * ------------------------------------------------------------------------------------- */
+
+export type AvailableNumberFilters = {
+  carrier?: string;
+  area_code?: string;
+  contains?: string;
+  locality?: string;
+  region?: string;
+  number_type?: string;
+  limit?: number;
+};
+
+export function useAvailableNumbers(api: ApiClient, filters: AvailableNumberFilters, enabled: boolean) {
+  const params = new URLSearchParams();
+  if (filters.carrier) params.set("carrier", filters.carrier);
+  if (filters.area_code) params.set("area_code", filters.area_code);
+  if (filters.contains) params.set("contains", filters.contains);
+  if (filters.locality) params.set("locality", filters.locality);
+  if (filters.region) params.set("region", filters.region);
+  if (filters.number_type) params.set("number_type", filters.number_type);
+  if (filters.limit != null) params.set("limit", String(filters.limit));
+  const qs = params.toString();
+
+  return useQuery({
+    queryKey: ["numbers-available", filters],
+    queryFn: () => api.request<AvailableNumberOut[]>(`/api/v1/numbers/available${qs ? `?${qs}` : ""}`),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useOrderNumber(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { e164: string; carrier?: string; campaign_id?: string }) =>
+      api.request<NumberOut>("/api/v1/numbers/order", { method: "POST", json: vars }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["numbers"] }),
+  });
+}
+
+export function useReleaseNumber(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (numberId: string) =>
+      api.request<NumberOut>(`/api/v1/numbers/${numberId}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["numbers"] }),
+  });
+}
+
+export function useAssignCampaign(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { numberId: string; campaign_id: string | null }) =>
+      api.request<NumberOut>(`/api/v1/numbers/${vars.numberId}/campaign`, {
+        method: "PATCH",
+        json: { campaign_id: vars.campaign_id },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["numbers"] }),
+  });
+}
+
+export function useBrands(api: ApiClient) {
+  return useQuery({
+    queryKey: ["brands"],
+    queryFn: () => api.request<BrandOut[]>("/api/v1/registration/brands"),
+  });
+}
+
+export function useCampaigns(api: ApiClient) {
+  return useQuery({
+    queryKey: ["campaigns"],
+    queryFn: () => api.request<CampaignOut[]>("/api/v1/registration/campaigns"),
+  });
+}
+
+export function useTollfreeVerifications(api: ApiClient) {
+  return useQuery({
+    queryKey: ["tollfree-verifications"],
+    queryFn: () => api.request<TollfreeOut[]>("/api/v1/registration/tollfree"),
   });
 }
