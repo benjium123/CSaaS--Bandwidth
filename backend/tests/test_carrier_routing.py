@@ -23,7 +23,6 @@ from app.main import create_app
 from app.providers.domain import CarrierError, SendResult
 from app.providers.health import COOLDOWN_SECONDS, FAILURE_THRESHOLD, Breaker
 from app.providers.registry import CarrierRegistry
-from app.routing import router as routing_svc
 from tests.conftest import FakeCarrier, auth_headers, make_org_with_number, register_and_login
 
 BW = "+12145550100"
