@@ -59,12 +59,30 @@ class MessageThread(Base, TenantScoped, TimestampMixin):
     __tablename__ = "message_threads"
     __table_args__ = (
         sa.UniqueConstraint("org_id", "our_e164", "contact_e164", name="uq_threads_org_pair"),
+        sa.Index("ix_threads_org_status_last", "org_id", "status", "last_message_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     our_e164: Mapped[str] = mapped_column(sa.String(20), nullable=False)
     contact_e164: Mapped[str] = mapped_column(sa.String(20), nullable=False)
     last_message_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+
+    # --- P2 conversation state -------------------------------------------------
+    # SET NULL: threads and messages are immutable comms records. Deleting a contact
+    # must never delete the history of what was said.
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(sa.String(8), nullable=False, default="open")
+    assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Read state is DERIVED from this cursor, never counted. A counter incremented from a
+    # webhook handler is exactly the "increment side effect" ARCHITECTURE D6 bans, and it
+    # would drift on replay. A derived count cannot.
+    last_read_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
 

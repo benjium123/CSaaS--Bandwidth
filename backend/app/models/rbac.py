@@ -32,6 +32,7 @@ PERMISSIONS: tuple[str, ...] = (
     "roles:write",
     "inbox:read",
     "inbox:send",
+    "inbox:manage",
     "contacts:read",
     "contacts:write",
     "numbers:read",
@@ -51,7 +52,15 @@ SYSTEM_ROLES: dict[str, list[str]] = {
     "owner": [WILDCARD],
     "admin": [p for p in PERMISSIONS if p not in ("org:delete", "org:billing")],
     # agent deliberately lacks members:read — it gives RBAC a real, tested deny path.
-    "agent": ["inbox:read", "inbox:send", "contacts:read", "contacts:write"],
+    # agent gains inbox:manage in P2 - agents work the inbox. The tested RBAC deny
+    # path stays agent x members:read, so the P0 test is untouched.
+    "agent": [
+        "inbox:read",
+        "inbox:send",
+        "inbox:manage",
+        "contacts:read",
+        "contacts:write",
+    ],
 }
 
 

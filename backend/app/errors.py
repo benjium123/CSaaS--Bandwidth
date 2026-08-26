@@ -98,3 +98,24 @@ class CarrierCapabilityError(CsaasError):
     code = "carrier_capability_unsupported"
     http_status = 501
     message = "The configured carrier does not support this operation"
+
+
+class FeatureUnavailableError(CsaasError):
+    """A feature is correctly implemented but its prerequisite config is absent."""
+
+    code = "feature_unavailable"
+    http_status = 503
+    message = "This feature is not available with the current configuration"
+
+
+class StickySenderUnavailableError(CsaasError):
+    """The number this conversation has always used is no longer active.
+
+    Deliberately loud. Silently sending from a different number is the classic
+    number-pool bug: the recipient sees a stranger, and STOP handling gets confusing.
+    The caller must opt in to reassignment explicitly.
+    """
+
+    code = "sticky_sender_unavailable"
+    http_status = 422
+    message = "The number this conversation uses is no longer active"

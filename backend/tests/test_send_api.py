@@ -170,17 +170,31 @@ async def test_number_is_globally_unique(app_with_carrier):
     assert r.status_code == 409
 
 
-async def test_ambiguous_from_when_org_has_two_numbers(app_with_carrier):
+async def test_two_numbers_no_longer_ambiguous_sticky_picks_one(app_with_carrier):
+    """P2 DR-10 recorded deviation.
+
+    P1 answered 422 when an org had several active numbers and no explicit `from`.
+    P2 replaced that with sticky-sender selection: a brand-new conversation gets a
+    deterministic pick from the pool instead of an error.
+    """
     client, fake, _ = app_with_carrier
     token, org, _ = await make_org_with_number(client, "amb@example.com", "Org A", OUR)
+    second = "+12145550133"
     await client.post(
-        "/api/v1/numbers", json={"e164": "+12145550133"}, headers=auth_headers(token, org["id"])
+        "/api/v1/numbers", json={"e164": second}, headers=auth_headers(token, org["id"])
     )
     r = await client.post(
         "/api/v1/messages",
         json={"to": THEIRS, "body": "hi"},
         headers=auth_headers(token, org["id"]),
     )
-    assert r.status_code == 422
-    assert "multiple active numbers" in r.json()["error"]["message"]
-    assert fake.sent == []
+    assert r.status_code == 201, r.text
+    assert r.json()["from_e164"] in (OUR, second)
+
+    # Deterministic: the same contact always lands on the same number.
+    again = await client.post(
+        "/api/v1/messages",
+        json={"to": THEIRS, "body": "hi again"},
+        headers=auth_headers(token, org["id"]),
+    )
+    assert again.json()["from_e164"] == r.json()["from_e164"]

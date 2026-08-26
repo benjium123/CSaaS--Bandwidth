@@ -33,6 +33,12 @@ def build_carrier(settings) -> MessagingCarrier | None:  # noqa: ANN001
     Returning None rather than raising is deliberate: the app must boot and serve /healthz
     with no carrier configured — that is the R1 reality today.
     """
+    if getattr(settings, "loopback_carrier_enabled", False):
+        # The config validator has already refused production and the both-on case.
+        from app.providers.loopback import LoopbackCarrier
+
+        return LoopbackCarrier()
+
     status = next((p for p in settings.provider_statuses() if p.name == "bandwidth"), None)
     if status is None or not status.enabled:
         return None

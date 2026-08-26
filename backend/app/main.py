@@ -10,10 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import auth as auth_routes
+from app.api.routes import contacts as contact_routes
 from app.api.routes import health as health_routes
+from app.api.routes import inbox as inbox_routes
 from app.api.routes import messages as message_routes
 from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
+from app.api.routes import twofa as twofa_routes
 from app.api.routes import webhooks as webhook_routes
 from app.config import Settings, load_settings
 from app.db.session import dispose_engine, init_engine
@@ -134,7 +137,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_routes.router)
     app.include_router(auth_routes.router)
     app.include_router(org_routes.router)
+    app.include_router(twofa_routes.router)
     app.include_router(number_routes.router)
+    app.include_router(contact_routes.router)
+    app.include_router(inbox_routes.router)
     app.include_router(message_routes.router)
     app.include_router(webhook_routes.router)
     return app

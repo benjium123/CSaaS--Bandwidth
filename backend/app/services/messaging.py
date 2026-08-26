@@ -43,6 +43,7 @@ from app.providers.domain import (
     UnknownEvent,
 )
 from app.providers.segments import estimate
+from app.services.contacts import resolve_or_create_contact
 
 log = structlog.get_logger("messaging")
 
@@ -144,6 +145,8 @@ async def send_message(
     est = estimate(body)
     thread = await upsert_thread(session, org_id, from_e164, to_e164)
     thread.last_message_at = _now()
+    if thread.contact_id is None:
+        thread.contact_id = (await resolve_or_create_contact(session, org_id, to_e164)).id
 
     message = Message(
         id=uuid.uuid4(),
@@ -184,26 +187,15 @@ async def send_message(
 async def resolve_from_number(
     session: AsyncSession, org_id: uuid.UUID, requested: str | None
 ) -> str:
-    """Resolve the sending number. Scoped query — cross-org resolution is structurally
-    impossible thanks to the P0 session guard, so a number owned by another org simply
-    does not exist from here."""
-    stmt = sa.select(OrgNumber).where(OrgNumber.is_active.is_(True))
-    if requested:
-        stmt = stmt.where(OrgNumber.e164 == requested)
-    rows = list((await session.execute(stmt)).scalars().all())
+    """REPLACED IN P2 by ``services.sender.select_sender`` (sticky-sender contract, DR-4).
 
-    if requested:
-        if not rows:
-            raise ValidationFailedError(f"{requested} is not an active number for this org")
-        return rows[0].e164
+    Kept as a loud shim rather than deleted so that any caller missed during the refactor
+    fails immediately and visibly instead of silently picking a number.
+    """
+    raise ValidationFailedError(
+        "resolve_from_number was replaced by select_sender in P2; call that instead"
+    )
 
-    if not rows:
-        raise ValidationFailedError("This org has no active numbers; add one first")
-    if len(rows) > 1:
-        raise ValidationFailedError(
-            "This org has multiple active numbers; specify 'from' explicitly"
-        )
-    return rows[0].e164
 
 
 # --------------------------------------------------------------------------------------
@@ -251,6 +243,14 @@ async def _ingest_inbound(
 
     thread = await upsert_thread(session, org_id, event.our_number, event.from_)
     thread.last_message_at = event.event_time or _now()
+    # Reopen-on-inbound, set inside the SAME transaction as the deduped insert - so a
+    # replayed webhook cannot observably re-reopen anything: the IntegrityError path
+    # rolls this back too.
+    thread.status = "open"
+    if thread.contact_id is None:
+        thread.contact_id = (
+            await resolve_or_create_contact(session, org_id, event.from_)
+        ).id
 
     message = Message(
         id=uuid.uuid4(),

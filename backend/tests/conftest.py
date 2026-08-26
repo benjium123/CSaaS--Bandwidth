@@ -47,6 +47,18 @@ def settings() -> Settings:
 @pytest.fixture
 async def engine(settings: Settings):
     eng = init_engine(settings.database_url)
+    if IS_SQLITE:
+        # SQLite ignores foreign keys unless asked. Without this, ON DELETE SET NULL /
+        # CASCADE silently do nothing locally while working on Postgres - so the local
+        # suite would pass on referential behaviour it never actually exercised.
+        from sqlalchemy import event
+
+        @event.listens_for(eng.sync_engine, "connect")
+        def _fk_on(dbapi_conn, _record):  # noqa: ANN001
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA foreign_keys=ON")
+            cur.close()
+
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -149,7 +161,13 @@ class FakeCarrier:
         self.sent.append(msg)
         if self.scripted:
             return self.scripted.pop(0)
-        return self.default_result
+        if len(self.sent) == 1:
+            # The FIRST send keeps the fixture id so the webhook fixtures match it.
+            return self.default_result
+        # Subsequent sends get unique ids, like a real carrier - otherwise they collide
+        # on uq_messages_provider_id.
+        base = self.default_result
+        return SendResult(base.status, f"{base.provider_message_id}-{len(self.sent)}", None)
 
     def verify_webhook(self, headers, raw_body) -> bool:  # pragma: no cover - unused
         return True
@@ -190,3 +208,65 @@ async def make_org_with_number(
     )
     assert r.status_code == 201, r.text
     return token, org, r.json()
+
+
+# ==================================================================================
+# P2 additions — query counter, loopback carrier, contact/inbox helpers
+# ==================================================================================
+from app.providers.loopback import LoopbackCarrier  # noqa: E402
+
+
+class QueryCounter:
+    """Counts SQL statements. The N+1 gate depends on this being honest."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    @property
+    def count(self) -> int:
+        return len(self.statements)
+
+    def reset(self) -> None:
+        self.statements.clear()
+
+
+@pytest.fixture
+def query_counter(engine):
+    from sqlalchemy import event
+
+    counter = QueryCounter()
+
+    def _before(conn, cursor, statement, parameters, context, executemany):
+        counter.statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", _before)
+    yield counter
+    event.remove(engine.sync_engine, "before_cursor_execute", _before)
+
+
+@pytest.fixture
+async def app_with_loopback(engine, webhook_settings):
+    """App wired with a deterministic LoopbackCarrier (auto=False → drive via drain())."""
+    application = create_app(webhook_settings)
+    carrier = LoopbackCarrier(auto=False)
+    application.state.carrier = carrier
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c, carrier, application
+
+
+async def create_contact(
+    client: httpx.AsyncClient, token: str, org_id, name: str, phones: list[str] | None = None
+) -> dict:
+    body: dict = {"display_name": name, "phones": []}
+    for i, p in enumerate(phones or []):
+        body["phones"].append({"e164": p, "label": "mobile", "is_primary": i == 0})
+    r = await client.post("/api/v1/contacts", json=body, headers=auth_headers(token, org_id))
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+async def create_tag(client: httpx.AsyncClient, token: str, org_id, name: str) -> dict:
+    r = await client.post("/api/v1/tags", json={"name": name}, headers=auth_headers(token, org_id))
+    assert r.status_code == 201, r.text
+    return r.json()

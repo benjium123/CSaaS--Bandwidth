@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     telnyx_voice_connection_id: str = ""
     telnyx_default_number: str = ""
 
+    # DEV/DEMO ONLY. See providers/loopback.py. The validator below refuses it in
+    # production and refuses it alongside a real carrier.
+    loopback_carrier_enabled: bool = False
+
     # ---------------- AI ----------------
     anthropic_api_key: SecretStr = SecretStr("")
     openai_api_key: SecretStr = SecretStr("")
@@ -151,6 +155,17 @@ class Settings(BaseSettings):
                 problems.append("PUBLIC_BASE_URL still points at the example placeholder")
             if "csaas:csaas@" in self.database_url:
                 problems.append("DATABASE_URL still uses the default development credentials")
+            if self.loopback_carrier_enabled:
+                problems.append(
+                    "LOOPBACK_CARRIER_ENABLED must be false in production - it is a fake "
+                    "carrier that never touches the PSTN"
+                )
+
+        if self.loopback_carrier_enabled and self.bandwidth_enabled:
+            problems.append(
+                "LOOPBACK_CARRIER_ENABLED and BANDWIDTH_ENABLED are both true - which "
+                "carrier should send? Disable one."
+            )
 
         if problems:
             raise ConfigurationError(

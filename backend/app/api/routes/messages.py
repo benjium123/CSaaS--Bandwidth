@@ -14,6 +14,7 @@ from app.errors import NotFoundError
 from app.models import Message, MessageThread
 from app.providers.base import get_carrier
 from app.services import messaging as svc
+from app.services.sender import select_sender
 
 router = APIRouter(prefix="/api/v1", tags=["messaging"])
 
@@ -22,6 +23,9 @@ class SendIn(BaseModel):
     to: str = Field(min_length=3, max_length=32)
     body: str = Field(min_length=1, max_length=4000)
     from_: str | None = Field(default=None, alias="from", max_length=32)
+    # Opt in to moving a conversation to a different number when its sticky number has
+    # been retired. Without this the send fails loudly rather than silently jumping.
+    allow_reassign: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -76,8 +80,12 @@ async def send(
     resource rather than branching on HTTP status.
     """
     to_norm = to_e164(payload.to)
-    from_norm = await svc.resolve_from_number(
-        ctx.session, ctx.org.id, to_e164(payload.from_) if payload.from_ else None
+    from_norm = await select_sender(
+        ctx.session,
+        ctx.org.id,
+        to_norm,
+        requested=to_e164(payload.from_) if payload.from_ else None,
+        allow_reassign=payload.allow_reassign,
     )
     message = await svc.send_message(
         ctx.session, ctx.org.id, carrier, to_e164=to_norm, from_e164=from_norm, body=payload.body
@@ -113,12 +121,16 @@ async def list_threads(
 async def list_messages(
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:read"))],
     thread_id: uuid.UUID | None = None,
+    after: datetime | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> list[MessageOut]:
     stmt = sa.select(Message).order_by(Message.created_at.asc()).limit(limit).offset(offset)
     if thread_id is not None:
         stmt = stmt.where(Message.thread_id == thread_id)
+    if after is not None:
+        # Keyset for polling: each poll transfers only what is new.
+        stmt = stmt.where(Message.created_at > after)
     rows = (await ctx.session.execute(stmt)).scalars().all()
     return [_out(m) for m in rows]
 

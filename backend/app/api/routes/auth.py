@@ -8,7 +8,13 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
-from app.auth.security import create_access_token, hash_password, needs_rehash, verify_password
+from app.auth.security import (
+    create_access_token,
+    create_pending_2fa_token,
+    hash_password,
+    needs_rehash,
+    verify_password,
+)
 from app.config import Settings
 from app.db.session import get_session
 from app.errors import UnauthenticatedError
@@ -31,8 +37,11 @@ class LoginIn(BaseModel):
 
 
 class TokenOut(BaseModel):
-    access_token: str
+    access_token: str | None = None
     token_type: str = "bearer"
+    # When 2FA is enabled the password step alone is NOT a login.
+    requires_2fa: bool = False
+    pending_token: str | None = None
 
 
 class MembershipOut(BaseModel):
@@ -84,6 +93,14 @@ async def login(
     if needs_rehash(user.hashed_password):
         user.hashed_password = hash_password(payload.password)
         await session.commit()
+
+    if user.totp_enabled:
+        return TokenOut(
+            requires_2fa=True,
+            pending_token=create_pending_2fa_token(
+                user.id, settings.jwt_secret.get_secret_value()
+            ),
+        )
 
     token = create_access_token(
         user.id,

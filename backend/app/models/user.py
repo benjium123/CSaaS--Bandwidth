@@ -25,5 +25,14 @@ class User(Base, TimestampMixin):
     full_name: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
 
+    # --- P2 2FA/TOTP ------------------------------------------------------------
+    # Fernet-encrypted with CREDENTIAL_ENCRYPTION_KEY - the first real consumer of that
+    # key. There is deliberately NO plaintext fallback branch: branching secret storage
+    # is bug bait, so enrollment 503s when the key is absent.
+    totp_secret: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    totp_enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    # Blocks replay of a code that was just accepted.
+    totp_last_used_step: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+
     def __repr__(self) -> str:
         return f"<User {self.email}>"
