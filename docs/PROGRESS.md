@@ -4,9 +4,9 @@
 > and whenever a decision or a blocker changes. If it disagrees with your memory, this file
 > is right.
 
-**Last updated:** 2026-08-26 — P2a implementation
-**Current phase:** P2a — **code complete: 139 backend + 17 frontend tests green.**
-P1b and P2b both blocked on R1.
+**Last updated:** 2026-08-26 — P3 compliance core
+**Current phase:** P3 — **compliance core done (199 backend tests green, CI green).**
+Media pipeline + routes + frontend still to do. P1b/P2b/P3b blocked on R1.
 **Current blocker:** R1 — confirm Bandwidth account path to production
 
 ### P0 remaining before sign-off (all need the user, not more code)
@@ -54,7 +54,8 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P1b | Live SMS round-trip | 🔴 blocked on R1 | — | — | — |
 | P2a | Contacts, inbox console, sticky sender, 2FA | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `798245b` |
 | P2b | Console live on VPS | 🔴 blocked on R1 | — | — | — |
-| P3 | MMS + compliance core | ⬜ not started | — | — | — |
+| P3-core | Compliance: opt-out, keywords, quiet hours, DNC | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `69f9278` |
+| P3-rest | MMS media pipeline, routes, templates UI | 🟡 in progress | — | — | — |
 | P4 | Numbers + 10DLC + TFV | ⬜ not started | — | — | — |
 | P5 | Voice core | ⬜ not started | — | — | — |
 | P6 | Browser softphone | ⬜ not started | — | — | — |
@@ -83,7 +84,7 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 | WS-5 | AI SMS Agent | ⬜ | |
 | WS-6 | Outbound Engine | ⬜ | |
 | WS-7 | Console | 🔵 React+Vite+TS inbox, contacts, numbers, security pages | |
-| WS-8 | Compliance | 🟡 compliance SEAM cut and pinned by tests; no logic yet (P3) | |
+| WS-8 | Compliance | 🔵 gate filled in: ledger, keywords, quiet hours, DNC, auto-replies | |
 | WS-9 | Platform Services | ⬜ | |
 | WS-10 | DevOps | 🔵 CI + Dockerfile + compose + deploy.sh written; deploy not yet run | |
 
@@ -312,3 +313,56 @@ Use that instead of trying to fetch logs.
 
 **Next step:** P3 (MMS + compliance core) can start on P2a — it consumes the seam and the
 models. P2b needs R1.
+
+---
+
+### Session 2026-08-26 (cont.) — P3 compliance core
+**Phase:** P3 (Fable refined `docs/plans/phase-3-plan.md` first)
+
+**Did:** append-only consent ledger, whole-message keyword engine, recipient-timezone quiet
+hours with DST, internal DNC + scrub, honest federal-DNC stub, compliance audit ledger,
+auto-replies, defer/hold + `release_held_messages`, `ObjectStore` seam (LocalFS +
+InMemory), template renderer, migration `0004`. **199 backend tests green; all 5 CI jobs
+green including Postgres.**
+
+**CARRIER REALITY CHANGED — READ THIS BEFORE PLANNING P4/P5.**
+The Bandwidth account (ID **9903389**, Bandwidth Build, 3,000 credits) is **Voice + Numbers
+only — no Messaging**. The user is registering 10DLC on **Telnyx** for SMS. So the real
+shape is **Telnyx for SMS, Bandwidth for voice**, inverting the plan's assumption.
+Consequences:
+- **P4 (10DLC) and P1b (live SMS) cannot be validated on the Bandwidth account.**
+- **A Telnyx messaging adapter moves from P14 to next-up** — it is the only way to
+  validate any SMS work end to end. The CAL was deliberately modelled Telnyx-shaped
+  (D2), so this is a new adapter file, not a refactor.
+- **P5 (voice) is what the Bandwidth account CAN validate.**
+Recommended order from here: **Telnyx messaging adapter → P5 voice → P4 numbers/10DLC.**
+Not yet applied to PHASES.md — awaiting the user's call.
+
+**Bandwidth API credentials do NOT authenticate.** Client ID `CLI-6a83e246-…` + secret are
+in `.env`, but all 8 probes return 401 (OAuth2 with/without scope, header and body creds,
+Dashboard/IRIS, Messaging, Voice, and reversed ID/secret). `id.bandwidth.com` returns a
+Bandwidth-shaped error, so they are recognised and rejected — most likely the secret needs
+regenerating (Account → API Credentials).
+
+**Domain:** `sabinepropertygroup.net` → 145.79.24.121 and `www` → 145.79.24.167 (the
+website host), **not** the CSaaS VPS. Webhook URLs must use a new `api.` subdomain
+A-record'd to 144.126.152.175. Until deployed, use webhook.site for carrier webhook fields.
+
+**DELEGATION FIX worth keeping:** `claude_tools/delegate.py` caps DeepSeek at 4000
+max_tokens. V4 Pro is a REASONING model whose reasoning tokens come out of that same
+budget, so on any large file it burns the budget thinking and returns an **empty string
+with exit code 0** — which is why DeepSeek looked useless. A wrapper that requests a large
+budget, checks `finish_reason`, and fails loudly lives in the session scratchpad
+(`dspro.py`, with `pro`/`flash` tiers). Observed: a big factual table made Pro spend
+16000/16000 tokens on reasoning and emit nothing — reasoning models are the wrong tool for
+bulk factual recall; use Flash for mechanical work.
+
+**Two seam-contract saves.** The frozen `test_compliance_seam.py` caught both: passing
+`exemption=` unconditionally, and adding a 4th positional arg to `on_inbound`. P1/P2's
+three-argument spies must keep working, so the fix was conditional kwargs and routing the
+carrier through `session.info` — *not* editing the tests, which would have been editing
+the evidence.
+
+**Still to do in P3:** media pipeline (upload, signed URLs, `fetch_pending_media` outside
+the webhook path), sweeper loop, API routes (compliance/media/templates), and the frontend
+surfaces (attachments, opt-out banner, compliance page).
