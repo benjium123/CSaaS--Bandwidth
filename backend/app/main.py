@@ -11,11 +11,15 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import auth as auth_routes
 from app.api.routes import health as health_routes
+from app.api.routes import messages as message_routes
+from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
+from app.api.routes import webhooks as webhook_routes
 from app.config import Settings, load_settings
 from app.db.session import dispose_engine, init_engine
 from app.errors import CsaasError
 from app.logging import configure_logging
+from app.providers.base import build_carrier
 
 VERSION = "0.1.0"
 
@@ -40,9 +44,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         _log_provider_report(settings)
         init_engine(settings.database_url)
+        # None when Bandwidth is not configured — the app must still boot and serve
+        # /healthz. Sending then answers 503 carrier_not_configured.
+        app.state.carrier = build_carrier(settings)
+        structlog.get_logger("startup").info(
+            "carrier_configured", carrier=getattr(app.state.carrier, "name", None)
+        )
         try:
             yield
         finally:
+            carrier = getattr(app.state, "carrier", None)
+            if carrier is not None and hasattr(carrier, "aclose"):
+                await carrier.aclose()
             await dispose_engine()
 
     app = FastAPI(
@@ -51,6 +64,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    # Set eagerly too: tests drive the app without running lifespan, and override it.
+    app.state.carrier = build_carrier(settings)
 
     if settings.cors_origin_list:
         app.add_middleware(
@@ -119,6 +134,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_routes.router)
     app.include_router(auth_routes.router)
     app.include_router(org_routes.router)
+    app.include_router(number_routes.router)
+    app.include_router(message_routes.router)
+    app.include_router(webhook_routes.router)
     return app
 
 

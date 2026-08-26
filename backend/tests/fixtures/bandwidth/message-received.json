@@ -1,0 +1,20 @@
+[
+  {
+    "time": "2026-08-26T15:04:05.123Z",
+    "type": "message-received",
+    "to": "+12145550100",
+    "description": "Incoming message received",
+    "message": {
+      "id": "1755000000000-inbound-aaaa",
+      "owner": "+12145550100",
+      "applicationId": "93de2206-9669-4e07-948d-329f4b722ee2",
+      "time": "2026-08-26T15:04:05.000Z",
+      "segmentCount": 1,
+      "direction": "in",
+      "to": ["+12145550100"],
+      "from": "+19725550199",
+      "text": "Yes I am still interested",
+      "channel": "sms"
+    }
+  }
+]

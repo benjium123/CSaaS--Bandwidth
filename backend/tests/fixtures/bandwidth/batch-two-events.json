@@ -1,0 +1,44 @@
+[
+  {
+    "time": "2026-08-26T15:05:00.100Z",
+    "type": "message-sending",
+    "to": "+19725550199",
+    "description": "Message is sending",
+    "message": {
+      "id": "1755000000000-outbound-bbbb",
+      "owner": "+12145550100",
+      "applicationId": "93de2206-9669-4e07-948d-329f4b722ee2",
+      "time": "2026-08-26T15:05:00.000Z",
+      "segmentCount": 1,
+      "direction": "out",
+      "to": [
+        "+19725550199"
+      ],
+      "from": "+12145550100",
+      "text": "Thanks - what is your best price?",
+      "tag": "PLACEHOLDER_TAG",
+      "channel": "sms"
+    }
+  },
+  {
+    "time": "2026-08-26T15:05:02.400Z",
+    "type": "message-delivered",
+    "to": "+19725550199",
+    "description": "Message delivered to carrier",
+    "message": {
+      "id": "1755000000000-outbound-bbbb",
+      "owner": "+12145550100",
+      "applicationId": "93de2206-9669-4e07-948d-329f4b722ee2",
+      "time": "2026-08-26T15:05:00.000Z",
+      "segmentCount": 1,
+      "direction": "out",
+      "to": [
+        "+19725550199"
+      ],
+      "from": "+12145550100",
+      "text": "Thanks - what is your best price?",
+      "tag": "PLACEHOLDER_TAG",
+      "channel": "sms"
+    }
+  }
+]

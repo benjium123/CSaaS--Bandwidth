@@ -18,6 +18,7 @@ dependencies = [
     "argon2-cffi>=23.1",
     "cryptography>=43",
     "python-multipart>=0.0.17",
+    "phonenumbers>=8.13",
 ]
 
 [project.optional-dependencies]
@@ -67,5 +68,6 @@ testpaths = ["tests"]
 addopts = "--strict-markers"
 markers = [
     "pg_only: test requires real PostgreSQL semantics; skipped on the SQLite backend",
+    "live_carrier: test hits a REAL carrier; skipped unless BANDWIDTH_LIVE_TEST=1 with real creds",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]

@@ -97,3 +97,96 @@ async def create_org(client: httpx.AsyncClient, token: str, name: str) -> dict:
     r = await client.post("/api/v1/orgs", json={"name": name}, headers=auth_headers(token))
     assert r.status_code == 201, r.text
     return r.json()
+
+
+# ==================================================================================
+# P1 additions — fixtures, FakeCarrier, webhook helpers
+# ==================================================================================
+import json  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from app.providers.domain import (  # noqa: E402
+    CarrierCapabilities,
+    OutboundMessage,
+    SendResult,
+)
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "bandwidth"
+
+WEBHOOK_USER = "bw-hook-user"
+WEBHOOK_PASS = "bw-hook-pass"
+
+
+def load_fixture(name: str) -> list | dict:
+    return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
+
+
+def fixture_bytes(name: str) -> bytes:
+    return (FIXTURE_DIR / name).read_bytes()
+
+
+def webhook_auth_headers(user: str = WEBHOOK_USER, password: str = WEBHOOK_PASS) -> dict:
+    import base64
+
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+
+
+@dataclass
+class FakeCarrier:
+    """Records every OutboundMessage and returns scripted SendResults."""
+
+    name: str = "bandwidth"
+    capabilities: CarrierCapabilities = field(default_factory=CarrierCapabilities)
+    sent: list = field(default_factory=list)
+    scripted: list = field(default_factory=list)
+    default_result: SendResult = field(
+        default_factory=lambda: SendResult("accepted", "1755000000000-outbound-bbbb", None)
+    )
+
+    async def send_message(self, msg: OutboundMessage) -> SendResult:
+        self.sent.append(msg)
+        if self.scripted:
+            return self.scripted.pop(0)
+        return self.default_result
+
+    def verify_webhook(self, headers, raw_body) -> bool:  # pragma: no cover - unused
+        return True
+
+    def parse_webhook(self, raw_body):  # pragma: no cover - unused
+        from app.providers.bandwidth import webhooks
+
+        return webhooks.parse(raw_body)
+
+
+@pytest.fixture
+def webhook_settings() -> Settings:
+    return make_settings(
+        bandwidth_webhook_username=WEBHOOK_USER,
+        bandwidth_webhook_password=WEBHOOK_PASS,
+    )
+
+
+@pytest.fixture
+async def app_with_carrier(engine, webhook_settings):
+    """App wired with a FakeCarrier. Returns (client, fake_carrier)."""
+    application = create_app(webhook_settings)
+    fake = FakeCarrier()
+    application.state.carrier = fake
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c, fake, application
+
+
+async def make_org_with_number(
+    client: httpx.AsyncClient, email: str, org_name: str, e164: str
+) -> tuple[str, dict, dict]:
+    """register -> login -> create org -> add a number. Returns (token, org, number)."""
+    token = await register_and_login(client, email)
+    org = await create_org(client, token, org_name)
+    r = await client.post(
+        "/api/v1/numbers", json={"e164": e164}, headers=auth_headers(token, org["id"])
+    )
+    assert r.status_code == 201, r.text
+    return token, org, r.json()

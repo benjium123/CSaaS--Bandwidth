@@ -72,3 +72,29 @@ class ConfigurationError(CsaasError):
     code = "configuration_error"
     http_status = 500
     message = "Invalid configuration"
+
+
+class CarrierNotConfiguredError(CsaasError):
+    """No messaging carrier is configured. This is the R1 reality until Bandwidth
+    credentials exist: the app boots and serves /healthz, but sending is a 503."""
+
+    code = "carrier_not_configured"
+    http_status = 503
+    message = "No messaging carrier is configured"
+
+
+class ComplianceBlockedError(CsaasError):
+    code = "compliance_blocked"
+    http_status = 422
+    message = "Blocked by compliance policy"
+
+
+class CarrierCapabilityError(CsaasError):
+    """The selected carrier cannot express the requested operation.
+
+    Callers should consult ``carrier.capabilities`` first rather than discovering this.
+    """
+
+    code = "carrier_capability_unsupported"
+    http_status = 501
+    message = "The configured carrier does not support this operation"

@@ -4,8 +4,8 @@
 > and whenever a decision or a blocker changes. If it disagrees with your memory, this file
 > is right.
 
-**Last updated:** 2026-08-26 — P0 implementation
-**Current phase:** P0 — **code complete, local + CI/Postgres green.** Awaiting R1 + VPS deploy.
+**Last updated:** 2026-08-26 — P1a implementation
+**Current phase:** P1a — **code complete, 99 tests green.** P1b blocked on R1.
 **Current blocker:** R1 — confirm Bandwidth account path to production
 
 ### P0 remaining before sign-off (all need the user, not more code)
@@ -49,7 +49,8 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | Phase | Name | Status | Gate passed | Deployed | Commit |
 |---|---|---|---|---|---|
 | P0 | Foundation | 🔵 in review | local ✅ / CI+PG ✅ / VPS ⬜ | ⬜ pending | `5c73dc9` |
-| P1 | Carrier layer + first SMS | ⬜ not started | — | — | — |
+| P1a | Carrier layer + ingestion (fixtures) | 🔵 in review | local ✅ | n/a | (see git log) |
+| P1b | Live SMS round-trip | 🔴 blocked on R1 | — | — | — |
 | P2 | Contacts / conversations / inbox | ⬜ not started | — | — | — |
 | P3 | MMS + compliance core | ⬜ not started | — | — | — |
 | P4 | Numbers + 10DLC + TFV | ⬜ not started | — | — | — |
@@ -73,14 +74,14 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 | WS | Workstream | Status | Notes |
 |---|---|---|---|
 | WS-0 | Foundation | 🔵 code complete — tenancy, RBAC, settings, auth, errors, logging | |
-| WS-1 | Carrier Abstraction Layer | ⬜ | |
-| WS-2 | Messaging | ⬜ | |
+| WS-1 | Carrier Abstraction Layer | 🔵 CAL + Bandwidth messaging adapter + webhook ingestion | |
+| WS-2 | Messaging | 🔵 messages/threads/events schema, state machine, send + read API | |
 | WS-3 | Voice Core | ⬜ | |
 | WS-4 | Media & AI Voice Agent | ⬜ | |
 | WS-5 | AI SMS Agent | ⬜ | |
 | WS-6 | Outbound Engine | ⬜ | |
 | WS-7 | Console | ⬜ | |
-| WS-8 | Compliance | ⬜ | |
+| WS-8 | Compliance | 🟡 compliance SEAM cut and pinned by tests; no logic yet (P3) | |
 | WS-9 | Platform Services | ⬜ | |
 | WS-10 | DevOps | 🔵 CI + Dockerfile + compose + deploy.sh written; deploy not yet run | |
 
@@ -198,3 +199,43 @@ before that.
 
 **Blockers:** R1 (Bandwidth account → production). VPS deploy not run — deliberately left
 for a supervised run since the box is production for other businesses.
+
+---
+
+### Session 2026-08-26 (cont.) — P1a
+**Phase:** P1a (Fable refined `docs/plans/phase-1-plan.md` first, splitting P1 around R1)
+
+**Did:** Carrier Abstraction Layer (`MessagingCarrier` protocol + frozen domain objects),
+Bandwidth messaging adapter (direct REST, no SDK), pure webhook parse/verify, segment
+estimator, 5-table messaging schema with a DB-constraint idempotency ledger, monotonic
+message state machine, send + read + numbers API, compliance seam, migration `0002`,
+nginx reference config, live-carrier suite and smoke script.
+
+**Tests (actual output):**
+```
+$ python -m pytest -q
+99 passed, 4 skipped in 9.61s     # skips = 2 pg_only + 2 live_carrier, all by design
+$ python -m ruff check .
+All checks passed!
+$ alembic upgrade head --sql      # renders uq_msg_events_dedupe, uq_messages_provider_id, ...
+```
+
+**Mutation-tested the gate rather than trusting a first-run pass.** Removing the
+monotonic-rank guard → unit tests fail. Removing terminal-immutability → **everything still
+passed.** Cause: every terminal status has rank 30, so `rank(new) <= rank(current)` already
+blocks equal-rank terminals — the two guards deliberately overlap. Removing BOTH fails 10
+tests including both integration gates, so the tests are not vacuous. Added
+`test_conflicting_terminal_does_not_overwrite` to cover `failed`-after-`delivered`
+explicitly.
+
+**Design notes worth remembering:**
+- A DLR for an unknown message id returns **500 on purpose** — the webhook can beat our own
+  commit, and Bandwidth's 24 h retry heals the race. Silently 200-ing would drop real deliveries.
+- Idempotency is a **unique constraint**, not an application check: Bandwidth publishes no
+  event id and retries in parallel, so only the DB is safe.
+- Carrier rejection returns **HTTP 201 with `status="rejected"`**, not an HTTP error.
+
+**Next step:** P2 (contacts + conversations + inbox) can start on P1a — it consumes the
+models and API, not the live carrier. P1b completes whenever R1 does.
+
+**Blockers:** R1 unchanged.
