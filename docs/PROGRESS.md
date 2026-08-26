@@ -49,7 +49,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | Phase | Name | Status | Gate passed | Deployed | Commit |
 |---|---|---|---|---|---|
 | P0 | Foundation | 🔵 in review | local ✅ / CI+PG ✅ / VPS ⬜ | ⬜ pending | `5c73dc9` |
-| P1a | Carrier layer + ingestion (fixtures) | 🔵 in review | local ✅ | n/a | (see git log) |
+| P1a | Carrier layer + ingestion (fixtures) | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `d6b5f59` |
 | P1b | Live SMS round-trip | 🔴 blocked on R1 | — | — | — |
 | P2 | Contacts / conversations / inbox | ⬜ not started | — | — | — |
 | P3 | MMS + compliance core | ⬜ not started | — | — | — |
@@ -237,5 +237,9 @@ explicitly.
 
 **Next step:** P2 (contacts + conversations + inbox) can start on P1a — it consumes the
 models and API, not the live carrier. P1b completes whenever R1 does.
+
+**CI:** all 4 jobs green on `d6b5f59`. The Postgres job matters most here — it is the only
+one that runs `test_concurrent_duplicate_ingest_pg`, proving the IntegrityError dedupe path
+holds under TRUE parallelism. SQLite serializes writes and cannot exercise it.
 
 **Blockers:** R1 unchanged.
