@@ -53,7 +53,11 @@ async def bandwidth_messaging(
 
     outcomes = []
     for event in events:
-        outcomes.append(await svc.ingest_event(session, CARRIER, event, body_text))
+        outcomes.append(
+            await svc.ingest_event(
+                session, CARRIER, event, body_text, getattr(request.app.state, "carrier", None)
+            )
+        )
 
     if svc.Outcome.RETRY in outcomes:
         # Deliberate 500: at least one DLR referenced a message we have not committed yet.

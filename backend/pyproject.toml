@@ -20,6 +20,9 @@ dependencies = [
     "python-multipart>=0.0.17",
     "phonenumbers>=8.13",
     "pyotp>=2.9",
+    # zoneinfo has no tz database on Windows or slim containers; without this,
+    # ZoneInfo("America/Chicago") raises and quiet hours cannot be evaluated.
+    "tzdata>=2024.2",
 ]
 
 [project.optional-dependencies]

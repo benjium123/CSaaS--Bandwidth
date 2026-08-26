@@ -42,6 +42,10 @@ class Contact(Base, TenantScoped, TimestampMixin):
     company_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("companies.id", ondelete="SET NULL"), nullable=True
     )
+    # Explicit IANA timezone. Always wins over area-code inference, because AREA CODE IS
+    # NOT LOCATION - a Dallas 214 number can live in Berlin. Quiet hours must respect the
+    # human, not the digits.
+    timezone: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     # Custom-field VALUES. Definitions live in custom_field_defs. JSON, not EAV: v1 has no
     # per-field indexed query requirement, and EAV would cost joins + SQLite parity for
     # nothing we ship this year.

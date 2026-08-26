@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -16,6 +17,24 @@ TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"
 IS_SQLITE = TEST_DB_URL.startswith("sqlite")
 
 TEST_JWT_SECRET = "test-jwt-secret-not-a-real-one-padded-to-32+bytes"
+
+
+# ----------------------------------------------------------------------------------
+# FROZEN COMPLIANCE CLOCK  (P3 DR-4)
+# ----------------------------------------------------------------------------------
+# Quiet hours are evaluated in the RECIPIENT's local time, so without this every send
+# test in the suite would pass or fail depending on the wall-clock hour CI happened to
+# run at. 2026-06-15 18:00Z is 13:00 CDT / 14:00 EDT / 11:00 PDT / 08:00 HST - inside the
+# allowed window in every zone the fixtures use.
+FROZEN_NOW = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def frozen_compliance_clock(monkeypatch):
+    from app.compliance import quiet_hours
+
+    monkeypatch.setattr(quiet_hours, "_now", lambda: FROZEN_NOW)
+    return FROZEN_NOW
 
 
 def pytest_collection_modifyitems(config, items):
@@ -34,6 +53,9 @@ def make_settings(**overrides) -> Settings:
         "session_secret": "test-session-secret",
         "database_url": TEST_DB_URL,
         "cors_origins": "http://localhost:5173",
+        # The sweeper is an interim in-process loop; tests drive its functions directly.
+        "sweeper_enabled": False,
+        "media_store_backend": "memory",
     }
     base.update(overrides)
     return Settings(**base)

@@ -48,6 +48,8 @@ from app.services.contacts import resolve_or_create_contact
 log = structlog.get_logger("messaging")
 
 CARRIER_DEFAULT = "bandwidth"
+#: Where the active carrier is stashed for code reached from ingestion (auto-replies).
+CARRIER_SESSION_KEY = "carrier"
 
 
 class Outcome(enum.Enum):
@@ -129,6 +131,7 @@ async def send_message(
     to_e164: str,
     from_e164: str,
     body: str,
+    exemption: str | None = None,
 ) -> Message:
     """Create and dispatch one outbound message.
 
@@ -136,10 +139,18 @@ async def send_message(
     races back in beats nothing — it finds the row, or (if it truly beats the commit) is
     told to retry.
     """
+    # Pass `exemption` ONLY when set. The seam's contract (P1/P2) is that a plain
+    # three-argument stand-in for check_outbound keeps working - test spies and any future
+    # wrapper are written that way - so a normal send must not force a keyword onto them.
+    gate_kwargs = {"exemption": exemption} if exemption else {}
     verdict = await gate.check_outbound(
-        session, org_id, gate.OutboundDraft(to_e164=to_e164, from_e164=from_e164, body=body)
+        session,
+        org_id,
+        gate.OutboundDraft(to_e164=to_e164, from_e164=from_e164, body=body),
+        **gate_kwargs,
     )
-    if not verdict.allowed:
+    deferred_until = getattr(verdict, "defer_until", None)
+    if not verdict.allowed and deferred_until is None:
         raise ComplianceBlockedError(verdict.reason or "Blocked by compliance policy")
 
     est = estimate(body)
@@ -161,11 +172,39 @@ async def send_message(
         carrier=getattr(carrier, "name", CARRIER_DEFAULT),
         segment_count_est=est.segments,
     )
+    if deferred_until is not None:
+        # QUIET HOURS: defer, do not drop. The row exists and is queued; the sweeper
+        # releases it and RE-RUNS THE FULL GATE, so an opt-out arriving during the hold
+        # still kills the send. Gate at dispatch, never only at enqueue.
+        message.hold_until = deferred_until
+        session.add(message)
+        await session.commit()
+        return message
+
     session.add(message)
     await session.commit()
 
+    return await _dispatch_to_carrier(session, org_id, carrier, message)
+
+
+async def _dispatch_to_carrier(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    carrier,  # noqa: ANN001
+    message: Message,
+) -> Message:
+    """Hand one persisted message to the carrier and record the outcome.
+
+    Factored out so release_held_messages shares the accepted/rejected handling verbatim -
+    a held message must behave exactly like an immediate one once it is released.
+    """
     result = await carrier.send_message(
-        OutboundMessage(to=to_e164, from_=from_e164, text=body, tag=str(message.id))
+        OutboundMessage(
+            to=message.to_e164,
+            from_=message.from_e164,
+            text=message.body or "",
+            tag=str(message.id),
+        )
     )
 
     set_org_context(session, org_id)
@@ -173,15 +212,75 @@ async def send_message(
     if result.status == "accepted":
         message.status = "accepted"
         message.provider_message_id = result.provider_message_id
+        message.hold_until = None
     else:
         # Carrier rejection is DATA, not an HTTP error (DR-7). The client reads one uniform
         # resource whether the carrier accepted, refused, or was unreachable.
         message.status = "rejected"
+        message.hold_until = None
         if result.error:
             message.error_code = (result.error.carrier_code or result.error.category)[:32]
             message.error_detail = result.error.detail[:255] or None
     await session.commit()
     return message
+
+
+async def release_held_messages(
+    session: AsyncSession,
+    carrier,  # noqa: ANN001
+    now: datetime | None = None,
+) -> int:
+    """Release messages whose quiet-hours hold has expired.
+
+    Re-runs the FULL gate before dispatching. That is the contract P11's scheduler
+    inherits: an opt-out that lands while a message is held must still stop it.
+    """
+    moment = now or _now()
+    bind_moment = moment.replace(tzinfo=None) if _is_sqlite(session) else moment
+    stmt = (
+        sa.select(Message)
+        .where(
+            Message.status == "queued",
+            Message.hold_until.is_not(None),
+            Message.hold_until <= bind_moment,
+        )
+        .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    )
+    held = list((await session.execute(stmt)).scalars().all())
+
+    released = 0
+    for message in held:
+        org_id = message.org_id
+        set_org_context(session, org_id)
+        verdict = await gate.check_outbound(
+            session,
+            org_id,
+            gate.OutboundDraft(
+                to_e164=message.to_e164,
+                from_e164=message.from_e164,
+                body=message.body or "",
+            ),
+        )
+        defer_until = getattr(verdict, "defer_until", None)
+        if not verdict.allowed and defer_until is None:
+            message.status = "rejected"
+            message.hold_until = None
+            message.error_code = f"{verdict.reason or 'blocked'}_while_held"[:32]
+            await session.commit()
+            continue
+        if defer_until is not None:
+            # Released on a boundary that is still quiet somewhere. Keep waiting.
+            message.hold_until = defer_until
+            await session.commit()
+            continue
+
+        await _dispatch_to_carrier(session, org_id, carrier, message)
+        released += 1
+    return released
+
+
+def _is_sqlite(session: AsyncSession) -> bool:
+    return session.get_bind().dialect.name == "sqlite"
 
 
 async def resolve_from_number(
@@ -209,14 +308,18 @@ async def dead_letter(session: AsyncSession, carrier: str, reason: str, payload:
 
 
 async def ingest_event(
-    session: AsyncSession, carrier_name: str, event: CarrierEvent, raw_body: str
+    session: AsyncSession,
+    carrier_name: str,
+    event: CarrierEvent,
+    raw_body: str,
+    carrier=None,  # noqa: ANN001 - needed only so inbound keywords can auto-reply
 ) -> Outcome:
     """Process ONE event in its own transaction. One bad event must not poison a batch."""
     if isinstance(event, UnknownEvent):
         await dead_letter(session, carrier_name, "unknown_event_type", raw_body)
         return Outcome.DEAD_LETTER
     if isinstance(event, InboundMessage):
-        return await _ingest_inbound(session, carrier_name, event, raw_body)
+        return await _ingest_inbound(session, carrier_name, event, raw_body, carrier)
     if isinstance(event, DeliveryReceipt):
         return await _ingest_dlr(session, carrier_name, event)
     await dead_letter(session, carrier_name, "unhandled_event", raw_body)
@@ -224,7 +327,11 @@ async def ingest_event(
 
 
 async def _ingest_inbound(
-    session: AsyncSession, carrier_name: str, event: InboundMessage, raw_body: str
+    session: AsyncSession,
+    carrier_name: str,
+    event: InboundMessage,
+    raw_body: str,
+    carrier=None,  # noqa: ANN001
 ) -> Outcome:
     # JUSTIFIED allow_unscoped: pre-tenant-resolution. An inbound webhook carries no org;
     # this lookup IS what resolves it, and it is constrained to one exact number.
@@ -288,6 +395,11 @@ async def _ingest_inbound(
         await session.rollback()
         return Outcome.DONE
 
+    # The carrier travels on the session, NOT in the signature. on_inbound's three-argument
+    # shape is pinned by the P1/P2 seam tests, and those spies must keep working unmodified
+    # - that is the evidence the seam held. session.info is already how org context flows.
+    if carrier is not None:
+        session.info[CARRIER_SESSION_KEY] = carrier
     await gate.on_inbound(session, org_id, message.id)
     await session.commit()
     return Outcome.DONE

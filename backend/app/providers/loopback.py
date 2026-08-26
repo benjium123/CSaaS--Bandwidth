@@ -115,7 +115,7 @@ class LoopbackCarrier:
 
         for event in events:
             async with get_sessionmaker()() as session:
-                await svc.ingest_event(session, CARRIER_NAME, event, "{}")
+                await svc.ingest_event(session, CARRIER_NAME, event, "{}", self)
 
     async def _simulate(self, provider_id: str, msg: OutboundMessage) -> None:
         try:

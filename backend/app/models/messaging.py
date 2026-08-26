@@ -110,6 +110,12 @@ class Message(Base, TenantScoped, TimestampMixin):
     segment_count_carrier: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    # Set when quiet hours DEFER a send. The message row exists and is queued; the
+    # sweeper releases it and RE-RUNS THE FULL GATE, so an opt-out landing during the
+    # hold still kills the send. Gate at dispatch, never only at enqueue.
+    hold_until: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True, index=True
+    )
 
 
 class MessageEvent(Base, TenantScoped, TimestampMixin):
@@ -154,3 +160,19 @@ class WebhookDeadLetter(Base, TimestampMixin):
     carrier: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     reason: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     payload: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+
+
+class MessageTemplate(Base, TenantScoped, TimestampMixin):
+    """A reusable message body with {{merge}} fields.
+
+    Templates never touch the carrier themselves - they render to text which then goes
+    through the normal send API, so they cannot bypass the compliance gate.
+    """
+
+    __tablename__ = "message_templates"
+    __table_args__ = (sa.UniqueConstraint("org_id", "name", name="uq_templates_org_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(sa.String(127), nullable=False)
+    body: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    media_asset_ids: Mapped[list] = mapped_column(PortableJSON(), nullable=False, default=list)

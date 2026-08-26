@@ -44,6 +44,10 @@ PERMISSIONS: tuple[str, ...] = (
     "reports:read",
     "settings:read",
     "settings:write",
+    "compliance:read",
+    "compliance:manage",
+    "templates:read",
+    "templates:manage",
 )
 
 WILDCARD = "*"
@@ -60,6 +64,9 @@ SYSTEM_ROLES: dict[str, list[str]] = {
         "inbox:manage",
         "contacts:read",
         "contacts:write",
+        # Agents see consent state and compose from templates; they cannot edit either.
+        "compliance:read",
+        "templates:read",
     ],
 }
 

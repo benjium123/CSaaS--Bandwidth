@@ -114,6 +114,13 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str = ""
     cartesia_api_key: SecretStr = SecretStr("")
 
+    # ---------------- media / storage ----------------
+    media_store_backend: str = "local"   # local | memory | s3 (s3 raises until P5)
+    media_local_root: str = "var/media"
+    media_retention_days: int = 0        # 0 = never expire
+    sweeper_enabled: bool = True
+    sweeper_interval_seconds: int = 60
+
     # ---------------- ops ----------------
     sentry_dsn: SecretStr = SecretStr("")
     smtp_host: str = ""
@@ -246,6 +253,20 @@ class Settings(BaseSettings):
         keyed("redis", {"REDIS_URL": self.redis_url})
         keyed("smtp", {"SMTP_HOST": self.smtp_host})
         keyed("sentry", {"SENTRY_DSN": self.sentry_dsn})
+
+        # Deliberately hard-coded disabled: we hold no DNC registry subscription and no
+        # OSS library exists. There is NO settings flag that could claim otherwise -
+        # making this configurable would let a deployment believe it was scrubbing.
+        out.append(
+            ProviderStatus(
+                "federal_dnc",
+                False,
+                reason=(
+                    "no registry subscription - numbers are NOT scrubbed against the "
+                    "federal DNC"
+                ),
+            )
+        )
         return out
 
 
