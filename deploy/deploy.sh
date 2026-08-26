@@ -54,8 +54,21 @@ fi
 echo "pre-flight OK"
 REMOTE
 
+say "Building the console locally (node stays off the production box)"
+if [ -d frontend ]; then
+  ( cd frontend && npm ci --no-audit --no-fund && npm run build ) || die "frontend build failed"
+else
+  echo "no frontend/ directory - skipping"
+fi
+
 say "Shipping tracked files (git archive HEAD)"
 git archive --format=tar HEAD | ssh "$TARGET" "tar -x -C ${REMOTE_DIR}"
+
+# frontend/dist is a build artifact, so it is gitignored and NOT in the archive.
+if [ -d frontend/dist ]; then
+  say "Shipping the built console"
+  tar -cf - frontend/dist | ssh "$TARGET" "tar -x -C ${REMOTE_DIR}"
+fi
 
 say "Building and starting (compose project: csaas)"
 ssh "$TARGET" "cd ${REMOTE_DIR} && docker compose -f deploy/docker-compose.prod.yml up -d --build"

@@ -4,8 +4,9 @@
 > and whenever a decision or a blocker changes. If it disagrees with your memory, this file
 > is right.
 
-**Last updated:** 2026-08-26 — P1a implementation
-**Current phase:** P1a — **code complete, 99 tests green.** P1b blocked on R1.
+**Last updated:** 2026-08-26 — P2a implementation
+**Current phase:** P2a — **code complete: 139 backend + 17 frontend tests green.**
+P1b and P2b both blocked on R1.
 **Current blocker:** R1 — confirm Bandwidth account path to production
 
 ### P0 remaining before sign-off (all need the user, not more code)
@@ -51,7 +52,8 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P0 | Foundation | 🔵 in review | local ✅ / CI+PG ✅ / VPS ⬜ | ⬜ pending | `5c73dc9` |
 | P1a | Carrier layer + ingestion (fixtures) | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `d6b5f59` |
 | P1b | Live SMS round-trip | 🔴 blocked on R1 | — | — | — |
-| P2 | Contacts / conversations / inbox | ⬜ not started | — | — | — |
+| P2a | Contacts, inbox console, sticky sender, 2FA | 🔵 in review | local ✅ | n/a | (see git log) |
+| P2b | Console live on VPS | 🔴 blocked on R1 | — | — | — |
 | P3 | MMS + compliance core | ⬜ not started | — | — | — |
 | P4 | Numbers + 10DLC + TFV | ⬜ not started | — | — | — |
 | P5 | Voice core | ⬜ not started | — | — | — |
@@ -80,7 +82,7 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 | WS-4 | Media & AI Voice Agent | ⬜ | |
 | WS-5 | AI SMS Agent | ⬜ | |
 | WS-6 | Outbound Engine | ⬜ | |
-| WS-7 | Console | ⬜ | |
+| WS-7 | Console | 🔵 React+Vite+TS inbox, contacts, numbers, security pages | |
 | WS-8 | Compliance | 🟡 compliance SEAM cut and pinned by tests; no logic yet (P3) | |
 | WS-9 | Platform Services | ⬜ | |
 | WS-10 | DevOps | 🔵 CI + Dockerfile + compose + deploy.sh written; deploy not yet run | |
@@ -243,3 +245,57 @@ one that runs `test_concurrent_duplicate_ingest_pg`, proving the IntegrityError 
 holds under TRUE parallelism. SQLite serializes writes and cannot exercise it.
 
 **Blockers:** R1 unchanged.
+
+---
+
+### Session 2026-08-26 (cont.) — P2a
+**Phase:** P2a (Fable refined `docs/plans/phase-2-plan.md` first)
+
+**Did:** contacts/companies/tags/notes/custom-fields, conversation state (open/closed,
+assignment, derived unread, labels), sticky sender, the inbox aggregate with a hard N+1
+gate, TOTP 2FA, a dev-only loopback carrier, migration `0003`, and the first frontend —
+React + Vite + TS console (login/2FA, org picker, inbox, contacts, numbers, security).
+
+**Tests (actual output):**
+```
+backend : 139 passed, 5 skipped   (ruff clean)
+frontend: 17 passed, 3 files      (tsc --noEmit clean, vite build clean)
+gen:api : regeneration is byte-identical across runs (drift gate is real)
+```
+
+**THREE REAL BUGS the tests caught, all of which Postgres would have hidden:**
+
+1. **Pagination cursor corrupted by hours.** SQLite returns NAIVE datetimes for
+   `DateTime(timezone=True)`; Postgres returns aware ones. `encode_cursor` called
+   `.astimezone(utc)` on the naive value, which Python interprets as LOCAL time — so the
+   cursor shifted by the machine's UTC offset and page 2 matched nothing. Fixed by
+   stamping naive values as UTC instead of converting them (`_as_utc`), plus `_bind_dt`
+   so the bound value matches what each backend actually stores.
+2. **SQLite silently ignores foreign keys.** `ON DELETE SET NULL` did nothing locally while
+   working on Postgres — the local suite was passing on referential behaviour it never
+   exercised. `PRAGMA foreign_keys=ON` is now set on the test engine.
+   ⚠ **Note for dev:** the app itself does not set this pragma, so anyone running the app
+   on SQLite locally still gets unenforced FKs. Production is Postgres, so this is a
+   dev-fidelity gap, not a prod risk — but do not trust local FK behaviour without it.
+3. **`Badge` dropped `aria-label`**, so the unread count had no accessible name.
+
+**Design notes worth remembering:**
+- **Loopback carrier** makes the console demoable with no Bandwidth account. It drives the
+  REAL ingestion service; a ledger assertion proves it does not bypass it. Boot refuses it
+  in production and refuses it alongside `BANDWIDTH_ENABLED`.
+- **Sticky sender never silently jumps.** A retired number fails 422 unless the caller
+  passes `allow_reassign`. The deterministic pick is pinned by test — changing the hash
+  would reshuffle every conversation's affinity.
+- **Unread is derived from a `last_read_at` cursor, never counted.** A counter incremented
+  from a webhook handler is the exact side effect D6 bans, and it would drift on replay.
+- **Polling, not WebSockets** (plan DR-6). Freshness is isolated in `src/api/hooks.ts`, so
+  swapping transports later touches one file. P7's media WebSocket is carrier frames with
+  a hard latency budget — UI fan-out must not be multiplexed onto it.
+- **OpenAPI drift gate** replaces the missing browser E2E layer until Playwright lands in
+  P6: CI regenerates `openapi.json` + `types.gen.ts` and fails on any diff.
+
+**Recorded deviations:** P1's ambiguous-from 422 became the sticky contract (plan DR-10);
+per-message tags deferred to P13 in favour of thread-level labels (DR-5).
+
+**Next step:** P3 (MMS + compliance core) can start on P2a — it consumes the seam and the
+models. P2b needs R1.
