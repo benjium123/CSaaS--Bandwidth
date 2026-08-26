@@ -284,3 +284,134 @@ async def test_purge_expired_keeps_the_row(app_with_carrier, session):
     assert refreshed.status == "purged"
     assert refreshed.storage_key is None, "object gone"
     assert refreshed.id == asset.id, "row kept for audit"
+
+
+# ---------------------------------------------------------------------------------
+# Regression: a failed persist must never be reported as success
+#
+# History: inbound media rows were added to the SAME flush as their parent message.
+# SQLAlchemy does not guarantee messages are INSERTed before media_assets, so with
+# foreign keys enforced the child hit a violation. That IntegrityError surfaced in the
+# dedupe handler -- which was written for duplicates -- so the handler rolled the
+# message back and answered 200 OK. A real inbound MMS was destroyed, silently, and the
+# carrier was told to stop retrying.
+#
+# Two properties keep it dead: the parent flushes first, and "duplicate" is CONFIRMED
+# rather than assumed.
+# ---------------------------------------------------------------------------------
+async def test_inbound_mms_persists_message_and_its_media(app_with_carrier, session):
+    """The original trigger: message and media must survive the same transaction."""
+    from app.models import Message
+
+    client, _, _ = app_with_carrier
+    await make_org_with_number(client, "m9@example.com", "Org A", OUR)
+    await _inbound_with_media(client, "https://media.bandwidth.com/x.png", msg_id="mms-keep")
+
+    messages = list(
+        (
+            await session.execute(
+                sa.select(Message)
+                .where(Message.provider_message_id == "mms-keep")
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalars().all()
+    )
+    assert len(messages) == 1, "the inbound MMS was dropped"
+    assets = await _assets(session)
+    assert len(assets) == 1
+    assert assets[0].message_id == messages[0].id, "media must hang off the persisted message"
+
+
+async def test_non_duplicate_integrity_error_asks_for_retry(app_with_carrier, session, monkeypatch):
+    """THE HONESTY PROPERTY.
+
+    A constraint violation that is *not* a duplicate must produce a retry, never a 200.
+    Injected as a real foreign-key violation rather than a fake exception, because that is
+    exactly the shape of the bug that got swallowed.
+    """
+    import uuid as _uuid
+
+    from app.models import Message
+    from app.services import messaging as messaging_svc
+
+    client, _, _ = app_with_carrier
+    await make_org_with_number(client, "m10@example.com", "Org A", OUR)
+
+    real_event_cls = messaging_svc.MessageEvent
+
+    def orphaned_event(**kwargs):
+        # Points at a message that does not exist -> FK violation at commit. A genuine
+        # failure, and emphatically not a duplicate.
+        kwargs["message_id"] = _uuid.uuid4()
+        return real_event_cls(**kwargs)
+
+    monkeypatch.setattr(messaging_svc, "MessageEvent", orphaned_event)
+
+    payload = json.loads(fixture_bytes("message-received.json"))
+    payload[0]["message"]["id"] = "mms-doomed"
+    payload[0]["message"]["media"] = ["https://media.bandwidth.com/y.png"]
+    payload[0]["message"]["channel"] = "mms"
+    r = await client.post(
+        HOOK, content=json.dumps(payload).encode(), headers=webhook_auth_headers()
+    )
+
+    assert r.status_code == 500, (
+        "a persist failure must ask the carrier to retry; answering 200 destroys the message"
+    )
+
+    survivors = list(
+        (
+            await session.execute(
+                sa.select(Message)
+                .where(Message.provider_message_id == "mms-doomed")
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalars().all()
+    )
+    assert survivors == [], "the failed transaction must roll back whole, not half-persist"
+
+
+async def test_a_real_duplicate_still_dedupes_to_200(app_with_carrier, session):
+    """The counterpart: the retry path must not have broken idempotency."""
+    from app.models import Message
+
+    client, _, _ = app_with_carrier
+    await make_org_with_number(client, "m11@example.com", "Org A", OUR)
+
+    await _inbound_with_media(client, "https://media.bandwidth.com/x.png", msg_id="mms-dupe")
+    await _inbound_with_media(client, "https://media.bandwidth.com/x.png", msg_id="mms-dupe")
+
+    messages = list(
+        (
+            await session.execute(
+                sa.select(Message)
+                .where(Message.provider_message_id == "mms-dupe")
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalars().all()
+    )
+    assert len(messages) == 1, "replay must not double-insert"
+    assert len(await _assets(session)) == 1, "nor duplicate the media rows"
+
+
+async def test_media_with_no_content_type_is_refused(app_with_carrier, session):
+    """An unlabelled response must not walk around the allowlist.
+
+    It used to: the type check was skipped when the header was blank, so an arbitrary
+    payload was stored as octet-stream and became servable from our own origin.
+    """
+    client, _, _ = app_with_carrier
+    await make_org_with_number(client, "m12@example.com", "Org A", OUR)
+    await _inbound_with_media(client, "https://media.bandwidth.com/mystery")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # No content-type header at all.
+        return httpx.Response(200, content=b"<html>anything</html>")
+
+    store = InMemoryObjectStore()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        await media_svc.fetch_pending_media(session, store, client=http)
+
+    asset = (await _assets(session))[0]
+    assert asset.status == "unsupported"
+    assert asset.storage_key is None, "nothing unverified may reach the object store"

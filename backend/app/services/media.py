@@ -223,10 +223,14 @@ async def _fetch_one(
                 return _fail(f"http {response.status_code}")
 
             content_type = (response.headers.get("content-type") or "").split(";")[0].strip()
-            if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+            # A MISSING content-type is refused, not waved through. Treating blank as
+            # "probably fine" let an arbitrary blob be stored as octet-stream and later
+            # served back from our own origin - the allowlist has to be a floor, not a
+            # filter that anything unlabelled walks around.
+            if content_type not in ALLOWED_CONTENT_TYPES:
                 asset.status = "unsupported"
-                asset.content_type = content_type
-                return _fail(f"unsupported type {content_type}", terminal=True)
+                asset.content_type = content_type or None
+                return _fail(f"unsupported type {content_type or '<missing>'}", terminal=True)
 
             chunks: list[bytes] = []
             total = 0
