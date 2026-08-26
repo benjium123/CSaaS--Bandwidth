@@ -8,7 +8,13 @@ import sqlalchemy as sa
 
 from app.db.base import set_org_context
 from app.models import Message, MessageThread
-from tests.conftest import auth_headers, create_contact, create_tag, make_org_with_number
+from tests.conftest import (
+    IS_SQLITE,
+    auth_headers,
+    create_contact,
+    create_tag,
+    make_org_with_number,
+)
 
 OUR = "+12145550100"
 
@@ -234,9 +240,13 @@ async def test_aggregate_on_postgres(app_with_carrier, session, query_counter):
     assert r.json()["items"][0]["last_message"]["body"].startswith("thread 29")
 
 
+@pytest.mark.skipif(not IS_SQLITE, reason="SQLite-specific capability check")
 async def test_sqlite_supports_window_functions(session):
     """The preview query needs ROW_NUMBER(). Fail loudly here rather than mysteriously
-    inside the aggregate if the bundled SQLite is ever too old."""
+    inside the aggregate if the bundled SQLite is ever too old.
+
+    Skipped on Postgres, which obviously has no sqlite_version().
+    """
     version = (await session.execute(sa.text("select sqlite_version()"))).scalar_one()
     major, minor = (int(p) for p in str(version).split(".")[:2])
     assert (major, minor) >= (3, 25), f"SQLite {version} lacks window functions"
