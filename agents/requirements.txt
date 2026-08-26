@@ -1,0 +1,5 @@
+# Separate dependency set from the backend ON PURPOSE (phase-7-plan): livekit-agents is
+# heavy and must never enter the API's dependency tree. Python >= 3.10.
+livekit>=1.0
+livekit-agents>=1.0
+PyJWT>=2.9

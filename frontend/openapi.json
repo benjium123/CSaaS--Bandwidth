@@ -1,6 +1,17 @@
 {
   "components": {
     "schemas": {
+      "AgentDispatchIn": {
+        "properties": {
+          "agent_name": {
+            "default": "echo",
+            "title": "Agent Name",
+            "type": "string"
+          }
+        },
+        "title": "AgentDispatchIn",
+        "type": "object"
+      },
       "AssignIn": {
         "properties": {
           "campaign_id": {
@@ -7933,6 +7944,83 @@
         "summary": "Carrier Voice",
         "tags": [
           "webhooks"
+        ]
+      }
+    },
+    "/api/v1/{call_id}/agent": {
+      "post": {
+        "description": "Dispatch a named agent worker (P7 echo agent, P8 AI agent) into a live room call.\n\nRoom calls only: an agent is a room participant, and carrier-path calls have no room\nfor it to join.",
+        "operationId": "dispatch_agent_api_v1__call_id__agent_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDispatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Dispatch Agent Api V1  Call Id  Agent Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dispatch Agent",
+        "tags": [
+          "calls"
         ]
       }
     },

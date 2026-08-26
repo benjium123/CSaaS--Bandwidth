@@ -190,6 +190,17 @@ class LiveKitApi:
             },
         )
 
+    async def create_agent_dispatch(
+        self, *, room: str, agent_name: str, metadata: str = ""
+    ) -> dict:
+        """Explicitly dispatch a named agent worker (P7 echo agent, P8 AI agent) into a
+        room. Workers register with agent_name and receive a job when dispatched."""
+        return await self._twirp(
+            "AgentDispatchService",
+            "CreateDispatch",
+            {"room": room, "agent_name": agent_name, "metadata": metadata},
+        )
+
     async def transfer_sip_participant(
         self,
         *,

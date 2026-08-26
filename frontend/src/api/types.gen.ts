@@ -1246,6 +1246,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/{call_id}/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispatch Agent
+         * @description Dispatch a named agent worker (P7 echo agent, P8 AI agent) into a live room call.
+         *
+         *     Room calls only: an agent is a room participant, and carrier-path calls have no room
+         *     for it to join.
+         */
+        post: operations["dispatch_agent_api_v1__call_id__agent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1270,6 +1293,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentDispatchIn */
+        AgentDispatchIn: {
+            /**
+             * Agent Name
+             * @default echo
+             */
+            agent_name: string;
+        };
         /** AssignIn */
         AssignIn: {
             /** Campaign Id */
@@ -5050,6 +5081,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispatch_agent_api_v1__call_id__agent_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentDispatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

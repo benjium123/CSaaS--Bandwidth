@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, get_current_user, require_permission
 from app.errors import (
+    CarrierNotConfiguredError,
     ConflictError,
     FeatureUnavailableError,
     NotFoundError,
@@ -419,6 +420,39 @@ async def transfer_call(
     except ConflictError:
         raise
     return await _detail_out(ctx.session, request, call)
+
+
+class AgentDispatchIn(BaseModel):
+    agent_name: str = "echo"
+
+
+@router.post("/{call_id}/agent")
+async def dispatch_agent(
+    call_id: uuid.UUID,
+    payload: AgentDispatchIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+) -> dict:
+    """Dispatch a named agent worker (P7 echo agent, P8 AI agent) into a live room call.
+
+    Room calls only: an agent is a room participant, and carrier-path calls have no room
+    for it to join.
+    """
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    extra = call.extra or {}
+    if extra.get("via") != "livekit":
+        raise ConflictError("Agents can only join room calls (via=room)")
+    if call.status in TERMINAL_CALL_STATUSES:
+        raise ConflictError(f"Call is already {call.status}")
+    api = getattr(request.app.state, "livekit", None)
+    if api is None:
+        raise CarrierNotConfiguredError("LiveKit is not configured on this deployment")
+    result = await api.create_agent_dispatch(
+        room=extra["room"], agent_name=payload.agent_name, metadata=str(call.id)
+    )
+    return {"dispatched": payload.agent_name, "room": extra["room"], "id": result.get("id", "")}
 
 
 @router.post("/calls/{call_id}/hangup", response_model=CallDetailOut)

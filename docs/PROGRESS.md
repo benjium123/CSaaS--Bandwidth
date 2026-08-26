@@ -60,7 +60,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P4 | Numbers + 10DLC + TFV | 🔵 in review (backend) | local ✅ (273) | 🔴 blocked on R1 | — |
 | P5 | Voice core | 🔵 in review | local ✅ (354) | 🔴 blocked on R1 + trunk | — |
 | P6 | LiveKit media plane + softphone | 🔵 in review | local ✅ (405) | 🔴 needs trunk + VPS bring-up | — |
-| P7 | Media streaming + echo bot | ⬜ not started | — | — | — |
+| P7 | Media plane measured + echo agent | 🔵 code complete | metrics 6/6 local | 🔴 gate runs on VPS | — |
 | P8 | AI voice agent v1 | ⬜ not started | — | — | — |
 | P9 | AI voice agent v2 | ⬜ not started | — | — | — |
 | P10 | AI SMS agent | ⬜ not started | — | — | — |
