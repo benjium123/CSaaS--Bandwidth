@@ -41,3 +41,4 @@ docker/data/
 pgdata/
 miniodata/
 *.log
+.venv-agents/

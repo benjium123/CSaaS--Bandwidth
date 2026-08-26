@@ -61,7 +61,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P5 | Voice core | 🔵 in review | local ✅ (354) | 🔴 blocked on R1 + trunk | — |
 | P6 | LiveKit media plane + softphone | 🔵 in review | local ✅ (405) | 🔴 needs trunk + VPS bring-up | — |
 | P7 | Media plane measured + echo agent | 🔵 code complete | metrics 6/6 local | 🔴 gate runs on VPS | — |
-| P8 | AI voice agent v1 | ⬜ not started | — | — | — |
+| P8 | AI voice agent v1 | 🔵 code complete | backend 430 + agents 31 | 🔴 runtime gate on VPS | — |
 | P9 | AI voice agent v2 | ⬜ not started | — | — | — |
 | P10 | AI SMS agent | ⬜ not started | — | — | — |
 | P11 | Outbound engine | ⬜ not started | — | — | — |

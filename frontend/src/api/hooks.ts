@@ -17,6 +17,8 @@ export type AvailableNumberOut = components["schemas"]["SearchOut"];
 export type BrandOut = components["schemas"]["BrandOut"];
 export type CampaignOut = components["schemas"]["CampaignOut"];
 export type TollfreeOut = components["schemas"]["TfvOut"];
+export type AgentProfileOut = components["schemas"]["ProfileOut"];
+export type TranscriptSegmentOut = components["schemas"]["TranscriptSegmentOut"];
 
 export type InboxItem = {
   thread: {
@@ -343,5 +345,81 @@ export function useTollfreeVerifications(api: ApiClient) {
   return useQuery({
     queryKey: ["tollfree-verifications"],
     queryFn: () => api.request<TollfreeOut[]>("/api/v1/registration/tollfree"),
+  });
+}
+
+/* ---------------------------------------------------------------------------------------
+ * AI agent (Phase 8)
+ * ------------------------------------------------------------------------------------- */
+
+export type AgentProfileFields = {
+  name: string;
+  system_prompt?: string;
+  greeting?: string;
+  voice_id?: string;
+  llm_provider?: string;
+  llm_model?: string;
+};
+
+export function useAgentProfiles(api: ApiClient) {
+  return useQuery({
+    queryKey: ["agent-profiles"],
+    queryFn: () => api.request<AgentProfileOut[]>("/api/v1/agent/profiles"),
+  });
+}
+
+export function useCreateAgentProfile(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: AgentProfileFields) =>
+      api.request<AgentProfileOut>("/api/v1/agent/profiles", { method: "POST", json: vars }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agent-profiles"] }),
+  });
+}
+
+export function useUpdateAgentProfile(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string } & Partial<AgentProfileFields>) => {
+      const { id, ...body } = vars;
+      return api.request<AgentProfileOut>(`/api/v1/agent/profiles/${id}`, {
+        method: "PATCH",
+        json: body,
+      });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agent-profiles"] }),
+  });
+}
+
+export function useDeleteAgentProfile(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.request<void>(`/api/v1/agent/profiles/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agent-profiles"] }),
+  });
+}
+
+export function useSetDefaultAgentProfile(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.request<AgentProfileOut>(`/api/v1/agent/profiles/${id}/default`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agent-profiles"] }),
+  });
+}
+
+/** POST /api/v1/{call_id}/agent - the P7 dispatch endpoint (path shape is existing,
+ * pre-P8 API). agent_name="ai" is the real P8 pipeline; "echo" is P7's loop-back test
+ * agent, unused by this console. */
+export function useDispatchAgent(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { callId: string; agent_name?: string }) =>
+      api.request<{ dispatched: string; room: string; id: string }>(
+        `/api/v1/${vars.callId}/agent`,
+        { method: "POST", json: { agent_name: vars.agent_name ?? "ai" } },
+      ),
+    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ["call", vars.callId] }),
   });
 }

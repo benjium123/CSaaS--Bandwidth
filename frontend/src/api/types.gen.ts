@@ -4,6 +4,93 @@
  */
 
 export interface paths {
+    "/api/v1/agent/context/{call_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Context */
+        get: operations["get_agent_context_api_v1_agent_context__call_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Profiles */
+        get: operations["list_agent_profiles_api_v1_agent_profiles_get"];
+        put?: never;
+        /** Create Agent Profile */
+        post: operations["create_agent_profile_api_v1_agent_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Agent Profile */
+        delete: operations["delete_agent_profile_api_v1_agent_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Agent Profile */
+        patch: operations["update_agent_profile_api_v1_agent_profiles__profile_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/agent/profiles/{profile_id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Default Agent Profile */
+        post: operations["set_default_agent_profile_api_v1_agent_profiles__profile_id__default_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/transcript": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Agent Transcript */
+        post: operations["post_agent_transcript_api_v1_agent_transcript_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/2fa/activate": {
         parameters: {
             query?: never;
@@ -1400,6 +1487,8 @@ export interface components {
             status: string;
             /** Tag */
             tag: string | null;
+            /** Transcript */
+            transcript?: components["schemas"]["TranscriptSegmentOut"][] | null;
         };
         /** CallIn */
         CallIn: {
@@ -1665,6 +1754,27 @@ export interface components {
             last_name?: string | null;
             /** Phones */
             phones?: components["schemas"]["PhoneIn"][] | null;
+        };
+        /** ContextOut */
+        ContextOut: {
+            /** Contact E164 */
+            contact_e164: string;
+            /** Direction */
+            direction: string;
+            /** Extra Rules */
+            extra_rules: unknown[];
+            /** Greeting */
+            greeting: string;
+            /** Llm Model */
+            llm_model: string;
+            /** Llm Provider */
+            llm_provider: string;
+            /** Org Name */
+            org_name: string;
+            /** System Prompt */
+            system_prompt: string;
+            /** Voice Id */
+            voice_id: string;
         };
         /** CustomFieldIn */
         CustomFieldIn: {
@@ -1960,6 +2070,85 @@ export interface components {
             /** Preference */
             preference: string[];
         };
+        /** ProfileIn */
+        ProfileIn: {
+            /** Extra */
+            extra?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Greeting
+             * @default
+             */
+            greeting: string;
+            /**
+             * Llm Model
+             * @default
+             */
+            llm_model: string;
+            /**
+             * Llm Provider
+             * @default
+             */
+            llm_provider: string;
+            /** Name */
+            name: string;
+            /**
+             * System Prompt
+             * @default
+             */
+            system_prompt: string;
+            /**
+             * Voice Id
+             * @default
+             */
+            voice_id: string;
+        };
+        /** ProfileOut */
+        ProfileOut: {
+            /** Extra */
+            extra: {
+                [key: string]: unknown;
+            };
+            /** Greeting */
+            greeting: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Llm Model */
+            llm_model: string;
+            /** Llm Provider */
+            llm_provider: string;
+            /** Name */
+            name: string;
+            /** System Prompt */
+            system_prompt: string;
+            /** Voice Id */
+            voice_id: string;
+        };
+        /** ProfilePatch */
+        ProfilePatch: {
+            /** Extra */
+            extra?: {
+                [key: string]: unknown;
+            } | null;
+            /** Greeting */
+            greeting?: string | null;
+            /** Llm Model */
+            llm_model?: string | null;
+            /** Llm Provider */
+            llm_provider?: string | null;
+            /** Name */
+            name?: string | null;
+            /** System Prompt */
+            system_prompt?: string | null;
+            /** Voice Id */
+            voice_id?: string | null;
+        };
         /** RecordingOut */
         RecordingOut: {
             /** Content Type */
@@ -2242,6 +2431,34 @@ export interface components {
              */
             token_type: string;
         };
+        /** TranscriptIn */
+        TranscriptIn: {
+            /**
+             * Call Id
+             * Format: uuid
+             */
+            call_id: string;
+            /** Segments */
+            segments: components["schemas"]["TranscriptSegmentIn"][];
+        };
+        /** TranscriptSegmentIn */
+        TranscriptSegmentIn: {
+            /** At Ms */
+            at_ms: number;
+            /** Role */
+            role: string;
+            /** Text */
+            text: string;
+        };
+        /** TranscriptSegmentOut */
+        TranscriptSegmentOut: {
+            /** At Ms */
+            at_ms: number;
+            /** Role */
+            role: string;
+            /** Text */
+            text: string;
+        };
         /** TransferIn */
         TransferIn: {
             /** To */
@@ -2295,6 +2512,239 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_agent_context_api_v1_agent_context__call_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_profiles_api_v1_agent_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_agent_profile_api_v1_agent_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_agent_profile_api_v1_agent_profiles__profile_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_agent_profile_api_v1_agent_profiles__profile_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfilePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_default_agent_profile_api_v1_agent_profiles__profile_id__default_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_agent_transcript_api_v1_agent_transcript_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TranscriptIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     activate_api_v1_auth_2fa_activate_post: {
         parameters: {
             query?: never;

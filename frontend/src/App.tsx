@@ -4,6 +4,7 @@ import { InboxPage } from "@/pages/InboxPage";
 import { ContactsPage } from "@/pages/ContactsPage";
 import { NumbersPage } from "@/pages/NumbersPage";
 import { CallsPage } from "@/pages/CallsPage";
+import { AgentPage } from "@/pages/AgentPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
@@ -16,6 +17,7 @@ const NAV = [
   { to: "/inbox", label: "Inbox" },
   { to: "/contacts", label: "Contacts" },
   { to: "/calls", label: "Calls" },
+  { to: "/agent", label: "AI Agent" },
   { to: "/numbers", label: "Numbers" },
   { to: "/security", label: "Security" },
 ];
@@ -70,6 +72,7 @@ export function App() {
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/calls" element={<CallsPage />} />
+        <Route path="/agent" element={<AgentPage />} />
         <Route path="/numbers" element={<NumbersPage />} />
         <Route path="/security" element={<SettingsSecurityPage />} />
         <Route path="*" element={<Navigate to="/inbox" replace />} />

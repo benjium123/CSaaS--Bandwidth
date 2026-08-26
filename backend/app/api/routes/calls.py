@@ -18,7 +18,7 @@ from app.errors import (
     NotFoundError,
     ValidationFailedError,
 )
-from app.models import Call, CallLeg, CallRecording, OrgNumber, User
+from app.models import Call, CallLeg, CallRecording, CallTranscriptSegment, OrgNumber, User
 from app.models.voice import TERMINAL_CALL_STATUSES
 from app.providers.voice import as_voice_carrier
 from app.services import calls as calls_svc
@@ -103,9 +103,19 @@ class CallOut(BaseModel):
     created_at: datetime
 
 
+class TranscriptSegmentOut(BaseModel):
+    role: str
+    text: str
+    at_ms: int
+
+
 class CallDetailOut(CallOut):
     legs: list[CallLegOut]
     recordings: list[RecordingOut]
+    #: P8: only populated for calls the AI agent joined - None (not an empty list) when
+    #: there is nothing to show, so the console's transcript panel has a single clean
+    #: "no transcript" gate instead of an always-present empty array.
+    transcript: list[TranscriptSegmentOut] | None = None
 
 
 def _call_out(c: Call) -> CallOut:
@@ -154,7 +164,9 @@ def _recording_out(rec: CallRecording, base_url: str, call_id: uuid.UUID) -> Rec
     )
 
 
-async def _detail_out(session, request: Request, call: Call) -> CallDetailOut:
+async def _detail_out(
+    session, request: Request, call: Call, *, include_transcript: bool = True
+) -> CallDetailOut:
     legs = await calls_svc.load_legs(session, call.id)
     rec_stmt = (
         sa.select(CallRecording)
@@ -162,11 +174,38 @@ async def _detail_out(session, request: Request, call: Call) -> CallDetailOut:
         .order_by(CallRecording.created_at)
     )
     recordings = list((await session.execute(rec_stmt)).scalars().all())
+    transcript = None
+    if include_transcript:
+        # Skipped right after create_call: the flag is correct on its own merits (a call
+        # that did not exist before THIS request cannot possibly have any transcript rows
+        # yet, so the query would always return empty), and it ALSO happens to remove one
+        # query that would otherwise race the room-call path's just-spawned background dial
+        # task (B2) for the shared SQLite StaticPool connection the test suite uses - a real
+        # InterfaceError, not a hypothetical one (repro: sqlite3.InterfaceError "Cursor
+        # needed to be reset because of commit/rollback" from the background task's own
+        # session). That race is only NARROWED by dropping this one query, not CLOSED: any
+        # other concurrent query against the same pooled connection can still hit it, so
+        # this comment must not be read as "the SQLite race is fixed here."
+        transcript_stmt = (
+            sa.select(CallTranscriptSegment)
+            .where(CallTranscriptSegment.call_id == call.id)
+            .order_by(CallTranscriptSegment.at_ms)
+        )
+        transcript_rows = list((await session.execute(transcript_stmt)).scalars().all())
+        transcript = (
+            [
+                TranscriptSegmentOut(role=t.role, text=t.text, at_ms=t.at_ms)
+                for t in transcript_rows
+            ]
+            if transcript_rows
+            else None
+        )
     base_url = request.app.state.settings.public_base_url or ""
     return CallDetailOut(
         **_call_out(call).model_dump(),
         legs=[_leg_out(leg) for leg in legs],
         recordings=[_recording_out(rec, base_url, call.id) for rec in recordings],
+        transcript=transcript,
     )
 
 
@@ -297,7 +336,7 @@ async def create_call(
             name=user.email,
             tag=payload.tag,
         )
-        detail = await _detail_out(ctx.session, request, call)
+        detail = await _detail_out(ctx.session, request, call, include_transcript=False)
         body = detail.model_dump(mode="json")
         url = settings.livekit_public_url or settings.livekit_url
         body.update({"room": room, "token": token, "url": url})
@@ -316,7 +355,8 @@ async def create_call(
         tag=payload.tag,
         record=payload.record,
     )
-    return await _detail_out(ctx.session, request, call)
+    # A call this request just created cannot have any transcript rows yet.
+    return await _detail_out(ctx.session, request, call, include_transcript=False)
 
 
 @router.get("/calls", response_model=list[CallOut])

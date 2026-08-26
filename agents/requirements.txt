@@ -1,5 +1,7 @@
 # Separate dependency set from the backend ON PURPOSE (phase-7-plan): livekit-agents is
 # heavy and must never enter the API's dependency tree. Python >= 3.10.
+# Signature-validated against livekit-agents 1.7.0 on 2026-08-26.
 livekit>=1.0
-livekit-agents>=1.0
+livekit-agents[deepgram,elevenlabs,openai,anthropic,silero,turn-detector]>=1.7
 PyJWT>=2.9
+httpx>=0.27

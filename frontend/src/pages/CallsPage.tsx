@@ -4,6 +4,7 @@ import type { ApiClient } from "@/api/client";
 import {
   useCall,
   useCalls,
+  useDispatchAgent,
   useHangupCall,
   useNumbers,
   usePlaceCall,
@@ -230,8 +231,10 @@ export function CallsPage() {
 function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut }) {
   const transferCall = useTransferCall(api);
   const hangupCall = useHangupCall(api);
+  const dispatchAgent = useDispatchAgent(api);
   const [transferTo, setTransferTo] = React.useState("");
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const [agentNotice, setAgentNotice] = React.useState<string | null>(null);
   const terminal = isTerminalCallStatus(call.status);
 
   async function doTransfer(e: React.FormEvent) {
@@ -250,6 +253,19 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
     try {
       await hangupCall.mutateAsync(call.id);
     } catch (err) {
+      setActionError((err as Error).message);
+    }
+  }
+
+  async function doSendAgent() {
+    setActionError(null);
+    setAgentNotice(null);
+    try {
+      const result = await dispatchAgent.mutateAsync({ callId: call.id });
+      setAgentNotice(`AI agent joined room ${result.room}.`);
+    } catch (err) {
+      // Surfaced verbatim: the backend's own error (e.g. "Agents can only join room
+      // calls (via=room)") is more useful here than a generic message.
       setActionError((err as Error).message);
     }
   }
@@ -287,6 +303,7 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
           {actionError}
         </p>
       )}
+      {agentNotice && <p className="text-sm text-muted-foreground">{agentNotice}</p>}
 
       <div className="flex flex-wrap items-end gap-2">
         <form className="flex items-end gap-2" onSubmit={doTransfer}>
@@ -307,6 +324,14 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
         </form>
         <Button
           type="button"
+          variant="outline"
+          onClick={doSendAgent}
+          disabled={terminal || dispatchAgent.isPending}
+        >
+          Send AI agent
+        </Button>
+        <Button
+          type="button"
           variant="destructive"
           onClick={doHangup}
           disabled={terminal || hangupCall.isPending}
@@ -314,6 +339,31 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
           Hang up
         </Button>
       </div>
+
+      {call.transcript && call.transcript.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium">Transcript</h3>
+          <ul className="mt-2 space-y-2" aria-label="Transcript">
+            {call.transcript.map((seg, i) => (
+              <li
+                key={i}
+                className={cn("flex", seg.role === "agent" ? "justify-start" : "justify-end")}
+              >
+                <div
+                  className={cn(
+                    "max-w-[75%] rounded-lg px-3 py-2 text-sm",
+                    seg.role === "agent"
+                      ? "bg-muted text-foreground"
+                      : "bg-primary text-primary-foreground",
+                  )}
+                >
+                  {seg.text}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div>
         <h3 className="text-sm font-medium">Legs</h3>
