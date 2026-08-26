@@ -72,7 +72,21 @@ jobs:
       - run: alembic downgrade base
       - run: alembic upgrade head
       # Full suite including pg_only tests.
-      - run: pytest -q
+      # Job logs need admin rights to download via the API even on a public repo, so the
+      # failure summary is re-emitted as workflow annotations, which ARE readable.
+      - name: Run tests
+        run: |
+          set -o pipefail
+          pytest -q -rf --tb=short 2>&1 | tee /tmp/pytest.txt || {
+            echo "::group::pytest failure summary"
+            tail -c 8000 /tmp/pytest.txt
+            echo "::endgroup::"
+            grep -E "^(FAILED|ERROR)" /tmp/pytest.txt | head -20 | while read -r line; do
+              echo "::error title=pytest::$line"
+            done
+            sed -n '/=== FAILURES ===/,$p' /tmp/pytest.txt | grep -E "^E " | head -20 |               while read -r line; do echo "::error title=assertion::$line"; done
+            exit 1
+          }
 
   # MERGE GATE 2. Until Playwright arrives (P6) these checks plus the backend contract
   # tests are what stand in for a browser E2E layer.
