@@ -118,6 +118,13 @@ class BandwidthMessagingCarrier:
             )
         return SendResult("rejected", None, error)
 
+    # NOTE: BandwidthMessagingCarrier deliberately does NOT implement NumberProvider.
+    # Bandwidth ordering runs through the IRIS/Dashboard XML API and needs a SiteId and
+    # SipPeerId that this account has not been given, plus credentials that currently
+    # return 401 (blocker R1). Writing an integration we cannot execute even once would
+    # produce code that looks finished and fails on first contact - `as_provider` raises a
+    # clear FeatureUnavailableError instead, and numbers can be added by hand meanwhile.
+
     def media_auth(self, url: str) -> tuple[str, str] | None:
         """Credentials for fetching carrier-hosted media - and ONLY for Bandwidth hosts.
 

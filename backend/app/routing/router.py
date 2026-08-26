@@ -19,7 +19,12 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import CarrierNotConfiguredError, ValidationFailedError
+from app.compliance import registration
+from app.errors import (
+    CarrierNotConfiguredError,
+    ComplianceBlockedError,
+    ValidationFailedError,
+)
 from app.models import MessageThread, OrgNumber
 from app.models.routing import RoutingPolicy
 from app.providers.registry import CarrierRegistry
@@ -65,7 +70,7 @@ async def _active_numbers(session: AsyncSession, org_id: uuid.UUID) -> list[OrgN
         (
             await session.execute(
                 sa.select(OrgNumber)
-                .where(OrgNumber.is_active.is_(True))
+                .where(OrgNumber.is_active.is_(True), OrgNumber.status == "active")
                 .order_by(OrgNumber.e164)
             )
         ).scalars().all()
@@ -89,6 +94,7 @@ async def plan_route(
     requested_carrier: str | None = None,
     thread_our_number: str | None = None,
     is_reply_in_thread: bool = False,
+    require_registration: bool = False,
 ) -> RoutePlan:
     """Resolve the send to a primary route plus an ordered fallback list.
 
@@ -106,6 +112,18 @@ async def plan_route(
     if not numbers:
         raise ValidationFailedError("This organisation has no active numbers to send from")
 
+    # A number whose registration we KNOW is incomplete is removed before anything else
+    # looks at it (phase-4-plan DR-1). Finding this out from a carrier rejection means the
+    # violation is already on the brand's record.
+    numbers, refused = await registration.partition_by_eligibility(
+        session, numbers, require_registration=require_registration
+    )
+    if not numbers:
+        raise ComplianceBlockedError(
+            "; ".join(refused.values())
+            or "No number on this organisation is registered to send"
+        )
+
     by_e164 = {n.e164: n for n in numbers}
     policy = await get_policy(session, org_id)
 
@@ -113,6 +131,10 @@ async def plan_route(
     if requested_from:
         number = by_e164.get(requested_from)
         if number is None:
+            # Distinguish "not yours" from "yours but not allowed to send" - the second is
+            # actionable and the operator needs to know which one they are looking at.
+            if requested_from in refused:
+                raise ComplianceBlockedError(refused[requested_from])
             raise ValidationFailedError(
                 f"{requested_from} is not an active number on this organisation"
             )
@@ -124,6 +146,9 @@ async def plan_route(
         _require_usable(registry, requested_carrier, explicit=True)
         ordered = _spread(numbers, requested_carrier, contact_e164)
         if not ordered:
+            blocked = [msg for e164, msg in refused.items() if e164 not in by_e164]
+            if blocked:
+                raise ComplianceBlockedError("; ".join(blocked))
             raise ValidationFailedError(
                 f"No active number is hosted on {requested_carrier!r}"
             )

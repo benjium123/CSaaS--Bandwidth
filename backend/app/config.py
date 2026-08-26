@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     signalwire_webhook_url: str = ""
     signalwire_default_number: str = ""
 
+    #: Refuse to send from a number we hold no registration for. Off by default because a
+    #: number registered directly at the carrier (Bandwidth's trial number, for one) is
+    #: perfectly legitimate and we should not block it on an assumption. Note the
+    #: direction: this flag can only make enforcement STRICTER. There is no flag that
+    #: loosens it, and none that lets a deployment claim a registration it does not hold.
+    require_number_registration: bool = False
+
     # DEV/DEMO ONLY. See providers/loopback.py. The validator below refuses it in
     # production and refuses it alongside a real carrier.
     loopback_carrier_enabled: bool = False

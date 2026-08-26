@@ -55,8 +55,9 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P2a | Contacts, inbox console, sticky sender, 2FA | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `798245b` |
 | P2b | Console live on VPS | 🔴 blocked on R1 | — | — | — |
 | P3-core | Compliance: opt-out, keywords, quiet hours, DNC | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `69f9278` |
-| P3-rest | MMS media pipeline, routes, templates UI | 🟡 in progress | — | — | — |
-| P4 | Numbers + 10DLC + TFV | ⬜ not started | — | — | — |
+| P3-rest | MMS media pipeline, routes, templates | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `96d3dc8` |
+| P3b | Carrier routing fabric (pulled fwd from P14) | 🔵 in review | local ✅ (252) | n/a | `ffd370f` |
+| P4 | Numbers + 10DLC + TFV | 🔵 in review (backend) | local ✅ (273) | 🔴 blocked on R1 | — |
 | P5 | Voice core | ⬜ not started | — | — | — |
 | P6 | Browser softphone | ⬜ not started | — | — | — |
 | P7 | Media streaming + echo bot | ⬜ not started | — | — | — |
@@ -122,6 +123,11 @@ Decisions live in `docs/ARCHITECTURE.md`. This is the index with dates.
 | 2026-08-26 | D6 | All webhook handlers idempotent + state-based. Both carriers retry unordered. |
 | 2026-08-26 | D7 | Compliance is a first-class module in the send path. No OSS library exists for TCPA/DNC or 10DLC. |
 | 2026-08-26 | D8 | Not forking Chatwoot / Dograh / jambonz. No AGPL or Commons-Clause in the core. |
+| 2026-08-26 | D12 | **Multi-carrier routing moved P14 → P3b.** A DID belongs to exactly one carrier, so routing picks a (number, carrier) PAIR and a carrier switch changes the sender the recipient sees. Cross-carrier failover is therefore opt-in and refused mid-thread; intra-carrier is the default. Explicit carrier choices are honoured or refused, never substituted. |
+| 2026-08-26 | D13 | **Sinch not adopted.** Its edge is global reach, which is irrelevant to a US-only 10DLC/TFV footprint; its API surface is fragmented across acquisitions and its media-streaming story is the weakest of the four. The adapter would be ~150 lines if that changes — the registry makes this cheap to revisit, which is the point. |
+| 2026-08-26 | D15 | **Registration is a PRE-SEND gate, not a post-send carrier error.** A number linked to a campaign/TFV that is not `approved` cannot be selected or sent from. Numbers we hold NO registration for are still allowed (they are often registered directly at the carrier) and logged — we refuse what we know is wrong, never what we merely do not know. `REQUIRE_NUMBER_REGISTRATION` can only make this stricter. |
+| 2026-08-26 | D16 | **Bandwidth number provisioning deliberately NOT implemented.** IRIS ordering needs a SiteId/SipPeerId this account has not been issued, on credentials that return 401 (R1). `as_provider()` raises a clear FeatureUnavailableError telling the operator to add the number by hand; Telnyx provisioning is implemented and tested. Writing an unverifiable XML integration would produce code that looks finished and fails on first contact. |
+| 2026-08-26 | D14 | **AI voice agents will run on LiveKit Agents** (user directive). This is D1's stated revisit condition firing: LiveKit reaches PSTN via LiveKit SIP + a carrier SIP trunk, so it buys native multi-party rooms (warm transfer, conferencing, supervisor barge) and a mature turn-detector, at the cost of a SIP leg and an SFU to run. It does NOT overturn D1's finding that transport is 3–15% of the latency budget — the reason to adopt it is capability, not speed. Re-plans P5/P7/P8. |
 
 ---
 
@@ -129,7 +135,8 @@ Decisions live in `docs/ARCHITECTURE.md`. This is the index with dates.
 
 | Rejected | Why |
 |---|---|
-| Own SIP stack (Kamailio/RTPengine/FreeSWITCH) **for AI latency** | Transport is 3–15% of the voice-to-voice budget. Endpointing alone is a bigger lever. Revisit only for warm transfer / conferencing / supervisor whisper / multi-carrier failover. |
+| Own SIP stack (Kamailio/RTPengine/FreeSWITCH) **for AI latency** | Transport is 3–15% of the voice-to-voice budget. Endpointing alone is a bigger lever. Revisit only for warm transfer / conferencing / supervisor whisper / multi-carrier failover. **Superseded in part by D14**: we adopt LiveKit (which uses a SIP trunk) for those capabilities — still NOT for latency, and still not a stack we build ourselves. |
+| Building E911 / per-seat PBX ("Dialpad clone") | Explicitly dropped by the user. E911 is mandatory for a business phone system with seats; it is not required for AI outbound/inbound conversations, and skipping it removes a real regulatory burden. |
 | Speech-to-speech (OpenAI Realtime / Gemini Live) as the primary | Black box: no transcript boundary for compliance, can't inject business rules mid-turn, can't swap the LLM, costs more. |
 | Forking Chatwoot | Rails + Vue. Harvest the data model instead. |
 | Forking Dograh wholesale | Voice-only. Forking makes our core someone else's AI-voice product with SMS bolted on. |

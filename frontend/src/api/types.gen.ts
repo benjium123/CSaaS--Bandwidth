@@ -489,6 +489,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/numbers/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Available
+         * @description Numbers we could order. Asks ONE carrier - whichever is named, or the primary.
+         *
+         *     Deliberately not a fan-out: the same number is not orderable from two carriers, and
+         *     merging results would hide which carrier a number would come from - which is exactly
+         *     what decides its registration regime and its routing.
+         */
+        get: operations["search_available_api_v1_numbers_available_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/numbers/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Order */
+        post: operations["order_api_v1_numbers_order_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/numbers/{number_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Release
+         * @description Release at the carrier, mark released here - but KEEP THE ROW (phase-4-plan DR-5).
+         *
+         *     Threads, messages and above all the consent ledger reference this number, and the
+         *     ledger is the evidence that somebody opted out. Deleting the row would destroy the
+         *     record we would need to prove we honoured a STOP.
+         */
+        delete: operations["release_api_v1_numbers__number_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/numbers/{number_id}/campaign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Assign Campaign */
+        patch: operations["assign_campaign_api_v1_numbers__number_id__campaign_patch"];
+        trace?: never;
+    };
     "/api/v1/orgs": {
         parameters: {
             query?: never;
@@ -558,6 +640,169 @@ export interface paths {
         get: operations["current_org_roles_api_v1_orgs_current_roles_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/brands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Brands */
+        get: operations["list_brands_api_v1_registration_brands_get"];
+        put?: never;
+        /** Create Brand */
+        post: operations["create_brand_api_v1_registration_brands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/brands/{brand_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Brand Status */
+        post: operations["set_brand_status_api_v1_registration_brands__brand_id__status_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/brands/{brand_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Brand */
+        post: operations["submit_brand_api_v1_registration_brands__brand_id__submit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/campaigns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Campaigns */
+        get: operations["list_campaigns_api_v1_registration_campaigns_get"];
+        put?: never;
+        /** Create Campaign */
+        post: operations["create_campaign_api_v1_registration_campaigns_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/campaigns/{campaign_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Campaign Status
+         * @description Record a registrar decision.
+         *
+         *     Monotonic: a stale `submitted` arriving after `approved` is ignored, not applied.
+         *     Carriers retry unordered, and demoting an approved campaign would stop every number on
+         *     it from sending until somebody noticed.
+         */
+        post: operations["set_campaign_status_api_v1_registration_campaigns__campaign_id__status_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/campaigns/{campaign_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Campaign */
+        post: operations["submit_campaign_api_v1_registration_campaigns__campaign_id__submit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/tollfree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tfv */
+        get: operations["list_tfv_api_v1_registration_tollfree_get"];
+        put?: never;
+        /** Create Tfv */
+        post: operations["create_tfv_api_v1_registration_tollfree_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/tollfree/{tfv_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Tfv Status */
+        post: operations["set_tfv_status_api_v1_registration_tollfree__tfv_id__status_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration/tollfree/{tfv_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Tfv */
+        post: operations["submit_tfv_api_v1_registration_tollfree__tfv_id__submit_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -794,10 +1039,127 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AssignIn */
+        AssignIn: {
+            /** Campaign Id */
+            campaign_id?: string | null;
+        };
         /** Body_upload_api_v1_media_post */
         Body_upload_api_v1_media_post: {
             /** File */
             file: string;
+        };
+        /** BrandIn */
+        BrandIn: {
+            /** City */
+            city?: string | null;
+            /**
+             * Country
+             * @default US
+             */
+            country: string;
+            /** Ein */
+            ein?: string | null;
+            /** Email */
+            email?: string | null;
+            /**
+             * Entity Type
+             * @default PRIVATE_PROFIT
+             */
+            entity_type: string;
+            /** Name */
+            name: string;
+            /** Phone */
+            phone?: string | null;
+            /** Postal Code */
+            postal_code?: string | null;
+            /** State */
+            state?: string | null;
+            /** Street */
+            street?: string | null;
+            /** Vertical */
+            vertical?: string | null;
+            /** Website */
+            website?: string | null;
+        };
+        /** BrandOut */
+        BrandOut: {
+            /** Carrier Refs */
+            carrier_refs: {
+                [key: string]: unknown;
+            };
+            /** Entity Type */
+            entity_type: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Missing For Submission */
+            missing_for_submission: string[];
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+        };
+        /** CampaignIn */
+        CampaignIn: {
+            /**
+             * Brand Id
+             * Format: uuid
+             */
+            brand_id: string;
+            /** Description */
+            description?: string | null;
+            /** Help Message */
+            help_message?: string | null;
+            /** Name */
+            name: string;
+            /** Opt In Process */
+            opt_in_process?: string | null;
+            /** Opt Out Message */
+            opt_out_message?: string | null;
+            /**
+             * Sample Messages
+             * @default []
+             */
+            sample_messages: string[];
+            /**
+             * Use Case
+             * @default MIXED
+             */
+            use_case: string;
+        };
+        /** CampaignOut */
+        CampaignOut: {
+            /**
+             * Brand Id
+             * Format: uuid
+             */
+            brand_id: string;
+            /** Carrier Refs */
+            carrier_refs: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Missing For Submission */
+            missing_for_submission: string[];
+            /** Name */
+            name: string;
+            /** Number Count */
+            number_count: number;
+            /** Status */
+            status: string;
+            /** Use Case */
+            use_case: string;
         };
         /** CarrierStatusOut */
         CarrierStatusOut: {
@@ -1064,6 +1426,15 @@ export interface components {
         };
         /** NumberOut */
         NumberOut: {
+            /** Campaign Id */
+            campaign_id?: string | null;
+            /**
+             * Capabilities
+             * @default {}
+             */
+            capabilities: {
+                [key: string]: unknown;
+            };
             /** Carrier */
             carrier: string;
             /** E164 */
@@ -1075,6 +1446,35 @@ export interface components {
             id: string;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Number Type
+             * @default local
+             */
+            number_type: string;
+            /**
+             * Registration
+             * @default unknown
+             */
+            registration: string;
+            /**
+             * Registration Detail
+             * @default
+             */
+            registration_detail: string;
+            /**
+             * Status
+             * @default active
+             */
+            status: string;
+        };
+        /** OrderIn */
+        OrderIn: {
+            /** Campaign Id */
+            campaign_id?: string | null;
+            /** Carrier */
+            carrier?: string | null;
+            /** E164 */
+            e164: string;
         };
         /** OrgCreateIn */
         OrgCreateIn: {
@@ -1186,6 +1586,23 @@ export interface components {
             /** Numbers */
             numbers: string[];
         };
+        /** SearchOut */
+        SearchOut: {
+            /** Capabilities */
+            capabilities: {
+                [key: string]: unknown;
+            };
+            /** E164 */
+            e164: string;
+            /** Locality */
+            locality: string;
+            /** Monthly Cost */
+            monthly_cost: string;
+            /** Number Type */
+            number_type: string;
+            /** Region */
+            region: string;
+        };
         /** SendIn */
         SendIn: {
             /**
@@ -1223,6 +1640,13 @@ export interface components {
             window_end?: string | null;
             /** Window Start */
             window_start?: string | null;
+        };
+        /** StatusIn */
+        StatusIn: {
+            /** Error */
+            error?: string | null;
+            /** Status */
+            status: string;
         };
         /** TagIn */
         TagIn: {
@@ -1273,6 +1697,50 @@ export interface components {
             name: string;
             /** Tokens */
             tokens: string[];
+        };
+        /** TfvIn */
+        TfvIn: {
+            /** Business Name */
+            business_name: string;
+            /** Contact Email */
+            contact_email?: string | null;
+            /** Message Volume */
+            message_volume?: number | null;
+            /**
+             * Number Id
+             * Format: uuid
+             */
+            number_id: string;
+            /** Opt In Process */
+            opt_in_process?: string | null;
+            /** Opt In Screenshot Url */
+            opt_in_screenshot_url?: string | null;
+            /**
+             * Use Case
+             * @default MIXED
+             */
+            use_case: string;
+            /** Use Case Summary */
+            use_case_summary?: string | null;
+        };
+        /** TfvOut */
+        TfvOut: {
+            /** Business Name */
+            business_name: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error */
+            last_error: string | null;
+            /**
+             * Number Id
+             * Format: uuid
+             */
+            number_id: string;
+            /** Status */
+            status: string;
         };
         /** ThreadOut */
         ThreadOut: {
@@ -1350,6 +1818,11 @@ export interface components {
             carrier?: string | null;
             /** E164 */
             e164: string;
+            /**
+             * Number Type
+             * @default local
+             */
+            number_type: string;
         };
     };
     responses: never;
@@ -2591,6 +3064,150 @@ export interface operations {
             };
         };
     };
+    search_available_api_v1_numbers_available_get: {
+        parameters: {
+            query?: {
+                carrier?: string | null;
+                area_code?: string;
+                contains?: string;
+                locality?: string;
+                region?: string;
+                number_type?: string;
+                limit?: number;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    order_api_v1_numbers_order_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NumberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    release_api_v1_numbers__number_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                number_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NumberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assign_campaign_api_v1_numbers__number_id__campaign_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                number_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NumberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_org_api_v1_orgs_post: {
         parameters: {
             query?: never;
@@ -2704,6 +3321,414 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RoleOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_brands_api_v1_registration_brands_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrandOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_brand_api_v1_registration_brands_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrandIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrandOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_brand_status_api_v1_registration_brands__brand_id__status_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                brand_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatusIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrandOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_brand_api_v1_registration_brands__brand_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                brand_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrandOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_campaigns_api_v1_registration_campaigns_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_campaign_api_v1_registration_campaigns_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CampaignIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_campaign_status_api_v1_registration_campaigns__campaign_id__status_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatusIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_campaign_api_v1_registration_campaigns__campaign_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tfv_api_v1_registration_tollfree_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TfvOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_tfv_api_v1_registration_tollfree_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TfvIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TfvOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_tfv_status_api_v1_registration_tollfree__tfv_id__status_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                tfv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatusIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TfvOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_tfv_api_v1_registration_tollfree__tfv_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                tfv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TfvOut"];
                 };
             };
             /** @description Validation Error */

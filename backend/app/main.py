@@ -20,6 +20,7 @@ from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
 from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
+from app.api.routes import registration as registration_routes
 from app.api.routes import routing as routing_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
@@ -175,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(inbox_routes.router)
     app.include_router(compliance_routes.router)
     app.include_router(routing_routes.router)
+    app.include_router(registration_routes.router)
     app.include_router(media_routes.router)
     app.include_router(template_routes.router)
     app.include_router(message_routes.router)

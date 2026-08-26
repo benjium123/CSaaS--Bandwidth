@@ -21,13 +21,17 @@ from app.providers.domain import (
 )
 from app.providers.telnyx import errors as tx_errors
 from app.providers.telnyx import webhooks
+from app.providers.telnyx.numbers import TelnyxNumberProviderMixin
 
 log = structlog.get_logger("carrier.telnyx")
 
 DEFAULT_BASE_URL = "https://api.telnyx.com/v2"
 
 
-class TelnyxMessagingCarrier:
+class TelnyxMessagingCarrier(TelnyxNumberProviderMixin):
+    """Messaging + provisioning. One API key, one base URL - splitting them into two
+    objects would mean two holders of the same credential for no gain."""
+
     name = "telnyx"
 
     # Telnyx accepts a scheduled send and can cancel a queued message - Bandwidth cannot.

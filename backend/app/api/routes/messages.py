@@ -105,6 +105,7 @@ async def send(
             contact_e164=to_norm,
             requested_carrier=payload.carrier,
             is_reply_in_thread=has_prior,
+            require_registration=request.app.state.settings.require_number_registration,
         )
     else:
         from_norm = await select_sender(
@@ -126,6 +127,7 @@ async def send(
             # let it silently outrank the org's carrier preference.
             thread_our_number=from_norm if has_prior else None,
             is_reply_in_thread=has_prior,
+            require_registration=request.app.state.settings.require_number_registration,
         )
     from_norm = plan.primary.from_e164
     settings = request.app.state.settings

@@ -47,6 +47,27 @@ class OrgNumber(Base, TenantScoped, TimestampMixin):
     carrier: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="bandwidth")
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
 
+    # ---- P4 -----------------------------------------------------------------------
+    #: "local" | "tollfree". Decides WHICH registration regime gates this number:
+    #: 10DLC for local, toll-free verification for toll-free. They are not interchangeable.
+    number_type: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="local")
+    #: What the carrier says this number can do. Declared by the carrier at order time,
+    #: never inferred from the number itself.
+    capabilities: Mapped[dict] = mapped_column(PortableJSON(), nullable=False, default=dict)
+    #: "active" | "pending" | "released". Numbers are NEVER deleted (phase-4-plan DR-5):
+    #: threads, messages and the consent ledger all point here, and the ledger is the
+    #: evidence that somebody opted out.
+    status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="active")
+    #: The carrier's own id for this number, needed to configure or release it later.
+    provider_ref: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    #: 10DLC campaign. NULL means this number may not send - see compliance.registration.
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("campaigns.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    released_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+
 
 class MessageThread(Base, TenantScoped, TimestampMixin):
     """A pure (org, our number, contact number) bucket.
