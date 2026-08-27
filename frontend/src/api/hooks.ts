@@ -542,3 +542,46 @@ export function useUpdateRoutingPolicy(api: ApiClient) {
     onSuccess: (data) => qc.setQueryData(["routing-policy"], data),
   });
 }
+
+/* ---------------------------------------------------------------------------------------
+ * Team: org members + invite-only registration
+ * ------------------------------------------------------------------------------------- */
+
+export type MemberOut = components["schemas"]["MemberOut"];
+export type InviteOut = components["schemas"]["InviteOut"];
+export type InviteCreatedOut = components["schemas"]["InviteCreatedOut"];
+
+export function useOrgMembers(api: ApiClient) {
+  return useQuery({
+    queryKey: ["org-members"],
+    queryFn: () => api.request<MemberOut[]>("/api/v1/orgs/current/members"),
+  });
+}
+
+export function useInvites(api: ApiClient) {
+  return useQuery({
+    queryKey: ["org-invites"],
+    queryFn: () => api.request<InviteOut[]>("/api/v1/orgs/current/invites"),
+  });
+}
+
+export function useCreateInvite(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { email: string; role_name: string }) =>
+      api.request<InviteCreatedOut>("/api/v1/orgs/current/invites", {
+        method: "POST",
+        json: vars,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["org-invites"] }),
+  });
+}
+
+export function useRevokeInvite(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId: string) =>
+      api.request<InviteOut>(`/api/v1/orgs/current/invites/${inviteId}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["org-invites"] }),
+  });
+}

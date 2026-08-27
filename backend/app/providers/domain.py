@@ -32,6 +32,11 @@ class CarrierError:
 class CarrierCapabilities:
     """What an adapter can and cannot do. Declared, never discovered by trial."""
 
+    #: False for a carrier this deployment holds VOICE-only credentials for. Bandwidth
+    #: sells voice and messaging as separate products with separate application ids, so a
+    #: perfectly healthy account can dial and never be allowed to text. Declared, because
+    #: discovering it from a failed send means the failure is already on a brand's record.
+    supports_messaging: bool = True
     supports_cancel: bool = False
     supports_scheduled_send: bool = False
     sync_delivery_status: bool = False

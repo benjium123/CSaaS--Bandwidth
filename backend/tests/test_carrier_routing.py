@@ -576,3 +576,89 @@ async def test_signalwire_mms_repeats_the_media_key_once_per_attachment():
         )
     assert result.status == "accepted"
     assert captured["body"].count("MediaUrl=") == 2
+
+
+# ==================================================================================
+# Voice-only carriers. Bandwidth sells voice and messaging as separate products with
+# separate application ids, so a healthy account can be entitled to dial and not to text.
+# ==================================================================================
+def test_bandwidth_with_only_a_voice_app_still_gets_built():
+    """Requiring the MESSAGING application id to build the adapter left a voice-only
+    account with no carrier at all - not even for calls it was fully entitled to make."""
+    from app.providers.registry import build_registry
+    from app.providers.voice import VoiceCarrier
+    from tests.conftest import make_settings
+
+    settings = make_settings(
+        bandwidth_account_id="acct",
+        bandwidth_api_username="u",
+        bandwidth_api_password="p",
+        bandwidth_voice_application_id="voice-app",
+    )
+    registry = build_registry(settings)
+    carrier = registry.get("bandwidth")
+    assert carrier is not None, "a voice-only Bandwidth account must still be usable"
+    assert isinstance(carrier, VoiceCarrier)
+    assert carrier.capabilities.supports_messaging is False
+
+
+def test_voice_only_carrier_is_never_chosen_for_a_message():
+    """Declared, not discovered. Offering a voice-only carrier to the message router
+    would only produce a rejection at dispatch - after the attempt is already on record."""
+    from app.models.routing import RoutingPolicy
+    from app.providers.registry import build_registry
+    from app.routing.router import _carrier_order
+    from tests.conftest import make_settings
+
+    settings = make_settings(
+        bandwidth_account_id="acct",
+        bandwidth_api_username="u",
+        bandwidth_api_password="p",
+        bandwidth_voice_application_id="voice-app",
+        telnyx_api_key="tk",
+        # Explicit: make_settings inherits the repo .env, which may pin TELNYX_ENABLED
+        # false on a developer machine. The point of this test is the BANDWIDTH exclusion,
+        # so the comparison carrier must not depend on local configuration.
+        telnyx_enabled=True,
+    )
+    registry = build_registry(settings)
+    order = _carrier_order(RoutingPolicy(preference=["bandwidth", "telnyx"]), registry)
+    assert "bandwidth" not in order
+    assert "telnyx" in order
+
+
+def test_explicitly_naming_a_voice_only_carrier_says_why_and_how_to_fix_it():
+    from app.errors import CarrierNotConfiguredError
+    from app.providers.registry import build_registry
+    from app.routing.router import _require_usable
+    from tests.conftest import make_settings
+
+    settings = make_settings(
+        bandwidth_account_id="acct",
+        bandwidth_api_username="u",
+        bandwidth_api_password="p",
+        bandwidth_voice_application_id="voice-app",
+    )
+    registry = build_registry(settings)
+    with pytest.raises(CarrierNotConfiguredError) as exc:
+        _require_usable(registry, "bandwidth", explicit=True)
+    message = str(exc.value)
+    assert "VOICE only" in message
+    assert "BANDWIDTH_MESSAGING_APPLICATION_ID" in message, "name the variable that fixes it"
+
+
+def test_adding_the_messaging_app_id_restores_messaging():
+    """The capability is derived from configuration, so it flips the moment the operator
+    pastes the missing id - no code change, no redeploy of anything but the env."""
+    from app.providers.registry import build_registry
+    from tests.conftest import make_settings
+
+    settings = make_settings(
+        bandwidth_account_id="acct",
+        bandwidth_api_username="u",
+        bandwidth_api_password="p",
+        bandwidth_voice_application_id="voice-app",
+        bandwidth_messaging_application_id="msg-app",
+    )
+    registry = build_registry(settings)
+    assert registry.get("bandwidth").capabilities.supports_messaging is True

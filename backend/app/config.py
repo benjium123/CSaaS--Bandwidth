@@ -145,6 +145,13 @@ class Settings(BaseSettings):
     #: loosens it, and none that lets a deployment claim a registration it does not hold.
     require_number_registration: bool = False
 
+    #: TEST/DEV ONLY. Registration is invite-only in production and the validator below
+    #: REFUSES this flag when APP_ENV=production, so it cannot be the reason a live
+    #: instance is open. It exists because the test suite legitimately creates many users,
+    #: and the alternative - a conftest that inserts users behind the API - would stop
+    #: exercising the real registration path in every one of those tests.
+    allow_open_registration: bool = False
+
     # DEV/DEMO ONLY. See providers/loopback.py. The validator below refuses it in
     # production and refuses it alongside a real carrier.
     loopback_carrier_enabled: bool = False
@@ -213,6 +220,11 @@ class Settings(BaseSettings):
                 problems.append("PUBLIC_BASE_URL still points at the example placeholder")
             if "csaas:csaas@" in self.database_url:
                 problems.append("DATABASE_URL still uses the default development credentials")
+            if self.allow_open_registration:
+                problems.append(
+                    "ALLOW_OPEN_REGISTRATION must be false in production - it disables "
+                    "invite-only signup and lets anyone on the internet create an account"
+                )
             if self.loopback_carrier_enabled:
                 problems.append(
                     "LOOPBACK_CARRIER_ENABLED must be false in production - it is a fake "

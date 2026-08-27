@@ -56,6 +56,10 @@ def make_settings(**overrides) -> Settings:
         # The sweeper is an interim in-process loop; tests drive its functions directly.
         "sweeper_enabled": False,
         "media_store_backend": "memory",
+        # Tests create many users and must keep exercising the REAL registration
+        # endpoint. Production refuses this flag outright (config.validate), so it can
+        # never be why a live instance is open; invite tests override it to False.
+        "allow_open_registration": True,
     }
     base.update(overrides)
     return Settings(**base)

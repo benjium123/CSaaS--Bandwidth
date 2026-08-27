@@ -10,6 +10,8 @@ import { AppointmentsPage } from "@/pages/AppointmentsPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
+import { TeamPage } from "@/pages/TeamPage";
+import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
 import { Button, Spinner } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
@@ -24,6 +26,7 @@ const NAV = [
   { to: "/numbers", label: "Numbers" },
   { to: "/providers", label: "Providers" },
   { to: "/security", label: "Security" },
+  { to: "/team", label: "Team" },
 ];
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -67,7 +70,17 @@ export function App() {
   const { me, orgId, ready } = useAuth();
 
   if (!ready) return <Spinner label="Starting" />;
-  if (!me) return <LoginPage />;
+
+  if (!me) {
+    // /accept-invite must be reachable without being logged in - it is how a brand new
+    // account gets created. Every other path when unauthenticated falls back to login.
+    return (
+      <Routes>
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
+        <Route path="*" element={<LoginPage />} />
+      </Routes>
+    );
+  }
   if (!orgId) return <OrgPickerPage />;
 
   return (
@@ -81,6 +94,7 @@ export function App() {
         <Route path="/numbers" element={<NumbersPage />} />
         <Route path="/providers" element={<ProvidersPage />} />
         <Route path="/security" element={<SettingsSecurityPage />} />
+        <Route path="/team" element={<TeamPage />} />
         <Route path="*" element={<Navigate to="/inbox" replace />} />
       </Routes>
     </Shell>

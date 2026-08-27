@@ -90,10 +90,27 @@ async def test_transport_error_is_unreachable_and_retryable():
 
 
 def test_capabilities_are_honest():
-    """The adapter must not claim abilities Bandwidth does not have."""
-    caps = BandwidthMessagingCarrier.capabilities
+    """The adapter must not claim abilities Bandwidth does not have.
+
+    Capabilities are per-INSTANCE, not per-class: whether this deployment may send
+    messages depends on whether it was given a messaging application id, and a
+    voice-only Bandwidth account is a real, supported configuration.
+    """
+    caps = BandwidthMessagingCarrier(
+        account_id="a", api_username="u", api_password="p", application_id="msg-app"
+    ).capabilities
     assert caps.supports_cancel is False
     assert caps.supports_scheduled_send is False
     # 202 Accepted is not delivery. Nothing may pretend otherwise.
     assert caps.sync_delivery_status is False
     assert caps.max_media_bytes == 3_750_000
+    assert caps.supports_messaging is True
+
+
+def test_a_voice_only_account_does_not_claim_messaging():
+    """No messaging application id means Bandwidth will not carry texts for this account.
+    Saying so up front beats finding out from a rejected send."""
+    caps = BandwidthMessagingCarrier(
+        account_id="a", api_username="u", api_password="p", application_id=""
+    ).capabilities
+    assert caps.supports_messaging is False

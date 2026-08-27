@@ -324,7 +324,16 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Register */
+        /**
+         * Register
+         * @description Registration is INVITE-ONLY once the instance has an owner.
+         *
+         *     The single exception is first-run: while no account exists at all there is nobody who
+         *     could issue an invitation, so the first registration is allowed and becomes the owner.
+         *     That gate is a COUNT of users rather than a config flag - a flag can be left switched
+         *     on by accident and silently reopen the instance months later; this condition flips
+         *     itself the moment the first account exists and can never drift back.
+         */
         post: operations["register_api_v1_auth_register_post"];
         delete?: never;
         options?: never;
@@ -990,6 +999,44 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/current/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Invites
+         * @description Outstanding and historical invitations. Never includes a token.
+         */
+        get: operations["list_invites_api_v1_orgs_current_invites_get"];
+        put?: never;
+        /** Create Invite */
+        post: operations["create_invite_api_v1_orgs_current_invites_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/current/invites/{invite_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Invite */
+        delete: operations["revoke_invite_api_v1_orgs_current_invites__invite_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1941,6 +1988,11 @@ export interface components {
              */
             state: string;
             /**
+             * Supports Messaging
+             * @default true
+             */
+            supports_messaging: boolean;
+            /**
              * Supports Numbers
              * @default false
              */
@@ -2149,6 +2201,65 @@ export interface components {
         HandoffOut: {
             /** Published */
             published: boolean;
+        };
+        /** InviteCreatedOut */
+        InviteCreatedOut: {
+            /** Accept Url */
+            accept_url: string;
+            /** Accepted At */
+            accepted_at: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Revoked At */
+            revoked_at: string | null;
+            /** Role Name */
+            role_name: string;
+            /** Token */
+            token: string;
+        };
+        /** InviteIn */
+        InviteIn: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /**
+             * Role Name
+             * @default agent
+             */
+            role_name: string;
+        };
+        /** InviteOut */
+        InviteOut: {
+            /** Accepted At */
+            accepted_at: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Revoked At */
+            revoked_at: string | null;
+            /** Role Name */
+            role_name: string;
         };
         /** KbChunkOut */
         KbChunkOut: {
@@ -2570,6 +2681,11 @@ export interface components {
              * @default
              */
             full_name: string;
+            /**
+             * Invite Token
+             * @default
+             */
+            invite_token: string;
             /** Password */
             password: string;
         };
@@ -5281,6 +5397,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_invites_api_v1_orgs_current_invites_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_invite_api_v1_orgs_current_invites_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteCreatedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_invite_api_v1_orgs_current_invites__invite_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                invite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteOut"];
                 };
             };
             /** @description Validation Error */

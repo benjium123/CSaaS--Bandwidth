@@ -22,6 +22,7 @@ from app.models.contacts import (
     Tag,
     ThreadLabel,
 )
+from app.models.invites import Invite
 from app.models.messaging import (
     EVENT_TO_STATUS,
     STATUS_RANK,
@@ -78,6 +79,7 @@ __all__ = [
     "CustomFieldDef",
     "DncEntry",
     "MediaAsset",
+    "Invite",
     "Message",
     "MessageEvent",
     "MessageTemplate",

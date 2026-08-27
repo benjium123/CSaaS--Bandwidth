@@ -999,6 +999,11 @@
             "title": "State",
             "type": "string"
           },
+          "supports_messaging": {
+            "default": true,
+            "title": "Supports Messaging",
+            "type": "boolean"
+          },
           "supports_numbers": {
             "default": false,
             "title": "Supports Numbers",
@@ -1512,6 +1517,147 @@
           "published"
         ],
         "title": "HandoffOut",
+        "type": "object"
+      },
+      "InviteCreatedOut": {
+        "properties": {
+          "accept_url": {
+            "title": "Accept Url",
+            "type": "string"
+          },
+          "accepted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "role_name": {
+            "title": "Role Name",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role_name",
+          "expires_at",
+          "accepted_at",
+          "revoked_at",
+          "token",
+          "accept_url"
+        ],
+        "title": "InviteCreatedOut",
+        "type": "object"
+      },
+      "InviteIn": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "role_name": {
+            "default": "agent",
+            "title": "Role Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "InviteIn",
+        "type": "object"
+      },
+      "InviteOut": {
+        "properties": {
+          "accepted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "role_name": {
+            "title": "Role Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role_name",
+          "expires_at",
+          "accepted_at",
+          "revoked_at"
+        ],
+        "title": "InviteOut",
         "type": "object"
       },
       "KbChunkOut": {
@@ -2548,6 +2694,11 @@
           "full_name": {
             "default": "",
             "title": "Full Name",
+            "type": "string"
+          },
+          "invite_token": {
+            "default": "",
+            "title": "Invite Token",
             "type": "string"
           },
           "password": {
@@ -4575,6 +4726,7 @@
     },
     "/api/v1/auth/register": {
       "post": {
+        "description": "Registration is INVITE-ONLY once the instance has an owner.\n\nThe single exception is first-run: while no account exists at all there is nobody who\ncould issue an invitation, so the first registration is allowed and becomes the owner.\nThat gate is a COUNT of users rather than a config flag - a flag can be left switched\non by accident and silently reopen the instance months later; this condition flips\nitself the moment the first account exists and can never drift back.",
         "operationId": "register_api_v1_auth_register_post",
         "requestBody": {
           "content": {
@@ -7998,6 +8150,191 @@
           }
         ],
         "summary": "Current Org",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/current/invites": {
+      "get": {
+        "description": "Outstanding and historical invitations. Never includes a token.",
+        "operationId": "list_invites_api_v1_orgs_current_invites_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InviteOut"
+                  },
+                  "title": "Response List Invites Api V1 Orgs Current Invites Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Invites",
+        "tags": [
+          "orgs"
+        ]
+      },
+      "post": {
+        "operationId": "create_invite_api_v1_orgs_current_invites_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteCreatedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Invite",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/current/invites/{invite_id}": {
+      "delete": {
+        "operationId": "revoke_invite_api_v1_orgs_current_invites__invite_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invite_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invite Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Invite",
         "tags": [
           "orgs"
         ]

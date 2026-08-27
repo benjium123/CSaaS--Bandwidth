@@ -77,10 +77,23 @@ async def _active_numbers(session: AsyncSession, org_id: uuid.UUID) -> list[OrgN
     )
 
 
+def _can_message(registry: CarrierRegistry, name: str) -> bool:
+    carrier = registry.get(name)
+    return carrier is not None and carrier.capabilities.supports_messaging
+
+
 def _carrier_order(policy: RoutingPolicy, registry: CarrierRegistry) -> list[str]:
-    """Preference first (as configured), then anything else the registry has."""
-    preferred = [c for c in (policy.preference or []) if c in registry]
-    remainder = [c for c in registry.names() if c not in preferred]
+    """Preference first (as configured), then anything else the registry has.
+
+    Voice-only carriers are excluded outright: they are present for calls, and offering
+    them to the message router would only produce a rejection at dispatch time.
+    """
+    preferred = [
+        c for c in (policy.preference or []) if c in registry and _can_message(registry, c)
+    ]
+    remainder = [
+        c for c in registry.names() if c not in preferred and _can_message(registry, c)
+    ]
     return preferred + remainder
 
 
@@ -164,8 +177,10 @@ async def plan_route(
     # ---- 3. sticky sender --------------------------------------------------------
     if thread_our_number and thread_our_number in by_e164:
         number = by_e164[thread_our_number]
-        if registry.get(number.carrier) is not None and registry.health.is_healthy(
-            number.carrier
+        if (
+            registry.get(number.carrier) is not None
+            and _can_message(registry, number.carrier)
+            and registry.health.is_healthy(number.carrier)
         ):
             return RoutePlan(
                 Route(number.carrier, number.e164, "sticky_sender"),
@@ -225,6 +240,13 @@ def _require_usable(registry: CarrierRegistry, name: str, *, explicit: bool) -> 
     if registry.get(name) is None:
         raise CarrierNotConfiguredError(
             f"Carrier {name!r} is not configured on this deployment"
+        )
+    carrier = registry.get(name)
+    if carrier is not None and not carrier.capabilities.supports_messaging:
+        raise CarrierNotConfiguredError(
+            f"Carrier {name!r} is configured for VOICE only on this deployment and "
+            "cannot send messages. Add its messaging credentials (for Bandwidth, "
+            "BANDWIDTH_MESSAGING_APPLICATION_ID) or send from another carrier."
         )
     if explicit and not registry.health.is_healthy(name):
         raise CarrierNotConfiguredError(

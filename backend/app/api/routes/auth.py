@@ -17,10 +17,11 @@ from app.auth.security import (
 )
 from app.config import Settings
 from app.db.session import get_session
-from app.errors import UnauthenticatedError
+from app.errors import UnauthenticatedError, ValidationFailedError
 from app.models import User
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
+from app.services import invites as invites_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -29,6 +30,8 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=10, max_length=128)
     full_name: str = ""
+    #: Required unless this is the very first account on the instance.
+    invite_token: str = ""
 
 
 class LoginIn(BaseModel):
@@ -61,11 +64,38 @@ class MeOut(BaseModel):
 @router.post("/register", response_model=MeOut, status_code=201)
 async def register(
     payload: RegisterIn,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> MeOut:
+    """Registration is INVITE-ONLY once the instance has an owner.
+
+    The single exception is first-run: while no account exists at all there is nobody who
+    could issue an invitation, so the first registration is allowed and becomes the owner.
+    That gate is a COUNT of users rather than a config flag - a flag can be left switched
+    on by accident and silently reopen the instance months later; this condition flips
+    itself the moment the first account exists and can never drift back.
+    """
+    settings: Settings = request.app.state.settings
+    bootstrap = settings.allow_open_registration or not await invites_svc.instance_has_users(
+        session
+    )
+
+    invite = None
+    if not bootstrap:
+        if not payload.invite_token:
+            raise ValidationFailedError(
+                "This instance is invite-only. Ask an administrator for an invitation."
+            )
+        invite = await invites_svc.find_redeemable(
+            session, payload.invite_token, payload.email
+        )
+
     user = await users_repo.create_user(
         session, email=payload.email, password=payload.password, full_name=payload.full_name
     )
+    if invite is not None:
+        await session.flush()
+        await invites_svc.redeem(session, invite, user.id)
     await session.commit()
     return MeOut(id=user.id, email=user.email, full_name=user.full_name, memberships=[])
 

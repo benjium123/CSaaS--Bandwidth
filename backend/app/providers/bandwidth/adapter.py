@@ -52,13 +52,19 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
         self._owns_client = client is None
 
     # -- capabilities are DECLARED, never discovered by trial -----------------------
-    capabilities = CarrierCapabilities(
-        supports_cancel=False,
-        supports_scheduled_send=False,
-        sync_delivery_status=False,
-        max_media_bytes=3_750_000,
-        group_mms_toll_free=False,
-    )
+    # INSTANCE level, not class level: whether this deployment may send MESSAGES depends
+    # on whether it was given a messaging application id, which differs per account. A
+    # Bandwidth trial that only has voice is a real and supported configuration.
+    @property
+    def capabilities(self) -> CarrierCapabilities:
+        return CarrierCapabilities(
+            supports_messaging=bool((self.application_id or "").strip()),
+            supports_cancel=False,
+            supports_scheduled_send=False,
+            sync_delivery_status=False,
+            max_media_bytes=3_750_000,
+            group_mms_toll_free=False,
+        )
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:

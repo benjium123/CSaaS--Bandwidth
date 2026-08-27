@@ -44,6 +44,9 @@ class CarrierCatalogOut(BaseModel):
     capabilities: dict = {}
     supports_numbers: bool = False
     supports_voice: bool = False
+    #: False when this deployment holds VOICE-only credentials for the carrier. The
+    #: console shows it so an operator learns before they try to text from it.
+    supports_messaging: bool = True
 
 
 class ProbeOut(BaseModel):
@@ -116,6 +119,9 @@ async def carrier_catalog(
                 capabilities=(row or {}).get("capabilities", {}),
                 supports_numbers=isinstance(carrier, NumberProvider),
                 supports_voice=isinstance(carrier, VoiceCarrier),
+                supports_messaging=(
+                    carrier.capabilities.supports_messaging if carrier is not None else True
+                ),
             )
         )
     return out

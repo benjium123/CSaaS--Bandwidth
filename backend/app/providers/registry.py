@@ -106,7 +106,13 @@ def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
         status = statuses.get(name)
         return bool(status and status.enabled)
 
-    if enabled("bandwidth") and settings.bandwidth_messaging_application_id.strip():
+    # Voice and messaging are separate Bandwidth products with separate application ids.
+    # Requiring the MESSAGING id to build the adapter meant a voice-only account got no
+    # carrier at all - not even for calls it was perfectly entitled to make.
+    if enabled("bandwidth") and (
+        settings.bandwidth_messaging_application_id.strip()
+        or settings.bandwidth_voice_application_id.strip()
+    ):
         from app.providers.bandwidth.adapter import BandwidthMessagingCarrier
 
         carriers["bandwidth"] = BandwidthMessagingCarrier(
