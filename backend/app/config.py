@@ -77,7 +77,11 @@ class Settings(BaseSettings):
     s3_secret_access_key: SecretStr = SecretStr("")
 
     # ---------------- carriers ----------------
-    bandwidth_enabled: bool = False
+    # TRI-STATE (phase-9b DR-1): None/unset = AUTO - the carrier is live iff its required
+    # credentials are present. true/false = explicit override; false is the kill-switch.
+    # Rationale: requiring keys AND a flag is a silent-failure generator - you paste a key,
+    # nothing happens, and nothing tells you why.
+    bandwidth_enabled: bool | None = None
     bandwidth_account_id: str = ""
     bandwidth_api_username: str = ""
     bandwidth_api_password: SecretStr = SecretStr("")
@@ -87,7 +91,7 @@ class Settings(BaseSettings):
     bandwidth_webhook_password: SecretStr = SecretStr("")
     bandwidth_default_number: str = ""
 
-    telnyx_enabled: bool = False
+    telnyx_enabled: bool | None = None
     telnyx_api_key: SecretStr = SecretStr("")
     telnyx_public_key: SecretStr = SecretStr("")
     telnyx_messaging_profile_id: str = ""
@@ -104,7 +108,7 @@ class Settings(BaseSettings):
     #: SIP trunk id configured in livekit-sip for OUTBOUND calls (lk sip outbound create).
     livekit_sip_outbound_trunk_id: str = ""
 
-    signalwire_enabled: bool = False
+    signalwire_enabled: bool | None = None
     signalwire_project_id: str = ""
     signalwire_api_token: SecretStr = SecretStr("")
     #: e.g. "yourspace.signalwire.com"
@@ -113,6 +117,26 @@ class Settings(BaseSettings):
     #: and it must not be reconstructed from an attacker-controllable Host header.
     signalwire_webhook_url: str = ""
     signalwire_default_number: str = ""
+
+    twilio_enabled: bool | None = None
+    #: Account SID (starts "AC"). Console -> Account Info.
+    twilio_account_sid: str = ""
+    twilio_auth_token: SecretStr = SecretStr("")
+    #: Optional Messaging Service SID ("MG..."); when set, Twilio picks the sender.
+    twilio_messaging_service_sid: str = ""
+    #: The URL we REGISTERED with Twilio. The signature covers the URL, and it must never
+    #: be rebuilt from an attacker-controllable Host header.
+    twilio_webhook_url: str = ""
+    twilio_default_number: str = ""
+
+    plivo_enabled: bool | None = None
+    plivo_auth_id: str = ""
+    plivo_auth_token: SecretStr = SecretStr("")
+    #: Optional Powerpack UUID for pooled sending.
+    plivo_powerpack_uuid: str = ""
+    #: Registered webhook URL - the V3 signature covers it (same reasoning as Twilio).
+    plivo_webhook_url: str = ""
+    plivo_default_number: str = ""
 
     #: Refuse to send from a number we hold no registration for. Off by default because a
     #: number registered directly at the carrier (Bandwidth's trial number, for one) is
@@ -194,7 +218,7 @@ class Settings(BaseSettings):
                     "LOOPBACK_CARRIER_ENABLED must be false in production - it is a fake "
                     "carrier that never touches the PSTN"
                 )
-            if self.bandwidth_enabled and (
+            if self.carrier_live("bandwidth") and (
                 _empty(self.bandwidth_webhook_username)
                 or _empty(self.bandwidth_webhook_password)
             ):
@@ -203,7 +227,7 @@ class Settings(BaseSettings):
                     "when Bandwidth is enabled - voice webhooks fail closed without them"
                 )
 
-        if self.loopback_carrier_enabled and self.bandwidth_enabled:
+        if self.loopback_carrier_enabled and self.carrier_live("bandwidth"):
             problems.append(
                 "LOOPBACK_CARRIER_ENABLED and BANDWIDTH_ENABLED are both true - which "
                 "carrier should send? Disable one."
@@ -216,23 +240,74 @@ class Settings(BaseSettings):
         return self
 
     # ------------------------------------------------------------------
+    #: Every carrier and the credentials it cannot run without. This map IS the
+    #: "bring your own key" contract: adding a carrier here makes it discoverable by the
+    #: status endpoint, the console and the tri-state auto-enable, in one place.
+    def carrier_requirements(self) -> dict[str, dict[str, object]]:
+        return {
+            "bandwidth": {
+                "BANDWIDTH_ACCOUNT_ID": self.bandwidth_account_id,
+                "BANDWIDTH_API_USERNAME": self.bandwidth_api_username,
+                "BANDWIDTH_API_PASSWORD": self.bandwidth_api_password,
+            },
+            "telnyx": {"TELNYX_API_KEY": self.telnyx_api_key},
+            "twilio": {
+                "TWILIO_ACCOUNT_SID": self.twilio_account_sid,
+                "TWILIO_AUTH_TOKEN": self.twilio_auth_token,
+            },
+            "plivo": {
+                "PLIVO_AUTH_ID": self.plivo_auth_id,
+                "PLIVO_AUTH_TOKEN": self.plivo_auth_token,
+            },
+            "signalwire": {
+                "SIGNALWIRE_PROJECT_ID": self.signalwire_project_id,
+                "SIGNALWIRE_API_TOKEN": self.signalwire_api_token,
+                "SIGNALWIRE_SPACE_URL": self.signalwire_space_url,
+            },
+        }
+
+    def carrier_flag(self, name: str) -> bool | None:
+        return getattr(self, f"{name}_enabled", None)
+
+    def carrier_live(self, name: str) -> bool:
+        """Effective enablement. Read this, never the raw flag - the flag alone cannot
+        answer the question now that unset means auto."""
+        flag = self.carrier_flag(name)
+        if flag is False:
+            return False
+        required = self.carrier_requirements().get(name, {})
+        return not [k for k, v in required.items() if _empty(v)]  # type: ignore[arg-type]
+
+    # ------------------------------------------------------------------
     def provider_statuses(self) -> list[ProviderStatus]:
         """One status per integration. Names missing variables, never values."""
         out: list[ProviderStatus] = []
 
-        def flagged(name: str, flag: bool, required: dict[str, object]) -> None:
-            if not flag:
+        def carrier(name: str) -> None:
+            """Tri-state (phase-9b DR-1). flag None = AUTO: live iff credentials present."""
+            flag = self.carrier_flag(name)
+            required = self.carrier_requirements()[name]
+            missing = [k for k, v in required.items() if _empty(v)]  # type: ignore[arg-type]
+
+            if flag is False:
                 out.append(
                     ProviderStatus(name, False, reason=f"{name.upper()}_ENABLED is false")
                 )
-                return
-            missing = [k for k, v in required.items() if _empty(v)]  # type: ignore[arg-type]
-            if missing:
+            elif missing and flag is True:
                 out.append(
                     ProviderStatus(
                         name,
                         False,
                         reason=f"{name.upper()}_ENABLED=true but missing: {', '.join(missing)}",
+                        missing=missing,
+                    )
+                )
+            elif missing:
+                out.append(
+                    ProviderStatus(
+                        name,
+                        False,
+                        reason=f"not configured; add {', '.join(missing)} to enable",
                         missing=missing,
                     )
                 )
@@ -247,29 +322,8 @@ class Settings(BaseSettings):
             else:
                 out.append(ProviderStatus(name, True))
 
-        flagged(
-            "bandwidth",
-            self.bandwidth_enabled,
-            {
-                "BANDWIDTH_ACCOUNT_ID": self.bandwidth_account_id,
-                "BANDWIDTH_API_USERNAME": self.bandwidth_api_username,
-                "BANDWIDTH_API_PASSWORD": self.bandwidth_api_password,
-            },
-        )
-        flagged(
-            "telnyx",
-            self.telnyx_enabled,
-            {"TELNYX_API_KEY": self.telnyx_api_key},
-        )
-        flagged(
-            "signalwire",
-            self.signalwire_enabled,
-            {
-                "SIGNALWIRE_PROJECT_ID": self.signalwire_project_id,
-                "SIGNALWIRE_API_TOKEN": self.signalwire_api_token,
-                "SIGNALWIRE_SPACE_URL": self.signalwire_space_url,
-            },
-        )
+        for carrier_name in self.carrier_requirements():
+            carrier(carrier_name)
 
         keyed("anthropic", {"ANTHROPIC_API_KEY": self.anthropic_api_key})
         keyed("openai", {"OPENAI_API_KEY": self.openai_api_key})
