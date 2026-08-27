@@ -133,8 +133,17 @@ async def _probe_signalwire(settings, http: httpx.AsyncClient) -> ProbeResult:  
 
 
 async def _probe_bandwidth(settings, http: httpx.AsyncClient) -> ProbeResult:  # noqa: ANN001
+    """Probe the surface this deployment actually uses.
+
+    Bandwidth sells voice and messaging separately. Testing the messaging endpoint on a
+    voice-only account asks a question the account was never meant to answer, and reports
+    a 401 that says nothing about whether calls would work.
+    """
     account = settings.bandwidth_account_id
-    url = f"https://messaging.bandwidth.com/api/v2/users/{account}/media"
+    if not settings.bandwidth_messaging_application_id.strip():
+        url = f"https://voice.bandwidth.com/api/v2/accounts/{account}/calls"
+    else:
+        url = f"https://messaging.bandwidth.com/api/v2/users/{account}/media"
     resp = await http.get(
         url,
         auth=(settings.bandwidth_api_username, _secret(settings.bandwidth_api_password)),
@@ -145,9 +154,11 @@ async def _probe_bandwidth(settings, http: httpx.AsyncClient) -> ProbeResult:  #
         return ProbeResult(
             "bandwidth",
             False,
-            "Bandwidth rejected these credentials. Note that the Messaging API needs an "
-            "API-user credential pair, which is NOT the dashboard login and NOT the "
-            "voice/Client ID pair. " + _detail_from(resp),
+            "Bandwidth rejected these credentials. Both the Voice and Messaging APIs "
+            "expect an API-user credential pair created under Account -> Credentials; "
+            "that is NOT the dashboard login, and a Client ID / Client Secret pair "
+            "(CLI-...) belongs to a different product surface and will 401 here. "
+            + _detail_from(resp),
             url,
         )
     return ProbeResult("bandwidth", False, _detail_from(resp), url)
