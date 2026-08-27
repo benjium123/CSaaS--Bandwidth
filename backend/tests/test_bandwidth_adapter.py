@@ -114,3 +114,106 @@ def test_a_voice_only_account_does_not_claim_messaging():
         account_id="a", api_username="u", api_password="p", application_id=""
     ).capabilities
     assert caps.supports_messaging is False
+
+
+# ==================================================================================
+# OAuth2. Current Bandwidth accounts issue a Client ID / Client Secret which is NOT
+# accepted as HTTP Basic anywhere - verified against a live account, where Basic 401s on
+# every host while the same pair mints a working token.
+# ==================================================================================
+async def test_client_credentials_are_exchanged_for_a_bearer_token():
+    import httpx
+
+    from app.providers.bandwidth.auth import BandwidthTokenProvider
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"access_token": "tok-abc", "expires_in": 3600})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = BandwidthTokenProvider("CLI-x", "secret", client=http)
+        assert await provider.token() == "tok-abc"
+        # Cached: a second call must not hit the token endpoint again. A token lasts an
+        # hour; refetching per request adds a round trip to every call.
+        assert await provider.token() == "tok-abc"
+
+    assert len(seen) == 1
+    assert seen[0].url.path == "/api/v1/oauth2/token"
+    assert b"grant_type=client_credentials" in seen[0].content
+
+
+async def test_a_rejected_client_credential_says_so_clearly():
+    import httpx
+    import pytest as _pytest
+
+    from app.providers.bandwidth.auth import BandwidthAuthError, BandwidthTokenProvider
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"message": "The credentials provided were invalid."})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = BandwidthTokenProvider("CLI-x", "bad", client=http)
+        with _pytest.raises(BandwidthAuthError) as exc:
+            await provider.token()
+    assert "invalid" in str(exc.value).lower()
+
+
+async def test_a_stale_token_is_refreshed_exactly_once_on_401():
+    """Tokens die early - revoked, rotated, clock drift. One forced refresh turns a
+    mysterious mid-call 401 into a self-healing retry; retrying forever would turn a
+    genuinely bad credential into a hot loop against the identity server."""
+    import httpx
+
+    from app.providers.bandwidth.adapter import BandwidthMessagingCarrier
+    from app.providers.domain import OutboundMessage
+
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/oauth2/token"):
+            calls.append("token")
+            return httpx.Response(200, json={"access_token": "t2", "expires_in": 3600})
+        calls.append("send")
+        # First send is rejected as if the cached token had just been revoked.
+        if calls.count("send") == 1:
+            return httpx.Response(401, json={"type": "unauthorized"})
+        return httpx.Response(202, json={"id": "m-1"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        carrier = BandwidthMessagingCarrier(
+            account_id="9903389",
+            api_username="CLI-x",
+            api_password="s",
+            application_id="app",
+            auth_mode="oauth2",
+            client=http,
+        )
+        result = await carrier.send_message(
+            OutboundMessage(to="+12145550100", from_="+19725550100", text="hi")
+        )
+
+    assert result.status == "accepted"
+    assert calls.count("send") == 2, "exactly one retry after the forced refresh"
+    assert calls.count("token") == 2, "the token was refreshed once, not on a loop"
+
+
+async def test_oauth2_accounts_use_a_bearer_header_not_basic_credentials():
+    """media_auth returns a Basic PAIR; under OAuth2 there is no pair to return, and
+    handing back the client secret as a password would leak it to the media host."""
+    from app.providers.bandwidth.adapter import BandwidthMessagingCarrier
+
+    oauth = BandwidthMessagingCarrier(
+        account_id="a", api_username="CLI-x", api_password="secret",
+        application_id="app", auth_mode="oauth2",
+    )
+    assert oauth.media_auth("https://media.bandwidth.com/x.jpg") is None
+
+    legacy = BandwidthMessagingCarrier(
+        account_id="a", api_username="u", api_password="p",
+        application_id="app", auth_mode="basic",
+    )
+    assert legacy.media_auth("https://media.bandwidth.com/x.jpg") == ("u", "p")
+    assert legacy.media_auth("https://bandwidth.com.evil.net/x.jpg") is None

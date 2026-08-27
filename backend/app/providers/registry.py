@@ -120,6 +120,7 @@ def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
             api_username=settings.bandwidth_api_username,
             api_password=settings.bandwidth_api_password.get_secret_value(),
             application_id=settings.bandwidth_messaging_application_id,
+            auth_mode=settings.bandwidth_auth_mode,
             webhook_username=settings.bandwidth_webhook_username,
             webhook_password=settings.bandwidth_webhook_password.get_secret_value(),
         )

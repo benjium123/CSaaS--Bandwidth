@@ -8,12 +8,14 @@ wildly version-skewed dependency along for one call.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from urllib.parse import urlparse
 
 import httpx
 import structlog
 
 from app.providers.bandwidth import errors as bw_errors
 from app.providers.bandwidth import webhooks
+from app.providers.bandwidth.auth import BandwidthTokenProvider
 from app.providers.bandwidth.voice import BandwidthVoiceMixin
 from app.providers.domain import (
     CarrierCapabilities,
@@ -37,6 +39,11 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
         api_username: str,
         api_password: str,
         application_id: str,
+        # Constructor default is BASIC so directly-constructed adapters keep their
+        # existing behaviour. Production never relies on this default: build_registry
+        # always passes settings.bandwidth_auth_mode, whose default is "oauth2" - the
+        # model current Bandwidth accounts actually use.
+        auth_mode: str = "basic",
         webhook_username: str = "",
         webhook_password: str = "",
         base_url: str = DEFAULT_BASE_URL,
@@ -48,6 +55,19 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
         self._webhook_username = webhook_username
         self._webhook_password = webhook_password
         self._auth = (api_username, api_password)
+        # OAuth2 when the dashboard issued a Client ID / Client Secret (the current
+        # Bandwidth model); Basic for legacy API-user credentials. Explicit config, not a
+        # guess: sniffing the credential shape would silently change how we authenticate
+        # the day Bandwidth changes its id format.
+        self.auth_mode = auth_mode
+        self._tokens = (
+            # Share the adapter's client so an injected transport (tests, and any future
+            # proxy/timeouts policy) also governs the token exchange. A provider with its
+            # own client would quietly make REAL network calls under a mocked adapter.
+            BandwidthTokenProvider(api_username, api_password, client=client)
+            if auth_mode == "oauth2"
+            else None
+        )
         self._client = client
         self._owns_client = client is None
 
@@ -68,7 +88,9 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(auth=self._auth, timeout=10.0)
+            self._client = httpx.AsyncClient(
+                auth=self._auth if self._tokens is None else None, timeout=10.0
+            )
         return self._client
 
     async def aclose(self) -> None:
@@ -90,7 +112,12 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
 
         client = await self._get_client()
         try:
-            resp = await client.post(url, json=body, auth=self._auth)
+            resp = await client.post(url, json=body, **(await self.auth_kwargs()))
+            if resp.status_code == 401 and self._tokens is not None:
+                # The token may have been revoked or rotated. Refresh once - never loop,
+                # or a genuinely bad credential becomes a hot loop on the token endpoint.
+                self.invalidate_token()
+                resp = await client.post(url, json=body, **(await self.auth_kwargs()))
         except httpx.TransportError as exc:
             log.warning("carrier_unreachable", error=str(exc))
             return SendResult("rejected", None, bw_errors.unreachable(str(exc)))
@@ -132,6 +159,19 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
     # produce code that looks finished and fails on first contact - `as_provider` raises a
     # clear FeatureUnavailableError instead, and numbers can be added by hand meanwhile.
 
+    async def auth_kwargs(self) -> dict:
+        """How to authenticate ONE outbound request: Bearer header or Basic tuple."""
+        if self._tokens is None:
+            return {"auth": self._auth}
+        if self._tokens._client is None:
+            self._tokens._client = await self._get_client()
+            self._tokens._owns_client = False
+        return {"headers": {"Authorization": f"Bearer {await self._tokens.token()}"}}
+
+    def invalidate_token(self) -> None:
+        if self._tokens is not None:
+            self._tokens.invalidate()
+
     def media_auth(self, url: str) -> tuple[str, str] | None:
         """Credentials for fetching carrier-hosted media - and ONLY for Bandwidth hosts.
 
@@ -143,7 +183,17 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
             host = httpx.URL(url).host or ""
         except Exception:
             return None
-        return self._auth if host.endswith("bandwidth.com") else None
+        if not host.endswith("bandwidth.com"):
+            return None
+        # Under OAuth2 there is no Basic pair to hand back; media_headers() carries the
+        # Bearer token instead, and the fetcher prefers it when present.
+        return self._auth if self._tokens is None else None
+
+    async def media_headers(self, url: str) -> dict | None:
+        host = (urlparse(url).hostname or "").lower()
+        if not host.endswith("bandwidth.com") or self._tokens is None:
+            return None
+        return {"Authorization": f"Bearer {await self._tokens.token()}"}
 
     # -- webhook surface delegates to the pure module ------------------------------
     def verify_webhook(self, headers: Mapping[str, str], raw_body: bytes) -> bool:

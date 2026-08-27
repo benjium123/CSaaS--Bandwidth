@@ -227,10 +227,19 @@ async def _fetch_one_recording(
     if not event.recording_url:
         return await _fail(recording, "recording_ready event carried no URL")
 
+    # Prefer a header-based credential when the adapter has one. A Bandwidth account on
+    # OAuth2 has no Basic pair to hand back, so recording_auth() correctly returns None
+    # there and the download would otherwise go out unauthenticated and 401.
     auth = adapter.recording_auth(event.recording_url)
+    headers: dict = {}
+    header_fn = getattr(adapter, "recording_headers", None)
+    if header_fn is not None:
+        headers = await header_fn(event.recording_url) or {}
 
     try:
-        async with client.stream("GET", event.recording_url, auth=auth) as response:
+        async with client.stream(
+            "GET", event.recording_url, auth=auth, headers=headers
+        ) as response:
             if response.status_code >= 400:
                 return await _fail(recording, f"http {response.status_code}")
 

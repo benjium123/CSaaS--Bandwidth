@@ -76,7 +76,7 @@ class BandwidthVoiceMixin:
             response = await client.post(
                 url,
                 json=body,
-                auth=self._auth,
+                **(await self.auth_kwargs()),
             )
         except httpx.HTTPError as exc:
             logger.warning("bandwidth_create_call_transport_error", error=str(exc))
@@ -258,8 +258,17 @@ class BandwidthVoiceMixin:
             )
         ]
 
+    async def recording_headers(self, url: str) -> dict | None:
+        """Bearer equivalent of recording_auth for OAuth2 accounts."""
+        hostname = urlparse(url).hostname
+        tokens = getattr(self, "_tokens", None)
+        if not (hostname and hostname.endswith(".bandwidth.com")) or tokens is None:
+            return None
+        return {"Authorization": f"Bearer {await tokens.token()}"}
+
     def recording_auth(self, url: str) -> tuple[str, str] | None:
         hostname = urlparse(url).hostname
         if hostname and hostname.endswith(".bandwidth.com"):
-            return self._auth
+            # Under OAuth2 there is no Basic pair; recording_headers() carries the token.
+            return self._auth if getattr(self, "_tokens", None) is None else None
         return None

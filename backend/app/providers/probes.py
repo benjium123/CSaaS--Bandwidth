@@ -144,10 +144,26 @@ async def _probe_bandwidth(settings, http: httpx.AsyncClient) -> ProbeResult:  #
         url = f"https://voice.bandwidth.com/api/v2/accounts/{account}/calls"
     else:
         url = f"https://messaging.bandwidth.com/api/v2/users/{account}/media"
-    resp = await http.get(
-        url,
-        auth=(settings.bandwidth_api_username, _secret(settings.bandwidth_api_password)),
-    )
+    if settings.bandwidth_auth_mode == "oauth2":
+        # Probe the way the adapter authenticates, or the probe answers a question
+        # nobody asked: Basic fails on an OAuth2 account even when the account is fine.
+        from app.providers.bandwidth.auth import BandwidthAuthError, BandwidthTokenProvider
+
+        provider = BandwidthTokenProvider(
+            settings.bandwidth_api_username,
+            _secret(settings.bandwidth_api_password),
+            client=http,
+        )
+        try:
+            token = await provider.token()
+        except BandwidthAuthError as exc:
+            return ProbeResult("bandwidth", False, str(exc)[:255], provider._token_url)
+        resp = await http.get(url, headers={"Authorization": f"Bearer {token}"})
+    else:
+        resp = await http.get(
+            url,
+            auth=(settings.bandwidth_api_username, _secret(settings.bandwidth_api_password)),
+        )
     if resp.status_code == 200:
         return ProbeResult("bandwidth", True, "Credentials accepted.", url)
     if resp.status_code in (401, 403):

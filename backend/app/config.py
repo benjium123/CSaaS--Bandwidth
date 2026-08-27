@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     bandwidth_api_password: SecretStr = SecretStr("")
     bandwidth_messaging_application_id: str = ""
     bandwidth_voice_application_id: str = ""
+    #: "oauth2" for a dashboard Client ID / Client Secret (current Bandwidth model),
+    #: "basic" for a legacy API-user username/password pair.
+    bandwidth_auth_mode: str = "oauth2"
     bandwidth_webhook_username: str = ""
     bandwidth_webhook_password: SecretStr = SecretStr("")
     bandwidth_default_number: str = ""
