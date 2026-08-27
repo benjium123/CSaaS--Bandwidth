@@ -19,6 +19,10 @@ dependencies = [
     "cryptography>=43",
     "python-multipart>=0.0.17",
     "phonenumbers>=8.13",
+    # RUNTIME, not dev: every carrier adapter (bandwidth/telnyx/twilio/plivo/signalwire)
+    # and the recording fetcher import httpx at module load. It was declared dev-only
+    # until the first production deploy crashed on ModuleNotFoundError at import time.
+    "httpx>=0.28",
     "pyotp>=2.9",
     # zoneinfo has no tz database on Windows or slim containers; without this,
     # ZoneInfo("America/Chicago") raises and quiet hours cannot be evaluated.
@@ -29,7 +33,6 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
-    "httpx>=0.28",
     "ruff>=0.8",
 ]
 

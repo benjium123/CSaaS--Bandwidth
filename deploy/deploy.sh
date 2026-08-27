@@ -12,6 +12,9 @@ set -euo pipefail
 
 TARGET="${1:-root@144.126.152.175}"
 REMOTE_DIR="/opt/csaas"
+# --env-file is REQUIRED: `${VAR}` interpolation in the compose file resolves against the
+# compose file's own directory (deploy/), not against the service-level `env_file:`. Without
+# it the first deploy dies on "CSAAS_DB_PASSWORD is missing a value".
 PORT=8080
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -71,10 +74,10 @@ if [ -d frontend/dist ]; then
 fi
 
 say "Building and starting (compose project: csaas)"
-ssh "$TARGET" "cd ${REMOTE_DIR} && docker compose -f deploy/docker-compose.prod.yml up -d --build"
+ssh "$TARGET" "cd ${REMOTE_DIR} && docker compose --env-file .env -f deploy/docker-compose.prod.yml up -d --build"
 
 say "Applying migrations"
-ssh "$TARGET" "cd ${REMOTE_DIR} && docker compose -f deploy/docker-compose.prod.yml exec -T api alembic upgrade head"
+ssh "$TARGET" "cd ${REMOTE_DIR} && docker compose --env-file .env -f deploy/docker-compose.prod.yml exec -T api alembic upgrade head"
 
 say "Health check"
 ssh "$TARGET" "curl -fsS http://127.0.0.1:${PORT}/healthz" || die "healthz did not come up green"
