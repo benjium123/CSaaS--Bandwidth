@@ -8,6 +8,7 @@ carriers for the cost of one, and the difference is a string.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from urllib.parse import urlencode
 
 import httpx
 import structlog
@@ -112,9 +113,16 @@ class SignalWireMessagingCarrier:
 
         client = await self._get_client()
         try:
+            # Hand-encoded, NOT data=form. On httpx 0.28 a list-of-tuples body is
+            # misrouted to the sync transport and every send dies with "Attempted to
+            # send an sync request with an AsyncClient instance" - SMS included, not
+            # just MMS. A dict cannot replace the list: MediaUrl repeats once per
+            # attachment. This path had no test at all until now, which is exactly how
+            # a completely dead send path shipped.
             resp = await client.post(
                 f"{self.base_url}/Messages.json",
-                data=form,
+                content=urlencode(form),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
                 auth=(self.project_id, self._api_token),
             )
         except httpx.TransportError as exc:

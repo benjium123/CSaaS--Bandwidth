@@ -511,3 +511,68 @@ async def test_routing_policy_is_org_scoped(multi):
         "/api/v1/routing/policy", headers=auth_headers(token_b, org_b["id"])
     )
     assert other.json()["pinned_carrier"] is None
+
+
+# ==================================================================================
+# SignalWire OUTBOUND. This path had no test until a Twilio adapter built against the
+# same Twilio-compatible shape exposed the bug: on httpx 0.28 a list-of-tuples form body
+# is misrouted to the sync transport, so EVERY SignalWire send - plain SMS included -
+# died with RuntimeError. It shipped in P3b behind webhook-only coverage.
+# ==================================================================================
+async def test_signalwire_sends_a_plain_sms():
+    import httpx
+
+    from app.providers.domain import OutboundMessage
+    from app.providers.signalwire.adapter import SignalWireMessagingCarrier
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+        return httpx.Response(201, json={"sid": "SM1", "status": "queued"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        carrier = SignalWireMessagingCarrier(
+            project_id="p",
+            api_token="t",
+            space_url="x.signalwire.com",
+            webhook_url="https://w/",
+            client=http,
+        )
+        result = await carrier.send_message(
+            OutboundMessage(to="+12145550100", from_="+19725550100", text="hi")
+        )
+    assert result.status == "accepted"
+    assert result.provider_message_id == "SM1"
+
+
+async def test_signalwire_mms_repeats_the_media_key_once_per_attachment():
+    """MediaUrl repeats; it is not an array and it is not a JSON list. A dict body cannot
+    express this, which is why the (broken) list-of-tuples form was there to begin with."""
+    import httpx
+
+    from app.providers.domain import OutboundMessage
+    from app.providers.signalwire.adapter import SignalWireMessagingCarrier
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content.decode()
+        return httpx.Response(201, json={"sid": "SM2", "status": "queued"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        carrier = SignalWireMessagingCarrier(
+            project_id="p",
+            api_token="t",
+            space_url="x.signalwire.com",
+            webhook_url="https://w/",
+            client=http,
+        )
+        result = await carrier.send_message(
+            OutboundMessage(
+                to="+12145550100",
+                from_="+19725550100",
+                text="pics",
+                media=("https://a/1.png", "https://a/2.png"),
+            )
+        )
+    assert result.status == "accepted"
+    assert captured["body"].count("MediaUrl=") == 2

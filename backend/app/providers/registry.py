@@ -139,6 +139,26 @@ def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
         )
         carriers["telnyx"].voice_connection_id = settings.telnyx_voice_connection_id
 
+    if enabled("twilio"):
+        from app.providers.twilio.adapter import TwilioMessagingCarrier
+
+        carriers["twilio"] = TwilioMessagingCarrier(
+            account_sid=settings.twilio_account_sid,
+            auth_token=settings.twilio_auth_token.get_secret_value(),
+            messaging_service_sid=settings.twilio_messaging_service_sid,
+            webhook_url=settings.twilio_webhook_url,
+        )
+
+    if enabled("plivo"):
+        from app.providers.plivo.adapter import PlivoMessagingCarrier
+
+        carriers["plivo"] = PlivoMessagingCarrier(
+            auth_id=settings.plivo_auth_id,
+            auth_token=settings.plivo_auth_token.get_secret_value(),
+            powerpack_uuid=settings.plivo_powerpack_uuid,
+            webhook_url=settings.plivo_webhook_url,
+        )
+
     if enabled("signalwire"):
         from app.providers.signalwire.adapter import SignalWireMessagingCarrier
 
