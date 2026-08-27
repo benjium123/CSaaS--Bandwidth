@@ -101,3 +101,49 @@ def test_secrets_never_logged():
     blob = repr(captured)
     assert SENTINEL not in blob
     assert any(e.get("provider") == "bandwidth" for e in captured)
+
+
+# ==================================================================================
+# phase-9b DR-1: keys are the switch
+# ==================================================================================
+def _base(**kw):
+    return dict(jwt_secret="x" * 32, session_secret="y" * 32, _env_file=None, **kw)
+
+
+def test_credentials_alone_bring_a_carrier_live():
+    """The whole point: paste a key, restart, it works. No second flag to remember."""
+    s = Settings(**_base(twilio_account_sid="ACxxx", twilio_auth_token="tok"))
+    assert s.carrier_live("twilio") is True
+    assert s.carrier_flag("twilio") is None, "unset flag means AUTO, not False"
+
+
+def test_explicit_false_is_a_kill_switch_that_beats_present_keys():
+    """The one thing the flag still says that the keys cannot: 'not this one, for now.'"""
+    s = Settings(
+        **_base(twilio_account_sid="ACxxx", twilio_auth_token="tok", twilio_enabled=False)
+    )
+    assert s.carrier_live("twilio") is False
+
+
+def test_flag_true_without_keys_names_the_missing_variables():
+    """An operator who set the flag and nothing else must be told exactly what is absent -
+    this is the failure mode the old two-step design left silent."""
+    s = Settings(**_base(plivo_enabled=True))
+    status = {p.name: p for p in s.provider_statuses()}["plivo"]
+    assert status.enabled is False
+    assert set(status.missing) == {"PLIVO_AUTH_ID", "PLIVO_AUTH_TOKEN"}
+    assert "PLIVO_AUTH_ID" in status.reason
+
+
+def test_unconfigured_carrier_says_how_to_enable_it():
+    s = Settings(**_base())
+    status = {p.name: p for p in s.provider_statuses()}["twilio"]
+    assert status.enabled is False
+    assert "add TWILIO_ACCOUNT_SID" in status.reason
+
+
+def test_every_supported_carrier_is_listed_even_when_dark():
+    """The console renders this list; a carrier missing from it is a carrier the operator
+    never learns they could switch on."""
+    names = {p.name for p in Settings(**_base()).provider_statuses()}
+    assert {"bandwidth", "telnyx", "twilio", "plivo", "signalwire"} <= names

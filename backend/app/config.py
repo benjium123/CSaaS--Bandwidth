@@ -227,11 +227,24 @@ class Settings(BaseSettings):
                     "when Bandwidth is enabled - voice webhooks fail closed without them"
                 )
 
-        if self.loopback_carrier_enabled and self.carrier_live("bandwidth"):
-            problems.append(
-                "LOOPBACK_CARRIER_ENABLED and BANDWIDTH_ENABLED are both true - which "
-                "carrier should send? Disable one."
-            )
+        if self.loopback_carrier_enabled:
+            # Loopback is a FAKE carrier. It must never coexist with a real one, and the
+            # test is INTENT, not merely capability: an explicit *_ENABLED=true says the
+            # operator means to send for real, even if the credentials are not there yet.
+            # (Under tri-state, checking only carrier_live() would let that contradiction
+            # through the moment the keys were absent - which is exactly when a confused
+            # deployment is most likely.)
+            contradicting = [
+                name
+                for name in self.carrier_requirements()
+                if self.carrier_live(name) or self.carrier_flag(name) is True
+            ]
+            if contradicting:
+                problems.append(
+                    "LOOPBACK_CARRIER_ENABLED is true alongside "
+                    + ", ".join(f"{n.upper()}_ENABLED" for n in contradicting)
+                    + " - which carrier should send? Disable one."
+                )
 
         if problems:
             raise ConfigurationError(

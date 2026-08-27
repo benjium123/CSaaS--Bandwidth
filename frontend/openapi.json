@@ -950,6 +950,76 @@
         "title": "CampaignOut",
         "type": "object"
       },
+      "CarrierCatalogOut": {
+        "description": "Every carrier this BUILD supports, live or not - so an operator can see what is\navailable to switch on, not merely what is already on.",
+        "properties": {
+          "capabilities": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "enabled_flag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled Flag"
+          },
+          "live": {
+            "title": "Live",
+            "type": "boolean"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "primary": {
+            "default": false,
+            "title": "Primary",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "state": {
+            "default": "",
+            "title": "State",
+            "type": "string"
+          },
+          "supports_numbers": {
+            "default": false,
+            "title": "Supports Numbers",
+            "type": "boolean"
+          },
+          "supports_voice": {
+            "default": false,
+            "title": "Supports Voice",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "live",
+          "reason",
+          "missing",
+          "enabled_flag"
+        ],
+        "title": "CarrierCatalogOut",
+        "type": "object"
+      },
       "CarrierStatusOut": {
         "properties": {
           "capabilities": {
@@ -2162,6 +2232,34 @@
           "pinned_carrier"
         ],
         "title": "PolicyOut",
+        "type": "object"
+      },
+      "ProbeOut": {
+        "properties": {
+          "checked": {
+            "title": "Checked",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "ok",
+          "detail",
+          "checked"
+        ],
+        "title": "ProbeOut",
         "type": "object"
       },
       "ProfileIn": {
@@ -8851,6 +8949,129 @@
           }
         ],
         "summary": "List Carriers",
+        "tags": [
+          "routing"
+        ]
+      }
+    },
+    "/api/v1/routing/carriers/{name}/probe": {
+      "post": {
+        "description": "Ask the carrier whether these credentials work. Operator-triggered ONLY - see\nproviders/probes.py for why this never runs on boot.",
+        "operationId": "probe_carrier_api_v1_routing_carriers__name__probe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Probe Carrier",
+        "tags": [
+          "routing"
+        ]
+      }
+    },
+    "/api/v1/routing/catalog": {
+      "get": {
+        "description": "The bring-your-own-key view: every supported carrier, whether it is live, and if\nnot, the exact variables that would make it live.",
+        "operationId": "carrier_catalog_api_v1_routing_catalog_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CarrierCatalogOut"
+                  },
+                  "title": "Response Carrier Catalog Api V1 Routing Catalog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Carrier Catalog",
         "tags": [
           "routing"
         ]

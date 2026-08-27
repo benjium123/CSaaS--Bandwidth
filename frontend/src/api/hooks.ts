@@ -502,3 +502,43 @@ export function useDeleteKbDocument(api: ApiClient) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["kb-documents"] }),
   });
 }
+
+/* ---------------------------------------------------------------------------------------
+ * Routing / providers (Providers page)
+ * ------------------------------------------------------------------------------------- */
+
+export type CarrierCatalogOut = components["schemas"]["CarrierCatalogOut"];
+export type ProbeOut = components["schemas"]["ProbeOut"];
+export type RoutingPolicyOut = components["schemas"]["PolicyOut"];
+export type RoutingPolicyIn = components["schemas"]["PolicyIn"];
+
+export function useCarrierCatalog(api: ApiClient) {
+  return useQuery({
+    queryKey: ["carrier-catalog"],
+    queryFn: () => api.request<CarrierCatalogOut[]>("/api/v1/routing/catalog"),
+  });
+}
+
+/** Operator-triggered only (never on boot) - see providers/probes.py. */
+export function useProbeCarrier(api: ApiClient) {
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.request<ProbeOut>(`/api/v1/routing/carriers/${name}/probe`, { method: "POST" }),
+  });
+}
+
+export function useRoutingPolicy(api: ApiClient) {
+  return useQuery({
+    queryKey: ["routing-policy"],
+    queryFn: () => api.request<RoutingPolicyOut>("/api/v1/routing/policy"),
+  });
+}
+
+export function useUpdateRoutingPolicy(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: RoutingPolicyIn) =>
+      api.request<RoutingPolicyOut>("/api/v1/routing/policy", { method: "PATCH", json: vars }),
+    onSuccess: (data) => qc.setQueryData(["routing-policy"], data),
+  });
+}

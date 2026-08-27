@@ -1221,6 +1221,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/routing/carriers/{name}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe Carrier
+         * @description Ask the carrier whether these credentials work. Operator-triggered ONLY - see
+         *     providers/probes.py for why this never runs on boot.
+         */
+        post: operations["probe_carrier_api_v1_routing_carriers__name__probe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/routing/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Carrier Catalog
+         * @description The bring-your-own-key view: every supported carrier, whether it is live, and if
+         *     not, the exact variables that would make it live.
+         */
+        get: operations["carrier_catalog_api_v1_routing_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/routing/policy": {
         parameters: {
             query?: never;
@@ -1865,6 +1907,50 @@ export interface components {
             /** Use Case */
             use_case: string;
         };
+        /**
+         * CarrierCatalogOut
+         * @description Every carrier this BUILD supports, live or not - so an operator can see what is
+         *     available to switch on, not merely what is already on.
+         */
+        CarrierCatalogOut: {
+            /**
+             * Capabilities
+             * @default {}
+             */
+            capabilities: {
+                [key: string]: unknown;
+            };
+            /** Enabled Flag */
+            enabled_flag: boolean | null;
+            /** Live */
+            live: boolean;
+            /** Missing */
+            missing: string[];
+            /** Name */
+            name: string;
+            /**
+             * Primary
+             * @default false
+             */
+            primary: boolean;
+            /** Reason */
+            reason: string;
+            /**
+             * State
+             * @default
+             */
+            state: string;
+            /**
+             * Supports Numbers
+             * @default false
+             */
+            supports_numbers: boolean;
+            /**
+             * Supports Voice
+             * @default false
+             */
+            supports_voice: boolean;
+        };
         /** CarrierStatusOut */
         CarrierStatusOut: {
             /** Capabilities */
@@ -2354,6 +2440,17 @@ export interface components {
             pinned_carrier: string | null;
             /** Preference */
             preference: string[];
+        };
+        /** ProbeOut */
+        ProbeOut: {
+            /** Checked */
+            checked: string;
+            /** Detail */
+            detail: string;
+            /** Name */
+            name: string;
+            /** Ok */
+            ok: boolean;
         };
         /** ProfileIn */
         ProfileIn: {
@@ -5685,6 +5782,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CarrierStatusOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    probe_carrier_api_v1_routing_carriers__name__probe_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    carrier_catalog_api_v1_routing_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CarrierCatalogOut"][];
                 };
             };
             /** @description Validation Error */

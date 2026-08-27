@@ -3,6 +3,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { InboxPage } from "@/pages/InboxPage";
 import { ContactsPage } from "@/pages/ContactsPage";
 import { NumbersPage } from "@/pages/NumbersPage";
+import { ProvidersPage } from "@/pages/ProvidersPage";
 import { CallsPage } from "@/pages/CallsPage";
 import { AgentPage } from "@/pages/AgentPage";
 import { AppointmentsPage } from "@/pages/AppointmentsPage";
@@ -21,6 +22,7 @@ const NAV = [
   { to: "/agent", label: "AI Agent" },
   { to: "/appointments", label: "Appointments" },
   { to: "/numbers", label: "Numbers" },
+  { to: "/providers", label: "Providers" },
   { to: "/security", label: "Security" },
 ];
 
@@ -77,6 +79,7 @@ export function App() {
         <Route path="/agent" element={<AgentPage />} />
         <Route path="/appointments" element={<AppointmentsPage />} />
         <Route path="/numbers" element={<NumbersPage />} />
+        <Route path="/providers" element={<ProvidersPage />} />
         <Route path="/security" element={<SettingsSecurityPage />} />
         <Route path="*" element={<Navigate to="/inbox" replace />} />
       </Routes>
