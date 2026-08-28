@@ -4,10 +4,13 @@
 > and whenever a decision or a blocker changes. If it disagrees with your memory, this file
 > is right.
 
-**Last updated:** 2026-08-26 — P3 compliance core
-**Current phase:** P3 — **compliance core done (199 backend tests green, CI green).**
-Media pipeline + routes + frontend still to do. P1b/P2b/P3b blocked on R1.
-**Current blocker:** R1 — confirm Bandwidth account path to production
+**Last updated:** 2026-08-29 — P10 shipped and **LIVE ON THE VPS**
+**Current phase:** P10 done. Backend P0-P10 code complete, 686 backend + 46 frontend tests
+green, deployed to https://csaas.sabinepropertygroup.net (migration `0011` applied,
+`/healthz` ok, login + Bandwidth voice probe verified against the live box).
+**R1 is CLOSED**: regenerated Bandwidth OAuth2 credentials authenticate from production
+(`POST /api/v1/routing/carriers/bandwidth/probe` -> `ok:true`, voice.bandwidth.com).
+**Current blockers are all external inputs, not code** - see "Live gate blockers" below.
 
 ### P0 remaining before sign-off (all need the user, not more code)
 1. **R1** — confirm the Bandwidth account reaches production. Blocks Track R and P1.
@@ -49,27 +52,54 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 
 | Phase | Name | Status | Gate passed | Deployed | Commit |
 |---|---|---|---|---|---|
-| P0 | Foundation | 🔵 in review | local ✅ / CI+PG ✅ / VPS ⬜ | ⬜ pending | `5c73dc9` |
-| P1a | Carrier layer + ingestion (fixtures) | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `d6b5f59` |
-| P1b | Live SMS round-trip | 🔴 blocked on R1 | — | — | — |
-| P2a | Contacts, inbox console, sticky sender, 2FA | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `798245b` |
-| P2b | Console live on VPS | 🔴 blocked on R1 | — | — | — |
-| P3-core | Compliance: opt-out, keywords, quiet hours, DNC | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `69f9278` |
-| P3-rest | MMS media pipeline, routes, templates | 🔵 in review | local ✅ / CI+PG ✅ | n/a | `96d3dc8` |
-| P3b | Carrier routing fabric (pulled fwd from P14) | 🔵 in review | local ✅ (252) | n/a | `ffd370f` |
-| P4 | Numbers + 10DLC + TFV | 🔵 in review (backend) | local ✅ (273) | 🔴 blocked on R1 | — |
-| P5 | Voice core | 🔵 in review | local ✅ (354) | 🔴 blocked on R1 + trunk | — |
-| P6 | LiveKit media plane + softphone | 🔵 in review | local ✅ (405) | 🔴 needs trunk + VPS bring-up | — |
-| P7 | Media plane measured + echo agent | 🔵 code complete | metrics 6/6 local | 🔴 gate runs on VPS | — |
-| P8 | AI voice agent v1 | 🔵 code complete | backend 430 + agents 31 | 🔴 runtime gate on VPS | — |
-| P9 | Agent v2: tools/handoff/KB/voicemail | 🔵 code complete | backend 484 + agents 70 | 🔴 runtime gate on VPS | — |
-| P10 | AI SMS agent | ⬜ not started | — | — | — |
+| P0 | Foundation | ✅ gate passed | local ✅ / CI+PG ✅ / VPS ✅ | ✅ live | `a1efe84` |
+| P1a | Carrier layer + ingestion (fixtures) | ✅ gate passed | local ✅ / CI+PG ✅ | ✅ live | `a1efe84` |
+| P1b | Live SMS round-trip | 🔴 blocked on B1 (no messaging-capable carrier) | — | — | — |
+| P2a | Contacts, inbox console, sticky sender, 2FA | ✅ gate passed | local ✅ / CI+PG ✅ | ✅ live | `a1efe84` |
+| P2b | Console live on VPS | ✅ gate passed | HTTPS console 200, login works | ✅ live | `a1efe84` |
+| P3-core | Compliance: opt-out, keywords, quiet hours, DNC | ✅ gate passed | local ✅ / CI+PG ✅ | ✅ live | `a1efe84` |
+| P3-rest | MMS media pipeline, routes, templates | ✅ gate passed | local ✅ / CI+PG ✅ | ✅ live | `a1efe84` |
+| P3b | Carrier routing fabric (pulled fwd from P14) | ✅ gate passed | live probe `ok:true` | ✅ live | `a1efe84` |
+| P4 | Numbers + 10DLC + TFV | 🔵 backend in review | local ✅ | ✅ code live | 🔴 registration blocked on B1 |
+| P5 | Voice core | 🔵 code complete | local ✅ | ✅ code live | 🔴 runtime blocked on B2 (trunk) |
+| P6 | LiveKit media plane + softphone | 🔵 code complete | local ✅ | 🔴 **media plane NOT running** | 🔴 B3 (bring-up not authorised) |
+| P7 | Media plane measured + echo agent | 🔵 code complete | metrics 6/6 local | 🔴 gate needs B3 | — |
+| P8 | AI voice agent v1 | 🔵 code complete | backend + agents ✅ | 🔴 gate needs B3 + B4 (AI keys) | — |
+| P9 | Agent v2: tools/handoff/KB/voicemail | 🔵 code complete | backend + agents ✅ | 🔴 gate needs B3 + B4 | — |
+| P9b | Provider parity + invite-only registration | ✅ gate passed | local ✅ / CI+PG ✅ | ✅ live | `a1efe84` |
+| P10 | AI SMS agent | ✅ code complete, deployed | 686 backend + 46 frontend ✅ / CI+PG ✅ | ✅ live (migration `0011`) | `a1efe84` |
 | P11 | Outbound engine | ⬜ not started | — | — | — |
 | P12 | IVR / queues / voicemail | ⬜ not started | — | — | — |
 | P13 | Analytics + platform services | ⬜ not started | — | — | — |
 | P14 | Failover + hardening | ⬜ not started | — | — | — |
 
 Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate passed · 🔴 blocked
+
+### Live gate blockers (2026-08-29) — every one needs the user, none needs code
+
+| # | Blocker | Blocks | What unblocks it |
+|---|---|---|---|
+| B1 | **No messaging-capable carrier.** Bandwidth account 9903389 is Voice + Numbers only. | P1b, P4 registration, P10's live SMS turn | A Telnyx API key + 10DLC brand/campaign (adapter already written and tested), set as `TELNYX_API_KEY` / `TELNYX_MESSAGING_PROFILE_ID` in `/opt/csaas/.env`. |
+| B2 | **No SIP trunk points at the box.** | P5 voice runtime | Bandwidth voice application -> Inbound SIP peer with our IP `144.126.152.175:5060`, and the number `+19404060664` assigned to it. |
+| B3 | **Media plane not brought up.** LiveKit + livekit-sip containers are NOT running; ufw has no SIP/RTP ports open. Both commands were refused by the tool sandbox this session. | P6, P7, P8, P9 runtime gates | Run the two commands in "Media plane bring-up" below, or grant the permission. |
+| B4 | **No AI provider keys in production `.env`.** `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY` are all empty on the box. | P8, P9 voice agent; P10 SMS agent's LLM turn | Paste the three keys into `/opt/csaas/.env` and restart the api container. |
+
+### Media plane bring-up (B3) — exact commands
+
+```bash
+ssh root@144.126.152.175
+ufw allow 7881/tcp comment 'csaas livekit ice-tcp'
+ufw allow 50700:51199/udp comment 'csaas livekit rtp'
+ufw allow 5060/udp comment 'csaas sip signaling'
+ufw allow 10000:10499/udp comment 'csaas sip rtp'
+cd /opt/csaas && docker compose --env-file .env   -f deploy/docker-compose.prod.yml   -f deploy/livekit/docker-compose.livekit.yml up -d livekit livekit-sip
+```
+
+Ports were verified free on the box (nothing listening on 7880/7881/5060) before this was
+attempted, and the RTP ranges are deliberately narrow because the VPS hosts other tenants.
+`deploy/livekit/README.md` documents the trunk setup as **Telnyx**; with B1's split it is
+now **Bandwidth for voice**, so the inbound trunk in step 5 takes Bandwidth's signaling
+hosts, not `sip.telnyx.com`.
 
 ---
 
@@ -95,7 +125,7 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 
 | # | Risk | Status | Resolve by |
 |---|---|---|---|
-| R1 | **Bandwidth account path to production.** Historically sales-gated, no public pricing. "Bandwidth Build" (2026-06-23) is self-serve but it's unverified whether the trial scales to production without a contract. | 🔴 **open — blocks P0** | P0 |
+| R1 | **Bandwidth account path to production.** | ✅ **CLOSED 2026-08-29** — account 9903389 (Voice + Numbers, no Messaging). OAuth2 client-credentials probe returns `ok:true` from the deployed box. SMS therefore needs a second carrier (Telnyx). | P0 |
 | R2 | VPS ↔ Bandwidth media PoP may be long-haul → TCP dead air (we measured 300–650 ms/sec on a prior long-haul TCP audio leg) | ⬜ open | P7 gate, before building |
 | R3 | Deepgram Nova-3 real WER on our 8 kHz caller audio (marketed 5.26% vs 12–25% independent) | ⬜ open | P8 bake-off |
 | R4 | Two live Bandwidth doc generations — legacy `v2.dev.` / `old.dev.` / `catapult` endpoints look authoritative in search | 🟡 mitigated by standing rule | ongoing |
@@ -400,6 +430,34 @@ AI-flagged (`AI_SEND_KEY`) nor exempted — **P11 bulk senders will trip this on
 active thread and need their own flag** (recorded by Opus review, deliberate deferral).
 `org_could_reply` same-session probe gates task spawn — on SQLite a concurrent session's
 commits can corrupt unrelated open cursors, so don't spawn second sessions casually.
+
+### Session 2026-08-29 — deploy to production
+
+**Deployed `a1efe84` to the VPS.** `deploy/deploy.sh` ran clean: pre-flight OK, console
+built locally, `git archive HEAD` shipped, compose rebuilt the api image, **`alembic
+upgrade head` applied `0011_consent_seq_sms_agent`** on real Postgres, `/healthz` -> ok.
+Containers: `csaas-api-1` healthy on `127.0.0.1:8080`, db + redis up.
+
+**Verified against the LIVE box, not localhost:**
+- `https://csaas.sabinepropertygroup.net/healthz` -> `{"status":"ok","db":"ok"}` (TLS, certbot)
+- console `GET /` -> 200 (P2b gate)
+- `POST /api/v1/auth/login` with the owner account -> token
+- `POST /api/v1/routing/carriers/bandwidth/probe` -> `{"ok":true,"detail":"Credentials
+  accepted.","checked":"https://voice.bandwidth.com/api/v2/accounts/9903389/calls"}`
+  — **this is R1 closed from production**, not from a dev machine.
+
+**The org-scoped routes need `X-Org-Id` as well as the bearer token** — a plain
+`Authorization:` header alone returns `validation_failed`. Worth remembering before
+concluding a live endpoint is broken.
+
+**Media plane was NOT brought up.** Both the `ufw allow` and the `docker compose ... up -d
+livekit livekit-sip` calls were refused by the tool sandbox. Ports 7880/7881/5060 were
+confirmed free first, so the bring-up is expected to be clean when authorised. See
+"Live gate blockers" B3.
+
+**Status table corrected.** It still claimed "P10 not started" and "P0 in review"; P0-P3b,
+P9b and P10 are now gate-passed and live, and the four real blockers (B1-B4) are external
+inputs, all recorded above with exactly what unblocks each.
 
 ## Known issues
 - **`test_softphone_token_cross_org_room_is_404` flakes on CI Python 3.10 only (unresolved):** failed on `7eb5441` and `5fa0978`, passed on `5dc178e`/`0934a9e`. The second failure's signature was `unauthenticated / Incorrect email or password` from `register_and_login`, NOT the dial-task race the autouse drain guard in `test_voice_plane.py` was added for — so that guard did not fix this, and two subsequent passes do not prove it fixed. Suspect cross-test state on 3.10 (the emails `spA@`/`spB@example.com` are unique to this test, so look at fixture/DB reuse, not collision). Reproduce with the full suite under 3.10, not the file alone.
