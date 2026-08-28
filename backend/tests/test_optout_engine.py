@@ -236,3 +236,31 @@ async def test_no_messages_row_is_created_on_deny(app_with_carrier, session):
     assert r.status_code == 422
     assert len(await _unscoped(session, Message)) == before, "a deny must cost nothing"
     assert len(fake.sent) == sent_before, "and must never reach the carrier"
+
+
+async def test_same_timestamp_consent_pair_resolves_by_recording_order(
+    app_with_carrier, session
+):
+    """The recorded coin-flip bug (PROGRESS 2026-08-26): created_at has finite resolution
+    and the id is a random UUID, so an opt-out/opt-in pair landing in the same timestamp
+    used to resolve at random. `seq` must make the LATER-recorded event win, always."""
+    client, fake, _ = app_with_carrier
+    token, org, _ = await make_org_with_number(client, "seq1@example.com", "Org A", NUM_A)
+    org_id = uuid.UUID(org["id"])
+    set_org_context(session, org_id)
+
+    out = await compliance_svc.record_consent(
+        session, org_id, contact_e164=CONTACT, event="opt_out", source="manual"
+    )
+    inn = await compliance_svc.record_consent(
+        session, org_id, contact_e164=CONTACT, event="opt_in", source="manual"
+    )
+    # Force the exact degenerate case instead of hoping the clock produces it.
+    inn.created_at = out.created_at
+    await session.commit()
+
+    assert inn.seq > out.seq
+    for _ in range(5):
+        latest = await compliance_svc.latest_consent(session, CONTACT)
+        assert latest is not None and latest.event == "opt_in"
+    assert not await compliance_svc.is_opted_out(session, CONTACT)

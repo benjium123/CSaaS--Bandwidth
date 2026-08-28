@@ -60,6 +60,70 @@ async def test_create_list_patch_delete_roundtrip(client):
     assert listed_after.json() == []
 
 
+async def test_sms_fields_default_and_round_trip(client):
+    """P10: sms_enabled defaults False forever unless explicitly set (plan DR-5's "off is
+    the default"), and all four SMS fields round-trip through create/patch."""
+    token, org = await _make_org(client, "sms-p1@example.com", "Org SMS-P1")
+    h = auth_headers(token, org["id"])
+
+    created = await client.post("/api/v1/agent/profiles", json={"name": "Main"}, headers=h)
+    assert created.status_code == 201, created.text
+    profile = created.json()
+    assert profile["sms_enabled"] is False
+    assert profile["sms_turn_ceiling"] == 10
+    assert profile["sms_handoff_keywords"] == [
+        "human",
+        "agent",
+        "representative",
+        "person",
+        "stop the bot",
+    ]
+    assert profile["sms_max_reply_chars"] == 480
+
+    patched = await client.patch(
+        f"/api/v1/agent/profiles/{profile['id']}",
+        json={
+            "sms_enabled": True,
+            "sms_turn_ceiling": 5,
+            "sms_handoff_keywords": ["human", "manager"],
+            "sms_max_reply_chars": 300,
+        },
+        headers=h,
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["sms_enabled"] is True
+    assert body["sms_turn_ceiling"] == 5
+    assert body["sms_handoff_keywords"] == ["human", "manager"]
+    assert body["sms_max_reply_chars"] == 300
+
+    listed = await client.get("/api/v1/agent/profiles", headers=h)
+    assert listed.json()[0]["sms_enabled"] is True
+
+
+async def test_create_with_sms_fields_explicit(client):
+    token, org = await _make_org(client, "sms-p2@example.com", "Org SMS-P2")
+    h = auth_headers(token, org["id"])
+
+    created = await client.post(
+        "/api/v1/agent/profiles",
+        json={
+            "name": "Support",
+            "sms_enabled": True,
+            "sms_turn_ceiling": 3,
+            "sms_handoff_keywords": ["agent"],
+            "sms_max_reply_chars": 200,
+        },
+        headers=h,
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["sms_enabled"] is True
+    assert body["sms_turn_ceiling"] == 3
+    assert body["sms_handoff_keywords"] == ["agent"]
+    assert body["sms_max_reply_chars"] == 200
+
+
 async def test_duplicate_name_in_same_org_is_409(client):
     token, org = await _make_org(client, "p2@example.com", "Org P2")
     h = auth_headers(token, org["id"])

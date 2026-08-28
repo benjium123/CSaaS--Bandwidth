@@ -6,7 +6,7 @@ from typing import Annotated, Any
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth.deps import OrgContext, require_permission
 from app.errors import NotFoundError, ValidationFailedError
@@ -25,6 +25,13 @@ class ThreadPatchIn(BaseModel):
 
 class LabelsIn(BaseModel):
     tag_ids: list[uuid.UUID] = []
+
+
+class ThreadAiIn(BaseModel):
+    #: P10 DR-5: the only two states an operator may set explicitly. `off` is never set
+    #: here - it is the thread's birth state, entered only by never having had an
+    #: sms_enabled profile see it.
+    state: str = Field(pattern="^(active|handed_off)$")
 
 
 @router.get("/inbox/threads")
@@ -89,7 +96,38 @@ async def patch_thread(
         "id": thread.id,
         "status": thread.status,
         "assigned_user_id": thread.assigned_user_id,
+        "ai_state": thread.ai_state,
     }
+
+
+@router.get("/threads/{thread_id}/ai")
+async def get_thread_ai_state(
+    thread_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("inbox:read"))],
+) -> dict:
+    thread = await _get_thread(ctx, thread_id)
+    return {"id": thread.id, "ai_state": thread.ai_state}
+
+
+@router.post("/threads/{thread_id}/ai")
+async def set_thread_ai_state(
+    thread_id: uuid.UUID,
+    payload: ThreadAiIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("inbox:manage"))],
+) -> dict:
+    """The re-arm / take-over pair (plan DR-5). Re-arming ("active") is the only way a
+    `handed_off` thread ever answers again - the bot itself never does this. Setting
+    "handed_off" is an explicit manual take-over, the same effect a human's own reply in
+    an `active` thread already has implicitly (see messaging.send_message)."""
+    thread = await _get_thread(ctx, thread_id)
+    thread.ai_state = payload.state
+    if payload.state == "active":
+        # DR-7: the turn ceiling counts replies SINCE this (re)arm - reset the clock every
+        # time an operator explicitly arms the thread, exactly like the bot's own
+        # off->active auto-arm does (sms_agent._maybe_reply_inner).
+        thread.ai_armed_at = datetime.now(timezone.utc)
+    await ctx.session.commit()
+    return {"id": thread.id, "ai_state": thread.ai_state}
 
 
 @router.post("/threads/{thread_id}/read", status_code=204)

@@ -13,6 +13,8 @@ No UPDATE or DELETE statement may ever target this table.
 
 from __future__ import annotations
 
+import itertools
+import time
 import uuid
 from datetime import datetime
 
@@ -33,6 +35,11 @@ CHANNELS = ("sms", "voice")
 FEDERAL_WINDOW_START = "08:00"
 FEDERAL_WINDOW_END = "21:00"
 
+#: Feeds ConsentEvent.seq. Seeded from wall-clock ns so values stay comparable across
+#: process restarts and workers; strictly increasing within a process, which is the case
+#: `created_at` cannot decide (an opt-out/opt-in pair written in the same timestamp).
+_CONSENT_SEQ = itertools.count(time.time_ns())
+
 
 class ConsentEvent(Base, TenantScoped, TimestampMixin):
     __tablename__ = "consent_events"
@@ -51,6 +58,13 @@ class ConsentEvent(Base, TenantScoped, TimestampMixin):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    #: Monotonic tiebreaker. `created_at` has finite resolution and the id is a RANDOM
+    #: UUID, so a same-timestamp opt-out/opt-in pair used to resolve by coin flip — a
+    #: correctness bug in a consent ledger, not a flake. Ordering is (created_at, seq, id);
+    #: existing rows backfilled with 0 keep their created_at order.
+    seq: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=lambda: next(_CONSENT_SEQ), server_default="0"
+    )
     contact_e164: Mapped[str] = mapped_column(sa.String(20), nullable=False)
     channel: Mapped[str] = mapped_column(sa.String(8), nullable=False, default="sms")
     event: Mapped[str] = mapped_column(sa.String(16), nullable=False)

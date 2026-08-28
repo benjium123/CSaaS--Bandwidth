@@ -1432,6 +1432,30 @@ export interface paths {
         patch: operations["patch_thread_api_v1_threads__thread_id__patch"];
         trace?: never;
     };
+    "/api/v1/threads/{thread_id}/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Thread Ai State */
+        get: operations["get_thread_ai_state_api_v1_threads__thread_id__ai_get"];
+        put?: never;
+        /**
+         * Set Thread Ai State
+         * @description The re-arm / take-over pair (plan DR-5). Re-arming ("active") is the only way a
+         *     `handed_off` thread ever answers again - the bot itself never does this. Setting
+         *     "handed_off" is an explicit manual take-over, the same effect a human's own reply in
+         *     an `active` thread already has implicitly (see messaging.send_message).
+         */
+        post: operations["set_thread_ai_state_api_v1_threads__thread_id__ai_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/threads/{thread_id}/labels": {
         parameters: {
             query?: never;
@@ -2587,6 +2611,23 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Sms Enabled
+             * @default false
+             */
+            sms_enabled: boolean;
+            /** Sms Handoff Keywords */
+            sms_handoff_keywords?: string[];
+            /**
+             * Sms Max Reply Chars
+             * @default 480
+             */
+            sms_max_reply_chars: number;
+            /**
+             * Sms Turn Ceiling
+             * @default 10
+             */
+            sms_turn_ceiling: number;
+            /**
              * System Prompt
              * @default
              */
@@ -2623,6 +2664,14 @@ export interface components {
             llm_provider: string;
             /** Name */
             name: string;
+            /** Sms Enabled */
+            sms_enabled: boolean;
+            /** Sms Handoff Keywords */
+            sms_handoff_keywords: string[];
+            /** Sms Max Reply Chars */
+            sms_max_reply_chars: number;
+            /** Sms Turn Ceiling */
+            sms_turn_ceiling: number;
             /** System Prompt */
             system_prompt: string;
             /** Voice Id */
@@ -2644,6 +2693,14 @@ export interface components {
             llm_provider?: string | null;
             /** Name */
             name?: string | null;
+            /** Sms Enabled */
+            sms_enabled?: boolean | null;
+            /** Sms Handoff Keywords */
+            sms_handoff_keywords?: string[] | null;
+            /** Sms Max Reply Chars */
+            sms_max_reply_chars?: number | null;
+            /** Sms Turn Ceiling */
+            sms_turn_ceiling?: number | null;
             /** System Prompt */
             system_prompt?: string | null;
             /** Voice Id */
@@ -2894,6 +2951,11 @@ export interface components {
             number_id: string;
             /** Status */
             status: string;
+        };
+        /** ThreadAiIn */
+        ThreadAiIn: {
+            /** State */
+            state: string;
         };
         /** ThreadOut */
         ThreadOut: {
@@ -6394,6 +6456,80 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ThreadPatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_thread_ai_state_api_v1_threads__thread_id__ai_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_thread_ai_state_api_v1_threads__thread_id__ai_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadAiIn"];
             };
         };
         responses: {

@@ -76,6 +76,8 @@ async def bandwidth_messaging(
         log.warning("webhook_malformed", reason=str(exc))
         return {"status": "dead_lettered"}
 
+    session.info["event_bus"] = getattr(request.app.state, "event_bus", None)
+    session.info["settings"] = getattr(request.app.state, "settings", None)
     outcomes = []
     for event in events:
         outcomes.append(
@@ -132,6 +134,8 @@ async def carrier_messaging(
         log.warning("webhook_malformed", carrier=carrier_name, reason=str(exc))
         return {"status": "dead_lettered"}
 
+    session.info["event_bus"] = getattr(request.app.state, "event_bus", None)
+    session.info["settings"] = getattr(request.app.state, "settings", None)
     outcomes = []
     for event in events:
         outcomes.append(

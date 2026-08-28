@@ -73,7 +73,11 @@ async def latest_consent(
             ConsentEvent.channel == channel,
             ConsentEvent.event.in_(("opt_out", "opt_in")),
         )
-        .order_by(ConsentEvent.created_at.desc(), ConsentEvent.id.desc())
+        # seq decides same-timestamp pairs (the random-UUID id was a coin flip there);
+        # id remains only as a stable last resort for pre-seq rows backfilled with 0.
+        .order_by(
+            ConsentEvent.created_at.desc(), ConsentEvent.seq.desc(), ConsentEvent.id.desc()
+        )
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none()

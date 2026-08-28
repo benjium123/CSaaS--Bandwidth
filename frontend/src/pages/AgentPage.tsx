@@ -24,6 +24,10 @@ const EMPTY_FORM: AgentProfileFields = {
   llm_provider: "",
   llm_model: "",
   voicemail_message: "",
+  sms_enabled: false,
+  sms_turn_ceiling: 10,
+  sms_handoff_keywords: [],
+  sms_max_reply_chars: 480,
 };
 
 function formFromProfile(p: AgentProfileOut): AgentProfileFields {
@@ -35,6 +39,10 @@ function formFromProfile(p: AgentProfileOut): AgentProfileFields {
     llm_provider: p.llm_provider,
     llm_model: p.llm_model,
     voicemail_message: p.voicemail_message,
+    sms_enabled: p.sms_enabled,
+    sms_turn_ceiling: p.sms_turn_ceiling,
+    sms_handoff_keywords: p.sms_handoff_keywords,
+    sms_max_reply_chars: p.sms_max_reply_chars,
   };
 }
 
@@ -52,13 +60,21 @@ export function AgentPage() {
 
   const selected = (profiles ?? []).find((p) => p.id === selectedId) ?? null;
 
+  // Handoff keywords are a string[] on the wire; edited here as one comma-separated
+  // field, kept as its own piece of state so a trailing ", " while typing isn't
+  // immediately collapsed away by round-tripping through the array.
+  const [keywordsInput, setKeywordsInput] = React.useState("");
+
   React.useEffect(() => {
-    setForm(selected ? formFromProfile(selected) : EMPTY_FORM);
+    const next = selected ? formFromProfile(selected) : EMPTY_FORM;
+    setForm(next);
+    setKeywordsInput((next.sms_handoff_keywords ?? []).join(", "));
   }, [selected]);
 
   function startNew() {
     setSelectedId(null);
     setForm(EMPTY_FORM);
+    setKeywordsInput((EMPTY_FORM.sms_handoff_keywords ?? []).join(", "));
     setError(null);
   }
 
@@ -236,6 +252,78 @@ export function AgentPage() {
               onChange={(e) => field("voicemail_message")(e.target.value)}
             />
           </div>
+
+          <fieldset className="space-y-3 rounded-md border border-border p-3">
+            <legend className="px-1 text-xs font-medium text-muted-foreground">
+              SMS agent
+            </legend>
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.sms_enabled ?? false}
+                onChange={(e) => setForm((f) => ({ ...f, sms_enabled: e.target.checked }))}
+              />
+              Reply to inbound SMS automatically
+            </label>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-turn-ceiling">
+                  Turn ceiling
+                </label>
+                <Input
+                  id="agent-sms-turn-ceiling"
+                  aria-label="Turn ceiling"
+                  type="number"
+                  min={1}
+                  value={form.sms_turn_ceiling ?? 10}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, sms_turn_ceiling: Number(e.target.value) }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-max-reply-chars">
+                  Max reply chars
+                </label>
+                <Input
+                  id="agent-sms-max-reply-chars"
+                  aria-label="Max reply chars"
+                  type="number"
+                  min={1}
+                  value={form.sms_max_reply_chars ?? 480}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, sms_max_reply_chars: Number(e.target.value) }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-handoff-keywords">
+                Handoff keywords
+              </label>
+              <Input
+                id="agent-sms-handoff-keywords"
+                aria-label="Handoff keywords"
+                placeholder="human, agent, representative"
+                value={keywordsInput}
+                onChange={(e) => {
+                  const text = e.target.value;
+                  setKeywordsInput(text);
+                  setForm((f) => ({
+                    ...f,
+                    sms_handoff_keywords: text
+                      .split(",")
+                      .map((k) => k.trim())
+                      .filter(Boolean),
+                  }));
+                }}
+              />
+              <p className="text-[11px] text-muted-foreground">Comma-separated.</p>
+            </div>
+          </fieldset>
 
           {error && (
             <p role="alert" className="text-sm text-destructive">

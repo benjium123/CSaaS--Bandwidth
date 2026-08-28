@@ -1,10 +1,17 @@
 import * as React from "react";
 import { useAuth } from "@/auth/AuthContext";
-import { useInbox, useTags, type InboxFilters } from "@/api/hooks";
+import {
+  useInbox,
+  useSetThreadAiState,
+  useTags,
+  useThreadAiState,
+  type InboxFilters,
+} from "@/api/hooks";
 import { ThreadList } from "@/components/inbox/ThreadList";
 import { ThreadView } from "@/components/inbox/ThreadView";
-import { Button, Input, Spinner } from "@/components/ui/primitives";
+import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import type { ApiClient } from "@/api/client";
 
 const STATUS_TABS = [
   { key: "open", label: "Open" },
@@ -111,9 +118,44 @@ export function InboxPage() {
         </div>
       </aside>
 
-      <section className="min-h-0">
-        <ThreadView api={api} item={selected} />
+      <section className="flex min-h-0 flex-col">
+        {selected && <ThreadAiBar api={api} threadId={selected.thread.id} />}
+        <div className="min-h-0 flex-1">
+          <ThreadView api={api} item={selected} />
+        </div>
       </section>
+    </div>
+  );
+}
+
+/** AI chip + one action (plan DR-5). Deliberately quiet: a chip and a single button
+ * for the selected thread, not a settings panel. `off` renders nothing - it means no
+ * sms_enabled profile has ever touched this thread. */
+function ThreadAiBar({ api, threadId }: { api: ApiClient; threadId: string }) {
+  const { data } = useThreadAiState(api, threadId);
+  const setState = useSetThreadAiState(api);
+  const state = data?.ai_state;
+
+  if (!state || state === "off") return null;
+
+  const active = state === "active";
+
+  return (
+    <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
+      <Badge className={active ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}>
+        {active ? "AI" : "AI paused"}
+      </Badge>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={setState.isPending}
+        onClick={() =>
+          setState.mutate({ threadId, state: active ? "handed_off" : "active" })
+        }
+      >
+        {active ? "Take over" : "Re-arm AI"}
+      </Button>
     </div>
   );
 }

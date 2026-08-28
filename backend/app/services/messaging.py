@@ -51,6 +51,11 @@ log = structlog.get_logger("messaging")
 CARRIER_DEFAULT = "bandwidth"
 #: Where the active carrier is stashed for code reached from ingestion (auto-replies).
 CARRIER_SESSION_KEY = "carrier"
+#: P10 DR-4/DR-5: set on the session by the SMS agent around its own send_message call.
+#: send_message reads this to know a send is AI-originated (never adding an exemption -
+#: the gate still runs unchanged) and the human-takeover check below reads it to tell an
+#: AI reply apart from a human operator typing in the same thread.
+AI_SEND_KEY = "ai_originated_send"
 
 
 class Outcome(enum.Enum):
@@ -179,6 +184,13 @@ async def send_message(
     thread.last_message_at = _now()
     if thread.contact_id is None:
         thread.contact_id = (await resolve_or_create_contact(session, org_id, to_e164)).id
+    if thread.ai_state == "active" and exemption is None and not session.info.get(AI_SEND_KEY):
+        # P10 DR-5: a human operator sending in an active thread is an implicit takeover -
+        # the bot must go silent without a second click. An AI-originated send (flagged via
+        # AI_SEND_KEY) must never trip this on itself - and neither must a compliance
+        # AUTO-REPLY (HELP/START confirmations pass `exemption`): that is the keyword
+        # engine answering on the gate's own behalf, not an operator taking the thread over.
+        thread.ai_state = "handed_off"
 
     message = Message(
         id=uuid.uuid4(),
@@ -536,6 +548,27 @@ async def _ingest_inbound(
         session.info[CARRIER_SESSION_KEY] = carrier
     await gate.on_inbound(session, org_id, message.id)
     await session.commit()
+
+    # P10 DR-2: post-commit, fire-and-forget. Imported locally to avoid a module cycle -
+    # sms_agent imports this module at its own top level for send_message/AI_SEND_KEY, so
+    # this module must not import sms_agent until AFTER it is fully loaded.
+    from app.services.sms_agent import org_could_reply, spawn_from_ingest
+
+    # A same-session, no-new-connection probe: only spawn the background turn (a SECOND,
+    # genuinely concurrent database session) when this org could conceivably act on it.
+    # For every org with no sms_enabled profile - the overwhelming majority - this is the
+    # end of the story, with zero extra sessions ever opened.
+    if await org_could_reply(session, org_id):
+        # webhooks.py stashes the app's real bus/settings on the session (the only two
+        # lines it is allowed to add) precisely so a handoff published from THIS
+        # background path reaches real websocket subscribers instead of a disconnected
+        # fallback bus.
+        spawn_from_ingest(
+            inbound_message_id=message.id,
+            carrier=carrier,
+            bus=session.info.get("event_bus"),
+            settings=session.info.get("settings"),
+        )
     return Outcome.DONE
 
 

@@ -15,6 +15,10 @@ function makeProfile(overrides: Record<string, unknown> = {}) {
     llm_model: "",
     is_default: false,
     extra: {},
+    sms_enabled: false,
+    sms_turn_ceiling: 10,
+    sms_handoff_keywords: [],
+    sms_max_reply_chars: 480,
     ...overrides,
   };
 }
@@ -115,6 +119,63 @@ describe("AgentPage", () => {
       ).toBe(true),
     );
     expect(await screen.findByText("No agent profiles yet.")).toBeInTheDocument();
+  });
+
+  it("round-trips the four SMS agent fields", async () => {
+    let profiles: Record<string, unknown>[] = [makeProfile()];
+
+    const client = makeStubClient({
+      "/api/v1/agent/profiles": (path: string, init: RequestInit & { json?: unknown }) => {
+        const method = init.method ?? "GET";
+        const idMatch = path.match(/^\/api\/v1\/agent\/profiles\/([^/]+)$/);
+        if (idMatch && method === "PATCH") {
+          const id = idMatch[1];
+          const body = init.json as Record<string, unknown>;
+          profiles = profiles.map((p) => (p.id === id ? { ...p, ...body } : p));
+          return profiles.find((p) => p.id === id);
+        }
+        return profiles;
+      },
+    });
+
+    renderWithProviders(<AgentPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Main" }));
+
+    await userEvent.click(
+      await screen.findByLabelText("Reply to inbound SMS automatically"),
+    );
+
+    const turnCeiling = screen.getByLabelText("Turn ceiling");
+    await userEvent.clear(turnCeiling);
+    await userEvent.type(turnCeiling, "5");
+
+    const maxReplyChars = screen.getByLabelText("Max reply chars");
+    await userEvent.clear(maxReplyChars);
+    await userEvent.type(maxReplyChars, "300");
+
+    await userEvent.type(
+      screen.getByLabelText("Handoff keywords"),
+      "human, agent, representative",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(
+        client.calls.some(
+          (c) => c.path === "/api/v1/agent/profiles/p1" && c.init.method === "PATCH",
+        ),
+      ).toBe(true),
+    );
+    const patchCall = client.calls.find(
+      (c) => c.path === "/api/v1/agent/profiles/p1" && c.init.method === "PATCH",
+    );
+    const body = patchCall?.init.json as Record<string, unknown>;
+    expect(body.sms_enabled).toBe(true);
+    expect(body.sms_turn_ceiling).toBe(5);
+    expect(body.sms_max_reply_chars).toBe(300);
+    expect(body.sms_handoff_keywords).toEqual(["human", "agent", "representative"]);
   });
 
   it("creates and deletes a knowledge base document", async () => {

@@ -20,6 +20,7 @@ from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, UnauthenticatedError
 from app.models import AgentProfile
+from app.models.agent import DEFAULT_SMS_HANDOFF_KEYWORDS
 from app.services import agent as agent_svc
 from app.services import kb as kb_svc
 
@@ -257,6 +258,13 @@ class ProfileIn(BaseModel):
     #: P9: spoken after the voicemail beep on outbound drops. Empty = no drop.
     voicemail_message: str = Field(default="", max_length=500)
     extra: dict = Field(default_factory=dict)
+    #: P10: the SMS surface. Off by default forever - enabling is always an explicit act.
+    sms_enabled: bool = False
+    sms_turn_ceiling: int = Field(default=10, ge=1)
+    sms_handoff_keywords: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_SMS_HANDOFF_KEYWORDS)
+    )
+    sms_max_reply_chars: int = Field(default=480, ge=1, le=1600)
 
 
 class ProfilePatch(BaseModel):
@@ -268,6 +276,10 @@ class ProfilePatch(BaseModel):
     llm_model: str | None = Field(default=None, max_length=64)
     voicemail_message: str | None = Field(default=None, max_length=500)
     extra: dict | None = None
+    sms_enabled: bool | None = None
+    sms_turn_ceiling: int | None = Field(default=None, ge=1)
+    sms_handoff_keywords: list[str] | None = None
+    sms_max_reply_chars: int | None = Field(default=None, ge=1, le=1600)
 
 
 class ProfileOut(BaseModel):
@@ -281,6 +293,10 @@ class ProfileOut(BaseModel):
     voicemail_message: str
     is_default: bool
     extra: dict
+    sms_enabled: bool
+    sms_turn_ceiling: int
+    sms_handoff_keywords: list[str]
+    sms_max_reply_chars: int
 
 
 def _profile_out(p: AgentProfile) -> ProfileOut:
@@ -295,6 +311,10 @@ def _profile_out(p: AgentProfile) -> ProfileOut:
         voicemail_message=p.voicemail_message,
         is_default=p.is_default,
         extra=p.extra or {},
+        sms_enabled=p.sms_enabled,
+        sms_turn_ceiling=p.sms_turn_ceiling,
+        sms_handoff_keywords=list(p.sms_handoff_keywords or []),
+        sms_max_reply_chars=p.sms_max_reply_chars,
     )
 
 

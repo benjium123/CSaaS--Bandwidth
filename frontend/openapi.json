@@ -2439,6 +2439,31 @@
             "title": "Name",
             "type": "string"
           },
+          "sms_enabled": {
+            "default": false,
+            "title": "Sms Enabled",
+            "type": "boolean"
+          },
+          "sms_handoff_keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sms Handoff Keywords",
+            "type": "array"
+          },
+          "sms_max_reply_chars": {
+            "default": 480,
+            "maximum": 1600.0,
+            "minimum": 1.0,
+            "title": "Sms Max Reply Chars",
+            "type": "integer"
+          },
+          "sms_turn_ceiling": {
+            "default": 10,
+            "minimum": 1.0,
+            "title": "Sms Turn Ceiling",
+            "type": "integer"
+          },
           "system_prompt": {
             "default": "",
             "title": "System Prompt",
@@ -2495,6 +2520,25 @@
             "title": "Name",
             "type": "string"
           },
+          "sms_enabled": {
+            "title": "Sms Enabled",
+            "type": "boolean"
+          },
+          "sms_handoff_keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sms Handoff Keywords",
+            "type": "array"
+          },
+          "sms_max_reply_chars": {
+            "title": "Sms Max Reply Chars",
+            "type": "integer"
+          },
+          "sms_turn_ceiling": {
+            "title": "Sms Turn Ceiling",
+            "type": "integer"
+          },
           "system_prompt": {
             "title": "System Prompt",
             "type": "string"
@@ -2518,7 +2562,11 @@
           "llm_model",
           "voicemail_message",
           "is_default",
-          "extra"
+          "extra",
+          "sms_enabled",
+          "sms_turn_ceiling",
+          "sms_handoff_keywords",
+          "sms_max_reply_chars"
         ],
         "title": "ProfileOut",
         "type": "object"
@@ -2585,6 +2633,56 @@
               }
             ],
             "title": "Name"
+          },
+          "sms_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sms Enabled"
+          },
+          "sms_handoff_keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sms Handoff Keywords"
+          },
+          "sms_max_reply_chars": {
+            "anyOf": [
+              {
+                "maximum": 1600.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sms Max Reply Chars"
+          },
+          "sms_turn_ceiling": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sms Turn Ceiling"
           },
           "system_prompt": {
             "anyOf": [
@@ -3282,6 +3380,20 @@
           "last_error"
         ],
         "title": "TfvOut",
+        "type": "object"
+      },
+      "ThreadAiIn": {
+        "properties": {
+          "state": {
+            "pattern": "^(active|handed_off)$",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ThreadAiIn",
         "type": "object"
       },
       "ThreadOut": {
@@ -10062,6 +10174,147 @@
           }
         ],
         "summary": "Patch Thread",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/api/v1/threads/{thread_id}/ai": {
+      "get": {
+        "operationId": "get_thread_ai_state_api_v1_threads__thread_id__ai_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Thread Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Thread Ai State Api V1 Threads  Thread Id  Ai Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Thread Ai State",
+        "tags": [
+          "inbox"
+        ]
+      },
+      "post": {
+        "description": "The re-arm / take-over pair (plan DR-5). Re-arming (\"active\") is the only way a\n`handed_off` thread ever answers again - the bot itself never does this. Setting\n\"handed_off\" is an explicit manual take-over, the same effect a human's own reply in\nan `active` thread already has implicitly (see messaging.send_message).",
+        "operationId": "set_thread_ai_state_api_v1_threads__thread_id__ai_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Thread Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadAiIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Thread Ai State Api V1 Threads  Thread Id  Ai Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Thread Ai State",
         "tags": [
           "inbox"
         ]

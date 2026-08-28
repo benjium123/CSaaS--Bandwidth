@@ -375,6 +375,32 @@ the evidence.
 the webhook path), sweeper loop, API routes (compliance/media/templates), and the frontend
 surfaces (attachments, opt-out banner, compliance page).
 
+### Session 2026-08-28 — P10 AI SMS agent
+**Phase:** P10 (plan: `docs/plans/phase-10-plan.md`, DR-1..DR-7 settled there)
+
+**Did (delegation loop worked end to end):** Fable wrote plan + schema (migration `0011`:
+`consent_events.seq` tiebreak fix, AgentProfile sms_* fields, `message_threads.ai_state`
++ `ai_armed_at`, `agent_sms_turns` with UNIQUE inbound_message_id as the idempotency
+primitive). DeepSeek Flash generated `services/llm_client.py` from a spec (verdict: GOOD
+for well-specified modules — compiled + ruff-clean first try; only sin was markdown
+fences). Sonnet implemented `services/sms_agent.py` + wiring + tests; Opus review came
+back FIX-REQUIRED with 3 blockers (Anthropic history shaping, HELP/START auto-reply
+falsely tripping the human-takeover flip, handoff events published to a void bus); one
+fix round closed all 13 findings. **686 backend + 46 frontend tests green.**
+
+**Two consent-ledger notes:** `latest_consent` now orders by `(created_at, seq, id)` —
+the random-UUID coin flip is dead (regression test forces the same-timestamp pair).
+Opted-out contacts record turn `blocked`/`opted_out` (no LLM call) by explicit ruling.
+
+**Load-bearing wiring facts for future phases:** webhook routes stash
+`session.info["event_bus"]/"settings"]` so post-commit background work reaches the REAL
+app bus (a fallback `_default_bus` exists but has no subscribers — never rely on it);
+`send_message` flips an active thread to `handed_off` for any send that is neither
+AI-flagged (`AI_SEND_KEY`) nor exempted — **P11 bulk senders will trip this on every
+active thread and need their own flag** (recorded by Opus review, deliberate deferral).
+`org_could_reply` same-session probe gates task spawn — on SQLite a concurrent session's
+commits can corrupt unrelated open cursors, so don't spawn second sessions casually.
+
 ## Known issues
 - **`test_softphone_token_cross_org_room_is_404` flakes on CI Python 3.10 only (unresolved):** failed on `7eb5441` and `5fa0978`, passed on `5dc178e`/`0934a9e`. The second failure's signature was `unauthenticated / Incorrect email or password` from `register_and_login`, NOT the dial-task race the autouse drain guard in `test_voice_plane.py` was added for — so that guard did not fix this, and two subsequent passes do not prove it fixed. Suspect cross-test state on 3.10 (the emails `spA@`/`spB@example.com` are unique to this test, so look at fixture/DB reuse, not collision). Reproduce with the full suite under 3.10, not the file alone.
 - **`latest_consent` random tiebreak (pre-existing, found 2026-08-26 by the P9 fix round):** `compliance/service.py::latest_consent` orders by `created_at desc, id desc` where id is a random UUIDv4 — a same-timestamp opt-out/opt-in pair resolves by coin flip. Real correctness risk, not just test flake (`test_manual_optout_then_manual_optin_is_allowed` flakes under full-suite load). Fix needs a monotonic tiebreaker (sequence column) — Tier-1 schema change, FIRST ITEM next session.

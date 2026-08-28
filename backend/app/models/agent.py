@@ -16,6 +16,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base, TenantScoped, TimestampMixin
 from app.db.types import GUID, PortableJSON
 
+#: Default handoff triggers (P10). Matched case-insensitively as whole phrases against an
+#: inbound SMS. "stop" is deliberately ABSENT: STOP belongs to the compliance keyword
+#: engine, which must keep sole ownership of opt-out semantics.
+DEFAULT_SMS_HANDOFF_KEYWORDS = ("human", "agent", "representative", "person", "stop the bot")
+
+#: Outcomes of one AI SMS turn (P10). One row per inbound message the agent considered.
+SMS_TURN_STATUSES = ("replied", "skipped", "blocked", "handoff", "error")
+
 
 class AgentProfile(Base, TenantScoped, TimestampMixin):
     """How this org's AI agent talks. v1 keeps dispatch explicit; the profile only says
@@ -37,6 +45,25 @@ class AgentProfile(Base, TenantScoped, TimestampMixin):
     #: indexes are not portable to SQLite).
     is_default: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
     extra: Mapped[dict] = mapped_column(PortableJSON(), nullable=False, default=dict)
+
+    # --- P10: the SMS surface ---------------------------------------------------
+    #: Off is the default FOREVER — an AI that starts texting customers because a
+    #: migration ran is an incident, so enabling is always an explicit operator act.
+    sms_enabled: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    #: AI replies per thread since last (re)arm before a forced handoff (plan DR-7).
+    sms_turn_ceiling: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=10, server_default="10"
+    )
+    #: Case-insensitive whole-phrase triggers that hand the thread to a human.
+    sms_handoff_keywords: Mapped[list] = mapped_column(
+        PortableJSON(), nullable=False, default=lambda: list(DEFAULT_SMS_HANDOFF_KEYWORDS)
+    )
+    #: Hard clamp on one AI reply. 480 chars ≈ 3 GSM-7 segments.
+    sms_max_reply_chars: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=480, server_default="480"
+    )
 
     __table_args__ = (
         sa.UniqueConstraint("org_id", "name", name="uq_agent_profiles_org_name"),
@@ -66,3 +93,33 @@ class CallTranscriptSegment(Base, TenantScoped, TimestampMixin):
         ),
         sa.Index("ix_call_transcripts_call_at", "call_id", "at_ms"),
     )
+
+
+class AgentSmsTurn(Base, TenantScoped, TimestampMixin):
+    """One AI decision about one inbound SMS (P10).
+
+    The UNIQUE inbound_message_id is the idempotency mechanism, not an audit nicety:
+    carriers deliver webhooks at least once, and "did we already answer this?" must be a
+    constraint the database enforces, never a check-then-act race in the turn engine.
+    """
+
+    __tablename__ = "agent_sms_turns"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        sa.ForeignKey("message_threads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    inbound_message_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), sa.ForeignKey("messages.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    #: Set only for status "replied" (and "handoff" when a farewell message was sent).
+    outbound_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    #: One of SMS_TURN_STATUSES.
+    status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    #: Operator-facing reason: the matched keyword, the gate's verdict, the error class.
+    detail: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")

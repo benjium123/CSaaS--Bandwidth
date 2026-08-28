@@ -139,6 +139,33 @@ export function usePatchThread(api: ApiClient) {
   });
 }
 
+/** Thread AI state (plan DR-5): off | active | handed_off. `off` is the default and is
+ * never set from the console - it only ever comes from an sms_enabled profile seeing the
+ * thread for the first time. */
+export type ThreadAiState = "off" | "active" | "handed_off";
+export type ThreadAiOut = { id: string; ai_state: ThreadAiState };
+
+export function useThreadAiState(api: ApiClient, threadId: string | null) {
+  return useQuery({
+    queryKey: ["thread-ai", threadId],
+    queryFn: () => api.request<ThreadAiOut>(`/api/v1/threads/${threadId}/ai`),
+    enabled: Boolean(threadId),
+  });
+}
+
+/** The re-arm / take-over pair. Only "active" and "handed_off" are settable here. */
+export function useSetThreadAiState(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { threadId: string; state: "active" | "handed_off" }) =>
+      api.request<ThreadAiOut>(`/api/v1/threads/${vars.threadId}/ai`, {
+        method: "POST",
+        json: { state: vars.state },
+      }),
+    onSuccess: (data, vars) => qc.setQueryData(["thread-ai", vars.threadId], data),
+  });
+}
+
 export function useContacts(api: ApiClient, q = "") {
   return useQuery({
     queryKey: ["contacts", q],
@@ -360,6 +387,11 @@ export type AgentProfileFields = {
   llm_provider?: string;
   llm_model?: string;
   voicemail_message?: string;
+  /** SMS agent (P10 DR-5/DR-7). */
+  sms_enabled?: boolean;
+  sms_turn_ceiling?: number;
+  sms_handoff_keywords?: string[];
+  sms_max_reply_chars?: number;
 };
 
 export function useAgentProfiles(api: ApiClient) {

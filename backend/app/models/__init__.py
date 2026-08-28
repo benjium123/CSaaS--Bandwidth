@@ -1,4 +1,4 @@
-from app.models.agent import AgentProfile, CallTranscriptSegment
+from app.models.agent import AgentProfile, AgentSmsTurn, CallTranscriptSegment
 from app.models.compliance import (
     CHANNELS,
     CONSENT_EVENTS,
@@ -48,6 +48,7 @@ __all__ = [
     "Campaign",
     "TollFreeVerification",
     "AgentProfile",
+    "AgentSmsTurn",
     "CallTranscriptSegment",
     "Call",
     "CallLeg",

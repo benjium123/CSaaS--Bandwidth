@@ -107,6 +107,20 @@ class MessageThread(Base, TenantScoped, TimestampMixin):
         sa.DateTime(timezone=True), nullable=True
     )
 
+    # --- P10 AI state machine (plan DR-5): off | active | handed_off ------------
+    # `off` until an operator arms the thread's org profile; `handed_off` is sticky —
+    # only the explicit re-arm endpoint returns a thread to `active`, never the bot.
+    ai_state: Mapped[str] = mapped_column(
+        sa.String(12), nullable=False, default="off", server_default="off"
+    )
+    # Set every time ai_state becomes "active" (auto-arm and manual re-arm alike). The
+    # turn ceiling counts replies AFTER this instant — counting "since the last
+    # bot-initiated handoff" instead would make a human takeover + re-arm inherit the old
+    # count and trip the ceiling on the very next inbound (DR-7 says "since last (re)arm").
+    ai_armed_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+
 
 class Message(Base, TenantScoped, TimestampMixin):
     __tablename__ = "messages"
