@@ -2890,6 +2890,86 @@
         "title": "NumberOut",
         "type": "object"
       },
+      "NumberReputationOut": {
+        "description": "P14 DR-7: derived, trailing-7-day per-number stats. No third-party reputation API -\nevery field here is computed from our own `messages` rows.",
+        "properties": {
+          "carrier": {
+            "title": "Carrier",
+            "type": "string"
+          },
+          "carrier_error_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Carrier Error Rate"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "delivery_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Rate"
+          },
+          "e164": {
+            "title": "E164",
+            "type": "string"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "spam_class_error_count": {
+            "title": "Spam Class Error Count",
+            "type": "integer"
+          },
+          "volume": {
+            "title": "Volume",
+            "type": "integer"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "e164",
+          "carrier",
+          "window_start",
+          "window_end",
+          "volume",
+          "delivered",
+          "failed",
+          "rejected",
+          "delivery_rate",
+          "carrier_error_rate",
+          "spam_class_error_count"
+        ],
+        "title": "NumberReputationOut",
+        "type": "object"
+      },
       "OrderIn": {
         "properties": {
           "campaign_id": {
@@ -11239,6 +11319,64 @@
         ]
       }
     },
+    "/api/v1/numbers/reputation": {
+      "get": {
+        "operationId": "number_reputation_api_v1_numbers_reputation_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NumberReputationOut"
+                  },
+                  "title": "Response Number Reputation Api V1 Numbers Reputation Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Number Reputation",
+        "tags": [
+          "numbers"
+        ]
+      }
+    },
     "/api/v1/numbers/{number_id}": {
       "delete": {
         "description": "Release at the carrier, mark released here - but KEEP THE ROW (phase-4-plan DR-5).\n\nThreads, messages and above all the consent ledger reference this number, and the\nledger is the evidence that somebody opted out. Deleting the row would destroy the\nrecord we would need to prove we honoured a STOP.",
@@ -16115,6 +16253,29 @@
         "summary": "Healthz",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/status": {
+      "get": {
+        "operationId": "status_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Status Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Status",
+        "tags": [
+          "status"
         ]
       }
     }

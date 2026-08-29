@@ -1187,6 +1187,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/numbers/reputation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Number Reputation */
+        get: operations["number_reputation_api_v1_numbers_reputation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/numbers/{number_id}": {
         parameters: {
             query?: never;
@@ -2387,6 +2404,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3521,6 +3555,41 @@ export interface components {
              * @default active
              */
             status: string;
+        };
+        /**
+         * NumberReputationOut
+         * @description P14 DR-7: derived, trailing-7-day per-number stats. No third-party reputation API -
+         *     every field here is computed from our own `messages` rows.
+         */
+        NumberReputationOut: {
+            /** Carrier */
+            carrier: string;
+            /** Carrier Error Rate */
+            carrier_error_rate: number | null;
+            /** Delivered */
+            delivered: number;
+            /** Delivery Rate */
+            delivery_rate: number | null;
+            /** E164 */
+            e164: string;
+            /** Failed */
+            failed: number;
+            /** Rejected */
+            rejected: number;
+            /** Spam Class Error Count */
+            spam_class_error_count: number;
+            /** Volume */
+            volume: number;
+            /**
+             * Window End
+             * Format: date-time
+             */
+            window_end: string;
+            /**
+             * Window Start
+             * Format: date-time
+             */
+            window_start: string;
         };
         /** OrderIn */
         OrderIn: {
@@ -7474,6 +7543,37 @@ export interface operations {
             };
         };
     };
+    number_reputation_api_v1_numbers_reputation_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NumberReputationOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     release_api_v1_numbers__number_id__delete: {
         parameters: {
             query?: never;
@@ -10009,6 +10109,28 @@ export interface operations {
         };
     };
     healthz_healthz_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    status_status_get: {
         parameters: {
             query?: never;
             header?: never;
