@@ -2,6 +2,8 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { InboxPage } from "@/pages/InboxPage";
 import { ContactsPage } from "@/pages/ContactsPage";
+import { ListsPage } from "@/pages/ListsPage";
+import { CampaignsPage } from "@/pages/CampaignsPage";
 import { NumbersPage } from "@/pages/NumbersPage";
 import { ProvidersPage } from "@/pages/ProvidersPage";
 import { CallsPage } from "@/pages/CallsPage";
@@ -20,6 +22,8 @@ import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 const NAV = [
   { to: "/inbox", label: "Inbox" },
   { to: "/contacts", label: "Contacts" },
+  { to: "/lists", label: "Lists" },
+  { to: "/campaigns", label: "Campaigns" },
   { to: "/calls", label: "Calls" },
   { to: "/agent", label: "AI Agent" },
   { to: "/appointments", label: "Appointments" },
@@ -88,6 +92,8 @@ export function App() {
       <Routes>
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/contacts" element={<ContactsPage />} />
+        <Route path="/lists" element={<ListsPage />} />
+        <Route path="/campaigns" element={<CampaignsPage />} />
         <Route path="/calls" element={<CallsPage />} />
         <Route path="/agent" element={<AgentPage />} />
         <Route path="/appointments" element={<AppointmentsPage />} />

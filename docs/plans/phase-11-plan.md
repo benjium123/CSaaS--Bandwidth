@@ -30,10 +30,12 @@ tested against fakes, and recorded as runtime-blocked, exactly like P5–P9.
   `send_message`, and links `message_id` + flips to `sent`/`deferred`/`blocked` in the
   SAME session/commit — a crash cannot double-send. On startup/tick, `sending` rows with
   no `message_id` older than 5 min are re-queued.
-- **DR-5: Pacing is DERIVED, never counted** (P2a lesson). Per-number sent-today =
-  `COUNT(messages)` for that `from_e164` since UTC midnight (v1 caps are per UTC day —
-  documented simplification; recipient-local fairness comes from the gate's quiet
-  hours). Warm-up ramp: `org_numbers.warmup_started_at` (new column, nullable = no
+- **DR-5: Pacing is DERIVED, never counted** (P2a lesson). Per-number "daily" cap =
+  `COUNT(messages)` for that `from_e164` over a TRAILING `CAP_WINDOW_HOURS` (26h)
+  window — AMENDED at review time from UTC-calendar-day: a rolling window has no
+  midnight burst, matches carrier warm-up reality, and stays correct under a
+  test-frozen tick clock sitting ahead of DB-real timestamps. Recipient-local fairness
+  comes from the gate's quiet hours. Warm-up ramp: `org_numbers.warmup_started_at` (new column, nullable = no
   ramp); ramp schedule lives in `services/pacing.py` as data
   (`[(3, 50), (7, 100), (14, 250)]` → else uncapped by ramp), effective cap =
   `min(campaign.daily_cap, ramp_cap)` when `respect_warmup`.

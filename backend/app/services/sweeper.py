@@ -24,9 +24,13 @@ log = structlog.get_logger("sweeper")
 
 async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     """One pass. Each task gets its own session so one failure cannot poison the others."""
+    from random import Random
+
     from app.db.session import get_sessionmaker
+    from app.services import dialer as dialer_svc
     from app.services import media as media_svc
     from app.services import messaging as messaging_svc
+    from app.services import outbound as outbound_svc
     from app.services import recordings as recordings_svc
 
     store = getattr(app.state, "media_store", None)
@@ -81,6 +85,34 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
             results["reprocessed"] = await messaging_svc.reprocess_pending(session)
     except Exception:
         log.exception("sweeper_reprocess_failed")
+
+    # P11: the outbound campaign scheduler and the auto-dialer are ticks inside this same
+    # loop (DR-6) - no new process, no Redis. Each gets its own session/try-except so a
+    # failure in one can never poison the others, same discipline as every task above.
+    if carrier is not None:
+        try:
+            async with get_sessionmaker()() as session:
+                outbound_counts = await outbound_svc.outbound_tick(
+                    session, carrier, app.state.settings, Random(), registry=registry
+                )
+            results["outbound_sent"] = outbound_counts.get("sent", 0)
+        except Exception:
+            log.exception("sweeper_outbound_tick_failed")
+
+    livekit = getattr(app.state, "livekit", None)
+    if livekit is not None:
+        try:
+            async with get_sessionmaker()() as session:
+                dial_counts = await dialer_svc.dialer_tick(
+                    session,
+                    livekit,
+                    app.state.settings,
+                    getattr(app.state, "event_bus", None),
+                    Random(),
+                )
+            results["dialer_connected"] = dial_counts.get("connected", 0)
+        except Exception:
+            log.exception("sweeper_dialer_tick_failed")
 
     return results
 

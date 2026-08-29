@@ -22,6 +22,7 @@ from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
 from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
+from app.api.routes import outbound as outbound_routes
 from app.api.routes import registration as registration_routes
 from app.api.routes import routing as routing_routes
 from app.api.routes import scheduling as scheduling_routes
@@ -199,6 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(template_routes.router)
     app.include_router(message_routes.router)
     app.include_router(call_routes.router)
+    app.include_router(outbound_routes.router)
     app.include_router(agent_routes.router)
     app.include_router(scheduling_routes.router)
     app.include_router(softphone_routes.router)

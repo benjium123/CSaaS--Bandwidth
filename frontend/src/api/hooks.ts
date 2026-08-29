@@ -15,7 +15,13 @@ export type RecordingOut = components["schemas"]["RecordingOut"];
 export type NumberOut = components["schemas"]["NumberOut"];
 export type AvailableNumberOut = components["schemas"]["SearchOut"];
 export type BrandOut = components["schemas"]["BrandOut"];
-export type CampaignOut = components["schemas"]["CampaignOut"];
+// NOTE: P11 added a second, differently-shaped "CampaignOut"/"CampaignIn" pair in
+// app/api/routes/outbound.py. FastAPI's default schema naming disambiguates same-named
+// models from different modules by qualifying them with the module path, so the bare
+// "CampaignOut"/"CampaignIn" keys no longer exist in the generated schema - this alias
+// (registration/10DLC campaigns, unrelated to P11 outbound campaigns) now points at the
+// qualified name to match.
+export type CampaignOut = components["schemas"]["app__api__routes__registration__CampaignOut"];
 export type TollfreeOut = components["schemas"]["TfvOut"];
 export type AgentProfileOut = components["schemas"]["ProfileOut"];
 export type TranscriptSegmentOut = components["schemas"]["TranscriptSegmentOut"];
@@ -615,5 +621,181 @@ export function useRevokeInvite(api: ApiClient) {
     mutationFn: (inviteId: string) =>
       api.request<InviteOut>(`/api/v1/orgs/current/invites/${inviteId}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-invites"] }),
+  });
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Outbound engine: contact lists + SMS/voice campaigns (Phase 11)
+ * ------------------------------------------------------------------------------------- */
+
+export type ListPreviewOut = components["schemas"]["ListPreviewOut"];
+export type ListOut = components["schemas"]["ListOut"];
+export type ListRowOut = components["schemas"]["ListRowOut"];
+export type OutboundCampaignOut = components["schemas"]["app__api__routes__outbound__CampaignOut"];
+export type OutboundProgressOut = components["schemas"]["ProgressOut"];
+
+const LIST_POLL_MS = 3000;
+const CAMPAIGN_PROGRESS_POLL_MS = 3000;
+
+/** Lists poll only while at least one is still `importing` - a report artifact that
+ * finishes on its own once the background import task completes (plan DR-8). */
+export function useLists(api: ApiClient) {
+  return useQuery({
+    queryKey: ["outbound-lists"],
+    queryFn: () => api.request<ListOut[]>("/api/v1/outbound/lists"),
+    refetchInterval: (query) => {
+      if (document.visibilityState !== "visible") return false;
+      const data = query.state.data;
+      if (!data) return false;
+      return data.some((l) => l.status === "importing") ? LIST_POLL_MS : false;
+    },
+  });
+}
+
+export function useList(api: ApiClient, listId: string | null) {
+  return useQuery({
+    queryKey: ["outbound-list", listId],
+    queryFn: () => api.request<ListOut>(`/api/v1/outbound/lists/${listId}`),
+    enabled: Boolean(listId),
+    refetchInterval: (query) => {
+      if (document.visibilityState !== "visible") return false;
+      return query.state.data?.status === "importing" ? LIST_POLL_MS : false;
+    },
+  });
+}
+
+/** The per-row import report (plan DR-8/DR-9), filterable by outcome status. */
+export function useListRows(api: ApiClient, listId: string | null, status?: string) {
+  const params = new URLSearchParams({ limit: "200" });
+  if (status) params.set("status", status);
+  return useQuery({
+    queryKey: ["outbound-list-rows", listId, status ?? null],
+    queryFn: () =>
+      api.request<ListRowOut[]>(`/api/v1/outbound/lists/${listId}/rows?${params.toString()}`),
+    enabled: Boolean(listId),
+  });
+}
+
+/** Step 1 (DR-8): upload the file, get back headers + preview rows + a suggested
+ * mapping. The list row already exists server-side (status "importing") - /commit
+ * confirms the mapping and starts the background import. */
+export function useUploadList(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { file: File; name?: string }) => {
+      const form = new FormData();
+      form.append("file", vars.file);
+      if (vars.name) form.append("name", vars.name);
+      // No `json` - the client only sets Content-Type when `json` is passed, so the
+      // browser adds the correct multipart boundary header for this FormData body.
+      return api.request<ListPreviewOut>("/api/v1/outbound/lists", { method: "POST", body: form });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["outbound-lists"] }),
+  });
+}
+
+export function useCommitList(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { listId: string; mapping: Record<string, string> }) =>
+      api.request<ListOut>(`/api/v1/outbound/lists/${vars.listId}/commit`, {
+        method: "POST",
+        json: { mapping: vars.mapping },
+      }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["outbound-lists"] });
+      qc.setQueryData(["outbound-list", data.id], data);
+    },
+  });
+}
+
+export type OutboundCampaignFilters = { channel?: string; status?: string };
+
+export function useOutboundCampaigns(api: ApiClient, filters: OutboundCampaignFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.channel) params.set("channel", filters.channel);
+  if (filters.status) params.set("status", filters.status);
+  const qs = params.toString();
+
+  return useQuery({
+    queryKey: ["outbound-campaigns", filters],
+    queryFn: () =>
+      api.request<OutboundCampaignOut[]>(`/api/v1/outbound/campaigns${qs ? `?${qs}` : ""}`),
+  });
+}
+
+export function useOutboundCampaign(api: ApiClient, campaignId: string | null) {
+  return useQuery({
+    queryKey: ["outbound-campaign", campaignId],
+    queryFn: () => api.request<OutboundCampaignOut>(`/api/v1/outbound/campaigns/${campaignId}`),
+    enabled: Boolean(campaignId),
+  });
+}
+
+export type CreateOutboundCampaignVars = {
+  name: string;
+  channel: "sms" | "voice";
+  list_id: string;
+  body?: string | null;
+  from_numbers?: string[];
+  rate_per_minute?: number;
+  daily_cap?: number;
+  respect_warmup?: boolean;
+  dialer_mode?: string | null;
+  parallel_lines?: number;
+  local_presence?: boolean;
+  max_attempts?: number;
+};
+
+export function useCreateOutboundCampaign(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: CreateOutboundCampaignVars) =>
+      api.request<OutboundCampaignOut>("/api/v1/outbound/campaigns", {
+        method: "POST",
+        json: vars,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["outbound-campaigns"] }),
+  });
+}
+
+function useOutboundCampaignAction(api: ApiClient, action: "start" | "pause" | "cancel") {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (campaignId: string) =>
+      api.request<OutboundCampaignOut>(`/api/v1/outbound/campaigns/${campaignId}/${action}`, {
+        method: "POST",
+      }),
+    onSuccess: (data, campaignId) => {
+      qc.setQueryData(["outbound-campaign", campaignId], data);
+      qc.invalidateQueries({ queryKey: ["outbound-campaigns"] });
+    },
+  });
+}
+
+export function useStartOutboundCampaign(api: ApiClient) {
+  return useOutboundCampaignAction(api, "start");
+}
+
+export function usePauseOutboundCampaign(api: ApiClient) {
+  return useOutboundCampaignAction(api, "pause");
+}
+
+export function useCancelOutboundCampaign(api: ApiClient) {
+  return useOutboundCampaignAction(api, "cancel");
+}
+
+/** Polls only while the campaign is `running` - a completed/paused/cancelled campaign's
+ * counts are done changing. */
+export function useOutboundCampaignProgress(api: ApiClient, campaignId: string | null) {
+  return useQuery({
+    queryKey: ["outbound-campaign-progress", campaignId],
+    queryFn: () =>
+      api.request<OutboundProgressOut>(`/api/v1/outbound/campaigns/${campaignId}/progress`),
+    enabled: Boolean(campaignId),
+    refetchInterval: (query) => {
+      if (document.visibilityState !== "visible") return false;
+      return query.state.data?.status === "running" ? CAMPAIGN_PROGRESS_POLL_MS : false;
+    },
   });
 }

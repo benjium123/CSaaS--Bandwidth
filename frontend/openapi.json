@@ -244,6 +244,31 @@
         "title": "Body_upload_api_v1_media_post",
         "type": "object"
       },
+      "Body_upload_list_api_v1_outbound_lists_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_list_api_v1_outbound_lists_post",
+        "type": "object"
+      },
       "BrandIn": {
         "properties": {
           "city": {
@@ -806,150 +831,6 @@
         "title": "CallOut",
         "type": "object"
       },
-      "CampaignIn": {
-        "properties": {
-          "brand_id": {
-            "format": "uuid",
-            "title": "Brand Id",
-            "type": "string"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "help_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Help Message"
-          },
-          "name": {
-            "maxLength": 127,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "opt_in_process": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Opt In Process"
-          },
-          "opt_out_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Opt Out Message"
-          },
-          "sample_messages": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Sample Messages",
-            "type": "array"
-          },
-          "use_case": {
-            "default": "MIXED",
-            "title": "Use Case",
-            "type": "string"
-          }
-        },
-        "required": [
-          "brand_id",
-          "name"
-        ],
-        "title": "CampaignIn",
-        "type": "object"
-      },
-      "CampaignOut": {
-        "properties": {
-          "brand_id": {
-            "format": "uuid",
-            "title": "Brand Id",
-            "type": "string"
-          },
-          "carrier_refs": {
-            "additionalProperties": true,
-            "title": "Carrier Refs",
-            "type": "object"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "last_error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Error"
-          },
-          "missing_for_submission": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Missing For Submission",
-            "type": "array"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "number_count": {
-            "title": "Number Count",
-            "type": "integer"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "use_case": {
-            "title": "Use Case",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "brand_id",
-          "name",
-          "use_case",
-          "status",
-          "carrier_refs",
-          "last_error",
-          "number_count",
-          "missing_for_submission"
-        ],
-        "title": "CampaignOut",
-        "type": "object"
-      },
       "CarrierCatalogOut": {
         "description": "Every carrier this BUILD supports, live or not - so an operator can see what is\navailable to switch on, not merely what is already on.",
         "properties": {
@@ -1072,6 +953,22 @@
           "code"
         ],
         "title": "CodeIn",
+        "type": "object"
+      },
+      "CommitIn": {
+        "properties": {
+          "mapping": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Mapping",
+            "type": "object"
+          }
+        },
+        "required": [
+          "mapping"
+        ],
+        "title": "CommitIn",
         "type": "object"
       },
       "CompanyIn": {
@@ -1807,6 +1704,196 @@
           }
         },
         "title": "LabelsIn",
+        "type": "object"
+      },
+      "ListOut": {
+        "properties": {
+          "accepted_count": {
+            "title": "Accepted Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dnc_count": {
+            "title": "Dnc Count",
+            "type": "integer"
+          },
+          "duplicate_count": {
+            "title": "Duplicate Count",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invalid_count": {
+            "title": "Invalid Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source_filename": {
+            "title": "Source Filename",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total_rows": {
+            "title": "Total Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "source_filename",
+          "status",
+          "total_rows",
+          "accepted_count",
+          "invalid_count",
+          "duplicate_count",
+          "dnc_count",
+          "error",
+          "created_at"
+        ],
+        "title": "ListOut",
+        "type": "object"
+      },
+      "ListPreviewOut": {
+        "properties": {
+          "headers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "array"
+          },
+          "list_id": {
+            "format": "uuid",
+            "title": "List Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "preview_rows": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Preview Rows",
+            "type": "array"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "suggested_mapping": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Suggested Mapping",
+            "type": "object"
+          }
+        },
+        "required": [
+          "list_id",
+          "name",
+          "headers",
+          "preview_rows",
+          "suggested_mapping",
+          "row_count"
+        ],
+        "title": "ListPreviewOut",
+        "type": "object"
+      },
+      "ListRowOut": {
+        "properties": {
+          "contact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Id"
+          },
+          "e164": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "E164"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "title": "Fields",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "row_number": {
+            "title": "Row Number",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "row_number",
+          "e164",
+          "status",
+          "reason",
+          "fields",
+          "contact_id"
+        ],
+        "title": "ListRowOut",
         "type": "object"
       },
       "LoginIn": {
@@ -2721,6 +2808,38 @@
           }
         },
         "title": "ProfilePatch",
+        "type": "object"
+      },
+      "ProgressOut": {
+        "properties": {
+          "campaign_id": {
+            "format": "uuid",
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "status",
+          "counts",
+          "total"
+        ],
+        "title": "ProgressOut",
         "type": "object"
       },
       "RecordingOut": {
@@ -3811,6 +3930,382 @@
           "e164"
         ],
         "title": "NumberIn",
+        "type": "object"
+      },
+      "app__api__routes__outbound__CampaignIn": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "channel": {
+            "default": "sms",
+            "title": "Channel",
+            "type": "string"
+          },
+          "daily_cap": {
+            "default": 200,
+            "minimum": 1.0,
+            "title": "Daily Cap",
+            "type": "integer"
+          },
+          "dialer_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dialer Mode"
+          },
+          "from_numbers": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "From Numbers",
+            "type": "array"
+          },
+          "list_id": {
+            "format": "uuid",
+            "title": "List Id",
+            "type": "string"
+          },
+          "local_presence": {
+            "default": false,
+            "title": "Local Presence",
+            "type": "boolean"
+          },
+          "max_attempts": {
+            "default": 2,
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 127,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "parallel_lines": {
+            "default": 1,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Parallel Lines",
+            "type": "integer"
+          },
+          "rate_per_minute": {
+            "default": 6,
+            "maximum": 600.0,
+            "minimum": 1.0,
+            "title": "Rate Per Minute",
+            "type": "integer"
+          },
+          "respect_warmup": {
+            "default": true,
+            "title": "Respect Warmup",
+            "type": "boolean"
+          },
+          "retry_backoff_minutes": {
+            "default": 240,
+            "minimum": 1.0,
+            "title": "Retry Backoff Minutes",
+            "type": "integer"
+          },
+          "start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start At"
+          }
+        },
+        "required": [
+          "name",
+          "list_id"
+        ],
+        "title": "CampaignIn",
+        "type": "object"
+      },
+      "app__api__routes__outbound__CampaignOut": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "daily_cap": {
+            "title": "Daily Cap",
+            "type": "integer"
+          },
+          "dialer_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dialer Mode"
+          },
+          "from_numbers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "From Numbers",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "list_id": {
+            "format": "uuid",
+            "title": "List Id",
+            "type": "string"
+          },
+          "local_presence": {
+            "title": "Local Presence",
+            "type": "boolean"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parallel_lines": {
+            "title": "Parallel Lines",
+            "type": "integer"
+          },
+          "rate_per_minute": {
+            "title": "Rate Per Minute",
+            "type": "integer"
+          },
+          "respect_warmup": {
+            "title": "Respect Warmup",
+            "type": "boolean"
+          },
+          "retry_backoff_minutes": {
+            "title": "Retry Backoff Minutes",
+            "type": "integer"
+          },
+          "start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "channel",
+          "list_id",
+          "status",
+          "body",
+          "from_numbers",
+          "rate_per_minute",
+          "daily_cap",
+          "respect_warmup",
+          "start_at",
+          "dialer_mode",
+          "parallel_lines",
+          "local_presence",
+          "max_attempts",
+          "retry_backoff_minutes",
+          "created_at"
+        ],
+        "title": "CampaignOut",
+        "type": "object"
+      },
+      "app__api__routes__registration__CampaignIn": {
+        "properties": {
+          "brand_id": {
+            "format": "uuid",
+            "title": "Brand Id",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "help_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Help Message"
+          },
+          "name": {
+            "maxLength": 127,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "opt_in_process": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt In Process"
+          },
+          "opt_out_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt Out Message"
+          },
+          "sample_messages": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample Messages",
+            "type": "array"
+          },
+          "use_case": {
+            "default": "MIXED",
+            "title": "Use Case",
+            "type": "string"
+          }
+        },
+        "required": [
+          "brand_id",
+          "name"
+        ],
+        "title": "CampaignIn",
+        "type": "object"
+      },
+      "app__api__routes__registration__CampaignOut": {
+        "properties": {
+          "brand_id": {
+            "format": "uuid",
+            "title": "Brand Id",
+            "type": "string"
+          },
+          "carrier_refs": {
+            "additionalProperties": true,
+            "title": "Carrier Refs",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "missing_for_submission": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing For Submission",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "number_count": {
+            "title": "Number Count",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "use_case": {
+            "title": "Use Case",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "brand_id",
+          "name",
+          "use_case",
+          "status",
+          "carrier_refs",
+          "last_error",
+          "number_count",
+          "missing_for_submission"
+        ],
+        "title": "CampaignOut",
         "type": "object"
       }
     },
@@ -8569,6 +9064,892 @@
         ]
       }
     },
+    "/api/v1/outbound/campaigns": {
+      "get": {
+        "operationId": "list_campaigns_api_v1_outbound_campaigns_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/app__api__routes__outbound__CampaignOut"
+                  },
+                  "title": "Response List Campaigns Api V1 Outbound Campaigns Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Campaigns",
+        "tags": [
+          "outbound"
+        ]
+      },
+      "post": {
+        "operationId": "create_campaign_api_v1_outbound_campaigns_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/app__api__routes__outbound__CampaignIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__routes__outbound__CampaignOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Campaign",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/campaigns/{campaign_id}": {
+      "get": {
+        "operationId": "get_campaign_api_v1_outbound_campaigns__campaign_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__routes__outbound__CampaignOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Campaign",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/campaigns/{campaign_id}/cancel": {
+      "post": {
+        "operationId": "cancel_campaign_api_v1_outbound_campaigns__campaign_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__routes__outbound__CampaignOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel Campaign",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/campaigns/{campaign_id}/pause": {
+      "post": {
+        "operationId": "pause_campaign_api_v1_outbound_campaigns__campaign_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__routes__outbound__CampaignOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Pause Campaign",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/campaigns/{campaign_id}/progress": {
+      "get": {
+        "operationId": "campaign_progress_api_v1_outbound_campaigns__campaign_id__progress_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Campaign Progress",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/campaigns/{campaign_id}/start": {
+      "post": {
+        "operationId": "start_campaign_api_v1_outbound_campaigns__campaign_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__routes__outbound__CampaignOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Campaign",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/lists": {
+      "get": {
+        "operationId": "list_lists_api_v1_outbound_lists_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ListOut"
+                  },
+                  "title": "Response List Lists Api V1 Outbound Lists Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Lists",
+        "tags": [
+          "outbound"
+        ]
+      },
+      "post": {
+        "description": "Step 1 (DR-8): parse for a preview + suggested mapping, and create the list row.\nThe raw bytes are stashed in the object store so /commit can re-parse the SAME file.",
+        "operationId": "upload_list_api_v1_outbound_lists_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_list_api_v1_outbound_lists_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListPreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload List",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/lists/{list_id}": {
+      "get": {
+        "operationId": "get_list_api_v1_outbound_lists__list_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "list_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "List Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get List",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/lists/{list_id}/commit": {
+      "post": {
+        "description": "Step 2 (DR-8): confirm the column mapping and kick off the background import.",
+        "operationId": "commit_list_api_v1_outbound_lists__list_id__commit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "list_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "List Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommitIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Commit List",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/lists/{list_id}/rows": {
+      "get": {
+        "description": "The per-row import report the P11 gate demands, filterable by outcome status.",
+        "operationId": "list_rows_api_v1_outbound_lists__list_id__rows_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "list_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "List Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ListRowOut"
+                  },
+                  "title": "Response List Rows Api V1 Outbound Lists  List Id  Rows Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Rows",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
     "/api/v1/registration/brands": {
       "get": {
         "operationId": "list_brands_api_v1_registration_brands_get",
@@ -8854,7 +10235,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/CampaignOut"
+                    "$ref": "#/components/schemas/app__api__routes__registration__CampaignOut"
                   },
                   "title": "Response List Campaigns Api V1 Registration Campaigns Get",
                   "type": "array"
@@ -8908,7 +10289,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CampaignIn"
+                "$ref": "#/components/schemas/app__api__routes__registration__CampaignIn"
               }
             }
           },
@@ -8919,7 +10300,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CampaignOut"
+                  "$ref": "#/components/schemas/app__api__routes__registration__CampaignOut"
                 }
               }
             },
@@ -8994,7 +10375,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CampaignOut"
+                  "$ref": "#/components/schemas/app__api__routes__registration__CampaignOut"
                 }
               }
             },
@@ -9058,7 +10439,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CampaignOut"
+                  "$ref": "#/components/schemas/app__api__routes__registration__CampaignOut"
                 }
               }
             },
