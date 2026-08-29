@@ -163,6 +163,23 @@ class LiveKitApi:
             {"room": room, "identity": identity},
         )
 
+    async def update_subscriptions(
+        self, *, room: str, identity: str, track_sids: list[str], subscribe: bool
+    ) -> dict:
+        """Force-(un)subscribe a participant from specific tracks (P12 DR-9 whisper:
+        the caller's SIP participant is server-side denied the supervisor's track —
+        never left to client politeness)."""
+        return await self._twirp(
+            "RoomService",
+            "UpdateSubscriptions",
+            {
+                "room": room,
+                "identity": identity,
+                "track_sids": track_sids,
+                "subscribe": subscribe,
+            },
+        )
+
     async def create_sip_participant(
         self,
         *,

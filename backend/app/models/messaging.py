@@ -75,6 +75,12 @@ class OrgNumber(Base, TenantScoped, TimestampMixin):
         sa.DateTime(timezone=True), nullable=True
     )
 
+    # ---- P12 ----------------------------------------------------------------------
+    #: Inbound call-flow binding. NULL keeps the pre-P12 default inbound behaviour.
+    call_flow_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("call_flows.id", ondelete="SET NULL"), nullable=True
+    )
+
 
 class MessageThread(Base, TenantScoped, TimestampMixin):
     """A pure (org, our number, contact number) bucket.
