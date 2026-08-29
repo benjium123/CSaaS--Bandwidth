@@ -163,6 +163,17 @@ class LiveKitApi:
             {"room": room, "identity": identity},
         )
 
+    async def list_participants(self, room: str) -> list[dict]:
+        data = await self._twirp("RoomService", "ListParticipants", {"room": room})
+        return data.get("participants", [])
+
+    # NOTE (P12 B7 adjudication, verified against the LIVE server 2026-08-29):
+    # RoomService has NO SetSubscriptionPermissions method (twirp 404 bad_route) —
+    # per-participant subscription permissions are PUBLISHER-side (the supervisor's
+    # client SDK sets track subscription permissions at publish time; the SFU enforces
+    # them). Server-side whisper enforcement therefore cannot be faked here; whisper
+    # raises FeatureUnavailableError until the softphone client implements it.
+
     async def update_subscriptions(
         self, *, room: str, identity: str, track_sids: list[str], subscribe: bool
     ) -> dict:

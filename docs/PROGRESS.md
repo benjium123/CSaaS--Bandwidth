@@ -69,7 +69,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P9b | Provider parity + invite-only registration | ✅ gate passed | local ✅ / CI+PG ✅ | ✅ live | `a1efe84` |
 | P10 | AI SMS agent | ✅ code complete, deployed | 686 backend + 46 frontend ✅ / CI+PG ✅ | ✅ live (migration `0011`) | `a1efe84` |
 | P11 | Outbound engine (lists, auto-texter, dialer) | ✅ code complete + Opus-reviewed (6 blockers fixed) | 730 backend + 53 frontend ✅ | ✅ live (migrations 0012–0014 applied 2026-08-29) | 🔴 live SMS gate needs B1; live dialer gate needs B2 |
-| P12 | IVR / queues / voicemail | 🟡 in progress (Tier-1 schema + flow engine done) | — | — | — |
+| P12 | IVR / queues / voicemail / supervisor | ✅ code complete + Opus-reviewed (12 blockers fixed) | 809 backend + 59 frontend ✅ | ✅ live (migration 0015) | 🔴 live gate needs B2; whisper needs softphone client (D15); room-path audio needs worker (I5) |
 | P13 | Analytics + platform services | 🟡 Tier-1 foundation done (schema, outbox+hooks, API-key auth, token capture) | — | — | — |
 | P14 | Failover + hardening | ⬜ not started | — | — | — |
 

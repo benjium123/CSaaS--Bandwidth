@@ -9,6 +9,8 @@ import { ProvidersPage } from "@/pages/ProvidersPage";
 import { CallsPage } from "@/pages/CallsPage";
 import { AgentPage } from "@/pages/AgentPage";
 import { AppointmentsPage } from "@/pages/AppointmentsPage";
+import { FlowsPage } from "@/pages/FlowsPage";
+import { QueuesPage } from "@/pages/QueuesPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
@@ -27,6 +29,8 @@ const NAV = [
   { to: "/calls", label: "Calls" },
   { to: "/agent", label: "AI Agent" },
   { to: "/appointments", label: "Appointments" },
+  { to: "/flows", label: "Flows" },
+  { to: "/queues", label: "Queues" },
   { to: "/numbers", label: "Numbers" },
   { to: "/providers", label: "Providers" },
   { to: "/security", label: "Security" },
@@ -97,6 +101,8 @@ export function App() {
         <Route path="/calls" element={<CallsPage />} />
         <Route path="/agent" element={<AgentPage />} />
         <Route path="/appointments" element={<AppointmentsPage />} />
+        <Route path="/flows" element={<FlowsPage />} />
+        <Route path="/queues" element={<QueuesPage />} />
         <Route path="/numbers" element={<NumbersPage />} />
         <Route path="/providers" element={<ProvidersPage />} />
         <Route path="/security" element={<SettingsSecurityPage />} />

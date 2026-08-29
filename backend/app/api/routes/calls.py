@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -18,7 +18,15 @@ from app.errors import (
     NotFoundError,
     ValidationFailedError,
 )
-from app.models import Call, CallLeg, CallRecording, CallTranscriptSegment, OrgNumber, User
+from app.models import (
+    Call,
+    CallLeg,
+    CallRecording,
+    CallTranscriptSegment,
+    OrgNumber,
+    QueueEntry,
+    User,
+)
 from app.models.voice import TERMINAL_CALL_STATUSES
 from app.providers.voice import as_voice_carrier
 from app.services import calls as calls_svc
@@ -434,6 +442,21 @@ async def answer_call(
         call.org_id,
         {"type": "call.handoff.claimed", "call_id": str(call.id)},
     )
+    # P12 (Opus B12): a queued room call answered through the normal console must also
+    # resolve its QueueEntry, or the routing tick overflows it to voicemail mid-talk.
+    # Conditional UPDATE = first-answer-wins; losing nothing when the call was never
+    # queued (rowcount 0 is fine).
+    await ctx.session.execute(
+        sa.update(QueueEntry)
+        .where(
+            QueueEntry.call_id == call.id,
+            QueueEntry.state.in_(("waiting", "offered")),
+        )
+        .values(
+            state="connected", offered_user_id=user.id, resolved_at=datetime.now(timezone.utc)
+        )
+    )
+    await ctx.session.commit()
     return SoftphoneAnswerOut(
         url=settings.livekit_public_url or settings.livekit_url, token=token, room=room
     )

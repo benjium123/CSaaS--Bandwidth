@@ -230,6 +230,32 @@
         "title": "AssignIn",
         "type": "object"
       },
+      "BindFlowIn": {
+        "properties": {
+          "flow_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow Id"
+          },
+          "number_id": {
+            "format": "uuid",
+            "title": "Number Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number_id"
+        ],
+        "title": "BindFlowIn",
+        "type": "object"
+      },
       "Body_upload_api_v1_media_post": {
         "properties": {
           "file": {
@@ -447,6 +473,76 @@
           "missing_for_submission"
         ],
         "title": "BrandOut",
+        "type": "object"
+      },
+      "BusinessHoursIn": {
+        "properties": {
+          "holidays": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Holidays",
+            "type": "array"
+          },
+          "name": {
+            "default": "default",
+            "maxLength": 127,
+            "title": "Name",
+            "type": "string"
+          },
+          "schedule": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Schedule",
+            "type": "object"
+          },
+          "timezone": {
+            "default": "America/Chicago",
+            "maxLength": 64,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "title": "BusinessHoursIn",
+        "type": "object"
+      },
+      "BusinessHoursOut": {
+        "properties": {
+          "holidays": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Holidays",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "schedule": {
+            "additionalProperties": true,
+            "title": "Schedule",
+            "type": "object"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "timezone",
+          "schedule",
+          "holidays"
+        ],
+        "title": "BusinessHoursOut",
         "type": "object"
       },
       "CallDetailOut": {
@@ -1392,6 +1488,68 @@
         "title": "EnrollOut",
         "type": "object"
       },
+      "FlowIn": {
+        "properties": {
+          "definition": {
+            "additionalProperties": true,
+            "title": "Definition",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 127,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "definition"
+        ],
+        "title": "FlowIn",
+        "type": "object"
+      },
+      "FlowOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "definition": {
+            "additionalProperties": true,
+            "title": "Definition",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "status",
+          "definition",
+          "created_at"
+        ],
+        "title": "FlowOut",
+        "type": "object"
+      },
       "GatherIn": {
         "properties": {
           "action_tag": {
@@ -2246,6 +2404,38 @@
         "title": "NoteIn",
         "type": "object"
       },
+      "NumberBindingOut": {
+        "properties": {
+          "call_flow_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Call Flow Id"
+          },
+          "e164": {
+            "title": "E164",
+            "type": "string"
+          },
+          "number_id": {
+            "format": "uuid",
+            "title": "Number Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number_id",
+          "e164",
+          "call_flow_id"
+        ],
+        "title": "NumberBindingOut",
+        "type": "object"
+      },
       "NumberOut": {
         "properties": {
           "campaign_id": {
@@ -2908,6 +3098,197 @@
         "title": "ProgressOut",
         "type": "object"
       },
+      "QueueEntryOut": {
+        "properties": {
+          "call_id": {
+            "format": "uuid",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "callback_e164": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callback E164"
+          },
+          "enqueued_at": {
+            "format": "date-time",
+            "title": "Enqueued At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "offered_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offered User Id"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "queue_id": {
+            "format": "uuid",
+            "title": "Queue Id",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "queue_id",
+          "call_id",
+          "state",
+          "offered_user_id",
+          "callback_e164",
+          "position",
+          "enqueued_at",
+          "resolved_at"
+        ],
+        "title": "QueueEntryOut",
+        "type": "object"
+      },
+      "QueueIn": {
+        "properties": {
+          "hold_audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Audio Url"
+          },
+          "max_wait_seconds": {
+            "default": 300,
+            "maximum": 3600.0,
+            "minimum": 10.0,
+            "title": "Max Wait Seconds",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 127,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "overflow": {
+            "default": "voicemail",
+            "title": "Overflow",
+            "type": "string"
+          },
+          "ring_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ring Group Id"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "QueueIn",
+        "type": "object"
+      },
+      "QueueOut": {
+        "properties": {
+          "hold_audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Audio Url"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "max_wait_seconds": {
+            "title": "Max Wait Seconds",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "overflow": {
+            "title": "Overflow",
+            "type": "string"
+          },
+          "ring_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ring Group Id"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "hold_audio_url",
+          "max_wait_seconds",
+          "overflow",
+          "ring_group_id"
+        ],
+        "title": "QueueOut",
+        "type": "object"
+      },
       "RecordingOut": {
         "properties": {
           "content_type": {
@@ -3010,6 +3391,79 @@
           "contact_id"
         ],
         "title": "RenderIn",
+        "type": "object"
+      },
+      "RingGroupIn": {
+        "properties": {
+          "member_user_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Member User Ids",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 127,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "ring_timeout_seconds": {
+            "default": 20,
+            "maximum": 120.0,
+            "minimum": 1.0,
+            "title": "Ring Timeout Seconds",
+            "type": "integer"
+          },
+          "strategy": {
+            "default": "simultaneous",
+            "title": "Strategy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "RingGroupIn",
+        "type": "object"
+      },
+      "RingGroupOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "member_user_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Member User Ids",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ring_timeout_seconds": {
+            "title": "Ring Timeout Seconds",
+            "type": "integer"
+          },
+          "strategy": {
+            "title": "Strategy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "strategy",
+          "member_user_ids",
+          "ring_timeout_seconds"
+        ],
+        "title": "RingGroupOut",
         "type": "object"
       },
       "RoleOut": {
@@ -3327,6 +3781,29 @@
           "status"
         ],
         "title": "StatusIn",
+        "type": "object"
+      },
+      "SupervisorTokenOut": {
+        "properties": {
+          "room": {
+            "title": "Room",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "token",
+          "room"
+        ],
+        "title": "SupervisorTokenOut",
         "type": "object"
       },
       "TagIn": {
@@ -3836,6 +4313,93 @@
           "code"
         ],
         "title": "VerifyIn",
+        "type": "object"
+      },
+      "VersionIn": {
+        "properties": {
+          "definition": {
+            "additionalProperties": true,
+            "title": "Definition",
+            "type": "object"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "title": "VersionIn",
+        "type": "object"
+      },
+      "VoicemailOut": {
+        "properties": {
+          "call_id": {
+            "format": "uuid",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "greeting_node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Greeting Node"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "recording_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript"
+          },
+          "transcript_status": {
+            "title": "Transcript Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "call_id",
+          "recording_id",
+          "greeting_node",
+          "transcript",
+          "transcript_status",
+          "status",
+          "created_at"
+        ],
+        "title": "VoicemailOut",
         "type": "object"
       },
       "app__api__routes__agent__ContactOut": {
@@ -5439,6 +6003,126 @@
         ]
       }
     },
+    "/api/v1/business-hours": {
+      "get": {
+        "operationId": "list_business_hours_api_v1_business_hours_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BusinessHoursOut"
+                  },
+                  "title": "Response List Business Hours Api V1 Business Hours Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Business Hours",
+        "tags": [
+          "flows"
+        ]
+      },
+      "post": {
+        "operationId": "create_business_hours_api_v1_business_hours_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessHoursIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessHoursOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Business Hours",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
     "/api/v1/calls": {
       "get": {
         "operationId": "list_calls_api_v1_calls_get",
@@ -5820,6 +6504,70 @@
         ]
       }
     },
+    "/api/v1/calls/{call_id}/barge": {
+      "post": {
+        "operationId": "supervise_barge_api_v1_calls__call_id__barge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupervisorTokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Supervise Barge",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
     "/api/v1/calls/{call_id}/gather": {
       "post": {
         "operationId": "gather_call_api_v1_calls__call_id__gather_post",
@@ -5955,6 +6703,70 @@
         "summary": "Hangup Call",
         "tags": [
           "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}/monitor": {
+      "post": {
+        "operationId": "supervise_monitor_api_v1_calls__call_id__monitor_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupervisorTokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Supervise Monitor",
+        "tags": [
+          "flows"
         ]
       }
     },
@@ -6101,6 +6913,70 @@
         "summary": "Transfer Call",
         "tags": [
           "calls"
+        ]
+      }
+    },
+    "/api/v1/calls/{call_id}/whisper": {
+      "post": {
+        "operationId": "supervise_whisper_api_v1_calls__call_id__whisper_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupervisorTokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Supervise Whisper",
+        "tags": [
+          "flows"
         ]
       }
     },
@@ -7498,6 +8374,459 @@
         "summary": "Create Custom Field",
         "tags": [
           "contacts"
+        ]
+      }
+    },
+    "/api/v1/flows": {
+      "get": {
+        "operationId": "list_flows_api_v1_flows_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FlowOut"
+                  },
+                  "title": "Response List Flows Api V1 Flows Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Flows",
+        "tags": [
+          "flows"
+        ]
+      },
+      "post": {
+        "operationId": "create_flow_api_v1_flows_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Flow",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/flows/bind": {
+      "post": {
+        "operationId": "bind_flow_api_v1_flows_bind_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindFlowIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NumberBindingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Bind Flow",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/flows/by-name/{name}/versions": {
+      "get": {
+        "operationId": "list_flow_versions_api_v1_flows_by_name__name__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FlowOut"
+                  },
+                  "title": "Response List Flow Versions Api V1 Flows By Name  Name  Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Flow Versions",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/flows/{flow_id}": {
+      "get": {
+        "operationId": "get_flow_api_v1_flows__flow_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Flow",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/flows/{flow_id}/activate": {
+      "post": {
+        "operationId": "activate_flow_api_v1_flows__flow_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Activate Flow",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/flows/{flow_id}/versions": {
+      "post": {
+        "operationId": "create_flow_version_api_v1_flows__flow_id__versions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Flow Version",
+        "tags": [
+          "flows"
         ]
       }
     },
@@ -10089,6 +11418,403 @@
         ]
       }
     },
+    "/api/v1/queue-entries/{entry_id}/claim": {
+      "post": {
+        "operationId": "claim_entry_api_v1_queue_entries__entry_id__claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entry Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueEntryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Claim Entry",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/queue-entries/{entry_id}/dial-now": {
+      "post": {
+        "description": "DR-6 v1: a manual \"dial now\" button for a captured callback. Places the call through\nthe P5 outbound primitive (`services.calls.create_outbound_call`) - full P11\ncampaign-scale auto-dialing for a single ad-hoc callback is future work (OPEN_ISSUES);\nthis is the honest v1 scope the plan calls for.\n\nB8 fixes:\n- Runs the SAME compliance primitives `services/dialer.py` uses before every campaign\n  dial (opt-out -> DNC -> quiet hours) - a captured callback number is exactly as\n  protected as any other outbound dial, not exempt just because a human clicked a\n  button. 409s (not silently skips) when blocked.\n- Caller ID prefers the number the caller ORIGINALLY dialed\n  (`entry.call_id -> Call.our_e164`) - falls back to \"any active number\" only when\n  that specific number is no longer active/owned by this org.\n- `entry.state` stays \"callback_requested\" through the dial itself. Advancing it to\n  \"connected\" only once the outbound call is genuinely ANSWERED would need a hook in\n  the voice-webhook path this implementer cannot add outside the P6 branch already\n  owned (`routes/webhooks.py`) - so the smallest HONEST design, rather than lying\n  about the state, is to stamp `offered_user_id`/`offered_at` as a \"dialing in\n  flight\" marker (a console can show \"dialing\" by state still being\n  callback_requested with a recent offered_at) and leave true state advancement as an\n  OPEN_ISSUES follow-up once that webhook hook exists.",
+        "operationId": "dial_callback_now_api_v1_queue_entries__entry_id__dial_now_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entry Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueEntryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dial Callback Now",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/queues": {
+      "get": {
+        "operationId": "list_queues_api_v1_queues_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QueueOut"
+                  },
+                  "title": "Response List Queues Api V1 Queues Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Queues",
+        "tags": [
+          "flows"
+        ]
+      },
+      "post": {
+        "operationId": "create_queue_api_v1_queues_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueueIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Queue",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/queues/{queue_id}/claim-next": {
+      "post": {
+        "operationId": "claim_next_api_v1_queues__queue_id__claim_next_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "queue_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Queue Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueEntryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Claim Next",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/queues/{queue_id}/entries": {
+      "get": {
+        "operationId": "list_queue_entries_api_v1_queues__queue_id__entries_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "queue_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Queue Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QueueEntryOut"
+                  },
+                  "title": "Response List Queue Entries Api V1 Queues  Queue Id  Entries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Queue Entries",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
     "/api/v1/registration/brands": {
       "get": {
         "operationId": "list_brands_api_v1_registration_brands_get",
@@ -10861,6 +12587,126 @@
         "summary": "Submit Tfv",
         "tags": [
           "registration"
+        ]
+      }
+    },
+    "/api/v1/ring-groups": {
+      "get": {
+        "operationId": "list_ring_groups_api_v1_ring_groups_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RingGroupOut"
+                  },
+                  "title": "Response List Ring Groups Api V1 Ring Groups Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Ring Groups",
+        "tags": [
+          "flows"
+        ]
+      },
+      "post": {
+        "operationId": "create_ring_group_api_v1_ring_groups_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RingGroupIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RingGroupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Ring Group",
+        "tags": [
+          "flows"
         ]
       }
     },
@@ -11970,6 +13816,144 @@
         "summary": "Mark Read",
         "tags": [
           "inbox"
+        ]
+      }
+    },
+    "/api/v1/voicemails": {
+      "get": {
+        "operationId": "list_voicemails_api_v1_voicemails_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VoicemailOut"
+                  },
+                  "title": "Response List Voicemails Api V1 Voicemails Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Voicemails",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/v1/voicemails/{voicemail_id}/mark-read": {
+      "post": {
+        "operationId": "mark_voicemail_read_api_v1_voicemails__voicemail_id__mark_read_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "voicemail_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Voicemail Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoicemailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark Voicemail Read",
+        "tags": [
+          "flows"
         ]
       }
     },

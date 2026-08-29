@@ -41,6 +41,9 @@ PERMISSIONS: tuple[str, ...] = (
     "campaigns:manage",
     "calls:read",
     "calls:place",
+    # P12: monitor/whisper/barge on live calls. Owner via wildcard; admin via the
+    # comprehension below + migration 0015 backfill for pre-P12 orgs; agents never.
+    "calls:supervise",
     "reports:read",
     "settings:read",
     "settings:write",

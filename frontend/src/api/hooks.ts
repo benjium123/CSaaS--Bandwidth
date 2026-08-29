@@ -799,3 +799,230 @@ export function useOutboundCampaignProgress(api: ApiClient, campaignId: string |
     },
   });
 }
+
+/* ---------------------------------------------------------------------------------------
+ * IVR flows / ring groups / queues / business hours / voicemails / supervisor (Phase 12)
+ * ------------------------------------------------------------------------------------- */
+
+export type FlowOut = components["schemas"]["FlowOut"];
+export type NumberBindingOut = components["schemas"]["NumberBindingOut"];
+export type RingGroupOut = components["schemas"]["RingGroupOut"];
+export type QueueOut = components["schemas"]["QueueOut"];
+export type QueueEntryOut = components["schemas"]["QueueEntryOut"];
+export type BusinessHoursOut = components["schemas"]["BusinessHoursOut"];
+export type VoicemailOut = components["schemas"]["VoicemailOut"];
+export type SupervisorTokenOut = components["schemas"]["SupervisorTokenOut"];
+
+const QUEUE_ENTRIES_POLL_MS = 4000;
+
+// ---- Flows (DR-1/DR-2/DR-3/DR-4) ------------------------------------------------------
+
+export function useFlows(api: ApiClient) {
+  return useQuery({
+    queryKey: ["flows"],
+    queryFn: () => api.request<FlowOut[]>("/api/v1/flows"),
+  });
+}
+
+export function useFlow(api: ApiClient, flowId: string | null) {
+  return useQuery({
+    queryKey: ["flow", flowId],
+    queryFn: () => api.request<FlowOut>(`/api/v1/flows/${flowId}`),
+    enabled: Boolean(flowId),
+  });
+}
+
+/** Every version of one named flow, newest first (DR-3: editing never mutates a row). */
+export function useFlowVersions(api: ApiClient, name: string | null) {
+  return useQuery({
+    queryKey: ["flow-versions", name],
+    queryFn: () =>
+      api.request<FlowOut[]>(`/api/v1/flows/by-name/${encodeURIComponent(name ?? "")}/versions`),
+    enabled: Boolean(name),
+  });
+}
+
+export function useCreateFlow(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { name: string; definition: object }) =>
+      api.request<FlowOut>("/api/v1/flows", { method: "POST", json: vars }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["flows"] });
+      qc.invalidateQueries({ queryKey: ["flow-versions", data.name] });
+    },
+  });
+}
+
+/** DR-3: "editing" a flow always creates a new immutable version row off `flowId`. */
+export function useCreateFlowVersion(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { flowId: string; definition: object }) =>
+      api.request<FlowOut>(`/api/v1/flows/${vars.flowId}/versions`, {
+        method: "POST",
+        json: { definition: vars.definition },
+      }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["flows"] });
+      qc.invalidateQueries({ queryKey: ["flow-versions", data.name] });
+    },
+  });
+}
+
+export function useActivateFlow(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (flowId: string) =>
+      api.request<FlowOut>(`/api/v1/flows/${flowId}/activate`, { method: "POST" }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["flows"] });
+      qc.invalidateQueries({ queryKey: ["flow-versions", data.name] });
+    },
+  });
+}
+
+/** Binding a flow_id of `null` clears it back to the pre-P12 default behaviour. */
+export function useBindFlow(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { numberId: string; flowId: string | null }) =>
+      api.request<NumberBindingOut>("/api/v1/flows/bind", {
+        method: "POST",
+        json: { number_id: vars.numberId, flow_id: vars.flowId },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["numbers"] }),
+  });
+}
+
+// ---- Ring groups (DR-5) ----------------------------------------------------------------
+
+export function useRingGroups(api: ApiClient) {
+  return useQuery({
+    queryKey: ["ring-groups"],
+    queryFn: () => api.request<RingGroupOut[]>("/api/v1/ring-groups"),
+  });
+}
+
+export function useCreateRingGroup(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      name: string;
+      strategy: string;
+      member_user_ids: string[];
+      ring_timeout_seconds: number;
+    }) => api.request<RingGroupOut>("/api/v1/ring-groups", { method: "POST", json: vars }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ring-groups"] }),
+  });
+}
+
+// ---- Queues (DR-6) ----------------------------------------------------------------------
+
+export function useQueues(api: ApiClient) {
+  return useQuery({
+    queryKey: ["queues"],
+    queryFn: () => api.request<QueueOut[]>("/api/v1/queues"),
+  });
+}
+
+export function useCreateQueue(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      name: string;
+      hold_audio_url?: string | null;
+      max_wait_seconds: number;
+      overflow: string;
+      ring_group_id?: string | null;
+    }) => api.request<QueueOut>("/api/v1/queues", { method: "POST", json: vars }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["queues"] }),
+  });
+}
+
+/** Position is derived server-side (DR-6). Polls only while `enabled` (the caller decides
+ * visibility - e.g. a queue expanded in the UI) and the tab is visible. */
+export function useQueueEntries(
+  api: ApiClient,
+  queueId: string | null,
+  opts: { state?: string; enabled?: boolean } = {},
+) {
+  const enabled = Boolean(queueId) && (opts.enabled ?? true);
+  const qs = opts.state ? `?state=${encodeURIComponent(opts.state)}` : "";
+  return useQuery({
+    queryKey: ["queue-entries", queueId, opts.state ?? null],
+    queryFn: () => api.request<QueueEntryOut[]>(`/api/v1/queues/${queueId}/entries${qs}`),
+    enabled,
+    refetchInterval: () => {
+      if (!enabled) return false;
+      return document.visibilityState === "visible" ? QUEUE_ENTRIES_POLL_MS : false;
+    },
+  });
+}
+
+// ---- Business hours (DR-10) -------------------------------------------------------------
+
+export function useBusinessHours(api: ApiClient) {
+  return useQuery({
+    queryKey: ["business-hours"],
+    queryFn: () => api.request<BusinessHoursOut[]>("/api/v1/business-hours"),
+  });
+}
+
+export function useCreateBusinessHours(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      name: string;
+      timezone: string;
+      schedule: Record<string, [string, string][]>;
+      holidays: string[];
+    }) => api.request<BusinessHoursOut>("/api/v1/business-hours", { method: "POST", json: vars }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["business-hours"] }),
+  });
+}
+
+// ---- Voicemails (DR-8) -------------------------------------------------------------------
+
+export function useVoicemails(api: ApiClient, status?: string) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return useQuery({
+    queryKey: ["voicemails", status ?? null],
+    queryFn: () => api.request<VoicemailOut[]>(`/api/v1/voicemails${qs}`),
+  });
+}
+
+export function useMarkVoicemailRead(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (voicemailId: string) =>
+      api.request<VoicemailOut>(`/api/v1/voicemails/${voicemailId}/mark-read`, {
+        method: "POST",
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["voicemails"] }),
+  });
+}
+
+// ---- Supervisor ops (DR-9: room/token operations, each writes an audited VoiceEvent) ----
+
+function useSupervisorAction(api: ApiClient, action: "monitor" | "whisper" | "barge") {
+  return useMutation({
+    mutationFn: (callId: string) =>
+      api.request<SupervisorTokenOut>(`/api/v1/calls/${callId}/${action}`, { method: "POST" }),
+  });
+}
+
+/** Subscribe-only token (`canPublish=false`). */
+export function useMonitorCall(api: ApiClient) {
+  return useSupervisorAction(api, "monitor");
+}
+
+/** Publish token; the server denies the caller leg from subscribing to it. */
+export function useWhisperCall(api: ApiClient) {
+  return useSupervisorAction(api, "whisper");
+}
+
+/** Full token - joins the room like any other participant. */
+export function useBargeCall(api: ApiClient) {
+  return useSupervisorAction(api, "barge");
+}

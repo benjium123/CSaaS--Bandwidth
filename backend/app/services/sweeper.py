@@ -32,6 +32,8 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     from app.services import messaging as messaging_svc
     from app.services import outbound as outbound_svc
     from app.services import recordings as recordings_svc
+    from app.services import routing_exec as routing_exec_svc
+    from app.services import voicemail as voicemail_svc
 
     store = getattr(app.state, "media_store", None)
     carrier = getattr(app.state, "carrier", None)
@@ -113,6 +115,35 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
             results["dialer_connected"] = dial_counts.get("connected", 0)
         except Exception:
             log.exception("sweeper_dialer_tick_failed")
+
+    # P12: IVR ring-group/queue stepping, then voicemail recording linking + transcription.
+    try:
+        async with get_sessionmaker()() as session:
+            routing_counts = await routing_exec_svc.routing_tick(
+                session, getattr(app.state, "event_bus", None)
+            )
+        results["routing_offered"] = routing_counts.get("offered", 0)
+        results["routing_abandoned"] = routing_counts.get("abandoned", 0)
+    except Exception:
+        log.exception("sweeper_routing_tick_failed")
+
+    if store is not None:
+        try:
+            async with get_sessionmaker()() as session:
+                results["voicemails_linked"] = await voicemail_svc.link_pending_recordings(session)
+        except Exception:
+            log.exception("sweeper_voicemail_link_failed")
+
+        try:
+            async with get_sessionmaker()() as session:
+                vm_counts = await voicemail_svc.transcribe_pending(
+                    session,
+                    store,
+                    deepgram_api_key=app.state.settings.deepgram_api_key.get_secret_value(),
+                )
+            results["voicemails_transcribed"] = vm_counts.get("done", 0)
+        except Exception:
+            log.exception("sweeper_voicemail_transcribe_failed")
 
     return results
 

@@ -43,7 +43,24 @@ class Hangup:
     pass
 
 
-Action = Speak | GatherDigit | EvaluateHours | RingGroup | Enqueue | RecordVoicemail | Hangup
+@dataclass(frozen=True)
+class TransferTo:
+    """P12 fix-round ruling: forward the call to a real phone number - the carrier
+    path's only route to a live human until the room path has a live trunk."""
+
+    to: str
+
+
+Action = (
+    Speak
+    | GatherDigit
+    | EvaluateHours
+    | RingGroup
+    | Enqueue
+    | RecordVoicemail
+    | Hangup
+    | TransferTo
+)
 
 
 @dataclass(frozen=True)
@@ -127,6 +144,13 @@ def _enter(flow: dict, node_id: str) -> StepResult:
                 raise FlowError(f"malformed voicemail node '{current}'")
             actions.append(RecordVoicemail(greeting=greeting))
             return StepResult(tuple(actions), {"node": current, "retries": 0}, None, "voicemail")
+
+        if ntype == "transfer":
+            to = node.get("to")
+            if not isinstance(to, str) or not to:
+                raise FlowError(f"malformed transfer node '{current}'")
+            actions.append(TransferTo(to=to))
+            return StepResult(tuple(actions), {"node": current, "retries": 0}, None, "transferred")
 
         if ntype == "hangup":
             actions.append(Hangup())
@@ -246,7 +270,9 @@ def validate_flow(flow: dict) -> list[str]:
         errors.append(f"entry node '{entry}' not found")
 
     references: dict[str, set[str]] = {}
-    known_types = {"menu", "hours", "ring_group", "queue", "voicemail", "speak", "hangup"}
+    known_types = {
+        "menu", "hours", "ring_group", "queue", "voicemail", "speak", "hangup", "transfer"
+    }
 
     for node_id, node in nodes.items():
         if not isinstance(node, dict):
@@ -323,6 +349,11 @@ def validate_flow(flow: dict) -> list[str]:
         elif ntype == "voicemail":
             if "greeting" not in node or node["greeting"] is None:
                 errors.append(f"node '{node_id}' missing required field 'greeting'")
+
+        elif ntype == "transfer":
+            to = node.get("to")
+            if not isinstance(to, str) or not to:
+                errors.append(f"node '{node_id}' missing required field 'to'")
 
         elif ntype == "speak":
             for field in ("text", "next"):

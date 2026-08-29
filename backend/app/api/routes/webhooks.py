@@ -22,6 +22,7 @@ from app.providers.bandwidth import webhooks as bw_webhooks
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
 from app.services import calls as calls_svc
 from app.services import messaging as svc
+from app.services import routing_exec as routing_exec_svc
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
 
@@ -313,7 +314,27 @@ async def _handle_voice_webhook(
             ):
                 # Idempotent by design (D6): a duplicate delivery of the same call_initiated
                 # gets the exact same BXML back, whether or not the row itself was new.
-                commands = list(DEFAULT_INBOUND_COMMANDS)
+                # P12: a number bound to an active call flow (org_numbers.call_flow_id) runs
+                # it through the carrier executor instead of the flat default below.
+                bound_flow = await routing_exec_svc.resolve_inbound_flow(session, call.our_e164)
+                if bound_flow is None:
+                    commands = list(DEFAULT_INBOUND_COMMANDS)
+                else:
+                    commands = await routing_exec_svc.start_carrier_flow(
+                        session, getattr(request.app.state, "event_bus", None), call, bound_flow
+                    )
+            elif (
+                event.event_type == "dtmf_received"
+                and call is not None
+                and call.direction == "inbound"
+            ):
+                # P12: a digit webhook for a call whose flow is awaiting one advances it -
+                # a no-op (commands left untouched) for every call with no active flow.
+                flow_commands = await routing_exec_svc.continue_carrier_flow(
+                    session, getattr(request.app.state, "event_bus", None), call, event
+                )
+                if flow_commands is not None:
+                    commands = flow_commands
             elif (
                 event.event_type == "call_answered"
                 and call is not None
