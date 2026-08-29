@@ -296,3 +296,56 @@ Nothing is written to a host log file by default - everything is `docker logs` /
 `docker compose logs` (see above), structured as JSON via structlog. `backup.sh`'s cron
 line redirects to `/opt/csaas/backups/backup.log` (see the Backups section) - that is the
 one exception, because cron itself has no stdout to capture otherwise.
+
+## Executed results (2026-08-29, Fable-supervised)
+
+- **backup.sh** ran clean on the box after a one-time on-box `sed -i 's/\r$//'`
+  (root cause fixed for good: `.gitattributes` now forces `*.sh text eol=lf`, because
+  `git archive` from a Windows checkout otherwise ships CRLF and bash rejects
+  `set -euo pipefail\r`). Output: `Backup complete:
+  /opt/csaas/backups/csaas-20260829-0144.dump (168K)`, perms `-rw------- root`.
+- **restore_drill.sh PASSED** end-to-end on the box against that dump: throwaway
+  postgres on an isolated drill network, `pg_restore`, `alembic upgrade head` a no-op at
+  `0015_calls_supervise`, `smoke_restore.py` all checks passed (orgs/users/roles counts,
+  tenant scope both directions — scoped query correctly filtered, unscoped correctly
+  refused), containers/network cleaned up. This is the P14 gate's restore half, executed.
+- **Bounded VPS load test:** not yet run — read mode needs an operator bearer token
+  (see Load testing above). `--self-test` green locally. Run it with your credentials
+  and record p50/p95/p99 here.
+
+## Operator step: expose /status and the LiveKit WS through nginx
+
+The public `/status` route and the softphone's LiveKit signal WebSocket (OPEN_ISSUES
+I1) both need one addition to the **csaas server block** in
+`/etc/nginx/sites-enabled/csaas`. Editing nginx on this shared box was deliberately
+left to the operator (the automation's permission layer blocks it, correctly). Steps:
+
+```bash
+cp /etc/nginx/sites-enabled/csaas /root/csaas.nginx.bak.$(date +%s)
+# insert BEFORE the existing "location /api/ {" block:
+```
+```nginx
+    # Public status page (P14 DR-8): component names + up/degraded/down only.
+    location = /status {
+        proxy_pass http://127.0.0.1:8080/status;
+        proxy_set_header Host $host;
+    }
+
+    # LiveKit signal WebSocket for the browser softphone (closes OPEN_ISSUES I1).
+    location /livekit/ {
+        proxy_pass http://127.0.0.1:7880/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $host;
+        proxy_set_header X-Real-IP  $remote_addr;
+        proxy_read_timeout 600s;
+        access_log off;
+    }
+```
+```bash
+nginx -t && systemctl reload nginx
+# then add to /opt/csaas/.env (by hand, as always) and restart the api:
+#   LIVEKIT_PUBLIC_URL=wss://csaas.sabinepropertygroup.net/livekit
+curl -s https://csaas.sabinepropertygroup.net/status
+```
