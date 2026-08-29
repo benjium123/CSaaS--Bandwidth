@@ -1308,6 +1308,72 @@
         "title": "CustomFieldIn",
         "type": "object"
       },
+      "DialAttemptOut": {
+        "properties": {
+          "amd_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amd Verdict"
+          },
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition"
+          },
+          "e164": {
+            "title": "E164",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Attempt At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "e164",
+          "status",
+          "disposition",
+          "amd_verdict",
+          "attempts",
+          "next_attempt_at"
+        ],
+        "title": "DialAttemptOut",
+        "type": "object"
+      },
       "EnrollOut": {
         "properties": {
           "provisioning_uri": {
@@ -9362,6 +9428,79 @@
           }
         ],
         "summary": "Cancel Campaign",
+        "tags": [
+          "outbound"
+        ]
+      }
+    },
+    "/api/v1/outbound/campaigns/{campaign_id}/dial-next": {
+      "post": {
+        "description": "Preview mode's manual trigger (DR-10): claims and dials exactly one due row.\nReturns null when nothing was due.",
+        "operationId": "dial_next_api_v1_outbound_campaigns__campaign_id__dial_next_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DialAttemptOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Dial Next Api V1 Outbound Campaigns  Campaign Id  Dial Next Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dial Next",
         "tags": [
           "outbound"
         ]

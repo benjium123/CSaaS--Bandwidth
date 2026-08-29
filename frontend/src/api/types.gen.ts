@@ -1135,6 +1135,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/outbound/campaigns/{campaign_id}/dial-next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dial Next
+         * @description Preview mode's manual trigger (DR-10): claims and dials exactly one due row.
+         *     Returns null when nothing was due.
+         */
+        post: operations["dial_next_api_v1_outbound_campaigns__campaign_id__dial_next_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/outbound/campaigns/{campaign_id}/pause": {
         parameters: {
             query?: never;
@@ -2304,6 +2325,26 @@ export interface components {
              * @default []
              */
             options: string[];
+        };
+        /** DialAttemptOut */
+        DialAttemptOut: {
+            /** Amd Verdict */
+            amd_verdict: string | null;
+            /** Attempts */
+            attempts: number;
+            /** Disposition */
+            disposition: string | null;
+            /** E164 */
+            e164: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Next Attempt At */
+            next_attempt_at: string | null;
+            /** Status */
+            status: string;
         };
         /** EnrollOut */
         EnrollOut: {
@@ -6151,6 +6192,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["app__api__routes__outbound__CampaignOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dial_next_api_v1_outbound_campaigns__campaign_id__dial_next_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DialAttemptOut"] | null;
                 };
             };
             /** @description Validation Error */
