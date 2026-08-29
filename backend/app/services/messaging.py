@@ -56,6 +56,10 @@ CARRIER_SESSION_KEY = "carrier"
 #: the gate still runs unchanged) and the human-takeover check below reads it to tell an
 #: AI reply apart from a human operator typing in the same thread.
 AI_SEND_KEY = "ai_originated_send"
+#: P11 DR-3: set on the session by the outbound campaign scheduler around its own
+#: send_message call. A bulk campaign send is not a human takeover, so it must not flip
+#: an active AI thread to handed_off — same shape as AI_SEND_KEY, gate still unchanged.
+BULK_SEND_KEY = "bulk_originated_send"
 
 
 class Outcome(enum.Enum):
@@ -184,12 +188,18 @@ async def send_message(
     thread.last_message_at = _now()
     if thread.contact_id is None:
         thread.contact_id = (await resolve_or_create_contact(session, org_id, to_e164)).id
-    if thread.ai_state == "active" and exemption is None and not session.info.get(AI_SEND_KEY):
+    if (
+        thread.ai_state == "active"
+        and exemption is None
+        and not session.info.get(AI_SEND_KEY)
+        and not session.info.get(BULK_SEND_KEY)
+    ):
         # P10 DR-5: a human operator sending in an active thread is an implicit takeover -
         # the bot must go silent without a second click. An AI-originated send (flagged via
         # AI_SEND_KEY) must never trip this on itself - and neither must a compliance
         # AUTO-REPLY (HELP/START confirmations pass `exemption`): that is the keyword
         # engine answering on the gate's own behalf, not an operator taking the thread over.
+        # P11 DR-3: a bulk campaign send (BULK_SEND_KEY) is not a takeover either.
         thread.ai_state = "handed_off"
 
     message = Message(

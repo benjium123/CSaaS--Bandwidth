@@ -19,6 +19,7 @@ dependencies = [
     "cryptography>=43",
     "python-multipart>=0.0.17",
     "phonenumbers>=8.13",
+    "openpyxl>=3.1",
     # RUNTIME, not dev: every carrier adapter (bandwidth/telnyx/twilio/plivo/signalwire)
     # and the recording fetcher import httpx at module load. It was declared dev-only
     # until the first production deploy crashed on ModuleNotFoundError at import time.

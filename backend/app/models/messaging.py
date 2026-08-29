@@ -68,6 +68,13 @@ class OrgNumber(Base, TenantScoped, TimestampMixin):
         sa.DateTime(timezone=True), nullable=True
     )
 
+    # ---- P11 ----------------------------------------------------------------------
+    #: When set, services/pacing.py applies the new-number warm-up ramp to campaign
+    #: sends from this number. NULL = no ramp (pre-P11 numbers keep full throughput).
+    warmup_started_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+
 
 class MessageThread(Base, TenantScoped, TimestampMixin):
     """A pure (org, our number, contact number) bucket.
