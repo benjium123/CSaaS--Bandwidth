@@ -24,7 +24,8 @@ export type BrandOut = components["schemas"]["BrandOut"];
 export type CampaignOut = components["schemas"]["app__api__routes__registration__CampaignOut"];
 export type TollfreeOut = components["schemas"]["TfvOut"];
 export type AgentProfileOut = components["schemas"]["ProfileOut"];
-export type TranscriptSegmentOut = components["schemas"]["TranscriptSegmentOut"];
+// Two routes declare a TranscriptSegmentOut; openapi-typescript qualifies both by module.
+export type TranscriptSegmentOut = components["schemas"]["app__api__routes__calls__TranscriptSegmentOut"];
 
 export type InboxItem = {
   thread: {
@@ -1025,4 +1026,271 @@ export function useWhisperCall(api: ApiClient) {
 /** Full token - joins the room like any other participant. */
 export function useBargeCall(api: ApiClient) {
   return useSupervisorAction(api, "barge");
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Platform services: API keys, outbound webhooks, audit log, usage (Phase 13)
+ * ------------------------------------------------------------------------------------- */
+
+export type ApiKeyOut = components["schemas"]["ApiKeyOut"];
+export type ApiKeyCreatedOut = components["schemas"]["ApiKeyCreatedOut"];
+export type WebhookEndpointOut = components["schemas"]["WebhookEndpointOut"];
+export type WebhookEndpointCreatedOut = components["schemas"]["WebhookEndpointCreatedOut"];
+export type WebhookDeliveryOut = components["schemas"]["WebhookDeliveryOut"];
+export type AuditEntryOut = components["schemas"]["AuditEntryOut"];
+export type AuditListOut = components["schemas"]["AuditListOut"];
+export type UsageRecordOut = components["schemas"]["UsageRecordOut"];
+export type ReconciliationItemOut = components["schemas"]["ReconciliationItemOut"];
+export type ReconciliationOut = components["schemas"]["ReconciliationOut"];
+
+/** Mirrors `PERMISSIONS` in app/models/rbac.py - no catalogue endpoint exists yet, and an
+ * API key's scopes must be a SUBSET of it (services/apikeys.py `_validate_scopes`, which
+ * also refuses the "*" wildcard outright - deliberately left out of this list). */
+export const API_KEY_SCOPE_CATALOGUE = [
+  "org:read",
+  "org:update",
+  "org:delete",
+  "org:billing",
+  "members:read",
+  "members:invite",
+  "members:update",
+  "members:remove",
+  "roles:read",
+  "roles:write",
+  "inbox:read",
+  "inbox:send",
+  "inbox:manage",
+  "contacts:read",
+  "contacts:write",
+  "numbers:read",
+  "numbers:manage",
+  "campaigns:read",
+  "campaigns:manage",
+  "calls:read",
+  "calls:place",
+  "calls:supervise",
+  "reports:read",
+  "settings:read",
+  "settings:write",
+  "compliance:read",
+  "compliance:manage",
+  "templates:read",
+  "templates:manage",
+] as const;
+
+/** Mirrors `PLATFORM_EVENT_TYPES` in app/models/platform.py - the six v1 outbox hooks
+ * (plan DR-4) an endpoint may subscribe to. No catalogue endpoint exists either. */
+export const PLATFORM_EVENT_TYPES = [
+  "message.received",
+  "message.finalized",
+  "call.completed",
+  "voicemail.created",
+  "campaign.completed",
+  "appointment.booked",
+] as const;
+
+// ---- API keys (DR-3) --------------------------------------------------------------------
+
+export function useApiKeys(api: ApiClient) {
+  return useQuery({
+    queryKey: ["api-keys"],
+    queryFn: () => api.request<ApiKeyOut[]>("/api/v1/api-keys"),
+  });
+}
+
+export function useCreateApiKey(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { name: string; scopes: string[]; expires_at?: string | null }) =>
+      api.request<ApiKeyCreatedOut>("/api/v1/api-keys", { method: "POST", json: vars }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
+  });
+}
+
+export function useRevokeApiKey(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (keyId: string) =>
+      api.request<ApiKeyOut>(`/api/v1/api-keys/${keyId}/revoke`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
+  });
+}
+
+/** Create-new + revoke-old (server-side, atomically) - the response is the NEW key,
+ * with its full secret shown once, same as create. */
+export function useRotateApiKey(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (keyId: string) =>
+      api.request<ApiKeyCreatedOut>(`/api/v1/api-keys/${keyId}/rotate`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
+  });
+}
+
+// ---- Outbound webhook endpoints + deliveries (DR-4/DR-5) --------------------------------
+
+export function useWebhookEndpoints(api: ApiClient) {
+  return useQuery({
+    queryKey: ["webhook-endpoints"],
+    queryFn: () => api.request<WebhookEndpointOut[]>("/api/v1/webhook-endpoints"),
+  });
+}
+
+export function useCreateWebhookEndpoint(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { url: string; event_types: string[] }) =>
+      api.request<WebhookEndpointCreatedOut>("/api/v1/webhook-endpoints", {
+        method: "POST",
+        json: vars,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["webhook-endpoints"] }),
+  });
+}
+
+export function useUpdateWebhookEndpoint(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      endpointId: string;
+      url?: string;
+      event_types?: string[];
+      status?: string;
+    }) => {
+      const { endpointId, ...body } = vars;
+      return api.request<WebhookEndpointOut>(`/api/v1/webhook-endpoints/${endpointId}`, {
+        method: "PATCH",
+        json: body,
+      });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["webhook-endpoints"] }),
+  });
+}
+
+export function useDeleteWebhookEndpoint(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (endpointId: string) =>
+      api.request<void>(`/api/v1/webhook-endpoints/${endpointId}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["webhook-endpoints"] }),
+  });
+}
+
+export function useWebhookDeliveries(
+  api: ApiClient,
+  endpointId: string | null,
+  status?: string,
+) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return useQuery({
+    queryKey: ["webhook-deliveries", endpointId, status ?? null],
+    queryFn: () =>
+      api.request<WebhookDeliveryOut[]>(
+        `/api/v1/webhook-endpoints/${endpointId}/deliveries${qs}`,
+      ),
+    enabled: Boolean(endpointId),
+  });
+}
+
+/** Manual retry (DR-5) - reuses the same event, so `X-Webhook-Id` is unchanged on the
+ * next attempt and consumer-side dedupe still holds. */
+export function useRedeliverWebhook(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (deliveryId: string) =>
+      api.request<WebhookDeliveryOut>(`/api/v1/webhook-deliveries/${deliveryId}/redeliver`, {
+        method: "POST",
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["webhook-deliveries"] }),
+  });
+}
+
+// ---- Audit log (DR-6) --------------------------------------------------------------------
+
+export type AuditFilters = {
+  action?: string;
+  target_type?: string;
+  actor_user_id?: string;
+};
+
+/** Cursor pagination, newest first - `cursor` is the opaque `next_cursor` from a previous
+ * page (or null for the first page). The page owns accumulating pages across cursors. */
+export function useAuditLog(api: ApiClient, filters: AuditFilters, cursor: string | null) {
+  const params = new URLSearchParams();
+  if (filters.action) params.set("action", filters.action);
+  if (filters.target_type) params.set("target_type", filters.target_type);
+  if (filters.actor_user_id) params.set("actor_user_id", filters.actor_user_id);
+  if (cursor) params.set("cursor", cursor);
+  const qs = params.toString();
+
+  return useQuery({
+    queryKey: ["audit-log", filters, cursor],
+    queryFn: () => api.request<AuditListOut>(`/api/v1/audit${qs ? `?${qs}` : ""}`),
+  });
+}
+
+// ---- Usage + reconciliation (DR-2) -------------------------------------------------------
+
+export function useUsage(api: ApiClient, start: string, end: string) {
+  return useQuery({
+    queryKey: ["usage", start, end],
+    queryFn: () => api.request<UsageRecordOut[]>(`/api/v1/usage?start=${start}&end=${end}`),
+    enabled: Boolean(start) && Boolean(end),
+  });
+}
+
+export function useReconciliation(api: ApiClient, date: string) {
+  return useQuery({
+    queryKey: ["usage-reconciliation", date],
+    queryFn: () => api.request<ReconciliationOut>(`/api/v1/usage/reconciliation?date=${date}`),
+    enabled: Boolean(date),
+  });
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Analytics dashboard + transcript search (Phase 13 DR-7/DR-10)
+ *
+ * Both endpoints return a plain dict/list (no `response_model`), so there is no generated
+ * schema for them - these types mirror `services/analytics.py::overview` and
+ * `services/search.py::search_transcripts` by hand.
+ * ------------------------------------------------------------------------------------- */
+
+export type AnalyticsOverviewOut = {
+  range: { start: string; end: string; days: number };
+  messages: { date: string; inbound: number; outbound: number; delivery_rate: number | null }[];
+  calls: { date: string; calls: number; avg_duration_seconds: number | null }[];
+  campaigns: { status: string; count: number }[];
+  ai: { date: string; turns: number; handoffs: number }[];
+};
+
+export function useAnalyticsOverview(api: ApiClient, days: number) {
+  return useQuery({
+    queryKey: ["analytics-overview", days],
+    queryFn: () => api.request<AnalyticsOverviewOut>(`/api/v1/analytics/overview?days=${days}`),
+  });
+}
+
+export type TranscriptSearchSegment = {
+  role: string;
+  text: string;
+  at_ms: number;
+  matched: boolean;
+};
+
+export type TranscriptSearchResult = {
+  call_id: string;
+  contact_e164: string;
+  started_at: string;
+  segments: TranscriptSearchSegment[];
+};
+
+export function useTranscriptSearch(api: ApiClient, q: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["transcript-search", q],
+    queryFn: () =>
+      api.request<TranscriptSearchResult[]>(
+        `/api/v1/search/transcripts?q=${encodeURIComponent(q)}`,
+      ),
+    enabled: enabled && q.trim().length > 0,
+  });
 }

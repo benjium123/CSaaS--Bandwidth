@@ -29,6 +29,7 @@ from app.models import (
     OutboundSend,
     User,
 )
+from app.services import audit as audit_svc
 from app.services import dialer as dialer_svc
 from app.services import list_import as list_import_svc
 from app.services import outbound as outbound_svc
@@ -397,6 +398,17 @@ async def start_campaign(
         campaign = await dialer_svc.start_dial_campaign(ctx.session, campaign)
     else:
         campaign = await outbound_svc.start_campaign(ctx.session, campaign)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="campaign.started",
+        target_type="outbound_campaign",
+        target_id=str(campaign.id),
+        detail={"name": campaign.name, "channel": campaign.channel},
+    )
+    await ctx.session.commit()
     return _campaign_out(campaign)
 
 
@@ -409,6 +421,17 @@ async def pause_campaign(
     if campaign is None:
         raise NotFoundError("Campaign not found")
     campaign = await outbound_svc.pause_campaign(ctx.session, campaign)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="campaign.paused",
+        target_type="outbound_campaign",
+        target_id=str(campaign.id),
+        detail={"name": campaign.name, "channel": campaign.channel},
+    )
+    await ctx.session.commit()
     return _campaign_out(campaign)
 
 
@@ -421,6 +444,17 @@ async def cancel_campaign(
     if campaign is None:
         raise NotFoundError("Campaign not found")
     campaign = await outbound_svc.cancel_campaign(ctx.session, campaign)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="campaign.cancelled",
+        target_type="outbound_campaign",
+        target_id=str(campaign.id),
+        detail={"name": campaign.name, "channel": campaign.channel},
+    )
+    await ctx.session.commit()
     return _campaign_out(campaign)
 
 

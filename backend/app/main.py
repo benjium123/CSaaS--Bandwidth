@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import agent as agent_routes
+from app.api.routes import analytics as analytics_routes
 from app.api.routes import auth as auth_routes
 from app.api.routes import calls as call_routes
 from app.api.routes import compliance as compliance_routes
@@ -24,6 +25,7 @@ from app.api.routes import messages as message_routes
 from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
 from app.api.routes import outbound as outbound_routes
+from app.api.routes import platform as platform_routes
 from app.api.routes import registration as registration_routes
 from app.api.routes import routing as routing_routes
 from app.api.routes import scheduling as scheduling_routes
@@ -207,6 +209,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(softphone_routes.router)
     app.include_router(webhook_routes.router)
     app.include_router(flow_routes.router)
+    app.include_router(platform_routes.router)
+    app.include_router(analytics_routes.router)
     return app
 
 

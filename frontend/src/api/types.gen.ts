@@ -176,6 +176,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/analytics/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Analytics Overview */
+        get: operations["analytics_overview_api_v1_analytics_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Api Keys */
+        get: operations["list_api_keys_api_v1_api_keys_get"];
+        put?: never;
+        /** Create Api Key */
+        post: operations["create_api_key_api_v1_api_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api-keys/{key_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke Api Key */
+        post: operations["revoke_api_key_api_v1_api_keys__key_id__revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api-keys/{key_id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate Api Key */
+        post: operations["rotate_api_key_api_v1_api_keys__key_id__rotate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/appointments": {
         parameters: {
             query?: never;
@@ -208,6 +277,23 @@ export interface paths {
         head?: never;
         /** Patch Appointment */
         patch: operations["patch_appointment_api_v1_appointments__appointment_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Audit */
+        get: operations["list_audit_api_v1_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/auth/2fa/activate": {
@@ -1830,6 +1916,23 @@ export interface paths {
         patch: operations["update_policy_api_v1_routing_policy_patch"];
         trace?: never;
     };
+    "/api/v1/search/transcripts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Transcripts */
+        get: operations["search_transcripts_api_v1_search_transcripts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/softphone/token": {
         parameters: {
             query?: never;
@@ -1992,6 +2095,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Usage */
+        get: operations["get_usage_api_v1_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/usage/reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Reconciliation */
+        get: operations["get_reconciliation_api_v1_usage_reconciliation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/voicemails": {
         parameters: {
             query?: never;
@@ -2020,6 +2157,76 @@ export interface paths {
         put?: never;
         /** Mark Voicemail Read */
         post: operations["mark_voicemail_read_api_v1_voicemails__voicemail_id__mark_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhook-deliveries/{delivery_id}/redeliver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redeliver Webhook */
+        post: operations["redeliver_webhook_api_v1_webhook_deliveries__delivery_id__redeliver_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhook-endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Webhook Endpoints */
+        get: operations["list_webhook_endpoints_api_v1_webhook_endpoints_get"];
+        put?: never;
+        /** Create Webhook Endpoint */
+        post: operations["create_webhook_endpoint_api_v1_webhook_endpoints_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhook-endpoints/{endpoint_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Webhook Endpoint */
+        delete: operations["delete_webhook_endpoint_api_v1_webhook_endpoints__endpoint_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Webhook Endpoint */
+        patch: operations["update_webhook_endpoint_api_v1_webhook_endpoints__endpoint_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/webhook-endpoints/{endpoint_id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Deliveries */
+        get: operations["list_deliveries_api_v1_webhook_endpoints__endpoint_id__deliveries_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2192,6 +2399,15 @@ export interface components {
              */
             agent_name: string;
         };
+        /** AiSeriesPointOut */
+        AiSeriesPointOut: {
+            /** Date */
+            date: string;
+            /** Handoffs */
+            handoffs: number;
+            /** Turns */
+            turns: number;
+        };
         /** AmdIn */
         AmdIn: {
             /**
@@ -2201,6 +2417,67 @@ export interface components {
             call_id: string;
             /** Result */
             result: string;
+        };
+        /** ApiKeyCreatedOut */
+        ApiKeyCreatedOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Key */
+            key: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Name */
+            name: string;
+            /** Prefix */
+            prefix: string;
+            /** Scopes */
+            scopes: string[];
+            /** Status */
+            status: string;
+        };
+        /** ApiKeyIn */
+        ApiKeyIn: {
+            /** Expires At */
+            expires_at?: string | null;
+            /** Name */
+            name: string;
+            /** Scopes */
+            scopes: string[];
+        };
+        /** ApiKeyOut */
+        ApiKeyOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Name */
+            name: string;
+            /** Prefix */
+            prefix: string;
+            /** Scopes */
+            scopes: string[];
+            /** Status */
+            status: string;
         };
         /** AppointmentBookIn */
         AppointmentBookIn: {
@@ -2268,6 +2545,40 @@ export interface components {
         AssignIn: {
             /** Campaign Id */
             campaign_id?: string | null;
+        };
+        /** AuditEntryOut */
+        AuditEntryOut: {
+            /** Action */
+            action: string;
+            /** Actor Api Key Id */
+            actor_api_key_id: string | null;
+            /** Actor User Id */
+            actor_user_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Target Id */
+            target_id: string | null;
+            /** Target Type */
+            target_type: string;
+        };
+        /** AuditListOut */
+        AuditListOut: {
+            /** Items */
+            items: components["schemas"]["AuditEntryOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** BindFlowIn */
         BindFlowIn: {
@@ -2424,7 +2735,7 @@ export interface components {
             /** Tag */
             tag: string | null;
             /** Transcript */
-            transcript?: components["schemas"]["TranscriptSegmentOut"][] | null;
+            transcript?: components["schemas"]["app__api__routes__calls__TranscriptSegmentOut"][] | null;
         };
         /** CallIn */
         CallIn: {
@@ -2516,6 +2827,22 @@ export interface components {
             status: string;
             /** Tag */
             tag: string | null;
+        };
+        /** CallsSeriesPointOut */
+        CallsSeriesPointOut: {
+            /** Avg Duration Seconds */
+            avg_duration_seconds: number | null;
+            /** Calls */
+            calls: number;
+            /** Date */
+            date: string;
+        };
+        /** CampaignProgressPointOut */
+        CampaignProgressPointOut: {
+            /** Count */
+            count: number;
+            /** Status */
+            status: string;
         };
         /**
          * CarrierCatalogOut
@@ -3124,6 +3451,17 @@ export interface components {
             /** To E164 */
             to_e164: string;
         };
+        /** MessagesSeriesPointOut */
+        MessagesSeriesPointOut: {
+            /** Date */
+            date: string;
+            /** Delivery Rate */
+            delivery_rate: number | null;
+            /** Inbound */
+            inbound: number;
+            /** Outbound */
+            outbound: number;
+        };
         /** NoteIn */
         NoteIn: {
             /** Body */
@@ -3209,6 +3547,27 @@ export interface components {
             name: string;
             /** Slug */
             slug: string;
+        };
+        /** OverviewOut */
+        OverviewOut: {
+            /** Ai */
+            ai: components["schemas"]["AiSeriesPointOut"][];
+            /** Calls */
+            calls: components["schemas"]["CallsSeriesPointOut"][];
+            /** Campaigns */
+            campaigns: components["schemas"]["CampaignProgressPointOut"][];
+            /** Messages */
+            messages: components["schemas"]["MessagesSeriesPointOut"][];
+            range: components["schemas"]["OverviewRangeOut"];
+        };
+        /** OverviewRangeOut */
+        OverviewRangeOut: {
+            /** Days */
+            days: number;
+            /** End */
+            end: string;
+            /** Start */
+            start: string;
         };
         /** PhoneIn */
         PhoneIn: {
@@ -3478,6 +3837,33 @@ export interface components {
             overflow: string;
             /** Ring Group Id */
             ring_group_id: string | null;
+        };
+        /** ReconciliationItemOut */
+        ReconciliationItemOut: {
+            /** Carrier */
+            carrier: number | null;
+            /** Delta */
+            delta: number | null;
+            /** Metric */
+            metric: string;
+            /** Ours */
+            ours: number;
+            /** Pending Dlrs */
+            pending_dlrs: number;
+            /** Verdict */
+            verdict: string;
+            /** Within Tolerance */
+            within_tolerance: boolean | null;
+        };
+        /** ReconciliationOut */
+        ReconciliationOut: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Items */
+            items: components["schemas"]["ReconciliationItemOut"][];
         };
         /** RecordingOut */
         RecordingOut: {
@@ -3826,17 +4212,19 @@ export interface components {
             /** Segments */
             segments: components["schemas"]["TranscriptSegmentIn"][];
         };
+        /** TranscriptSearchResultOut */
+        TranscriptSearchResultOut: {
+            /** Call Id */
+            call_id: string;
+            /** Contact E164 */
+            contact_e164: string;
+            /** Segments */
+            segments: components["schemas"]["app__api__routes__analytics__TranscriptSegmentOut"][];
+            /** Started At */
+            started_at: string;
+        };
         /** TranscriptSegmentIn */
         TranscriptSegmentIn: {
-            /** At Ms */
-            at_ms: number;
-            /** Role */
-            role: string;
-            /** Text */
-            text: string;
-        };
-        /** TranscriptSegmentOut */
-        TranscriptSegmentOut: {
             /** At Ms */
             at_ms: number;
             /** Role */
@@ -3848,6 +4236,20 @@ export interface components {
         TransferIn: {
             /** To */
             to: string;
+        };
+        /** UsageRecordOut */
+        UsageRecordOut: {
+            /** Carrier Quantity */
+            carrier_quantity: number | null;
+            /** Metric */
+            metric: string;
+            /**
+             * Period Date
+             * Format: date
+             */
+            period_date: string;
+            /** Quantity */
+            quantity: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -3904,6 +4306,101 @@ export interface components {
             /** Transcript Status */
             transcript_status: string;
         };
+        /** WebhookDeliveryOut */
+        WebhookDeliveryOut: {
+            /** Attempts */
+            attempts: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Endpoint Id
+             * Format: uuid
+             */
+            endpoint_id: string;
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /** Event Type */
+            event_type: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Last Status Code */
+            last_status_code: number | null;
+            /** Next Attempt At */
+            next_attempt_at: string | null;
+            /** Status */
+            status: string;
+        };
+        /** WebhookEndpointCreatedOut */
+        WebhookEndpointCreatedOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Event Types */
+            event_types: string[];
+            /** Failure Streak */
+            failure_streak: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Secret */
+            secret: string;
+            /** Status */
+            status: string;
+            /** Url */
+            url: string;
+        };
+        /** WebhookEndpointIn */
+        WebhookEndpointIn: {
+            /** Event Types */
+            event_types: string[];
+            /** Url */
+            url: string;
+        };
+        /** WebhookEndpointOut */
+        WebhookEndpointOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Event Types */
+            event_types: string[];
+            /** Failure Streak */
+            failure_streak: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Status */
+            status: string;
+            /** Url */
+            url: string;
+        };
+        /** WebhookEndpointUpdateIn */
+        WebhookEndpointUpdateIn: {
+            /** Event Types */
+            event_types?: string[] | null;
+            /** Status */
+            status?: string | null;
+            /** Url */
+            url?: string | null;
+        };
         /** ContactOut */
         app__api__routes__agent__ContactOut: {
             /** Last Messages */
@@ -3912,6 +4409,26 @@ export interface components {
             name: string;
             /** Tags */
             tags: string[];
+        };
+        /** TranscriptSegmentOut */
+        app__api__routes__analytics__TranscriptSegmentOut: {
+            /** At Ms */
+            at_ms: number;
+            /** Matched */
+            matched: boolean;
+            /** Role */
+            role: string;
+            /** Text */
+            text: string;
+        };
+        /** TranscriptSegmentOut */
+        app__api__routes__calls__TranscriptSegmentOut: {
+            /** At Ms */
+            at_ms: number;
+            /** Role */
+            role: string;
+            /** Text */
+            text: string;
         };
         /** NumberIn */
         app__api__routes__compliance__NumberIn: {
@@ -4531,6 +5048,171 @@ export interface operations {
             };
         };
     };
+    analytics_overview_api_v1_analytics_overview_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_api_keys_api_v1_api_keys_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_api_key_api_v1_api_keys_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiKeyIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreatedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_api_key_api_v1_api_keys__key_id__revoke_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rotate_api_key_api_v1_api_keys__key_id__rotate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreatedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_appointments_api_v1_appointments_get: {
         parameters: {
             query?: {
@@ -4588,6 +5270,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppointmentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_audit_api_v1_audit_get: {
+        parameters: {
+            query?: {
+                action?: string | null;
+                target_type?: string | null;
+                actor_user_id?: string | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditListOut"];
                 };
             };
             /** @description Validation Error */
@@ -8330,6 +9049,40 @@ export interface operations {
             };
         };
     };
+    search_transcripts_api_v1_search_transcripts_get: {
+        parameters: {
+            query: {
+                q: string;
+                limit?: number;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscriptSearchResultOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     softphone_token_api_v1_softphone_token_post: {
         parameters: {
             query?: never;
@@ -8753,6 +9506,73 @@ export interface operations {
             };
         };
     };
+    get_usage_api_v1_usage_get: {
+        parameters: {
+            query: {
+                start: string;
+                end: string;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageRecordOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reconciliation_api_v1_usage_reconciliation_get: {
+        parameters: {
+            query: {
+                date: string;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconciliationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_voicemails_api_v1_voicemails_get: {
         parameters: {
             query?: {
@@ -8806,6 +9626,209 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VoicemailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    redeliver_webhook_api_v1_webhook_deliveries__delivery_id__redeliver_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                delivery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookDeliveryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_webhook_endpoints_api_v1_webhook_endpoints_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEndpointOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_webhook_endpoint_api_v1_webhook_endpoints_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookEndpointIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEndpointCreatedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_webhook_endpoint_api_v1_webhook_endpoints__endpoint_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_webhook_endpoint_api_v1_webhook_endpoints__endpoint_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookEndpointUpdateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEndpointOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_deliveries_api_v1_webhook_endpoints__endpoint_id__deliveries_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                limit?: number;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookDeliveryOut"][];
                 };
             };
             /** @description Validation Error */

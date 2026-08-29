@@ -1,5 +1,6 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
+import { DashboardPage } from "@/pages/DashboardPage";
 import { InboxPage } from "@/pages/InboxPage";
 import { ContactsPage } from "@/pages/ContactsPage";
 import { ListsPage } from "@/pages/ListsPage";
@@ -13,6 +14,7 @@ import { FlowsPage } from "@/pages/FlowsPage";
 import { QueuesPage } from "@/pages/QueuesPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { PlatformPage } from "@/pages/PlatformPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
 import { TeamPage } from "@/pages/TeamPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
@@ -22,6 +24,7 @@ import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 
 const NAV = [
+  { to: "/dashboard", label: "Dashboard" },
   { to: "/inbox", label: "Inbox" },
   { to: "/contacts", label: "Contacts" },
   { to: "/lists", label: "Lists" },
@@ -35,6 +38,7 @@ const NAV = [
   { to: "/providers", label: "Providers" },
   { to: "/security", label: "Security" },
   { to: "/team", label: "Team" },
+  { to: "/platform", label: "Platform" },
 ];
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -94,6 +98,7 @@ export function App() {
   return (
     <Shell>
       <Routes>
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/lists" element={<ListsPage />} />
@@ -107,6 +112,7 @@ export function App() {
         <Route path="/providers" element={<ProvidersPage />} />
         <Route path="/security" element={<SettingsSecurityPage />} />
         <Route path="/team" element={<TeamPage />} />
+        <Route path="/platform" element={<PlatformPage />} />
         <Route path="*" element={<Navigate to="/inbox" replace />} />
       </Routes>
     </Shell>

@@ -33,7 +33,10 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     from app.services import outbound as outbound_svc
     from app.services import recordings as recordings_svc
     from app.services import routing_exec as routing_exec_svc
+    from app.services import scoring as scoring_svc
+    from app.services import usage as usage_svc
     from app.services import voicemail as voicemail_svc
+    from app.services import webhooks_out as webhooks_out_svc
 
     store = getattr(app.state, "media_store", None)
     carrier = getattr(app.state, "carrier", None)
@@ -144,6 +147,40 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
             results["voicemails_transcribed"] = vm_counts.get("done", 0)
         except Exception:
             log.exception("sweeper_voicemail_transcribe_failed")
+
+    # P13: durable outbox fan-out + signed delivery (DR-4/DR-5), usage rollup (DR-2), and
+    # LLM call scoring (DR-8, guarded on a configured key so an unconfigured deployment
+    # never churns every pending call to `disabled` on every tick).
+    try:
+        async with get_sessionmaker()() as session:
+            results["webhooks_fanned_out"] = await webhooks_out_svc.fan_out_pending_events(
+                session
+            )
+    except Exception:
+        log.exception("sweeper_webhook_fanout_failed")
+
+    try:
+        async with get_sessionmaker()() as session:
+            delivery_counts = await webhooks_out_svc.delivery_tick(session, app.state.settings)
+        results["webhooks_delivered"] = delivery_counts.get("delivered", 0)
+    except Exception:
+        log.exception("sweeper_webhook_delivery_failed")
+
+    try:
+        async with get_sessionmaker()() as session:
+            usage_counts = await usage_svc.usage_tick(session)
+        results["usage_orgs_rolled_up"] = usage_counts.get("orgs", 0)
+    except Exception:
+        log.exception("sweeper_usage_rollup_failed")
+
+    settings = app.state.settings
+    if settings.anthropic_api_key.get_secret_value() or settings.openai_api_key.get_secret_value():
+        try:
+            async with get_sessionmaker()() as session:
+                scoring_counts = await scoring_svc.score_pending_calls(session, settings)
+            results["calls_scored"] = scoring_counts.get("done", 0)
+        except Exception:
+            log.exception("sweeper_call_scoring_failed")
 
     return results
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -103,8 +103,19 @@ async def _org_context_from_api_key(
     if org is None or not org.is_active:
         raise PermissionDeniedError("This organization is disabled")
 
-    # Best-effort usage stamp: lands with whatever commit the route performs.
-    row.last_used_at = datetime.now(timezone.utc)
+    # Usage stamp at HOUR granularity with its own commit: a GET-only route never
+    # commits the request session (P13 Opus finding), so a purely-read key would
+    # otherwise never record a use. Committing every request would double writes for
+    # machine traffic; once per hour per key is enough signal for "is this key alive".
+    now = datetime.now(timezone.utc)
+    last = row.last_used_at
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    row.last_used_at = now
+    if last is None or (now - last) >= timedelta(hours=1):
+        await session.commit()
+        set_org_context(session, row.org_id)
+        row = await session.get(ApiKey, row.id)
 
     # Defensive: scopes are validated at creation, but the wildcard must never work via
     # a key even if one sneaks into the column.

@@ -290,7 +290,11 @@ async def dispatch_with_failover(
         # either loops a permanent failure across every carrier or gives up on a blip.
         error = getattr(last, "last_carrier_error", None)
         breaker.record_failure(error)
-        if error is None or not error.retryable:
+        # P14 DR-1/DR-2: an `auth` failure is carrier-SPECIFIC by definition (a dead or
+        # rotated credential on THIS carrier), so unlike invalid_request/unregistered it
+        # must not stop the walk — the next route may be a different, healthy carrier.
+        # This is the killed-credentials failover case the P14 gate names.
+        if error is None or not (error.retryable or error.category == "auth"):
             return last
 
     return last

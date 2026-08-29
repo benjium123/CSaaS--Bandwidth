@@ -52,4 +52,9 @@
 | D18 | Business hours: overnight windows ("22:00"–"02:00") evaluate closed; schedule weekday keys are not validated (typo = silently closed). | P12 Opus review | Validate keys + support overnight windows. |
 | D19 | `services/media.py` fetch loop has the same multi-org single-commit autoflush hazard that broke routing_tick (B1) — pre-existing, latent. | P12 Opus review | Apply the per-row-commit pattern. |
 | D20 | `routing_tick` has no batch limit. | P12 Opus review | Fine at current scale. |
+| D21 | Webhook SSRF guard has an honest DNS-rebinding TOCTOU: the private-IP check runs on our resolution; httpx re-resolves at request time. Documented in webhooks_out.py. | P13 Opus review | A pinned-IP transport would close it; not v1. |
+| D22 | `call_scores` is write-only (no read endpoint by DR-8 scope) and a `disabled` score is permanent even after keys arrive; scoring has no lookback window (first ticks after enabling spend LLM on all history). `summary=="retry_exhausted"` sentinel must map to None in any future serializer. | P13 Opus review | Bundle into the scores read endpoint when built. |
+| D23 | DR-11's `GET /api/v1/openapi-public.json` deferred by Fable ruling — docs nicety, not gate-relevant. | P13 | Small filter over app.openapi(). |
+| D24 | `role.changed` audit action unwired — no member-role-update route exists anywhere yet. | P13 Opus review | Wire when the route exists. |
+| D25 | Transcript search: tsvector-path stemmed hits may return a call with no segment flagged `matched` (substring flagging). Campaign "progress" in analytics is a status snapshot, not a daily series. | P13 Opus review | Cosmetic. |
 | D14 | Voice campaign.completed / voicemail hold events: `campaign.completed` outbox hook lands with the P11 fix round; `voicemail.created` must be wired inside P12's services/voicemail.py. | P13 planning | Verify both hooks exist before P13 webhook tests rely on them. |

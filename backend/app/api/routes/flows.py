@@ -33,6 +33,7 @@ from app.models.callflow import (
 )
 from app.models.messaging import OrgNumber
 from app.models.voice import Call
+from app.services import audit as audit_svc
 from app.services import calls as calls_svc
 from app.services import flows as flows_svc
 from app.services import routing_exec as routing_exec_svc
@@ -127,7 +128,19 @@ async def create_flow_version(
 async def activate_flow(
     flow_id: uuid.UUID, ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))]
 ) -> FlowOut:
-    return _flow_out(await flows_svc.activate_flow(ctx.session, ctx.org.id, flow_id))
+    flow = await flows_svc.activate_flow(ctx.session, ctx.org.id, flow_id)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="flow.activated",
+        target_type="call_flow",
+        target_id=str(flow.id),
+        detail={"name": flow.name, "version": flow.version},
+    )
+    await ctx.session.commit()
+    return _flow_out(flow)
 
 
 class BindFlowIn(BaseModel):
@@ -148,6 +161,20 @@ async def bind_flow(
     number = await flows_svc.bind_number(
         ctx.session, ctx.org.id, payload.number_id, payload.flow_id
     )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="flow.bound",
+        target_type="org_number",
+        target_id=str(number.id),
+        detail={
+            "e164": number.e164,
+            "call_flow_id": str(number.call_flow_id) if number.call_flow_id else None,
+        },
+    )
+    await ctx.session.commit()
     return NumberBindingOut(number_id=number.id, e164=number.e164, call_flow_id=number.call_flow_id)
 
 
@@ -566,6 +593,17 @@ async def supervise_monitor(
         name=user.email,
         actor_user_id=user.id,
     )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="supervisor.monitor",
+        target_type="call",
+        target_id=str(call.id),
+        detail={},
+    )
+    await ctx.session.commit()
     return SupervisorTokenOut(
         url=settings.livekit_public_url or settings.livekit_url,
         token=token,
@@ -593,6 +631,17 @@ async def supervise_whisper(
         name=user.email,
         actor_user_id=user.id,
     )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="supervisor.whisper",
+        target_type="call",
+        target_id=str(call.id),
+        detail={},
+    )
+    await ctx.session.commit()
     return SupervisorTokenOut(
         url=settings.livekit_public_url or settings.livekit_url,
         token=token,
@@ -618,6 +667,17 @@ async def supervise_barge(
         name=user.email,
         actor_user_id=user.id,
     )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="supervisor.barge",
+        target_type="call",
+        target_id=str(call.id),
+        detail={},
+    )
+    await ctx.session.commit()
     return SupervisorTokenOut(
         url=settings.livekit_public_url or settings.livekit_url,
         token=token,
