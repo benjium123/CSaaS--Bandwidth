@@ -4,7 +4,7 @@
 > and whenever a decision or a blocker changes. If it disagrees with your memory, this file
 > is right.
 
-**Last updated:** 2026-08-29 — P10 shipped and **LIVE ON THE VPS**
+**Last updated:** 2026-08-29 (later session) — **B3 CLEARED: media plane is UP on the VPS** (see session entry at the bottom). B1/B2/B4 still open.
 **Current phase:** P10 done. Backend P0-P10 code complete, 686 backend + 46 frontend tests
 green, deployed to https://csaas.sabinepropertygroup.net (migration `0011` applied,
 `/healthz` ok, login + Bandwidth voice probe verified against the live box).
@@ -62,10 +62,10 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P3b | Carrier routing fabric (pulled fwd from P14) | ✅ gate passed | live probe `ok:true` | ✅ live | `a1efe84` |
 | P4 | Numbers + 10DLC + TFV | 🔵 backend in review | local ✅ | ✅ code live | 🔴 registration blocked on B1 |
 | P5 | Voice core | 🔵 code complete | local ✅ | ✅ code live | 🔴 runtime blocked on B2 (trunk) |
-| P6 | LiveKit media plane + softphone | 🔵 code complete | local ✅ | 🔴 **media plane NOT running** | 🔴 B3 (bring-up not authorised) |
-| P7 | Media plane measured + echo agent | 🔵 code complete | metrics 6/6 local | 🔴 gate needs B3 | — |
-| P8 | AI voice agent v1 | 🔵 code complete | backend + agents ✅ | 🔴 gate needs B3 + B4 (AI keys) | — |
-| P9 | Agent v2: tools/handoff/KB/voicemail | 🔵 code complete | backend + agents ✅ | 🔴 gate needs B3 + B4 | — |
+| P6 | LiveKit media plane + softphone | 🔵 code complete | local ✅ | ✅ **media plane UP** (livekit + livekit-sip healthy) | 🔴 ear-test gate needs B2 (trunk) + nginx wss proxy |
+| P7 | Media plane measured + echo agent | 🔵 code complete | metrics 6/6 local | ✅ plane up / 🔴 no agent worker service | 🔴 echo gate needs B2 (real PSTN call) |
+| P8 | AI voice agent v1 | 🔵 code complete | backend + agents ✅ | 🔴 gate needs B2 + B4 (AI keys) | — |
+| P9 | Agent v2: tools/handoff/KB/voicemail | 🔵 code complete | backend + agents ✅ | 🔴 gate needs B2 + B4 | — |
 | P9b | Provider parity + invite-only registration | ✅ gate passed | local ✅ / CI+PG ✅ | ✅ live | `a1efe84` |
 | P10 | AI SMS agent | ✅ code complete, deployed | 686 backend + 46 frontend ✅ / CI+PG ✅ | ✅ live (migration `0011`) | `a1efe84` |
 | P11 | Outbound engine | ⬜ not started | — | — | — |
@@ -81,7 +81,7 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 |---|---|---|---|
 | B1 | **No messaging-capable carrier.** Bandwidth account 9903389 is Voice + Numbers only. | P1b, P4 registration, P10's live SMS turn | A Telnyx API key + 10DLC brand/campaign (adapter already written and tested), set as `TELNYX_API_KEY` / `TELNYX_MESSAGING_PROFILE_ID` in `/opt/csaas/.env`. |
 | B2 | **No SIP trunk points at the box.** | P5 voice runtime | Bandwidth voice application -> Inbound SIP peer with our IP `144.126.152.175:5060`, and the number `+19404060664` assigned to it. |
-| B3 | **Media plane not brought up.** LiveKit + livekit-sip containers are NOT running; ufw has no SIP/RTP ports open. Both commands were refused by the tool sandbox this session. | P6, P7, P8, P9 runtime gates | Run the two commands in "Media plane bring-up" below, or grant the permission. |
+| B3 | ~~Media plane not brought up.~~ ✅ **CLEARED 2026-08-29** — ufw rules added, livekit 1.8.4 + livekit-sip up, SIP listening on 5060 udp/tcp, RTP 10000-10499 + 50700-51199 open. Required fixing a real compose bug first (commit `913f510`, see session entry). Residual: **nginx has no wss proxy for 7880** (softphone can't connect until added — additive one-location change to the csaas nginx site, awaiting authorization since nginx is shared with other tenants) and **no agents worker service exists on the box** (agents/ code is shipped; worker needs its own venv/service — with B4 for the AI agent). | — | — |
 | B4 | **No AI provider keys in production `.env`.** `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY` are all empty on the box. | P8, P9 voice agent; P10 SMS agent's LLM turn | Paste the three keys into `/opt/csaas/.env` and restart the api container. |
 
 ### Media plane bring-up (B3) — exact commands
@@ -458,6 +458,40 @@ confirmed free first, so the bring-up is expected to be clean when authorised. S
 **Status table corrected.** It still claimed "P10 not started" and "P0 in review"; P0-P3b,
 P9b and P10 are now gate-passed and live, and the four real blockers (B1-B4) are external
 inputs, all recorded above with exactly what unblocks each.
+
+### Session 2026-08-29 (later) — B3 media-plane bring-up
+**Phase:** live-gate blockers (no phase code touched)
+
+**Did:**
+- Audited B1-B4 on the box: all five carrier/AI keys EMPTY in `/opt/csaas/.env`
+  (B1, B4 open); no livekit containers or ufw rules (B3 open); B2 is portal-side.
+- Ran the B3 bring-up (user-authorized commands). First `up -d` crash-looped both
+  containers: `read /etc/livekit.yaml: is a directory`.
+- **Root cause (repo bug, commit `913f510`):** with multiple `-f` files, compose
+  resolves relative bind-mount paths against the FIRST file's directory (`deploy/`),
+  so `./livekit.yaml` pointed at `deploy/livekit.yaml` — nonexistent — and Docker
+  manufactured empty DIRECTORIES there (an earlier Aug 28 attempt had already left
+  them). Fixed mounts to `./livekit/livekit.yaml` + `./livekit/sip.yaml`, removed
+  the junk dirs, recreated containers.
+
+**Verified on the box (actual output):**
+- `docker compose ps` → livekit + livekit-sip both Up (no restart loop)
+- livekit log: `starting LiveKit server ... nodeIP 144.126.152.175, portHttp 7880, rtc.portTCP 7881, portICERange [50700,51199]`
+- sip log: `sip signaling listening on ... port 5060` (udp AND tcp), redis 127.0.0.1:6380 connected
+- `curl 127.0.0.1:7880/` → 200; `/rtc/validate` without token → 401 (auth enforced)
+- ufw: 7881/tcp, 50700:51199/udp, 5060/udp, 10000:10499/udp allowed (v4+v6)
+
+**Open decisions:**
+- nginx wss proxy for 7880 NOT configured — needed for the browser softphone;
+  additive location block on the csaas site, but nginx is shared with other
+  tenants so it was flagged, not applied.
+- No agents-worker service on the box (agents/ code shipped, no venv/unit).
+
+**Next step:** B2 (Bandwidth portal: SIP peer → 144.126.152.175:5060, assign
++19404060664) and B4 (paste AI keys into `.env`, restart api) — both user-only.
+Then P7 echo-agent gate is the first exercisable one.
+
+**Blockers:** B1, B2, B4.
 
 ## Known issues
 - **`test_softphone_token_cross_org_room_is_404` flakes on CI Python 3.10 only (unresolved):** failed on `7eb5441` and `5fa0978`, passed on `5dc178e`/`0934a9e`. The second failure's signature was `unauthenticated / Incorrect email or password` from `register_and_login`, NOT the dial-task race the autouse drain guard in `test_voice_plane.py` was added for — so that guard did not fix this, and two subsequent passes do not prove it fixed. Suspect cross-test state on 3.10 (the emails `spA@`/`spB@example.com` are unique to this test, so look at fixture/DB reuse, not collision). Reproduce with the full suite under 3.10, not the file alone.
