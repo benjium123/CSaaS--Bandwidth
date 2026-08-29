@@ -13,6 +13,7 @@ reputation as well as the first's.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -30,7 +31,15 @@ FAILURE_THRESHOLD = 5
 COOLDOWN_SECONDS = 30.0
 
 #: Categories that mean "the carrier is unwell". Everything else means "we are unwell".
-CARRIER_FAULT_CATEGORIES = frozenset({"carrier_transient", "carrier_unreachable", "rate_limited"})
+#: P14 DR-1: `auth` joins this set. `invalid_request` stays excluded - a malformed
+#: request is still our bug, retrying it elsewhere just spreads it. A revoked or rotated
+#: credential is different: it is operationally a dead carrier (this carrier, specifically -
+#: the same request would succeed against any other), which is exactly the failover case
+#: the gate names. Same threshold (5 consecutive): a typo'd credential at setup never gets
+#: 5 consecutive real sends without the operator noticing the probe endpoint fail first.
+CARRIER_FAULT_CATEGORIES = frozenset(
+    {"carrier_transient", "carrier_unreachable", "rate_limited", "auth"}
+)
 
 
 def opens_breaker(error: CarrierError | None) -> bool:
@@ -44,12 +53,16 @@ class Breaker:
     name: str
     consecutive_failures: int = 0
     opened_at: float | None = None
+    #: P14 DR-3: injectable so a test can drive cooldown/half-open/recovery without
+    #: monkeypatching time.monotonic globally. Default is unchanged real-time behaviour -
+    #: callers that never pass `now` explicitly (the send path) get this clock instead.
+    clock: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
     _probing: bool = field(default=False, repr=False)
 
     def state(self, now: float | None = None) -> State:
         if self.opened_at is None:
             return "closed"
-        moment = now if now is not None else time.monotonic()
+        moment = now if now is not None else self.clock()
         if moment - self.opened_at >= COOLDOWN_SECONDS:
             return "half_open"
         return "open"
@@ -81,7 +94,7 @@ class Breaker:
             return
         self.consecutive_failures += 1
         if self.consecutive_failures >= FAILURE_THRESHOLD and self.opened_at is None:
-            self.opened_at = now if now is not None else time.monotonic()
+            self.opened_at = now if now is not None else self.clock()
             log.error(
                 "carrier_breaker_opened",
                 carrier=self.name,
@@ -91,12 +104,17 @@ class Breaker:
 
 
 class HealthRegistry:
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
+        #: Propagated to every Breaker this registry lazily creates, so a test can inject
+        #: one clock here instead of patching each breaker (or real time) individually.
+        #: Default unchanged: None -> Breaker's own default (time.monotonic).
+        self._clock = clock
         self._breakers: dict[str, Breaker] = {}
 
     def breaker(self, name: str) -> Breaker:
         if name not in self._breakers:
-            self._breakers[name] = Breaker(name)
+            kwargs = {"clock": self._clock} if self._clock is not None else {}
+            self._breakers[name] = Breaker(name, **kwargs)
         return self._breakers[name]
 
     def is_healthy(self, name: str, now: float | None = None) -> bool:

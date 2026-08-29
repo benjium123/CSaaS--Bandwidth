@@ -71,7 +71,7 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P11 | Outbound engine (lists, auto-texter, dialer) | ✅ code complete + Opus-reviewed (6 blockers fixed) | 730 backend + 53 frontend ✅ | ✅ live (migrations 0012–0014 applied 2026-08-29) | 🔴 live SMS gate needs B1; live dialer gate needs B2 |
 | P12 | IVR / queues / voicemail / supervisor | ✅ code complete + Opus-reviewed (12 blockers fixed) | 809 backend + 59 frontend ✅ | ✅ live (migration 0015) | 🔴 live gate needs B2; whisper needs softphone client (D15); room-path audio needs worker (I5) |
 | P13 | Analytics + platform services | ✅ code complete + Opus-reviewed (4 blockers fixed) | 871 backend + 66 frontend ✅ (gate: reconciliation + signed-webhook replay-dedupe both local-green) | ✅ live | LLM scoring runtime needs B4 (honest `disabled` until then) |
-| P14 | Failover + hardening | ⬜ not started | — | — | — |
+| P14 | Failover + hardening | ✅ code complete + Opus-reviewed (5 blockers fixed; gate test mutation-verified) | 911 backend ✅ | ✅ live | Gate: **SMS failover fully met locally** (killed-credentials → per-attempt flip to fallback → cooldown recovery, none lost/doubled); **voice deferred by DR-2 amendment** (no error taxonomy on CreateCallResult — D28); restore drill + backup run on-box (results in RUNBOOK); VPS bounded load test needs operator creds (runbook step) |
 
 Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate passed · 🔴 blocked
 
@@ -84,22 +84,12 @@ Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate
 | B3 | ~~Media plane not brought up.~~ ✅ **CLEARED 2026-08-29** — ufw rules added, livekit 1.8.4 + livekit-sip up, SIP listening on 5060 udp/tcp, RTP 10000-10499 + 50700-51199 open. Required fixing a real compose bug first (commit `913f510`, see session entry). Residual: **nginx has no wss proxy for 7880** (softphone can't connect until added — additive one-location change to the csaas nginx site, awaiting authorization since nginx is shared with other tenants) and **no agents worker service exists on the box** (agents/ code is shipped; worker needs its own venv/service — with B4 for the AI agent). | — | — |
 | B4 | **No AI provider keys in production `.env`.** `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY` are all empty on the box. | P8, P9 voice agent; P10 SMS agent's LLM turn | Paste the three keys into `/opt/csaas/.env` and restart the api container. |
 
-### Media plane bring-up (B3) — exact commands
+### Media plane bring-up (B3)
 
-```bash
-ssh root@144.126.152.175
-ufw allow 7881/tcp comment 'csaas livekit ice-tcp'
-ufw allow 50700:51199/udp comment 'csaas livekit rtp'
-ufw allow 5060/udp comment 'csaas sip signaling'
-ufw allow 10000:10499/udp comment 'csaas sip rtp'
-cd /opt/csaas && docker compose --env-file .env   -f deploy/docker-compose.prod.yml   -f deploy/livekit/docker-compose.livekit.yml up -d livekit livekit-sip
-```
-
-Ports were verified free on the box (nothing listening on 7880/7881/5060) before this was
-attempted, and the RTP ranges are deliberately narrow because the VPS hosts other tenants.
-`deploy/livekit/README.md` documents the trunk setup as **Telnyx**; with B1's split it is
-now **Bandwidth for voice**, so the inbound trunk in step 5 takes Bandwidth's signaling
-hosts, not `sip.telnyx.com`.
+See `docs/RUNBOOK.md` ("Media plane bring-up (B3)") — moved there in P14 (DR-9) so ops
+knowledge lives in one place, alongside deploy/rollback/backup/restore-drill/failover
+procedures. The exact commands live in the runbook now; this file keeps tracking phase
+status and the residual items in the "Live gate blockers" table above.
 
 ---
 
@@ -492,6 +482,32 @@ inputs, all recorded above with exactly what unblocks each.
 Then P7 echo-agent gate is the first exercisable one.
 
 **Blockers:** B1, B2, B4.
+
+### Session 2026-08-29 (P11→P14 push) — all fourteen phases code-complete
+**Phases:** P11, P12, P13, P14 (+ P13 Tier-1 landed early)
+
+**Loop used (per delegation rules):** Fable planned every phase (phase-N-plan.md,
+DR rulings, schema/migrations 0012–0015, guardrails), DeepSeek Flash drafted the pure
+modules (pacing, list_parsing, flow_engine — all Fable-reviewed, one real bug each
+caught), Sonnet implemented backend + frontend per phase, Opus reviewed each phase
+adversarially (P11: 6 blockers; P12: 12; P13: 4 — several PROVEN with executed probes;
+P14: 5, gate mutation-verified), one fix round each, Fable adjudicated + fixed
+escalations directly.
+
+**Tests:** 686 → **911 backend** + 46 → **66 frontend**, ruff clean, OpenAPI drift
+gate green throughout. Suite lessons that now have teeth: per-run frozen tick clock
+(hour-pinned 18:00 UTC) after two wall-clock CI breaks; multi-org sweeper ticks commit
+per row (proven autoflush crash); and the LONG-STANDING softphone flake (C1) was
+root-caused (dial-task commit racing login on SQLite StaticPool) and fixed.
+
+**Everything found-but-deferred lives in `docs/OPEN_ISSUES.md`** (E1–E3 external,
+I1–I3 infra, C-rows, D1–D29) — the cleanup ledger the user asked for. Security review:
+`docs/SECURITY_REVIEW_P14.md` (one MEDIUM: no login/TOTP rate limiting → D26).
+Runbook: `docs/RUNBOOK.md`.
+
+**Deployed:** migrations 0012–0015 applied to production; every phase deployed same-day
+(P11 `6d0cbee`, P12 `6dab76f`, P13 `d497cfb`, P14 below). Live gates that remain
+blocked are exactly B1/B2/B4 + I1 — external inputs, not code.
 
 ## Known issues
 - **`test_softphone_token_cross_org_room_is_404` flakes on CI Python 3.10 only (unresolved):** failed on `7eb5441` and `5fa0978`, passed on `5dc178e`/`0934a9e`. The second failure's signature was `unauthenticated / Incorrect email or password` from `register_and_login`, NOT the dial-task race the autouse drain guard in `test_voice_plane.py` was added for — so that guard did not fix this, and two subsequent passes do not prove it fixed. Suspect cross-test state on 3.10 (the emails `spA@`/`spB@example.com` are unique to this test, so look at fixture/DB reuse, not collision). Reproduce with the full suite under 3.10, not the file alone.

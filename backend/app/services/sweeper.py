@@ -16,10 +16,16 @@ pipeline with it.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import structlog
 
 log = structlog.get_logger("sweeper")
+
+#: Opus review B4: an every-~60s, all-orgs, trailing-7-day scan is needless load. Gated to
+#: at most once per this many seconds via a plain monotonic timestamp on app.state (one
+#: process, no DB round trip needed just to decide whether to run).
+REPUTATION_TICK_INTERVAL_SECONDS = 3600
 
 
 async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
@@ -32,6 +38,7 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     from app.services import messaging as messaging_svc
     from app.services import outbound as outbound_svc
     from app.services import recordings as recordings_svc
+    from app.services import reputation as reputation_svc
     from app.services import routing_exec as routing_exec_svc
     from app.services import scoring as scoring_svc
     from app.services import usage as usage_svc
@@ -172,6 +179,24 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
         results["usage_orgs_rolled_up"] = usage_counts.get("orgs", 0)
     except Exception:
         log.exception("sweeper_usage_rollup_failed")
+
+    # P14 DR-7: derived per-number reputation monitoring, one audit row per breach per
+    # (org, number, UTC day) - same per-org-commit discipline as usage_tick above. Gated
+    # to hourly (Opus review B4): reserve the slot BEFORE running, not just on success, so
+    # a persistent failure cannot turn this into an every-tick retry storm either.
+    last_reputation_run = getattr(app.state, "_reputation_last_run", None)
+    now_monotonic = time.monotonic()
+    if (
+        last_reputation_run is None
+        or now_monotonic - last_reputation_run >= REPUTATION_TICK_INTERVAL_SECONDS
+    ):
+        app.state._reputation_last_run = now_monotonic
+        try:
+            async with get_sessionmaker()() as session:
+                reputation_counts = await reputation_svc.reputation_tick(session)
+            results["reputation_alerts"] = reputation_counts.get("alerts", 0)
+        except Exception:
+            log.exception("sweeper_reputation_tick_failed")
 
     settings = app.state.settings
     if settings.anthropic_api_key.get_secret_value() or settings.openai_api_key.get_secret_value():

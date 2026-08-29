@@ -21,6 +21,7 @@ from app.errors import (
 from app.models import OrgNumber
 from app.models.numbers import Campaign
 from app.providers import numbers as numbers_api
+from app.services import reputation as reputation_svc
 
 router = APIRouter(prefix="/api/v1/numbers", tags=["numbers"])
 
@@ -275,3 +276,44 @@ async def assign_campaign(
     number.campaign_id = payload.campaign_id
     await ctx.session.commit()
     return await _out(ctx.session, number)
+
+
+class NumberReputationOut(BaseModel):
+    """P14 DR-7: derived, trailing-7-day per-number stats. No third-party reputation API -
+    every field here is computed from our own `messages` rows."""
+
+    e164: str
+    carrier: str
+    window_start: datetime
+    window_end: datetime
+    volume: int
+    delivered: int
+    failed: int
+    rejected: int
+    delivery_rate: float | None
+    carrier_error_rate: float | None
+    spam_class_error_count: int
+
+
+@router.get("/reputation", response_model=list[NumberReputationOut])
+async def number_reputation(
+    ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
+) -> list[NumberReputationOut]:
+    stats = await reputation_svc.compute_number_stats(ctx.session, ctx.org.id)
+    await ctx.session.commit()
+    return [
+        NumberReputationOut(
+            e164=s.e164,
+            carrier=s.carrier,
+            window_start=s.window_start,
+            window_end=s.window_end,
+            volume=s.volume,
+            delivered=s.delivered,
+            failed=s.failed,
+            rejected=s.rejected,
+            delivery_rate=s.delivery_rate,
+            carrier_error_rate=s.carrier_error_rate,
+            spam_class_error_count=s.spam_class_error_count,
+        )
+        for s in stats
+    ]

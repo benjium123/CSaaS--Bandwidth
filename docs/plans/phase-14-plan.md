@@ -28,8 +28,13 @@ review.
   intra-carrier by default, cross-carrier only when the org's policy allows it AND the
   send is not a mid-thread reply. The message row is created ONCE; only the
   (carrier, from) pair of the successful attempt lands on it — "no message lost" means
-  the caller sees one message with one outcome, never two sends. Voice: `create_call`
-  walks the same plan for the initial leg only (an established call never re-dials).
+  the caller sees one message with one outcome, never two sends.
+  **AMENDED at review time (Opus B2 + implementer finding): voice does NOT walk the
+  plan in P14.** The dial path has no `RoutePlan` builder and `CreateCallResult`
+  carries no error taxonomy (no `CarrierError`, no category), so a voice failover walk
+  could not feed the breaker without touching `providers/**` — half-machinery on a
+  runtime that is entirely B2-blocked. Deferred with the full implementation recipe in
+  OPEN_ISSUES D28; the P14 gate is recorded as SMS-met / voice-deferred, honestly.
 - **DR-3: Recovery is the breaker's existing half-open probe** — after cooldown one
   real send goes back to the primary; success closes the breaker ("and back after
   cooldown"). No new machinery; the gate test drives time via injected clocks (the

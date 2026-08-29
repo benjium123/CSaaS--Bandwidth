@@ -471,6 +471,12 @@ async def test_softphone_token_cross_org_room_is_404(app_with_room_calls):
     created = await client.post("/api/v1/calls", json={"to": THEIRS, "via": "room"}, headers=h_a)
     assert created.status_code == 201, created.text
     room = created.json()["room"]
+    # The known C1 flake, finally reproducible ~50% in isolation: org A's background dial
+    # task commits on its own session while org B's register/login runs below, and on
+    # SQLite's single StaticPool connection a concurrent commit can corrupt the login
+    # SELECT's open cursor ("Incorrect email or password" for a user created 80ms ago).
+    # Draining the dial task here removes the concurrency window deterministically.
+    await voice_service.wait_for_pending_dial_tasks()
 
     token_b, org_b, _ = await make_org_with_number(
         client, "spB@example.com", "Org SB", "+12145550101"

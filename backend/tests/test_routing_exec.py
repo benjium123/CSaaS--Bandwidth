@@ -1181,12 +1181,27 @@ async def test_claim_next_concurrent_callers_only_one_wins(session, engine):
 
     results = await asyncio.gather(_claim(user_a), _claim(user_b), return_exceptions=True)
 
+    # Cross-dialect determinism (CI Postgres flaked here once with zero winners and no
+    # diagnostics): the loser may legitimately see EITHER ConflictError (lost the
+    # conditional UPDATE) or None (its candidate SELECT already saw the entry claimed).
+    # Anything else is a real failure and must be shown verbatim, not swallowed by
+    # return_exceptions.
+    unexpected = [
+        r
+        for r in results
+        if not isinstance(r, QueueEntry | ConflictError) and r is not None
+    ]
+    assert not unexpected, f"unexpected claim outcomes: {results!r}"
+
     successes = [r for r in results if isinstance(r, QueueEntry)]
-    conflicts = [r for r in results if isinstance(r, ConflictError)]
     assert len(successes) == 1, f"expected exactly one winner, got {results!r}"
-    assert len(conflicts) == 1
     assert successes[0].id == entry.id
     assert successes[0].offered_user_id in (user_a, user_b)
+
+    # The database is the final arbiter: exactly one connected claim, one owner.
+    await session.refresh(entry)
+    assert entry.state == "connected"
+    assert entry.offered_user_id == successes[0].offered_user_id
 
 
 async def test_claim_entry_route_publishes_handoff_claimed_event(app_with_carrier, session):

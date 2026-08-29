@@ -294,7 +294,10 @@ def test_breaker_opens_only_on_carrier_faults():
 
     for _ in range(FAILURE_THRESHOLD * 2):
         b.record_failure(CarrierError("auth", None, retryable=False))
-    assert b.state() == "closed", "bad credentials are not an outage either"
+    # P14 DR-1 REVERSED the original ruling here: a dead/rotated credential is
+    # operationally a dead carrier (the gate's killed-credentials failover case), so
+    # `auth` now opens the breaker like any carrier fault. invalid_request stays excluded.
+    assert b.state() == "open", "dead credentials must fail the carrier over (P14 DR-1)"
 
     for _ in range(FAILURE_THRESHOLD):
         b.record_failure(CarrierError("carrier_transient", None, retryable=True))
