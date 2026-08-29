@@ -123,3 +123,6 @@ class AgentSmsTurn(Base, TenantScoped, TimestampMixin):
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     #: Operator-facing reason: the matched keyword, the gate's verdict, the error class.
     detail: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
+    # ---- P13 (plan DR-9): usage from the LLM response; NULL when no LLM ran ---------
+    tokens_in: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)

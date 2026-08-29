@@ -101,7 +101,7 @@ async def opt_out(
         contact_e164=e164,
         event="opt_out",
         source="manual",
-        actor_user_id=ctx.membership.user_id,
+        actor_user_id=ctx.actor_user_id,
         details={"reason": payload.reason} if payload.reason else {},
     )
     await ctx.session.commit()
@@ -118,7 +118,7 @@ async def opt_in(
     Only the consumer's own START reverses their own STOP.
     """
     e164 = to_e164(payload.e164)
-    await svc.manual_opt_in(ctx.session, ctx.org.id, e164, ctx.membership.user_id)
+    await svc.manual_opt_in(ctx.session, ctx.org.id, e164, ctx.actor_user_id)
     await ctx.session.commit()
     return {"contact_e164": e164, "opted_out": False}
 
@@ -146,7 +146,7 @@ async def add_dnc(
         ctx.org.id,
         e164,
         reason=payload.reason,
-        actor_user_id=ctx.membership.user_id,
+        actor_user_id=ctx.actor_user_id,
     )
     await ctx.session.commit()
     return {"id": entry.id, "e164": entry.e164}
@@ -157,7 +157,7 @@ async def remove_dnc(
     e164: str,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> None:
-    await svc.remove_dnc(ctx.session, ctx.org.id, to_e164(e164), ctx.membership.user_id)
+    await svc.remove_dnc(ctx.session, ctx.org.id, to_e164(e164), ctx.actor_user_id)
     await ctx.session.commit()
 
 

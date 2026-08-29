@@ -68,9 +68,9 @@ Unregistered numbers get error `4476` and are rejected, not queued.
 | P9 | Agent v2: tools/handoff/KB/voicemail | 🔵 code complete | backend + agents ✅ | 🔴 gate needs B2 + B4 | — |
 | P9b | Provider parity + invite-only registration | ✅ gate passed | local ✅ / CI+PG ✅ | ✅ live | `a1efe84` |
 | P10 | AI SMS agent | ✅ code complete, deployed | 686 backend + 46 frontend ✅ / CI+PG ✅ | ✅ live (migration `0011`) | `a1efe84` |
-| P11 | Outbound engine | ⬜ not started | — | — | — |
-| P12 | IVR / queues / voicemail | ⬜ not started | — | — | — |
-| P13 | Analytics + platform services | ⬜ not started | — | — | — |
+| P11 | Outbound engine (lists, auto-texter, dialer) | 🔵 code complete + Opus-reviewed (6 blockers fixed) | 730 backend + 53 frontend ✅ | pending deploy | 🔴 live SMS gate needs B1; live dialer gate needs B2 |
+| P12 | IVR / queues / voicemail | 🟡 in progress (Tier-1 schema + flow engine done) | — | — | — |
+| P13 | Analytics + platform services | 🟡 Tier-1 foundation done (schema, outbox+hooks, API-key auth, token capture) | — | — | — |
 | P14 | Failover + hardening | ⬜ not started | — | — | — |
 
 Status values: ⬜ not started · 🟡 in progress · 🔵 in review · ✅ gate passed · 🔴 blocked

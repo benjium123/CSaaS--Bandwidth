@@ -49,7 +49,7 @@ async def inbox_threads(
     return await inbox_svc.list_inbox(
         ctx.session,
         ctx.org.id,
-        ctx.membership.user_id,
+        ctx.actor_user_id,
         inbox_svc.InboxFilters(status=status, assigned=assigned, q=q, label_id=label_id),
         cursor=cursor,
         limit=limit,

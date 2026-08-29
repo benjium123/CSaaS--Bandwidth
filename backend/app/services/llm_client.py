@@ -52,6 +52,9 @@ class ChatTurn:
 class ChatResult:
     text: str
     tool_calls: tuple
+    # P13 DR-9: usage from the provider response; 0 when the provider omitted it.
+    tokens_in: int = 0
+    tokens_out: int = 0
 
 
 def _is_blank_content(content: Any) -> bool:
@@ -217,7 +220,13 @@ def _parse_anthropic_response(data: dict[str, Any]) -> ChatResult:
     text = "".join(text_parts)
     if not text and not tool_calls:
         raise LLMError("provider returned no completion")
-    return ChatResult(text=text, tool_calls=tuple(tool_calls))
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    return ChatResult(
+        text=text,
+        tool_calls=tuple(tool_calls),
+        tokens_in=int(usage.get("input_tokens") or 0),
+        tokens_out=int(usage.get("output_tokens") or 0),
+    )
 
 
 def _parse_openai_response(data: dict[str, Any]) -> ChatResult:
@@ -264,7 +273,13 @@ def _parse_openai_response(data: dict[str, Any]) -> ChatResult:
 
     if not text and not tool_calls:
         raise LLMError("provider returned no completion")
-    return ChatResult(text=text, tool_calls=tuple(tool_calls))
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    return ChatResult(
+        text=text,
+        tool_calls=tuple(tool_calls),
+        tokens_in=int(usage.get("prompt_tokens") or 0),
+        tokens_out=int(usage.get("completion_tokens") or 0),
+    )
 
 
 async def chat(

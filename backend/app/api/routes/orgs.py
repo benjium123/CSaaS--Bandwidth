@@ -155,7 +155,7 @@ async def create_invite(
         org_id=ctx.org.id,
         email=payload.email,
         role_name=payload.role_name,
-        created_by=ctx.membership.user_id,
+        created_by=ctx.actor_user_id,
     )
     await ctx.session.commit()
     base = (getattr(request.app.state.settings, "public_base_url", "") or "").rstrip("/")

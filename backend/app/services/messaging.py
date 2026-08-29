@@ -45,6 +45,7 @@ from app.providers.domain import (
 )
 from app.providers.segments import estimate
 from app.services.contacts import resolve_or_create_contact
+from app.services.outbox import record_platform_event
 
 log = structlog.get_logger("messaging")
 
@@ -524,6 +525,20 @@ async def _ingest_inbound(
                 processed_at=_now(),
             )
         )
+        # P13 DR-4: durable outbox row commits (or rolls back on the dedupe path) with
+        # the message itself - the webhook deliverer fans it out later.
+        record_platform_event(
+            session,
+            org_id,
+            "message.received",
+            {
+                "message_id": str(message.id),
+                "thread_id": str(thread.id),
+                "from": event.from_,
+                "to": event.our_number,
+                "body": event.text,
+            },
+        )
         await session.commit()
     except IntegrityError:
         await session.rollback()
@@ -624,7 +639,23 @@ async def _ingest_dlr(
         await session.rollback()
         return Outcome.DONE  # already ingested, possibly by a parallel retry
 
+    prior_status = message.status
     _apply_dlr_to_message(message, event)
+    if message.status != prior_status and message.status in ("delivered", "failed"):
+        # P13 DR-4: the message reached its carrier-terminal outcome in THIS transaction.
+        record_platform_event(
+            session,
+            org_id,
+            "message.finalized",
+            {
+                "message_id": str(message.id),
+                "thread_id": str(message.thread_id),
+                "status": message.status,
+                "to": message.to_e164,
+                "from": message.from_e164,
+                "error_code": message.error_code,
+            },
+        )
     await session.execute(
         sa.update(MessageEvent)
         .where(

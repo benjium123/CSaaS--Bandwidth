@@ -33,3 +33,17 @@
 
 | # | Issue | Found | Notes |
 |---|---|---|---|
+| D1 | `pacing.predictive_coefficient` floor=0.25 overrides the 3% abandon target when observed abandon > 12%, and `parallel_lines=1` predictive campaigns can never throttle below 1 line — docstring overclaims a guarantee. | P11 Opus review | Tighten floor semantics or document honestly. |
+| D2 | Predictive denominator counts compliance-blocked rows (never dialed) as "placed", understating abandon rate. | P11 Opus review | Exclude disposition="blocked" from placed. |
+| D3 | `DIAL_STATUSES` lacks `blocked`; compliance refusals ship as `failed` + disposition="blocked". | P11 Opus review | Add `blocked` in the next migration touching outbound. |
+| D4 | Uploaded list source blob (`org/{org}/imports/{list}/source`) is never deleted and has no retention. | P11 Opus review | Delete after import completes, or add to media purge sweep. |
+| D5 | `SEND_TERMINAL` includes `deferred`: a campaign reads "completed" while gate-held sends are still awaiting sweeper release. | P11 Opus review | Progress endpoint should surface held count; consider completing only when releases resolve. |
+| D6 | Campaign pause is honored between ticks only — a pause mid-tick still sends the remaining batch (max `OUTBOUND_TICK_BATCH`). | P11 Opus review | Re-check status inside the send loop if this matters at larger batch sizes. |
+| D7 | Dial tick batch budget charges deferred/compliance-blocked rows though no dial was placed. | P11 Opus review | Cosmetic throughput loss. |
+| D8 | No RBAC deny tests for `/api/v1/outbound/*` (generic deny path covered elsewhere). | P11 Opus review | Coverage hygiene. |
+| D9 | `allow_unscoped` uses in outbound.py/dialer.py lack the inline justification comment style db/base.py mandates. | P11 Opus review | Move rationale inline. |
+| D10 | `resolve_or_create_contact`'s IntegrityError path rolls back the whole session — inside `run_import`'s 200-row batches a genuine phone race discards the current batch. | P11 implementer | Narrow to a nested savepoint. |
+| D11 | List import re-checks DNC/opt-out per row (two queries/row) — fine at 500 rows, quadratic pain at 50k. | P11 implementer | Batch the scrub queries. |
+| D12 | Campaign throughput is bounded at ~1 send/number/tick (one frozen `now` per tick) — high-volume orgs need a short sweeper interval, not bigger batches. | P11 implementer | Document in ops runbook (P14). |
+| D13 | Voice-agent (LiveKit worker) token usage is not reported to the backend — `ai_tokens` metering covers SMS turns only. | P13 planning | Extend the worker transcript seam to carry usage. |
+| D14 | Voice campaign.completed / voicemail hold events: `campaign.completed` outbox hook lands with the P11 fix round; `voicemail.created` must be wired inside P12's services/voicemail.py. | P13 planning | Verify both hooks exist before P13 webhook tests rely on them. |

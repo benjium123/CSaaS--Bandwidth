@@ -6,6 +6,9 @@ history) are deliberately not used.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets as _secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -38,6 +41,38 @@ def needs_rehash(hashed: str) -> bool:
         return _hasher.check_needs_rehash(hashed)
     except InvalidHashError:
         return True
+
+
+# --------------------------------------------------------------------------------------
+# API keys (P13 DR-3). SHA-256, not argon2: these are 256-bit random secrets verified on
+# every machine request - brute-force resistance comes from entropy, not work factor, and
+# argon2 per-request would be a self-inflicted DoS.
+# --------------------------------------------------------------------------------------
+API_KEY_TOKEN_PREFIX = "csk"
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    """Returns (full_key, prefix, key_hash). The full key is shown ONCE at creation."""
+    prefix = _secrets.token_hex(4)
+    secret = _secrets.token_urlsafe(32)
+    full = f"{API_KEY_TOKEN_PREFIX}_{prefix}_{secret}"
+    return full, prefix, hash_api_key(full)
+
+
+def hash_api_key(full_key: str) -> str:
+    return hashlib.sha256(full_key.encode()).hexdigest()
+
+
+def api_key_hash_matches(full_key: str, stored_hash: str) -> bool:
+    return hmac.compare_digest(hash_api_key(full_key), stored_hash)
+
+
+def parse_api_key_prefix(full_key: str) -> str | None:
+    """The prefix segment of ``csk_<prefix>_<secret>``, or None if malformed."""
+    parts = full_key.split("_", 2)
+    if len(parts) != 3 or parts[0] != API_KEY_TOKEN_PREFIX or not parts[1] or not parts[2]:
+        return None
+    return parts[1]
 
 
 def create_access_token(user_id: uuid.UUID, secret: str, *, expire_hours: int = 24) -> str:

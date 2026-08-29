@@ -40,6 +40,7 @@ from app.models import (
 from app.models.voice import TERMINAL_CALL_STATUSES
 from app.services import calls as calls_svc
 from app.services import contacts as contacts_svc
+from app.services.outbox import record_platform_event
 
 log = structlog.get_logger("agent")
 
@@ -372,6 +373,19 @@ async def book_appointment(
         created_by="ai",
     )
     session.add(appt)
+    # P13 DR-4: outbox row commits with the appointment itself.
+    record_platform_event(
+        session,
+        call.org_id,
+        "appointment.booked",
+        {
+            "appointment_id": str(appt.id),
+            "contact_e164": contact_e164,
+            "raw_when": raw_when,
+            "scheduled_for": appt.scheduled_for.isoformat() if appt.scheduled_for else None,
+            "source": "voice",
+        },
+    )
     await session.flush()
     return appt
 

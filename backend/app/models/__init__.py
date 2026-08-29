@@ -66,6 +66,22 @@ from app.models.outbound import (
     OutboundCampaign,
     OutboundSend,
 )
+from app.models.platform import (
+    API_KEY_STATUSES,
+    DELIVERY_BACKOFF_SECONDS,
+    DELIVERY_STATUSES,
+    PLATFORM_EVENT_TYPES,
+    SCORE_STATUSES,
+    USAGE_METRICS,
+    WEBHOOK_ENDPOINT_STATUSES,
+    ApiKey,
+    AuditLogEntry,
+    CallScore,
+    PlatformEvent,
+    UsageRecord,
+    WebhookDelivery,
+    WebhookEndpoint,
+)
 from app.models.rbac import PERMISSIONS, SYSTEM_ROLES, WILDCARD, OrgMembership, Role
 from app.models.routing import RoutingPolicy
 from app.models.scheduling import Appointment, KbChunk, KbDocument
@@ -88,6 +104,20 @@ __all__ = [
     "DialAttempt",
     "OutboundCampaign",
     "OutboundSend",
+    "API_KEY_STATUSES",
+    "DELIVERY_BACKOFF_SECONDS",
+    "DELIVERY_STATUSES",
+    "PLATFORM_EVENT_TYPES",
+    "SCORE_STATUSES",
+    "USAGE_METRICS",
+    "WEBHOOK_ENDPOINT_STATUSES",
+    "ApiKey",
+    "AuditLogEntry",
+    "CallScore",
+    "PlatformEvent",
+    "UsageRecord",
+    "WebhookDelivery",
+    "WebhookEndpoint",
     "FLOW_STATUSES",
     "QUEUE_ENTRY_STATES",
     "QUEUE_ENTRY_TERMINAL",

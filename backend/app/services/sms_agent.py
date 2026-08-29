@@ -44,6 +44,7 @@ from app.services import agent as agent_svc
 from app.services import kb as kb_svc
 from app.services import llm_client
 from app.services.messaging import AI_SEND_KEY, send_message
+from app.services.outbox import record_platform_event
 
 log = structlog.get_logger("sms_agent")
 
@@ -231,8 +232,29 @@ async def _book_appointment_sms(
         created_by="ai",
     )
     session.add(appt)
+    # P13 DR-4: outbox row commits with the appointment itself.
+    record_platform_event(
+        session,
+        org_id,
+        "appointment.booked",
+        {
+            "appointment_id": str(appt.id),
+            "contact_e164": contact_e164,
+            "raw_when": raw_when,
+            "scheduled_for": appt.scheduled_for.isoformat() if appt.scheduled_for else None,
+            "source": "sms",
+        },
+    )
     await session.flush()
     return appt
+
+
+def _apply_turn_usage(turn: AgentSmsTurn, usage: list[tuple[int, int]]) -> None:
+    """P13 DR-9: token totals across the turn's LLM rounds; untouched (NULL) when no
+    round completed."""
+    if usage:
+        turn.tokens_in = sum(t for t, _ in usage)
+        turn.tokens_out = sum(t for _, t in usage)
 
 
 def _publish_handoff(bus, org_id: uuid.UUID, thread: MessageThread, *, reason: str) -> None:  # noqa: ANN001
@@ -323,10 +345,15 @@ async def _run_llm_turn(
     session: AsyncSession,
     org_id: uuid.UUID,
     thread: MessageThread,
+    usage_sink: list[tuple[int, int]] | None = None,
 ) -> tuple[str, str | None]:
     """Returns (reply_text, handoff_reason). ``handoff_reason`` is set (and reply_text is
     "") when the model called handoff_to_human. Raises on any LLM/transport failure - the
-    caller decides how that becomes a turn/thread state change."""
+    caller decides how that becomes a turn/thread state change.
+
+    ``usage_sink`` (P13 DR-9) collects (tokens_in, tokens_out) per completed LLM round -
+    a sink rather than a return value so rounds already paid for survive a mid-turn
+    exception."""
     turns = list(history)
     last_text = ""
     for _round in range(MAX_TOOL_ROUNDS):
@@ -339,6 +366,8 @@ async def _run_llm_turn(
             turns=turns,
             tools=_TOOL_SPECS,
         )
+        if usage_sink is not None:
+            usage_sink.append((result.tokens_in, result.tokens_out))
         last_text = result.text
         if not result.tool_calls:
             return last_text, None
@@ -527,6 +556,7 @@ async def _maybe_reply_inner(
 
     owns_client = http_client is None
     client = http_client or _default_http_client()
+    usage: list[tuple[int, int]] = []
     try:
         reply_text, handoff_reason = await _run_llm_turn(
             client,
@@ -538,8 +568,10 @@ async def _maybe_reply_inner(
             session=session,
             org_id=org_id,
             thread=thread,
+            usage_sink=usage,
         )
     except Exception as exc:  # noqa: BLE001 - LLMError and anything else: error + handoff
+        _apply_turn_usage(turn, usage)
         thread.ai_state = "handed_off"
         turn.status = "error"
         turn.detail = str(exc)[:255]
@@ -549,6 +581,7 @@ async def _maybe_reply_inner(
     finally:
         if owns_client:
             await client.aclose()
+    _apply_turn_usage(turn, usage)
 
     if handoff_reason is not None:
         thread.ai_state = "handed_off"

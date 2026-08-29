@@ -307,7 +307,7 @@ async def add_note(
         id=uuid.uuid4(),
         org_id=ctx.org.id,
         contact_id=contact_id,
-        author_user_id=ctx.membership.user_id,
+        author_user_id=ctx.actor_user_id,
         body=payload.body,
     )
     ctx.session.add(note)
