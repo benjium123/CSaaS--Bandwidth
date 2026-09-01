@@ -11,9 +11,10 @@ from pydantic import BaseModel, Field
 from app import routing
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
-from app.errors import NotFoundError
+from app.errors import NotFoundError, PermissionDeniedError
 from app.models import Message, MessageThread
 from app.providers.base import get_carrier
+from app.services import inbox_access as inbox_access_svc
 from app.services import media as media_svc
 from app.services import messaging as svc
 from app.services.sender import select_sender
@@ -130,6 +131,14 @@ async def send(
             require_registration=request.app.state.settings.require_number_registration,
         )
     from_norm = plan.primary.from_e164
+    # P15: the number the routing plan actually landed on must be one this caller may
+    # send from - checked here (not earlier) because sticky/deterministic pool picks are
+    # only known once the plan is resolved.
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.can_use(from_norm):
+        raise PermissionDeniedError(f"You do not have send access to {from_norm}")
     settings = request.app.state.settings
     # The carrier fetches MMS media from a URL, so attachments become long-lived signed
     # links rather than being uploaded twice.
@@ -163,12 +172,19 @@ async def list_threads(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> list[ThreadOut]:
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
     stmt = (
         sa.select(MessageThread)
         .order_by(MessageThread.last_message_at.desc().nullslast())
         .limit(limit)
         .offset(offset)
     )
+    if not access.is_admin:
+        stmt = stmt.where(
+            MessageThread.our_e164.in_(access.member_e164s | access.viewer_e164s)
+        )
     rows = (await ctx.session.execute(stmt)).scalars().all()
     return [
         ThreadOut(
@@ -191,6 +207,17 @@ async def list_messages(
 ) -> list[MessageOut]:
     stmt = sa.select(Message).order_by(Message.created_at.asc()).limit(limit).offset(offset)
     if thread_id is not None:
+        # P15: a thread-id-addressed read is gated exactly like the thread's own detail
+        # route (app/api/routes/inbox.py::_get_thread) - an inaccessible thread is a 404,
+        # not a 403, so existence is not leaked either way.
+        access = await inbox_access_svc.resolve_access(
+            ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+        )
+        thread = await ctx.session.get(MessageThread, thread_id)
+        if thread is None:
+            raise NotFoundError("Thread not found")
+        if not access.is_admin and not access.can_view(thread.our_e164):
+            raise NotFoundError("Thread not found")
         stmt = stmt.where(Message.thread_id == thread_id)
     if after is not None:
         # Keyset for polling: each poll transfers only what is new.
@@ -208,4 +235,12 @@ async def get_message(
     message = await ctx.session.get(Message, message_id)
     if message is None:
         raise NotFoundError("Message not found")
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin:
+        thread = await ctx.session.get(MessageThread, message.thread_id)
+        # An inaccessible message's thread is a 404, never a 403 - don't leak existence.
+        if thread is None or not access.can_view(thread.our_e164):
+            raise NotFoundError("Message not found")
     return _out(message)

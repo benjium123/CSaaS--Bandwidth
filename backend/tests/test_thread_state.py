@@ -5,7 +5,7 @@ import uuid
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.models import OrgMembership, Role
+from app.models import Inbox, InboxGrant, OrgMembership, OrgNumber, Role
 from app.repositories import users as users_repo
 from tests.conftest import (
     auth_headers,
@@ -170,13 +170,40 @@ async def test_inbox_manage_permission(app_with_carrier, session):
     await session.commit()
 
     agent_h = auth_headers(agent_token, org["id"])
-    # Agents DO get inbox:manage in P2 - they work the inbox.
+
+    # P15: inbox:manage alone is no longer enough - fail-closed with no grant on OUR's
+    # inbox. An inaccessible thread's mutation is a 404, not a 403 (existence not leaked).
+    no_grant = await client.patch(
+        f"/api/v1/threads/{thread_id}", json={"status": "closed"}, headers=agent_h
+    )
+    assert no_grant.status_code == 404
+
+    inbox = (
+        await session.execute(
+            sa.select(Inbox)
+            .join(OrgNumber, OrgNumber.id == Inbox.number_id)
+            .where(OrgNumber.e164 == OUR)
+        )
+    ).scalar_one()
+    session.add(
+        InboxGrant(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            inbox_id=inbox.id,
+            grantee_type="user",
+            grantee_id=agent_user.id,
+            role="member",
+        )
+    )
+    await session.commit()
+
+    # Agents DO get inbox:manage in P2 - they work the inbox - PLUS (P15) a grant on it.
     ok = await client.patch(
         f"/api/v1/threads/{thread_id}", json={"status": "closed"}, headers=agent_h
     )
     assert ok.status_code == 200
 
-    # Strip the permission and it must be refused.
+    # Strip the permission and it must be refused - RBAC still gates on top of the grant.
     agent_role.permissions = ["inbox:read", "inbox:send"]
     await session.commit()
     denied = await client.patch(

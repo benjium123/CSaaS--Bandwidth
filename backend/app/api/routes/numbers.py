@@ -18,7 +18,7 @@ from app.errors import (
     NotFoundError,
     ValidationFailedError,
 )
-from app.models import OrgNumber
+from app.models import Inbox, OrgNumber
 from app.models.numbers import Campaign
 from app.providers import numbers as numbers_api
 from app.services import reputation as reputation_svc
@@ -81,6 +81,16 @@ async def add_number(
     )
     ctx.session.add(number)
     try:
+        # P15: every number gets its Inbox in the SAME transaction it's created in - a
+        # missing inbox row is treated as a bug elsewhere, never a lazy-create branch.
+        # Flushed separately: Inbox.number_id is a plain FK column (no relationship()
+        # between the two classes), so the unit of work has no dependency edge telling it
+        # to insert org_numbers before inboxes - without this flush it can emit the Inbox
+        # INSERT first and trip the foreign key.
+        await ctx.session.flush()
+        ctx.session.add(
+            Inbox(id=uuid.uuid4(), org_id=ctx.org.id, name=normalized, number_id=number.id)
+        )
         await ctx.session.commit()
     except IntegrityError as exc:
         await ctx.session.rollback()
@@ -214,6 +224,12 @@ async def order(
     )
     ctx.session.add(number)
     try:
+        # P15: every number gets its Inbox in the SAME transaction it's created in - see
+        # the matching comment in add_number() for why the flush must come first.
+        await ctx.session.flush()
+        ctx.session.add(
+            Inbox(id=uuid.uuid4(), org_id=ctx.org.id, name=result.e164, number_id=number.id)
+        )
         await ctx.session.commit()
     except IntegrityError as exc:
         await ctx.session.rollback()

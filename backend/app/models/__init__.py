@@ -36,6 +36,14 @@ from app.models.contacts import (
     Tag,
     ThreadLabel,
 )
+from app.models.inboxes import (
+    GRANTEE_TYPES,
+    INBOX_GRANT_ROLES,
+    Department,
+    DepartmentMember,
+    Inbox,
+    InboxGrant,
+)
 from app.models.invites import Invite
 from app.models.messaging import (
     EVENT_TO_STATUS,
@@ -166,6 +174,12 @@ __all__ = [
     "CustomFieldDef",
     "DncEntry",
     "MediaAsset",
+    "GRANTEE_TYPES",
+    "INBOX_GRANT_ROLES",
+    "Department",
+    "DepartmentMember",
+    "Inbox",
+    "InboxGrant",
     "Invite",
     "Message",
     "MessageEvent",

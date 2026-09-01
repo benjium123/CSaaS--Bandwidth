@@ -16,6 +16,7 @@ from app.errors import (
     ConflictError,
     FeatureUnavailableError,
     NotFoundError,
+    PermissionDeniedError,
     ValidationFailedError,
 )
 from app.models import (
@@ -30,6 +31,7 @@ from app.models import (
 from app.models.voice import TERMINAL_CALL_STATUSES
 from app.providers.voice import as_voice_carrier
 from app.services import calls as calls_svc
+from app.services import inbox_access as inbox_access_svc
 from app.services import recordings as recordings_svc
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import LiveKitApiError, mint_access_token
@@ -320,6 +322,9 @@ async def create_call(
         raise ValidationFailedError("via must be 'carrier' or 'room'")
 
     to_norm = to_e164(payload.to)
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
 
     if payload.via == "room":
         settings = request.app.state.settings
@@ -331,6 +336,8 @@ async def create_call(
             # deploys are valid, but this route can never succeed without one.
             raise FeatureUnavailableError("No LiveKit SIP outbound trunk is configured")
         from_norm = await _resolve_room_from_number(ctx.session, ctx.org.id, payload)
+        if not access.can_use(from_norm):
+            raise PermissionDeniedError(f"You do not have call access to {from_norm}")
         bus = request.app.state.event_bus
         call, _leg, room, token = await voice_service.start_room_call(
             ctx.session,
@@ -352,6 +359,8 @@ async def create_call(
 
     registry = getattr(request.app.state, "carriers", None)
     _carrier_name, from_norm = await _resolve_outbound(ctx.session, registry, ctx.org.id, payload)
+    if not access.can_use(from_norm):
+        raise PermissionDeniedError(f"You do not have call access to {from_norm}")
     call, _leg = await calls_svc.create_outbound_call(
         ctx.session,
         registry,
@@ -375,13 +384,36 @@ async def list_calls(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> list[CallOut]:
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
     stmt = sa.select(Call).order_by(Call.created_at.desc()).limit(limit).offset(offset)
     if contact_e164:
         stmt = stmt.where(Call.contact_e164 == contact_e164)
     if status:
         stmt = stmt.where(Call.status == status)
+    if not access.is_admin:
+        stmt = stmt.where(Call.our_e164.in_(access.member_e164s | access.viewer_e164s))
     rows = (await ctx.session.execute(stmt)).scalars().all()
     return [_call_out(c) for c in rows]
+
+
+async def _access_or_404(
+    ctx: OrgContext, call: Call, *, require_use: bool, message: str = "Call not found"
+) -> None:
+    """P15: gate a by-id call route the same way get_call does. An inaccessible call is a
+    404, never a 403 - and this must run BEFORE any other check on the route (a room/
+    status ConflictError, a recording lookup, ...) that could otherwise leak the call's
+    existence to a caller with no access to it at all.
+    """
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if access.is_admin:
+        return
+    ok = access.can_use(call.our_e164) if require_use else access.can_view(call.our_e164)
+    if not ok:
+        raise NotFoundError(message)
 
 
 @router.get("/calls/{call_id}", response_model=CallDetailOut)
@@ -392,6 +424,12 @@ async def get_call(
 ) -> CallDetailOut:
     call = await ctx.session.get(Call, call_id)
     if call is None:
+        raise NotFoundError("Call not found")
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin and not access.can_view(call.our_e164):
+        # An inaccessible call's detail is a 404, never a 403 - don't leak existence.
         raise NotFoundError("Call not found")
     return await _detail_out(ctx.session, request, call)
 
@@ -415,6 +453,7 @@ async def answer_call(
     call = await ctx.session.get(Call, call_id)
     if call is None:
         raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
 
     # Pre-existing bug: `call.extra.get(...)` dereferences None when `extra` itself is
     # None (e.g. a carrier-path call with no `extra` set at all) - every sibling check
@@ -472,6 +511,7 @@ async def transfer_call(
     call = await ctx.session.get(Call, call_id)
     if call is None:
         raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
 
     to_norm = to_e164(payload.to)
 
@@ -516,6 +556,7 @@ async def dispatch_agent(
     call = await ctx.session.get(Call, call_id)
     if call is None:
         raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
     extra = call.extra or {}
     if extra.get("via") != "livekit":
         raise ConflictError("Agents can only join room calls (via=room)")
@@ -539,6 +580,7 @@ async def hangup_call(
     call = await ctx.session.get(Call, call_id)
     if call is None:
         raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
 
     if (call.extra or {}).get("via") == "livekit":
         api = getattr(request.app.state, "livekit", None)
@@ -564,6 +606,7 @@ async def gather_call(
     call = await ctx.session.get(Call, call_id)
     if call is None:
         raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
 
     if (call.extra or {}).get("via") == "livekit":
         raise ConflictError(
@@ -600,6 +643,10 @@ async def get_recording(
     recording = await ctx.session.get(CallRecording, recording_id)
     if recording is None or recording.call_id != call_id:
         raise NotFoundError("Recording not found")
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Recording not found")
+    await _access_or_404(ctx, call, require_use=False, message="Recording not found")
     if recording.status != "stored" or not recording.storage_key:
         raise NotFoundError("Recording not found")
 

@@ -33,6 +33,11 @@ PERMISSIONS: tuple[str, ...] = (
     "inbox:read",
     "inbox:send",
     "inbox:manage",
+    # P15: see + manage ALL inboxes and their grants, bypassing the tiered access model.
+    # Deliberately separate from inbox:manage, which agents hold to work their OWN inboxes.
+    "inboxes:admin",
+    "departments:read",
+    "departments:manage",
     "contacts:read",
     "contacts:write",
     "numbers:read",

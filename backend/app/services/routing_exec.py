@@ -737,6 +737,10 @@ async def _offer_to_ring_group(
                 "call_id": str(call.id),
                 "queue_id": str(queue.id),
                 "ring_user_ids": ring_user_ids,
+                # P15: the softphone fan-out gate needs this to know which number's
+                # inbox the ring belongs to - without it a non-admin never sees it at
+                # all (fail-closed default for a call.ring with no resolvable "to").
+                "to": call.our_e164,
             },
         )
 

@@ -9,9 +9,10 @@ from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 
 from app.auth.deps import OrgContext, require_permission
-from app.errors import NotFoundError, ValidationFailedError
+from app.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import MessageThread, OrgMembership, Tag, ThreadLabel
 from app.services import inbox as inbox_svc
+from app.services import inbox_access as inbox_access_svc
 
 router = APIRouter(prefix="/api/v1", tags=["inbox"])
 
@@ -46,7 +47,7 @@ async def inbox_threads(
 ) -> dict[str, Any]:
     if status and status not in ("open", "closed"):
         raise ValidationFailedError("status must be 'open' or 'closed'")
-    return await inbox_svc.list_inbox(
+    result = await inbox_svc.list_inbox(
         ctx.session,
         ctx.org.id,
         ctx.actor_user_id,
@@ -54,13 +55,38 @@ async def inbox_threads(
         cursor=cursor,
         limit=limit,
     )
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin:
+        # P15: post-filter the aggregate's page by inbox access. A page can come back
+        # shorter than `limit` when some of its threads are on numbers this caller cannot
+        # see - `next_cursor` (from the UNFILTERED page) still walks correctly, it just
+        # means a client may need an extra round trip to fill a visually full page.
+        result = dict(result)
+        result["items"] = [
+            item for item in result["items"] if access.can_view(item["thread"]["our_e164"])
+        ]
+    return result
 
 
-async def _get_thread(ctx: OrgContext, thread_id: uuid.UUID) -> MessageThread:
+async def _get_thread(
+    ctx: OrgContext, thread_id: uuid.UUID, *, require_use: bool = False
+) -> MessageThread:
     # Scoped by the session guard: another org's thread id is a 404 here.
     thread = await ctx.session.get(MessageThread, thread_id)
     if thread is None:
         raise NotFoundError("Thread not found")
+
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin:
+        # An inaccessible thread's detail is a 404, never a 403 - don't leak existence.
+        if not access.can_view(thread.our_e164):
+            raise NotFoundError("Thread not found")
+        if require_use and not access.can_use(thread.our_e164):
+            raise PermissionDeniedError("You do not have manage access to this inbox")
     return thread
 
 
@@ -70,7 +96,7 @@ async def patch_thread(
     payload: ThreadPatchIn,
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:manage"))],
 ) -> dict:
-    thread = await _get_thread(ctx, thread_id)
+    thread = await _get_thread(ctx, thread_id, require_use=True)
 
     if payload.status is not None:
         if payload.status not in ("open", "closed"):
@@ -119,7 +145,7 @@ async def set_thread_ai_state(
     `handed_off` thread ever answers again - the bot itself never does this. Setting
     "handed_off" is an explicit manual take-over, the same effect a human's own reply in
     an `active` thread already has implicitly (see messaging.send_message)."""
-    thread = await _get_thread(ctx, thread_id)
+    thread = await _get_thread(ctx, thread_id, require_use=True)
     thread.ai_state = payload.state
     if payload.state == "active":
         # DR-7: the turn ceiling counts replies SINCE this (re)arm - reset the clock every
@@ -147,7 +173,7 @@ async def set_labels(
     payload: LabelsIn,
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:manage"))],
 ) -> dict:
-    thread = await _get_thread(ctx, thread_id)
+    thread = await _get_thread(ctx, thread_id, require_use=True)
 
     wanted = set(payload.tag_ids)
     if wanted:

@@ -36,6 +36,7 @@ from app.models.voice import Call
 from app.services import audit as audit_svc
 from app.services import calls as calls_svc
 from app.services import flows as flows_svc
+from app.services import inbox_access as inbox_access_svc
 from app.services import routing_exec as routing_exec_svc
 from app.services import supervisor as supervisor_svc
 
@@ -436,6 +437,12 @@ async def dial_callback_now(
     if number is None:
         raise ConflictError("No active outbound number is available on this org")
 
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.can_use(number.e164):
+        raise PermissionDeniedError(f"You do not have call access to {number.e164}")
+
     registry = getattr(request.app.state, "carriers", None)
     await calls_svc.create_outbound_call(
         ctx.session,
@@ -535,9 +542,19 @@ async def list_voicemails(
     ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
     status: str | None = Query(default=None),
 ) -> list[VoicemailOut]:
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
     stmt = sa.select(Voicemail).order_by(Voicemail.created_at.desc())
     if status:
         stmt = stmt.where(Voicemail.status == status)
+    if not access.is_admin:
+        # P15: a voicemail transcript must never cross inboxes - only numbers this caller
+        # can VIEW are included.
+        allowed = access.member_e164s | access.viewer_e164s
+        stmt = stmt.where(
+            Voicemail.call_id.in_(sa.select(Call.id).where(Call.our_e164.in_(allowed)))
+        )
     rows = (await ctx.session.execute(stmt)).scalars().all()
     return [_vm_out(v) for v in rows]
 
@@ -548,6 +565,13 @@ async def mark_voicemail_read(
 ) -> VoicemailOut:
     row = await ctx.session.get(Voicemail, voicemail_id)
     if row is None:
+        raise NotFoundError("Voicemail not found")
+    call = await ctx.session.get(Call, row.call_id)
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin and (call is None or not access.can_view(call.our_e164)):
+        # An inaccessible voicemail is a 404, never a 403 - don't leak existence.
         raise NotFoundError("Voicemail not found")
     row.status = "read"
     await ctx.session.commit()
@@ -568,10 +592,20 @@ class SupervisorTokenOut(BaseModel):
     room: str
 
 
-async def _get_call(ctx: OrgContext, call_id: uuid.UUID) -> Call:
+async def _get_call(ctx: OrgContext, call_id: uuid.UUID, *, require_use: bool = False) -> Call:
+    """P15: calls:supervise alone is no longer sufficient - monitor needs can_view,
+    whisper/barge (which actually touch the live audio) need can_use. An inaccessible
+    call is a 404, never a 403 - don't leak existence."""
     call = await ctx.session.get(Call, call_id)
     if call is None:
         raise NotFoundError("Call not found")
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin:
+        ok = access.can_use(call.our_e164) if require_use else access.can_view(call.our_e164)
+        if not ok:
+            raise NotFoundError("Call not found")
     return call
 
 
@@ -619,7 +653,7 @@ async def supervise_whisper(
     user: Annotated[User, Depends(get_current_user)],
 ) -> SupervisorTokenOut:
     _require_supervisor(ctx)
-    call = await _get_call(ctx, call_id)
+    call = await _get_call(ctx, call_id, require_use=True)
     settings = request.app.state.settings
     api = getattr(request.app.state, "livekit", None)
     token = await supervisor_svc.whisper(
@@ -657,7 +691,7 @@ async def supervise_barge(
     user: Annotated[User, Depends(get_current_user)],
 ) -> SupervisorTokenOut:
     _require_supervisor(ctx)
-    call = await _get_call(ctx, call_id)
+    call = await _get_call(ctx, call_id, require_use=True)
     settings = request.app.state.settings
     token = await supervisor_svc.barge(
         ctx.session,
