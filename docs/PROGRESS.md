@@ -512,3 +512,20 @@ blocked are exactly B1/B2/B4 + I1 — external inputs, not code.
 ## Known issues
 - **`test_softphone_token_cross_org_room_is_404` flakes on CI Python 3.10 only (unresolved):** failed on `7eb5441` and `5fa0978`, passed on `5dc178e`/`0934a9e`. The second failure's signature was `unauthenticated / Incorrect email or password` from `register_and_login`, NOT the dial-task race the autouse drain guard in `test_voice_plane.py` was added for — so that guard did not fix this, and two subsequent passes do not prove it fixed. Suspect cross-test state on 3.10 (the emails `spA@`/`spB@example.com` are unique to this test, so look at fixture/DB reuse, not collision). Reproduce with the full suite under 3.10, not the file alone.
 - **`latest_consent` random tiebreak (pre-existing, found 2026-08-26 by the P9 fix round):** `compliance/service.py::latest_consent` orders by `created_at desc, id desc` where id is a random UUIDv4 — a same-timestamp opt-out/opt-in pair resolves by coin flip. Real correctness risk, not just test flake (`test_manual_optout_then_manual_optin_is_allowed` flakes under full-suite load). Fix needs a monotonic tiebreaker (sequence column) — Tier-1 schema change, FIRST ITEM next session.
+
+## P15 — Departments + tiered inbox access (2026-09-01, commit 469b45d)
+Admin (`inboxes:admin`) sees all; departments own numbers members inherit; direct
+user grants (member = read+send/dial, viewer = read-only). FAIL-CLOSED: no grant →
+404 everywhere (threads, messages, all call-control routes, recordings, voicemails,
+supervisor monitor/whisper/barge, callback dial-out, WS ring/handoff/status fan-out).
+Migration `0016` (departments, department_members, inboxes 1:1 with org_numbers,
+inbox_grants; backfills one inbox per number + 3 new perms onto system admin).
+930 passed, 7 skipped. Opus-reviewed twice: round 1 found 6 BLOCKERs (ungated
+call-control) + 7 MAJORs (voicemail/supervisor leaks, queue-ring bypass, inactive
+depts still granting) — all closed and re-verified. Residuals ledgered as D30–D33.
+Deployed same-day; live checks: count(inboxes)==count(org_numbers), perms on admin
+role, /status ok. NOTE: employees see NO inboxes until granted (by design) — grant
+via /api/v1/inboxes/{id}/grants or the P16 UI. Also this session: I1 nginx step DONE
+(/status + /livekit proxied; LIVEKIT_URL fixed to ws://livekit:7880 — was unreachable
+127.0.0.1 inside the api container), media_plane now "up". Bandwidth trial 402 root-
+caused: account must be upgraded before outbound calls connect (dest ≠ verified num).
