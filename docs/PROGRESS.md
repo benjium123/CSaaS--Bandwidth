@@ -579,3 +579,18 @@ Backend 1034 / frontend 112 green. Opus rounds: 4 blockers + majors closed; D37 
 Bandwidth Numbers API Basic auth live once the account is upgraded) + D38 ledgered.
 Live: head 0019, columns present, number_orders_polled emitting, 0 errors.
 P19 plan + schema (models/spend.py, migration 0020) written; drafts in flight.
+
+## P19 — Provider cost tracking (2026-09-03, commit 31b9682, migration 0020)
+provider_rates (org overrides over code defaults) + provider_spend_daily (derived,
+replaced per org/day, NULL-safe unique key via scope_key). Rollup in SQL: billable SMS
+segments (usage.py rule; queued/rejected excluded), MMS by media, voice ceil-minutes
+per call, number MRC prorated only for numbers alive that day (purchase/release
+window — releasing never erases history), setup on purchase day. Hourly sweeper,
+POST /spend/rollup recalculate, GET summary/daily, GET/PUT provider-rates with
+default_unit_cost_micros, analytics spend_usd_month_to_date. UI: per-provider spend
+card + no-rate-card caveat, rates drawer (changed rows only, reset to server default,
+recalc today, a11y), dashboard 30-day zero-filled chart, Numbers Spend MTD.
+Backend 1056 / frontend 142 green. Opus: 4 money-math blockers closed (segments vs
+rows, non-billable charged, MRC before purchase, release erasing history).
+Live: head 0020, spend_orgs_rolled_up=1 on first pass, rows written, 0 errors.
+**Phases 15–19 COMPLETE** — see docs/DONE_P15_P19.md.
