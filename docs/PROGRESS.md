@@ -529,3 +529,21 @@ via /api/v1/inboxes/{id}/grants or the P16 UI. Also this session: I1 nginx step 
 (/status + /livekit proxied; LIVEKIT_URL fixed to ws://livekit:7880 — was unreachable
 127.0.0.1 inside the api container), media_plane now "up". Bandwidth trial 402 root-
 caused: account must be upgraded before outbound calls connect (dest ≠ verified num).
+
+## P16 — Quo-style three-pane inbox + unified SMS/call timeline (2026-09-02, commit 5e31392)
+Frontend: dark sidebar with per-number inboxes (+ admin "All inboxes"), Chats/Calls
+tabs, Open/Unread/Unresponded chips + debounced search, one timeline per contact
+interleaving SMS, call cards (failed calls show carrier reason incl. the Bandwidth
+trial 402), voicemail transcript + playback, contact panel (attributes-backed fields,
+notes), P15 admin UI (departments + grants). Viewers read-only. Legacy pages linked,
+old inbox at /inbox/legacy. Dark tokens scoped to the new surfaces (legacy pages light).
+Backend: GET /conversations + /conversations/{e164}/timeline (P15 + calls:read gated,
+bounded SQL windows, composite keyset cursor with two-source frontier continuation);
+migration 0017 gives system agent roles calls:read; built-in contact attributes
+company/role/email/address. Backend 958 / frontend 91 green. Opus found and closed
+3+2 blockers and 7+12 majors across backend/frontend, plus two follow-up cursor
+blockers. Deployed same day; live checks: /status ok, agent perms backfilled, head 0017.
+DeepSeek V4 Pro drafted every module from Fable specs (streaming caller with 64k
+budget — delegate.py's 32k returned empty on big drafts); Sonnet integrated + fixed;
+Opus reviewed. Deferred: department grouping in sidebar (D-series), global dark theme.
+NOTE deploy.sh builds frontend from the LOCAL tree — uncommitted frontend work ships.
