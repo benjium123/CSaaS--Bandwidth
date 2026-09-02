@@ -75,6 +75,10 @@ SYSTEM_ROLES: dict[str, list[str]] = {
         # Agents see consent state and compose from templates; they cannot edit either.
         "compliance:read",
         "templates:read",
+        # P16: the unified inbox timeline shows calls alongside SMS. An agent who may work
+        # an inbox may read its calls; P15 grants still scope WHICH numbers. calls:place
+        # deliberately stays admin-granted.
+        "calls:read",
     ],
 }
 

@@ -93,6 +93,11 @@ async def link_threads_for_phone(
     return result.rowcount or 0
 
 
+#: Contact-detail keys the P16 contact panel stores in ``attributes`` without an org
+#: custom-field definition. Text only.
+BUILTIN_CONTACT_ATTRIBUTES: frozenset[str] = frozenset({"company", "role", "email", "address"})
+
+
 async def validate_attributes(
     session: AsyncSession, attributes: dict | None
 ) -> dict:
@@ -108,6 +113,14 @@ async def validate_attributes(
     for key, value in attributes.items():
         definition = defs.get(key)
         if definition is None:
+            # P16: the contact panel's built-in detail fields need no custom-field
+            # definition. They are plain text; an org-defined custom field of the same
+            # key (handled above) takes precedence and keeps its own kind/options.
+            if key in BUILTIN_CONTACT_ATTRIBUTES:
+                if value is not None and not isinstance(value, str):
+                    raise ValidationFailedError(f"Contact field {key!r} expects text")
+                clean[key] = value
+                continue
             raise ValidationFailedError(f"Unknown custom field: {key!r}")
         if value is None:
             clean[key] = None

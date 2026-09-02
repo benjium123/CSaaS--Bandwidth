@@ -17,6 +17,7 @@ from app.api.routes import auth as auth_routes
 from app.api.routes import calls as call_routes
 from app.api.routes import compliance as compliance_routes
 from app.api.routes import contacts as contact_routes
+from app.api.routes import conversations as conversation_routes
 from app.api.routes import departments as department_routes
 from app.api.routes import flows as flow_routes
 from app.api.routes import health as health_routes
@@ -201,6 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(contact_routes.router)
     app.include_router(inbox_routes.router)
     app.include_router(inboxes_routes.router)
+    app.include_router(conversation_routes.router)
     app.include_router(department_routes.router)
     app.include_router(compliance_routes.router)
     app.include_router(routing_routes.router)

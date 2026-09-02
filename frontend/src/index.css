@@ -13,5 +13,24 @@
   --destructive: 0 72% 51%;
 }
 
+/* F10 (Phase 16 follow-up): scoped dark token override. Legacy pages never get the
+ * `.dark` class, so they keep reading the light values above unchanged - only the P16
+ * inbox panes (ConversationsPage, InboxSettingsPage) and the Sidebar rail wrap themselves
+ * in `.dark`, so their Composer/Input/Button/Spinner children (all built on the
+ * `bg-background`/`text-foreground`/`border-border`/`bg-muted`/`bg-primary` tokens in
+ * src/components/ui/primitives.tsx) render dark instead of leaving a white strip inside
+ * an otherwise-dark pane. Values are tuned to match the neutral-900/950 raw Tailwind
+ * classes those panes already use directly. */
+.dark {
+  --background: 0 0% 4%;
+  --foreground: 0 0% 95%;
+  --muted: 0 0% 16%;
+  --muted-foreground: 0 0% 60%;
+  --border: 0 0% 20%;
+  --primary: 0 0% 95%;
+  --primary-foreground: 0 0% 9%;
+  --destructive: 0 72% 51%;
+}
+
 html, body, #root { height: 100%; }
 body { @apply bg-background text-foreground antialiased; }

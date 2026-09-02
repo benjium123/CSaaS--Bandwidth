@@ -1,6 +1,10 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { ConversationsPage } from "@/pages/ConversationsPage";
+import { InboxSettingsPage } from "@/pages/InboxSettingsPage";
+// F9: kept reachable (never deleted) at its own route - linked under Sidebar "More" as
+// "Legacy inbox".
 import { InboxPage } from "@/pages/InboxPage";
 import { ContactsPage } from "@/pages/ContactsPage";
 import { ListsPage } from "@/pages/ListsPage";
@@ -18,62 +22,21 @@ import { PlatformPage } from "@/pages/PlatformPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
 import { TeamPage } from "@/pages/TeamPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
-import { Button, Spinner } from "@/components/ui/primitives";
-import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ui/primitives";
+import { Sidebar } from "@/components/shell/Sidebar";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 
-const NAV = [
-  { to: "/dashboard", label: "Dashboard" },
-  { to: "/inbox", label: "Inbox" },
-  { to: "/contacts", label: "Contacts" },
-  { to: "/lists", label: "Lists" },
-  { to: "/campaigns", label: "Campaigns" },
-  { to: "/calls", label: "Calls" },
-  { to: "/agent", label: "AI Agent" },
-  { to: "/appointments", label: "Appointments" },
-  { to: "/flows", label: "Flows" },
-  { to: "/queues", label: "Queues" },
-  { to: "/numbers", label: "Numbers" },
-  { to: "/providers", label: "Providers" },
-  { to: "/security", label: "Security" },
-  { to: "/team", label: "Team" },
-  { to: "/platform", label: "Platform" },
-];
-
+/** Replaces the old top nav (plan phase-16-plan.md): the Sidebar is now the one
+ * persistent nav frame for every authed route, with the inbox as the app's home. */
 function Shell({ children }: { children: React.ReactNode }) {
-  const { me, orgId, logout } = useAuth();
-  const org = me?.memberships.find((m) => m.org_id === orgId);
   return (
     <SoftphoneProvider>
-      <div className="grid h-full grid-rows-[auto_1fr]">
-        <header className="flex items-center justify-between gap-4 border-b border-border px-4 py-2">
-          <nav className="flex items-center gap-1">
-            {NAV.map((n) => (
-              <NavLink key={n.to} to={n.to}>
-                {({ isActive }) => (
-                  <span
-                    className={cn(
-                      "rounded-md px-3 py-1.5 text-sm",
-                      isActive ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted",
-                    )}
-                  >
-                    {n.label}
-                  </span>
-                )}
-              </NavLink>
-            ))}
-          </nav>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span>{org?.org_name}</span>
-            <Button size="sm" variant="ghost" onClick={logout}>
-              Sign out
-            </Button>
-          </div>
-        </header>
-        <main className="min-h-0">{children}</main>
-        <SoftphonePanel />
+      <div className="flex h-full">
+        <Sidebar />
+        <main className="min-h-0 flex-1">{children}</main>
       </div>
+      <SoftphonePanel />
     </SoftphoneProvider>
   );
 }
@@ -99,7 +62,9 @@ export function App() {
     <Shell>
       <Routes>
         <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/inbox" element={<InboxPage />} />
+        <Route path="/inbox" element={<ConversationsPage />} />
+        <Route path="/inbox/legacy" element={<InboxPage />} />
+        <Route path="/settings/inboxes" element={<InboxSettingsPage />} />
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/lists" element={<ListsPage />} />
         <Route path="/campaigns" element={<CampaignsPage />} />
