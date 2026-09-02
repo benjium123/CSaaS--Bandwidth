@@ -54,6 +54,29 @@ const POLICY = {
   pinned_carrier: null,
 };
 
+const SPEND_SUMMARY = {
+  total_micros: 5_000_000,
+  total_usd: "$5.00",
+  by_provider: {
+    telnyx: {
+      cost_micros: 5_000_000,
+      by_metric: { sms_out: { quantity: 500, cost_micros: 5_000_000 } },
+      numbers: [{ number_id: "n1", e164: "+12145550100", cost_micros: 5_000_000 }],
+    },
+  },
+};
+
+const PROVIDER_RATES = [
+  {
+    provider: "telnyx",
+    metric: "sms_out",
+    unit_cost_micros: 4000,
+    default_unit_cost_micros: 4000,
+    is_override: false,
+    currency: "USD",
+  },
+];
+
 const NUMBERS: NumberOut[] = [
   {
     id: "n1",
@@ -174,6 +197,8 @@ function baseRoutes(overrides: Record<string, unknown> = {}) {
     "/api/v1/routing/policy": POLICY,
     "/api/v1/numbers": NUMBERS,
     "/api/v1/auth/me": ME_OWNER,
+    "/api/v1/spend/summary": SPEND_SUMMARY,
+    "/api/v1/provider-rates": PROVIDER_RATES,
     ...overrides,
   };
 }
@@ -593,5 +618,47 @@ describe("ProvidersPage", () => {
     const telnyxCard = within(carriersList).getByText("telnyx").closest("li")!;
     expect(within(telnyxCard).getByRole("alert")).toHaveTextContent(/open/i);
     expect(within(telnyxCard).getByRole("alert")).toHaveTextContent(/failing/i);
+  });
+
+  // P19: per-card spend line, and the page-level Rates drawer.
+  it("shows a spend line on the provider card that has spend this month", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<ProvidersPage />, client);
+
+    const telnyxCard = await screen.findByRole("region", { name: "telnyx account" });
+    expect(await within(telnyxCard).findByText("$5.00")).toBeInTheDocument();
+    expect(within(telnyxCard).getByText(/Spend this month/)).toBeInTheDocument();
+
+    const bandwidthCard = await screen.findByRole("region", { name: "bandwidth account" });
+    expect(within(bandwidthCard).getByText("No spend yet.")).toBeInTheDocument();
+  });
+
+  it("opens the rates drawer from the Rates button and lets an owner save a rate", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<ProvidersPage />, client);
+
+    await userEvent.click(screen.getByRole("button", { name: "Rates" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Provider rates" });
+    const input = within(dialog).getByLabelText("telnyx sms_out rate") as HTMLInputElement;
+    expect(input.value).toBe("0.0040");
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "0.0050");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save rates" }));
+
+    await waitFor(() => {
+      const call = client.calls.find(
+        (c) => c.path === "/api/v1/provider-rates" && c.init?.method === "PUT",
+      );
+      expect(call).toBeTruthy();
+    });
+
+    const call = client.calls.find(
+      (c) => c.path === "/api/v1/provider-rates" && c.init?.method === "PUT",
+    )!;
+    expect(call.init?.json).toEqual({
+      rates: [{ provider: "telnyx", metric: "sms_out", unit_cost_micros: 5000 }],
+    });
   });
 });

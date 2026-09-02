@@ -18,6 +18,7 @@ import {
   type AnalyticsOverviewOut,
 } from "@/api/hooks";
 import { Button, Input, Spinner } from "@/components/ui/primitives";
+import { SpendTile } from "@/components/spend/SpendCard";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -313,6 +314,9 @@ export function DashboardPage() {
           <DeliveryRateChart data={data.messages} />
           <CallsChart data={data.calls} />
           <AiChart data={data.ai} />
+          <div className="md:col-span-2">
+            <SpendTile />
+          </div>
           <div className="md:col-span-2">
             <CampaignsChart data={data.campaigns} />
           </div>

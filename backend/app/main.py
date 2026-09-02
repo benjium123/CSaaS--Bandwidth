@@ -34,6 +34,7 @@ from app.api.routes import registration as registration_routes
 from app.api.routes import routing as routing_routes
 from app.api.routes import scheduling as scheduling_routes
 from app.api.routes import softphone as softphone_routes
+from app.api.routes import spend as spend_routes
 from app.api.routes import status as status_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
@@ -226,6 +227,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(platform_routes.router)
     app.include_router(analytics_routes.router)
     app.include_router(provider_accounts_routes.router)
+    app.include_router(spend_routes.router)
     return app
 
 

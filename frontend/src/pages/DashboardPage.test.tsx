@@ -31,11 +31,54 @@ const EMPTY_OVERVIEW = {
   ai: [],
 };
 
+const SPEND_SUMMARY = {
+  total_micros: 12_000_000,
+  total_usd: "$12.00",
+  by_provider: {
+    telnyx: {
+      cost_micros: 8_000_000,
+      by_metric: { sms_out: { quantity: 1000, cost_micros: 8_000_000 } },
+      numbers: [],
+    },
+    bandwidth: {
+      cost_micros: 4_000_000,
+      by_metric: { sms_out: { quantity: 500, cost_micros: 4_000_000 } },
+      numbers: [],
+    },
+  },
+};
+
+function spendDailyRows() {
+  const now = new Date();
+  return Array.from({ length: 30 }, (_, i) => {
+    const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+    return {
+      period_date: day.toISOString().slice(0, 10),
+      provider: "telnyx",
+      metric: "sms_out" as const,
+      quantity: 1,
+      cost_micros: 400_000,
+    };
+  });
+}
+
+const SPEND_DAILY = spendDailyRows();
+
+function baseStubs(overrides: Record<string, unknown> = {}) {
+  return {
+    "/api/v1/spend/summary": SPEND_SUMMARY,
+    "/api/v1/spend/daily": SPEND_DAILY,
+    ...overrides,
+  };
+}
+
 describe("DashboardPage", () => {
   it("renders the analytics series from the API", async () => {
-    const client = makeStubClient({
-      "/api/v1/analytics/overview": OVERVIEW,
-    });
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/analytics/overview": OVERVIEW,
+      }),
+    );
     renderWithProviders(<DashboardPage />, client);
 
     expect(await screen.findByText("Messages in / out")).toBeInTheDocument();
@@ -51,9 +94,11 @@ describe("DashboardPage", () => {
   });
 
   it("shows an empty state per chart when a series has no data", async () => {
-    const client = makeStubClient({
-      "/api/v1/analytics/overview": EMPTY_OVERVIEW,
-    });
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/analytics/overview": EMPTY_OVERVIEW,
+      }),
+    );
     renderWithProviders(<DashboardPage />, client);
 
     const emptyMessages = await screen.findAllByText("No data for this range.");
@@ -61,9 +106,11 @@ describe("DashboardPage", () => {
   });
 
   it("refetches with a different day range when the picker changes", async () => {
-    const client = makeStubClient({
-      "/api/v1/analytics/overview": OVERVIEW,
-    });
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/analytics/overview": OVERVIEW,
+      }),
+    );
     renderWithProviders(<DashboardPage />, client);
 
     await screen.findByText("Messages in / out");
@@ -77,20 +124,22 @@ describe("DashboardPage", () => {
   });
 
   it("searches transcripts and renders matched segments", async () => {
-    const client = makeStubClient({
-      "/api/v1/analytics/overview": EMPTY_OVERVIEW,
-      "/api/v1/search/transcripts": [
-        {
-          call_id: "call-1",
-          contact_e164: "+19725550199",
-          started_at: new Date().toISOString(),
-          segments: [
-            { role: "agent", text: "Hello there", at_ms: 0, matched: false },
-            { role: "user", text: "I need a refund", at_ms: 1000, matched: true },
-          ],
-        },
-      ],
-    });
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/analytics/overview": EMPTY_OVERVIEW,
+        "/api/v1/search/transcripts": [
+          {
+            call_id: "call-1",
+            contact_e164: "+19725550199",
+            started_at: new Date().toISOString(),
+            segments: [
+              { role: "agent", text: "Hello there", at_ms: 0, matched: false },
+              { role: "user", text: "I need a refund", at_ms: 1000, matched: true },
+            ],
+          },
+        ],
+      }),
+    );
     renderWithProviders(<DashboardPage />, client);
 
     await screen.findByText("Transcript search");
@@ -101,5 +150,22 @@ describe("DashboardPage", () => {
     expect(
       client.calls.some((c) => c.path === "/api/v1/search/transcripts?q=refund"),
     ).toBe(true);
+  });
+
+  // P19: the spend tile - MTD total, per-provider breakdown, and a 30-day bar per day.
+  it("renders the spend tile with MTD total and 30 daily bars", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/analytics/overview": EMPTY_OVERVIEW,
+      }),
+    );
+    renderWithProviders(<DashboardPage />, client);
+
+    expect(await screen.findByText("$12.00")).toBeInTheDocument();
+    expect(screen.getByText("telnyx")).toBeInTheDocument();
+    // P19 fix-required #4: the bar's aria-label now carries the amount too.
+    expect(
+      screen.getAllByRole("img", { name: /^Spend \d{4}-\d{2}-\d{2}: /}),
+    ).toHaveLength(30);
   });
 });

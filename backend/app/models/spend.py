@@ -17,6 +17,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base, TenantScoped, TimestampMixin
 from app.db.types import GUID
 
+TRAFFIC_SCOPE = "traffic"
+
 SPEND_METRICS: tuple[str, ...] = (
     "sms_out",
     "sms_in",
@@ -66,8 +68,13 @@ class ProviderRate(Base, TenantScoped, TimestampMixin):
 class ProviderSpendDaily(Base, TenantScoped, TimestampMixin):
     __tablename__ = "provider_spend_daily"
     __table_args__ = (
+        # ``number_id`` is NULL for traffic rows and NULLs are distinct in a UNIQUE
+        # constraint (Postgres and SQLite alike), so the key uses ``scope_key`` — a
+        # NOT NULL text mirror: the number id for number rows, "traffic" otherwise.
+        # That makes concurrent rollups (sweeper + operator "recalculate") collide
+        # instead of doubling a day's cost.
         sa.UniqueConstraint(
-            "org_id", "period_date", "provider", "metric", "number_id",
+            "org_id", "period_date", "provider", "metric", "scope_key",
             name="uq_provider_spend_daily_key",
         ),
         sa.Index("ix_provider_spend_daily_org_date", "org_id", "period_date"),
@@ -83,3 +90,5 @@ class ProviderSpendDaily(Base, TenantScoped, TimestampMixin):
     number_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("org_numbers.id", ondelete="CASCADE"), nullable=True
     )
+    #: "traffic" for traffic rows, else str(number_id). Always set by the service.
+    scope_key: Mapped[str] = mapped_column(sa.String(36), nullable=False, default=TRAFFIC_SCOPE)

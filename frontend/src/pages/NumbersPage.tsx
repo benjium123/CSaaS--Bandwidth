@@ -27,6 +27,7 @@ import {
   type NumberOut,
   type SearchOut,
 } from "@/api/numbers";
+import { formatMicros, monthToDateRange, useSpendSummary } from "@/api/spend";
 import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -150,6 +151,16 @@ export function NumbersPage() {
     [campaigns],
   );
 
+  const spendRange = React.useMemo(() => monthToDateRange(), []);
+  const spendSummaryQuery = useSpendSummary(api, spendRange.from, spendRange.to);
+  const spendMicrosByNumberId = React.useCallback(
+    (numberId: string, carrier: string): number | undefined => {
+      const providerSpend = spendSummaryQuery.data?.by_provider[carrier];
+      return providerSpend?.numbers.find((n) => n.number_id === numberId)?.cost_micros;
+    },
+    [spendSummaryQuery.data],
+  );
+
   const [value, setValue] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
 
@@ -224,6 +235,9 @@ export function NumbersPage() {
                   <th className="px-3 py-2 font-medium">Type</th>
                   <th className="px-3 py-2 font-medium">Carrier</th>
                   <th className="px-3 py-2 font-medium">Cost</th>
+                  <th className="px-3 py-2 font-medium">
+                    Spend MTD <span className="font-normal text-neutral-600">(UTC days)</span>
+                  </th>
                   <th className="px-3 py-2 font-medium">Purchased</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Registration</th>
@@ -238,6 +252,8 @@ export function NumbersPage() {
                     number={n}
                     campaignName={campaignName(n.campaign_id)}
                     campaigns={campaigns ?? []}
+                    spendMicros={spendMicrosByNumberId(n.id, n.carrier)}
+                    spendUnavailable={spendSummaryQuery.isLoading || spendSummaryQuery.isError}
                     onAssign={(campaignId) => assign(n.id, campaignId)}
                     assignPending={assignCampaign.isPending}
                     confirming={confirmReleaseId === n.id}
@@ -270,6 +286,8 @@ function NumberRow({
   number,
   campaignName,
   campaigns,
+  spendMicros,
+  spendUnavailable,
   onAssign,
   assignPending,
   confirming,
@@ -279,6 +297,8 @@ function NumberRow({
   number: NumberOut;
   campaignName: string | null;
   campaigns: { id: string; name: string }[];
+  spendMicros: number | undefined;
+  spendUnavailable: boolean;
   onAssign: (campaignId: string) => void;
   assignPending: boolean;
   confirming: boolean;
@@ -299,6 +319,9 @@ function NumberRow({
         )}
       </td>
       <td className="px-3 py-2 text-xs text-neutral-300">{formatMonthlyCost(number)}</td>
+      <td className="px-3 py-2 text-xs text-neutral-300">
+        {spendUnavailable ? "—" : formatMicros(spendMicros ?? 0)}
+      </td>
       <td className="px-3 py-2 text-xs text-neutral-400">{formatPurchasedAt(number.purchased_at)}</td>
       <td className="px-3 py-2">
         <span

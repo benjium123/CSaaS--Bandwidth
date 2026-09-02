@@ -27,6 +27,11 @@ log = structlog.get_logger("sweeper")
 #: process, no DB round trip needed just to decide whether to run).
 REPUTATION_TICK_INTERVAL_SECONDS = 3600
 
+#: P19: provider spend rollup is derived (like usage), but there is no reason to
+#: recompute every org's spend on every ~60s tick - hourly matches the reputation gate
+#: above, same discipline (Opus review B4).
+SPEND_TICK_INTERVAL_SECONDS = 3600
+
 
 async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     """One pass. Each task gets its own session so one failure cannot poison the others."""
@@ -42,6 +47,7 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     from app.services import reputation as reputation_svc
     from app.services import routing_exec as routing_exec_svc
     from app.services import scoring as scoring_svc
+    from app.services import spend as spend_svc
     from app.services import usage as usage_svc
     from app.services import voicemail as voicemail_svc
     from app.services import webhooks_out as webhooks_out_svc
@@ -194,6 +200,23 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
         results["usage_orgs_rolled_up"] = usage_counts.get("orgs", 0)
     except Exception:
         log.exception("sweeper_usage_rollup_failed")
+
+    # P19: derived provider spend rollup (today + yesterday, every org) - same hourly
+    # gate discipline as reputation below: reserve the slot BEFORE running so a
+    # persistent failure cannot turn this into an every-tick retry storm.
+    last_spend_run = getattr(app.state, "_spend_last_run", None)
+    now_monotonic = time.monotonic()
+    if (
+        last_spend_run is None
+        or now_monotonic - last_spend_run >= SPEND_TICK_INTERVAL_SECONDS
+    ):
+        app.state._spend_last_run = now_monotonic
+        try:
+            async with get_sessionmaker()() as session:
+                spend_orgs = await spend_svc.rollup_recent(session)
+            results["spend_orgs_rolled_up"] = spend_orgs
+        except Exception:
+            log.exception("sweeper_spend_rollup_failed")
 
     # P14 DR-7: derived per-number reputation monitoring, one audit row per breach per
     # (org, number, UTC day) - same per-org-commit discipline as usage_tick above. Gated

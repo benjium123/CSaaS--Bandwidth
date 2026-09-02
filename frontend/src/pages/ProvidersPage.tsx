@@ -29,6 +29,8 @@ import {
   type ProviderName,
 } from "@/api/providers";
 import { Badge, Button, Spinner } from "@/components/ui/primitives";
+import { RatesDrawer } from "@/components/spend/RatesDrawer";
+import { SpendCard } from "@/components/spend/SpendCard";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -106,6 +108,7 @@ function ProviderAccountCard({
   numbersLoading,
   readOnly,
   onError,
+  onOpenRates,
 }: {
   provider: ProviderName;
   account: ProviderAccount | undefined;
@@ -113,6 +116,7 @@ function ProviderAccountCard({
   numbersLoading: boolean;
   readOnly: boolean;
   onError: (error: unknown) => void;
+  onOpenRates: () => void;
 }) {
   const { api } = useAuth();
   const queryClient = useQueryClient();
@@ -358,6 +362,8 @@ function ProviderAccountCard({
           </ul>
         )}
       </div>
+
+      <SpendCard provider={provider} onOpenRates={onOpenRates} />
     </section>
   );
 }
@@ -624,6 +630,7 @@ export function ProvidersPage() {
   // after a failed write.
   const [forcedReadOnly, setForcedReadOnly] = React.useState(false);
   const [storageError, setStorageError] = React.useState<string | null>(null);
+  const [ratesOpen, setRatesOpen] = React.useState(false);
 
   const providerAccountsQuery = useQuery({
     queryKey: ["provider-accounts"],
@@ -659,10 +666,25 @@ export function ProvidersPage() {
 
   return (
     <div className="dark mx-auto max-w-5xl space-y-8 bg-neutral-950 p-6 text-neutral-100">
-      <div className="space-y-2">
-        <h1 className="text-lg font-semibold text-neutral-50">Providers</h1>
-        <p className="text-sm text-neutral-400">Provider accounts and carrier health.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <h1 className="text-lg font-semibold text-neutral-50">Providers</h1>
+          <p className="text-sm text-neutral-400">Provider accounts and carrier health.</p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setRatesOpen(true)}
+          className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+        >
+          Rates
+        </Button>
       </div>
+
+      {ratesOpen && (
+        <RatesDrawer readOnly={readOnly} onClose={() => setRatesOpen(false)} />
+      )}
 
       {storageError && (
         <div
@@ -702,6 +724,7 @@ export function ProvidersPage() {
                 numbersLoading={numbersQuery.isLoading}
                 readOnly={readOnly}
                 onError={handleError}
+                onOpenRates={() => setRatesOpen(true)}
               />
             );
           })

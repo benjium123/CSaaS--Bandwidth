@@ -19,6 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import AgentSmsTurn
+from app.services import spend as spend_svc
 from app.models.messaging import Message
 from app.models.outbound import OutboundCampaign
 from app.models.voice import TERMINAL_CALL_STATUSES, Call
@@ -162,6 +163,8 @@ async def overview(
     session: AsyncSession, org_id: uuid.UUID, days: int, *, now: datetime | None = None
 ) -> dict:
     start, end = _day_bounds(days, now=now)
+    today = (now or datetime.now(timezone.utc)).date()
+    month_to_date_micros = await spend_svc.month_to_date_micros(session, org_id, today)
     return {
         "range": {
             "start": start.date().isoformat(),
@@ -172,4 +175,5 @@ async def overview(
         "calls": await _calls_series(session, org_id, start, end),
         "campaigns": await _campaign_progress(session, org_id),
         "ai": await _ai_series(session, org_id, start, end),
+        "spend_usd_month_to_date": round(month_to_date_micros / 1_000_000, 2),
     }

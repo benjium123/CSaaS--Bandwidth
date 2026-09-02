@@ -43,9 +43,10 @@ def upgrade() -> None:
         sa.Column("quantity", sa.BigInteger(), nullable=False, server_default="0"),
         sa.Column("cost_micros", sa.BigInteger(), nullable=False, server_default="0"),
         sa.Column("number_id", GUID(), sa.ForeignKey("org_numbers.id", ondelete="CASCADE"), nullable=True),
+        sa.Column("scope_key", sa.String(36), nullable=False, server_default="traffic"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.UniqueConstraint("org_id", "period_date", "provider", "metric", "number_id", name="uq_provider_spend_daily_key"),
+        sa.UniqueConstraint("org_id", "period_date", "provider", "metric", "scope_key", name="uq_provider_spend_daily_key"),
     )
     op.create_index("ix_provider_spend_daily_org_date", "provider_spend_daily", ["org_id", "period_date"])
 

@@ -144,6 +144,19 @@ const ORDERED_NUMBER = numberFixture({
   registration_detail: "",
 });
 
+// P19: "Spend MTD" column - num-1's carrier is "bandwidth" (see numberFixture above).
+const SPEND_SUMMARY = {
+  total_micros: 2_500_000,
+  total_usd: "$2.50",
+  by_provider: {
+    bandwidth: {
+      cost_micros: 2_500_000,
+      by_metric: {},
+      numbers: [{ number_id: "num-1", e164: "+12145550100", cost_micros: 2_500_000 }],
+    },
+  },
+};
+
 /**
  * NOTE on key order: test/harness.tsx's stub client resolves a request by
  * `Object.keys(routes).find((k) => path.startsWith(k))`, i.e. the FIRST key (in
@@ -168,6 +181,7 @@ function baseStubs(overrides: Record<string, unknown> = {}) {
     "/api/v1/routing/catalog": CATALOG,
     "/api/v1/provider-accounts": PROVIDER_ACCOUNTS,
     "/api/v1/numbers": [numberFixture()],
+    "/api/v1/spend/summary": SPEND_SUMMARY,
     ...overrides,
   };
 }
@@ -431,5 +445,47 @@ describe("NumbersPage", () => {
       expect(call?.init.method).toBe("PATCH");
       expect(call?.init.json).toEqual({ campaign_id: "camp-1" });
     });
+  });
+
+  // P19: "Spend MTD" column looks up num-1's cost from the spend summary by number_id,
+  // scoped to the row's own carrier ("bandwidth" - see SPEND_SUMMARY above).
+  it("shows the Spend MTD column looked up from the spend summary", async () => {
+    const client = makeStubClient(baseStubs());
+    renderWithProviders(<NumbersPage />, client);
+
+    expect(await screen.findByText(/Spend MTD/)).toBeInTheDocument();
+    expect(await screen.findByText("$2.50")).toBeInTheDocument();
+  });
+
+  it("shows $0.00 in the Spend MTD column when the number has no spend rows", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/spend/summary": { total_micros: 0, total_usd: "$0.00", by_provider: {} },
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    await screen.findByText("(214) 555-0100");
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
+  });
+
+  // P19 fix-required #5: never show a fabricated $0.00 while the spend summary is loading
+  // or has failed (a 403/500) - that would misread as "genuinely zero spend".
+  it("shows an em dash in Spend MTD while the spend summary is unavailable", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/spend/summary": () => {
+          throw new Error("spend summary down");
+        },
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    await screen.findByText("(214) 555-0100");
+    await waitFor(() => {
+      const cells = screen.getAllByRole("cell").filter((c) => c.textContent === "—");
+      expect(cells.length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
   });
 });

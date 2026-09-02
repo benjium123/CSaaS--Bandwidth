@@ -58,6 +58,7 @@ class OverviewOut(BaseModel):
     calls: list[CallsSeriesPointOut]
     campaigns: list[CampaignProgressPointOut]
     ai: list[AiSeriesPointOut]
+    spend_usd_month_to_date: float
 
 
 @router.get("/analytics/overview", response_model=OverviewOut)

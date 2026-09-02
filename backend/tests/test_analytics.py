@@ -171,6 +171,11 @@ async def test_overview_route_requires_reports_read_and_is_org_scoped(client, se
     assert r.status_code == 200, r.text
     body = r.json()
     assert "messages" in body and "calls" in body and "campaigns" in body and "ai" in body
+    # P19: spend_usd_month_to_date must actually reach the HTTP response - it is easy for
+    # a field added to the service dict to be silently stripped by response_model unless
+    # OverviewOut also declares it.
+    assert "spend_usd_month_to_date" in body
+    assert isinstance(body["spend_usd_month_to_date"], (int, float))
 
 
 # --------------------------------------------------------------------------------------
