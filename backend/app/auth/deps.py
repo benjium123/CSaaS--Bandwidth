@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import AsyncIterator, Annotated
 
 import sqlalchemy as sa
 from fastapi import Depends, Header, Request
@@ -23,8 +23,10 @@ from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_session
 from app.errors import PermissionDeniedError, UnauthenticatedError, ValidationFailedError
 from app.models import ApiKey, Org, OrgMembership, Role, User
+from app.providers import registry_org
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
+from app.services import credentials as credential_svc
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -129,35 +131,55 @@ async def get_current_org(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     session: Annotated[AsyncSession, Depends(get_session)],
     x_org_id: Annotated[str | None, Header(alias="X-Org-Id")] = None,
-) -> OrgContext:
+) -> AsyncIterator[OrgContext]:
     # P13 DR-11: an API key authenticates against the SAME org-scoped routes. The key is
     # org-bound, so X-Org-Id is optional — but when present it must agree.
     if creds is not None and creds.credentials.startswith(f"{API_KEY_TOKEN_PREFIX}_"):
         ctx = await _org_context_from_api_key(creds.credentials, session)
         if x_org_id and x_org_id != str(ctx.org.id):
             raise PermissionDeniedError("X-Org-Id does not match this API key's organization")
-        return ctx
+    else:
+        user = await get_current_user(request, creds, session)
+        if not x_org_id:
+            raise ValidationFailedError("X-Org-Id header is required for org-scoped routes")
+        try:
+            org_id = uuid.UUID(x_org_id)
+        except (ValueError, AttributeError) as exc:
+            raise ValidationFailedError("X-Org-Id is not a valid UUID") from exc
 
-    user = await get_current_user(request, creds, session)
-    if not x_org_id:
-        raise ValidationFailedError("X-Org-Id header is required for org-scoped routes")
+        found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
+        if found is None:
+            # Deliberately the same 403 whether the org does not exist or the user simply
+            # is not a member — do not let callers probe for which orgs exist.
+            raise PermissionDeniedError("You are not a member of this organization")
+
+        org, membership, role = found
+        if not org.is_active:
+            raise PermissionDeniedError("This organization is disabled")
+
+        set_org_context(session, org.id)
+        ctx = OrgContext(org=org, membership=membership, role=role, session=session)
+
+    # P17: give the carrier registry proxy (app/providers/registry_org.py) an org to
+    # resolve for the lifetime of this request, so app.state.carriers picks DB-configured
+    # provider credentials over the env fallback when this org has an active account.
+    # Skipped entirely with no master key configured — a bare env deployment (today's
+    # default) never pays for the lookup.
+    settings: Settings = request.app.state.settings
+    if credential_svc.master_key_present(settings) and not registry_org.is_primed(ctx.org.id):
+        # Reuse the live global registry's adapter objects/HealthRegistry rather than
+        # rebuilding both from settings - getattr because a test fixture may have
+        # installed a raw CarrierRegistry (no .global_registry) in app.state.carriers.
+        carriers = getattr(request.app.state, "carriers", None)
+        global_registry = getattr(carriers, "global_registry", None)
+        await registry_org.prime_org_registry(
+            session, settings, ctx.org.id, global_registry=global_registry
+        )
+    org_token = registry_org.CURRENT_ORG_ID.set(ctx.org.id)
     try:
-        org_id = uuid.UUID(x_org_id)
-    except (ValueError, AttributeError) as exc:
-        raise ValidationFailedError("X-Org-Id is not a valid UUID") from exc
-
-    found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
-    if found is None:
-        # Deliberately the same 403 whether the org does not exist or the user simply is
-        # not a member — do not let callers probe for which orgs exist.
-        raise PermissionDeniedError("You are not a member of this organization")
-
-    org, membership, role = found
-    if not org.is_active:
-        raise PermissionDeniedError("This organization is disabled")
-
-    set_org_context(session, org.id)
-    return OrgContext(org=org, membership=membership, role=role, session=session)
+        yield ctx
+    finally:
+        registry_org.CURRENT_ORG_ID.reset(org_token)
 
 
 def require_permission(permission: str):

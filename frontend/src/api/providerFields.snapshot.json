@@ -1,0 +1,32 @@
+{
+  "bandwidth": {
+    "account_id": false,
+    "api_username": false,
+    "api_password": true,
+    "messaging_application_id": false,
+    "voice_application_id": false,
+    "webhook_username": false,
+    "webhook_password": true
+  },
+  "telnyx": {
+    "api_key": true,
+    "public_key": true,
+    "messaging_profile_id": false,
+    "voice_connection_id": false
+  },
+  "twilio": {
+    "account_sid": false,
+    "auth_token": true,
+    "messaging_service_sid": false
+  },
+  "plivo": {
+    "auth_id": false,
+    "auth_token": true,
+    "powerpack_uuid": false
+  },
+  "signalwire": {
+    "project_id": false,
+    "api_token": true,
+    "space_url": false
+  }
+}

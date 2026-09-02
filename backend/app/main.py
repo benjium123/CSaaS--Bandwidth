@@ -29,6 +29,7 @@ from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
 from app.api.routes import outbound as outbound_routes
 from app.api.routes import platform as platform_routes
+from app.api.routes import provider_accounts as provider_accounts_routes
 from app.api.routes import registration as registration_routes
 from app.api.routes import routing as routing_routes
 from app.api.routes import scheduling as scheduling_routes
@@ -43,6 +44,7 @@ from app.errors import CsaasError
 from app.events.bus import EventBus
 from app.logging import configure_logging
 from app.providers.registry import build_registry
+from app.providers.registry_org import CarrierRegistryProxy
 from app.storage.base import build_store
 from app.voice_plane import service as voice_service
 
@@ -71,7 +73,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         init_engine(settings.database_url)
         # None when Bandwidth is not configured — the app must still boot and serve
         # /healthz. Sending then answers 503 carrier_not_configured.
-        app.state.carriers = build_registry(settings)
+        # P17: wrapped so a request with an org context resolving to DB credentials
+        # (app/auth/deps.py) transparently gets its own per-org registry; every
+        # existing caller with no org context (here, the sweeper, webhooks) still
+        # resolves straight through to this global env-configured registry.
+        app.state.carriers = CarrierRegistryProxy(build_registry(settings))
         # Kept as the PRIMARY, not as "the" carrier: the P1/P2 seam tests read it,
         # and they are the evidence the abstraction held.
         app.state.carrier = app.state.carriers.primary()
@@ -121,7 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     # Set eagerly too: tests drive the app without running lifespan, and override it.
-    app.state.carriers = build_registry(settings)
+    app.state.carriers = CarrierRegistryProxy(build_registry(settings))
     app.state.carrier = app.state.carriers.primary()
     app.state.media_store = build_store(
         settings.media_store_backend, root=settings.media_local_root
@@ -219,6 +225,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(flow_routes.router)
     app.include_router(platform_routes.router)
     app.include_router(analytics_routes.router)
+    app.include_router(provider_accounts_routes.router)
     return app
 
 

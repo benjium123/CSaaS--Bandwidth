@@ -70,3 +70,10 @@
 | D31 | `_resolve_event_e164` opens a session per event per connected WS socket; `call.status` fires per leg transition. | P15 Opus review | P16: stamp `our_e164` into event payloads at publish time (like queue `call.ring` now does), or cache `call_id → our_e164` per connection. |
 | D32 | WS TTL access re-resolve: a DB blip kills `_forward_events` (fail-closed, client reconnects). Acceptable; could keep previous access + log instead. | P15 Opus review | Wrap TTL re-resolve in try/except in P16 softphone work. |
 | D33 | Deliberate P15 scope lines (decided, not oversights): analytics aggregates are org-wide counts (no content); `campaigns:manage` holders may set campaign `from_numbers` without inbox grants (admin-tier concern — make explicit in P16); `/inbox/threads` P15 filter is a post-filter so a page can return short (push into `inbox_svc.list_inbox` in P16); API-key callers bypass the inbox tier (P13 DR-3). | P15 review | Revisit each in P16 UI phase. |
+
+## Discovered during P17 (Opus review — approved non-blocking, land in P18)
+| ID | Issue | Found | Recipe |
+|---|---|---|---|
+| D34 | Org registry cache: a version bump leaves the previous `(org, old_version)` entry and its db-owned adapter open until 256-entry LRU pressure (bounded, not unbounded). | P17 Opus review | In `_cache_org_registry`, evict every existing key with `k[0] == org_id` (awaiting adapter close) before inserting. |
+| D35 | Voice webhooks have NO DB-account fallback — a DB-only provider org's inbound CALLS still resolve against the env registry (messaging fallback exists). P17's "no .env edits" goal holds for SMS only. | P17 Opus review | Mirror `_db_account_carrier_verifying` with `verify_voice_webhook` in `_handle_voice_webhook`; land with P18 number purchasing. |
+| D36 | Carrier catalog (`/routing/catalog`) mixes truths: registry part is per-org via the proxy, but `settings.provider_statuses()`/`carrier_requirements()` are env-derived, so an org with DB-only Telnyx may still see "Needs credentials" in the health section. | P17 review | Make provider_statuses/requirements account-aware in P18. |

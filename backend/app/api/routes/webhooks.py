@@ -7,6 +7,7 @@ far inside Bandwidth's timeout without needing a queue.
 
 from __future__ import annotations
 
+import time
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -18,9 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_session
 from app.models import CallLeg, OrgNumber
+from app.models.provider_accounts import PROVIDER_NAMES, ProviderAccount
+from app.providers import registry_org
 from app.providers.bandwidth import webhooks as bw_webhooks
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
 from app.services import calls as calls_svc
+from app.services import credentials as credential_svc
 from app.services import messaging as svc
 from app.services import routing_exec as routing_exec_svc
 from app.voice_plane import service as voice_service
@@ -30,6 +34,61 @@ router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 log = structlog.get_logger("webhooks")
 
 CARRIER = "bandwidth"
+
+#: P17: verification fallback for a provider now configured only through an org's
+#: provider_accounts row (no env credentials for it at all). Short-TTL, bounded: this
+#: runs ONLY after the global env-registry path has already failed, so it is off the hot
+#: path for every deployment that still authenticates purely off the environment.
+_WEBHOOK_ACCOUNTS_CACHE: dict[str, tuple[float, list[ProviderAccount]]] = {}
+_WEBHOOK_ACCOUNTS_TTL_SECONDS = 30.0
+_WEBHOOK_ACCOUNTS_MAX_ROWS = 50
+
+
+async def _active_accounts_for_provider(
+    session: AsyncSession, provider: str
+) -> list[ProviderAccount]:
+    now = time.monotonic()
+    cached = _WEBHOOK_ACCOUNTS_CACHE.get(provider)
+    if cached is not None and now - cached[0] < _WEBHOOK_ACCOUNTS_TTL_SECONDS:
+        return cached[1]
+
+    # JUSTIFIED allow_unscoped: this runs before any org is known - verifying against
+    # every org's account for this provider IS how a carrier-signed request that fails
+    # env verification gets attributed to an org at all.
+    rows = list(
+        (
+            await session.execute(
+                sa.select(ProviderAccount)
+                .where(
+                    ProviderAccount.provider == provider,
+                    ProviderAccount.status == "active",
+                )
+                .limit(_WEBHOOK_ACCOUNTS_MAX_ROWS)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        )
+        .scalars()
+        .all()
+    )
+    _WEBHOOK_ACCOUNTS_CACHE[provider] = (now, rows)
+    return rows
+
+
+async def _db_account_carrier_verifying(
+    session: AsyncSession, settings, provider: str, headers, raw: bytes
+):  # noqa: ANN001
+    """First active DB account for ``provider`` whose credentials verify this request, or
+    None. Never raises: a 503 from a missing master key just means no DB fallback exists,
+    not that the webhook itself failed."""
+    if provider not in PROVIDER_NAMES:  # attacker-controlled path segment: never cache/query
+        return None
+    if not credential_svc.master_key_present(settings):
+        return None
+    for account in await _active_accounts_for_provider(session, provider):
+        candidate = await registry_org.carrier_for_account(settings, account)
+        if candidate is not None and candidate.verify_webhook(headers, raw):
+            return candidate
+    return None
 
 #: The only automatic inbound-call behaviour this phase has: no configured IVR/routing
 #: exists yet, so an inbound call gets told so and hung up. P6 replaces this ONE constant
@@ -58,11 +117,23 @@ async def bandwidth_messaging(
     settings = request.app.state.settings
     raw = await request.body()
 
-    if not bw_webhooks.verify(
-        request.headers,
-        settings.bandwidth_webhook_username,
-        settings.bandwidth_webhook_password.get_secret_value(),
-    ):
+    env_user = settings.bandwidth_webhook_username
+    env_pass = settings.bandwidth_webhook_password.get_secret_value()
+    # Empty configured creds must NEVER verify. bw_webhooks.verify() does a
+    # constant-time compare of the request's Basic-auth user/pass against these -
+    # unguarded, an unconfigured deployment (both blank) would accept a bare
+    # `Authorization: Basic <base64(":")>` request as authentic, since "" == "" too.
+    verified = bool(env_user and env_pass) and bw_webhooks.verify(
+        request.headers, env_user, env_pass
+    )
+    db_carrier = None
+    if not verified:
+        db_carrier = await _db_account_carrier_verifying(
+            session, settings, CARRIER, request.headers, raw
+        )
+        verified = db_carrier is not None
+
+    if not verified:
         # Bandwidth retrying a 401 for 24h is their problem. Accepting unauthenticated
         # events would be ours.
         response.status_code = 401
@@ -83,7 +154,11 @@ async def bandwidth_messaging(
     for event in events:
         outcomes.append(
             await svc.ingest_event(
-                session, CARRIER, event, body_text, getattr(request.app.state, "carrier", None)
+                session,
+                CARRIER,
+                event,
+                body_text,
+                db_carrier or getattr(request.app.state, "carrier", None),
             )
         )
 
@@ -114,16 +189,27 @@ async def carrier_messaging(
     Bandwidth keeps its own explicit route above; this handles the rest, so the path an
     operator registers with a carrier always names the carrier.
     """
+    settings = request.app.state.settings
     registry = getattr(request.app.state, "carriers", None)
     carrier = registry.get(carrier_name) if registry else None
+
+    raw = await request.body()
+    verified = carrier is not None and carrier.verify_webhook(request.headers, raw)
+    if not verified:
+        db_carrier = await _db_account_carrier_verifying(
+            session, settings, carrier_name, request.headers, raw
+        )
+        if db_carrier is not None:
+            carrier = db_carrier
+            verified = True
+
     if carrier is None:
         # 404, not 401: the carrier genuinely is not configured here, and telling it to
         # retry for 24h against a route that will never exist helps nobody.
         response.status_code = 404
         return {"error": {"code": "carrier_not_configured", "message": carrier_name}}
 
-    raw = await request.body()
-    if not carrier.verify_webhook(request.headers, raw):
+    if not verified:
         response.status_code = 401
         return {"error": {"code": "unauthenticated", "message": "Invalid webhook signature"}}
 

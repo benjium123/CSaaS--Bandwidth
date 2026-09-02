@@ -27,6 +27,10 @@ def verify(headers: Mapping[str, str], expected_user: str, expected_pass: str) -
     Both comparisons ALWAYS run and are combined with ``&``, never ``and`` — short-circuit
     evaluation would leak, via timing, whether the username was correct.
     """
+    # Empty configured credentials must never verify: an unconfigured deployment would
+    # otherwise accept ``Basic base64(":")`` (compare_digest("", "") is True).
+    if not expected_user or not expected_pass:
+        return False
     auth = headers.get("authorization") or headers.get("Authorization") or ""
     if not auth.lower().startswith("basic "):
         return False

@@ -90,6 +90,12 @@ from app.models.platform import (
     WebhookDelivery,
     WebhookEndpoint,
 )
+from app.models.provider_accounts import (
+    PROVIDER_ACCOUNT_STATUSES,
+    PROVIDER_CREDENTIAL_FIELDS,
+    PROVIDER_NAMES,
+    ProviderAccount,
+)
 from app.models.rbac import PERMISSIONS, SYSTEM_ROLES, WILDCARD, OrgMembership, Role
 from app.models.routing import RoutingPolicy
 from app.models.scheduling import Appointment, KbChunk, KbDocument
@@ -187,6 +193,10 @@ __all__ = [
     "MessageThread",
     "Org",
     "OrgMembership",
+    "PROVIDER_ACCOUNT_STATUSES",
+    "PROVIDER_CREDENTIAL_FIELDS",
+    "PROVIDER_NAMES",
+    "ProviderAccount",
     "OrgNumber",
     "Role",
     "Tag",

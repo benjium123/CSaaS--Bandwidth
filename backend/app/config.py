@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("")
     session_secret: SecretStr = SecretStr("")
     credential_encryption_key: SecretStr = SecretStr("")
+    #: P17: encrypts per-org provider_accounts.credentials_encrypted (Fernet key). A
+    #: separate secret from credential_encryption_key on purpose - rotating one must
+    #: never silently rotate the other.
+    credentials_master_key: SecretStr = SecretStr("")
     jwt_expire_hours: int = 24
 
     # ---------------- datastores ----------------
