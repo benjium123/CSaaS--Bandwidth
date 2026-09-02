@@ -563,3 +563,19 @@ every outbound send; empty-env webhook bypass) + 5 majors closed; D34–D36 ledg
 (org-cache eviction on bump, voice webhook DB fallback, env-mixed carrier catalog).
 Deployed same day; live: head 0018, CREDENTIALS_MASTER_KEY loaded (backup
 /root/csaas-env-backup-*), endpoints 401 unauth, webhook empty-basic 401, 0 errors.
+
+## P18 — Number search/purchase/release/inventory, all 5 providers (2026-09-02, commit f754d9c, migration 0019)
+Bandwidth (XML Numbers API, DTD-rejecting capped parser, escaped bodies, order →
+pending → sweeper-polled) + SignalWire (LaML) provisioning added; Telnyx gains
+order_status. Orders persist cost cents / purchased_at / order_detail and the P17
+account that bought the number (only when the carrier came from the org's DB
+registry). Sweeper polls pending orders with per-org context + registry PRIMING
+(without priming the proxy silently fell back to env after the 300s TTL — Opus caught
+it), SQL-filtered to pollable carriers, commit per row. Unpollable pending numbers keep
+the routable default; pollable pending ones are inactive until COMPLETE. Numbers page:
+carrier/account, cost, purchase date, pending/failed badges + refetch, search across
+every live provider, order sends searched carrier + price, grant-inbox link.
+Backend 1034 / frontend 112 green. Opus rounds: 4 blockers + majors closed; D37 (verify
+Bandwidth Numbers API Basic auth live once the account is upgraded) + D38 ledgered.
+Live: head 0019, columns present, number_orders_polled emitting, 0 errors.
+P19 plan + schema (models/spend.py, migration 0020) written; drafts in flight.

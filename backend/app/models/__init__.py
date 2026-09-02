@@ -99,6 +99,7 @@ from app.models.provider_accounts import (
 from app.models.rbac import PERMISSIONS, SYSTEM_ROLES, WILDCARD, OrgMembership, Role
 from app.models.routing import RoutingPolicy
 from app.models.scheduling import Appointment, KbChunk, KbDocument
+from app.models.spend import DEFAULT_RATES_MICROS, SPEND_METRICS, ProviderRate, ProviderSpendDaily
 from app.models.user import User
 from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
@@ -201,6 +202,10 @@ __all__ = [
     "Role",
     "Tag",
     "ThreadLabel",
+    "DEFAULT_RATES_MICROS",
+    "SPEND_METRICS",
+    "ProviderRate",
+    "ProviderSpendDaily",
     "User",
     "WebhookDeadLetter",
 ]
