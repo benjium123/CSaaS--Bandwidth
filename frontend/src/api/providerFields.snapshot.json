@@ -6,7 +6,8 @@
     "messaging_application_id": false,
     "voice_application_id": false,
     "webhook_username": false,
-    "webhook_password": true
+    "webhook_password": true,
+    "site_id": false
   },
   "telnyx": {
     "api_key": true,

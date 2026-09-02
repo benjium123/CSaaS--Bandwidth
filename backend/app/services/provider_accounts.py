@@ -294,6 +294,24 @@ async def get_account(session: AsyncSession, account_id: uuid.UUID) -> ProviderA
     return account
 
 
+async def active_account_for(session: AsyncSession, provider: str) -> ProviderAccount | None:
+    """The current org's ACTIVE account for one provider, or None.
+
+    P18: lets a route record WHICH provider_accounts row bought a number, without the
+    route re-deriving the same "active DB account for this provider" query itself.
+    ``ProviderAccount`` is ``TenantScoped`` - like every other query in this module the
+    caller's session must already carry an org context (app/db/base.py::set_org_context,
+    normally bound for the request by app/auth/deps.py::get_current_org).
+    """
+    return (
+        await session.execute(
+            sa.select(ProviderAccount).where(
+                ProviderAccount.provider == provider, ProviderAccount.status == "active"
+            )
+        )
+    ).scalar_one_or_none()
+
+
 def settings_like_for(settings: Settings, account: ProviderAccount) -> object:
     creds = credential_svc.decrypt(settings, account.credentials_encrypted)
 

@@ -8,12 +8,9 @@ holders of the same secret.
 from __future__ import annotations
 
 import httpx
-import structlog
 
 from app.errors import FeatureUnavailableError, ValidationFailedError
-from app.providers.numbers import AvailableNumber, NumberSearch, OrderResult
-
-log = structlog.get_logger("carrier.plivo.numbers")
+from app.providers.numbers import AvailableNumber, NumberSearch, OrderResult, parse_cost_cents
 
 
 class PlivoNumberProviderMixin:
@@ -65,6 +62,9 @@ class PlivoNumberProviderMixin:
                         "mms": bool(item.get("mms_enabled")),
                         "voice": bool(item.get("voice_enabled")),
                     },
+                    monthly_cost_cents=parse_cost_cents(item.get("monthly_rental_rate")),
+                    # Plivo's PhoneNumber search does not report a one-time setup fee.
+                    setup_cost_cents=None,
                 )
             )
         return out

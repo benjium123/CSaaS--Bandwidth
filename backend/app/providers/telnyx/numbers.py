@@ -10,13 +10,13 @@ credential for no gain.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from urllib.parse import quote
+
 import httpx
-import structlog
 
 from app.errors import FeatureUnavailableError, ValidationFailedError
-from app.providers.numbers import AvailableNumber, NumberSearch, OrderResult
-
-log = structlog.get_logger("carrier.telnyx.numbers")
+from app.providers.numbers import AvailableNumber, NumberSearch, OrderResult, parse_cost_cents
 
 
 def _capabilities(features: object) -> dict:
@@ -29,6 +29,15 @@ def _capabilities(features: object) -> dict:
             elif isinstance(item, str):
                 names.add(item.lower())
     return {"sms": "sms" in names, "mms": "mms" in names, "voice": "voice" in names}
+
+
+@dataclass(frozen=True)
+class OrderStatusResult:
+    """P18: Telnyx's async order-status return, same shape as Bandwidth's - the sweeper
+    (services/number_orders.py) accepts either."""
+
+    status: str
+    detail: str | None = None
 
 
 class TelnyxNumberProviderMixin:
@@ -68,6 +77,7 @@ class TelnyxNumberProviderMixin:
             if not isinstance(item, dict):
                 continue
             region = item.get("region_information") or {}
+            cost_info = item.get("cost_information") or {}
             out.append(
                 AvailableNumber(
                     e164=str(item.get("phone_number") or ""),
@@ -78,9 +88,11 @@ class TelnyxNumberProviderMixin:
                     if isinstance(region, dict)
                     else "",
                     locality=str(region.get("locality") or "") if isinstance(region, dict) else "",
-                    monthly_cost=str((item.get("cost_information") or {}).get("monthly_cost", "")),
-                    setup_cost=str((item.get("cost_information") or {}).get("upfront_cost", "")),
+                    monthly_cost=str(cost_info.get("monthly_cost", "")),
+                    setup_cost=str(cost_info.get("upfront_cost", "")),
                     capabilities=_capabilities(item.get("features")),
+                    monthly_cost_cents=parse_cost_cents(cost_info.get("monthly_cost")),
+                    setup_cost_cents=parse_cost_cents(cost_info.get("upfront_cost")),
                 )
             )
         return [n for n in out if n.e164]
@@ -122,6 +134,41 @@ class TelnyxNumberProviderMixin:
             status="active" if order_status == "success" else "pending",
             capabilities=_capabilities(entry.get("features")),
         )
+
+    async def order_status(self, provider_ref: str) -> OrderStatusResult:
+        """P18: Telnyx number orders are not always synchronous - a `number_orders`
+        create can come back "pending" and only later settle to "success" or "failed".
+        Polled by services/number_orders.py exactly like Bandwidth's order_status."""
+        client = await self._get_client()
+        resp = await client.get(
+            f"{self.base_url}/number_orders/{quote(provider_ref, safe='')}",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
+        if resp.status_code != 200:
+            raise FeatureUnavailableError(
+                f"Telnyx order status failed with {resp.status_code}"
+            )
+
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = {}
+        data = (payload or {}).get("data") or {}
+        raw_status = str(data.get("status") or "").lower()
+
+        detail: str | None = None
+        errors = payload.get("errors") if isinstance(payload, dict) else None
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            detail = str(errors[0].get("detail") or errors[0].get("title") or "") or None
+
+        if raw_status == "success":
+            return OrderStatusResult(status="active")
+        if raw_status in ("failed", "cancelled", "canceled"):
+            return OrderStatusResult(
+                status="failed",
+                detail=detail or f"Telnyx order {provider_ref} {raw_status}",
+            )
+        return OrderStatusResult(status="pending", detail=detail or raw_status or "pending")
 
     async def release_number(self, e164: str, provider_ref: str | None = None) -> None:
         client = await self._get_client()

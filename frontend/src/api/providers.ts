@@ -31,6 +31,7 @@ export const PROVIDER_FIELDS: Record<ProviderName, ProviderField[]> = {
     { name: "voice_application_id", label: "Voice application ID", secret: false },
     { name: "webhook_username", label: "Webhook username", secret: false },
     { name: "webhook_password", label: "Webhook password", secret: true },
+    { name: "site_id", label: "Site ID (needed to order numbers)", secret: false },
   ],
   telnyx: [
     { name: "api_key", label: "API key", secret: true },

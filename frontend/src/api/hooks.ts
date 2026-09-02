@@ -13,7 +13,6 @@ export type CallDetailOut = components["schemas"]["CallDetailOut"];
 export type CallLegOut = components["schemas"]["CallLegOut"];
 export type RecordingOut = components["schemas"]["RecordingOut"];
 export type NumberOut = components["schemas"]["NumberOut"];
-export type AvailableNumberOut = components["schemas"]["SearchOut"];
 export type BrandOut = components["schemas"]["BrandOut"];
 // NOTE: P11 added a second, differently-shaped "CampaignOut"/"CampaignIn" pair in
 // app/api/routes/outbound.py. FastAPI's default schema naming disambiguates same-named
@@ -190,6 +189,10 @@ export function useTags(api: ApiClient) {
   });
 }
 
+/** Generated-typed base list, used by callers that only need id/e164/carrier/status
+ * (CallsPage, CampaignsPage, FlowsPage, SoftphonePanel, ProvidersPage). NumbersPage
+ * itself uses the P18-extended version in api/numbers.ts (same ["numbers"] query key,
+ * intentionally - both read/invalidate the same cache entry). */
 export function useNumbers(api: ApiClient) {
   return useQuery({
     queryKey: ["numbers"],
@@ -301,35 +304,6 @@ export function useHangupCall(api: ApiClient) {
 /* ---------------------------------------------------------------------------------------
  * Numbers (Phase 4 upgrade) + registration lookups
  * ------------------------------------------------------------------------------------- */
-
-export type AvailableNumberFilters = {
-  carrier?: string;
-  area_code?: string;
-  contains?: string;
-  locality?: string;
-  region?: string;
-  number_type?: string;
-  limit?: number;
-};
-
-export function useAvailableNumbers(api: ApiClient, filters: AvailableNumberFilters, enabled: boolean) {
-  const params = new URLSearchParams();
-  if (filters.carrier) params.set("carrier", filters.carrier);
-  if (filters.area_code) params.set("area_code", filters.area_code);
-  if (filters.contains) params.set("contains", filters.contains);
-  if (filters.locality) params.set("locality", filters.locality);
-  if (filters.region) params.set("region", filters.region);
-  if (filters.number_type) params.set("number_type", filters.number_type);
-  if (filters.limit != null) params.set("limit", String(filters.limit));
-  const qs = params.toString();
-
-  return useQuery({
-    queryKey: ["numbers-available", filters],
-    queryFn: () => api.request<AvailableNumberOut[]>(`/api/v1/numbers/available${qs ? `?${qs}` : ""}`),
-    enabled,
-    retry: false,
-  });
-}
 
 export function useOrderNumber(api: ApiClient) {
   const qc = useQueryClient();

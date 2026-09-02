@@ -103,6 +103,10 @@ def _construct_provider(name: str, src: Any, base: Settings) -> MessagingCarrier
                 auth_mode=getattr(base, "bandwidth_auth_mode", "oauth2"),
                 webhook_username=getattr(src, "bandwidth_webhook_username", ""),
                 webhook_password=getattr(src, "bandwidth_webhook_password").get_secret_value(),
+                # P18: DB-backed accounts supply their own Dashboard/IRIS Site id via the
+                # optional `site_id` credential (settings_like_for maps it to
+                # bandwidth_site_id); missing -> "".
+                site_id=getattr(src, "bandwidth_site_id", ""),
             )
             carrier.voice_application_id = getattr(src, "bandwidth_voice_application_id", "")
             carrier.voice_callback_url = (
@@ -220,6 +224,25 @@ def is_primed(org_id: uuid.UUID) -> bool:
         return False
     _registry, _db_owned, cached_at = entry
     return time.monotonic() - cached_at <= _ORG_REGISTRY_TTL_SECONDS
+
+
+def db_backed_providers(org_id: uuid.UUID) -> frozenset[str]:
+    """Provider names this org has an ACTIVE, DB-backed adapter for, right now.
+
+    P18: read-only accessor over the same cache ``is_primed`` reads, so a route (e.g.
+    ``POST /numbers/order``) can tell "this carrier object came from the org's P17
+    provider account" apart from "this carrier object is the env-configured shared
+    one" WITHOUT re-deriving cache/TTL logic itself. Mirrors ``is_primed``'s own
+    freshness rule exactly: not cached, or past the TTL backstop, means "treat it as
+    env" - the same fallback ``CarrierRegistryProxy._resolve()`` takes in that case.
+    """
+    entry = _ORG_REGISTRY_CACHE.get((org_id, current_version(org_id)))
+    if entry is None:
+        return frozenset()
+    _registry, db_owned, cached_at = entry
+    if time.monotonic() - cached_at > _ORG_REGISTRY_TTL_SECONDS:
+        return frozenset()
+    return frozenset(db_owned)
 
 
 async def carrier_for_account(settings: Settings, account: ProviderAccount) -> MessagingCarrier | None:

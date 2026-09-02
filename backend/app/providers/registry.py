@@ -123,6 +123,8 @@ def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
             auth_mode=settings.bandwidth_auth_mode,
             webhook_username=settings.bandwidth_webhook_username,
             webhook_password=settings.bandwidth_webhook_password.get_secret_value(),
+            # P18: the Dashboard/IRIS Site id number orders are placed under.
+            site_id=settings.bandwidth_site_id,
         )
         bw = carriers["bandwidth"]
         # Voice attributes ride on the same adapter object; the voice mixin reads them

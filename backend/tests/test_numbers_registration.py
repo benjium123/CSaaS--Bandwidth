@@ -425,12 +425,23 @@ def test_provisioning_capability_is_declared_not_probed():
     assert isinstance(telnyx, NumberProvider)
     assert as_provider(telnyx) is telnyx
 
+    # P18 Gap 1: Bandwidth now provisions too, via BandwidthNumberProviderMixin against
+    # the separate Dashboard/IRIS XML API (blocker R1 from the P4 note this test used to
+    # encode is resolved). Declared the same way as every other carrier - by actually
+    # implementing search_numbers/order_number/release_number - never by a runtime probe.
     bandwidth = BandwidthMessagingCarrier(
         account_id="a", api_username="u", api_password="p", application_id="x"
     )
-    assert not isinstance(bandwidth, NumberProvider)
+    assert isinstance(bandwidth, NumberProvider)
+    assert as_provider(bandwidth) is bandwidth
+
+    # A carrier-shaped object that genuinely does not implement provisioning still fails
+    # closed with a useful message, rather than being "probed" at call time.
+    class _NoProvisioning:
+        name = "no-provisioning"
+
     with pytest.raises(FeatureUnavailableError) as exc:
-        as_provider(bandwidth)
+        as_provider(_NoProvisioning())
     assert "manually" in str(exc.value), "the error must tell the operator what to do instead"
 
 

@@ -81,6 +81,21 @@ class OrgNumber(Base, TenantScoped, TimestampMixin):
         GUID(), sa.ForeignKey("call_flows.id", ondelete="SET NULL"), nullable=True
     )
 
+    # ---- P18 ----------------------------------------------------------------------
+    #: Which P17 provider account bought this number (NULL = env-configured carrier or
+    #: added by hand). SET NULL so disabling/removing an account never orphans numbers.
+    provider_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("provider_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    #: Purchase facts captured at order time (cents; NULL = provider did not report).
+    purchase_cost_cents: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    monthly_cost_cents: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    purchased_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    #: Last provider order status / error text (async orders are polled by the sweeper).
+    order_detail: Mapped[str | None] = mapped_column(sa.String(512), nullable=True)
+
 
 class MessageThread(Base, TenantScoped, TimestampMixin):
     """A pure (org, our number, contact number) bucket.

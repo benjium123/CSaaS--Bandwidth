@@ -31,6 +31,9 @@ PROVIDER_CREDENTIAL_FIELDS: dict[str, dict[str, bool]] = {
         "voice_application_id": False,
         "webhook_username": False,
         "webhook_password": True,
+        # P18: Bandwidth number orders need a Site (sub-account) id. Optional — only
+        # required when ordering numbers (see providers/bandwidth/numbers.py).
+        "site_id": False,
     },
     "telnyx": {
         "api_key": True,

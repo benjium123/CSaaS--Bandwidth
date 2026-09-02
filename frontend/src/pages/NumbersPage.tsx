@@ -1,45 +1,149 @@
 import * as React from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import type { ApiClient } from "@/api/client";
 import {
   useAssignCampaign,
-  useAvailableNumbers,
   useCampaigns,
+  useCarrierCatalog,
+  useReleaseNumber,
+  type CarrierCatalogOut,
+} from "@/api/hooks";
+import {
+  fetchProviderAccounts,
+  PROVIDER_NAMES,
+  type ProviderAccount,
+  type ProviderName,
+} from "@/api/providers";
+import {
+  formatMonthlyCost,
+  formatSetupCost,
+  useAvailableNumbers,
   useNumbers,
   useOrderNumber,
-  useReleaseNumber,
   type AvailableNumberFilters,
   type NumberOut,
-} from "@/api/hooks";
+  type SearchOut,
+} from "@/api/numbers";
 import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const CARRIER_OPTIONS = [
-  { value: "", label: "Primary carrier" },
-  { value: "bandwidth", label: "Bandwidth" },
-  { value: "telnyx", label: "Telnyx" },
-  { value: "signalwire", label: "SignalWire" },
-];
+const PROVIDER_LABELS: Record<ProviderName, string> = {
+  bandwidth: "Bandwidth",
+  telnyx: "Telnyx",
+  twilio: "Twilio",
+  plivo: "Plivo",
+  signalwire: "SignalWire",
+};
+
+type CarrierOption = {
+  value: ProviderName;
+  label: string;
+  disabled: boolean;
+  tooltip?: string;
+};
+
+/** Live carriers = env-live catalog entries UNION active provider accounts (P17). Every
+ * provider always renders, in the fixed order the plan calls for - not-live ones are
+ * disabled with a tooltip instead of being hidden. */
+function buildCarrierOptions(
+  catalog: CarrierCatalogOut[],
+  accounts: ProviderAccount[],
+): CarrierOption[] {
+  const activeAccountByProvider = new Map<ProviderName, ProviderAccount>();
+  for (const account of accounts) {
+    if (account.status === "active" && !activeAccountByProvider.has(account.provider)) {
+      activeAccountByProvider.set(account.provider, account);
+    }
+  }
+  const catalogByProvider = new Map(catalog.map((entry) => [entry.name, entry]));
+
+  return PROVIDER_NAMES.map((name) => {
+    const account = activeAccountByProvider.get(name);
+    const entry = catalogByProvider.get(name);
+    const envLive = Boolean(entry?.live);
+    const live = Boolean(account) || envLive;
+
+    const label = account
+      ? `${PROVIDER_LABELS[name]} (account: ${account.label})`
+      : envLive
+        ? `${PROVIDER_LABELS[name]} (env)`
+        : PROVIDER_LABELS[name];
+
+    return {
+      value: name,
+      label,
+      disabled: !live,
+      tooltip: live ? undefined : entry?.reason || "Add credentials in Providers",
+    };
+  });
+}
 
 function registrationBadgeClass(registration: string): string {
   switch (registration) {
     case "approved":
-      return "bg-green-100 text-green-800";
+      return "bg-green-950 text-green-400";
     case "pending":
-      return "bg-amber-100 text-amber-800";
+      return "bg-amber-950 text-amber-400";
     case "rejected":
-      return "bg-red-100 text-red-800";
+      return "bg-red-950 text-red-400";
     default:
-      return "bg-gray-100 text-gray-600";
+      return "bg-neutral-800 text-neutral-400";
   }
+}
+
+function numberStatusPill(status: string): { label: string; className: string } {
+  switch (status) {
+    case "active":
+      return { label: "Active", className: "bg-green-950 text-green-400" };
+    case "pending":
+      return { label: "Pending", className: "bg-amber-950 text-amber-400" };
+    case "failed":
+      return { label: "Failed", className: "bg-red-950 text-red-400" };
+    case "released":
+      return { label: "Released", className: "bg-neutral-800 text-neutral-400" };
+    default:
+      return { label: status, className: "bg-neutral-800 text-neutral-400" };
+  }
+}
+
+function formatPurchasedAt(value: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+/** Small inline pending/error readout - same local pattern as ProvidersPage /
+ * InboxSettingsPage (P16/P17); not shared since neither exports it. */
+function MutationStatus({
+  mutation,
+}: {
+  mutation: { isPending: boolean; isError: boolean; error: unknown };
+}) {
+  if (mutation.isPending) {
+    return (
+      <span className="flex items-center gap-1 text-[10px] text-neutral-500">
+        <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+      </span>
+    );
+  }
+  if (mutation.isError) {
+    return (
+      <span role="alert" className="text-[10px] text-red-400">
+        {(mutation.error as Error).message}
+      </span>
+    );
+  }
+  return null;
 }
 
 export function NumbersPage() {
   const { api } = useAuth();
   const qc = useQueryClient();
-  const { data, isLoading } = useNumbers(api);
+  const { data: numbers, isLoading } = useNumbers(api);
   const { data: campaigns } = useCampaigns(api);
   const campaignName = React.useCallback(
     (id: string | null | undefined) => campaigns?.find((c) => c.id === id)?.name ?? null,
@@ -66,28 +170,32 @@ export function NumbersPage() {
   const [confirmReleaseId, setConfirmReleaseId] = React.useState<string | null>(null);
 
   async function release(id: string) {
-    setError(null);
     try {
       await releaseNumber.mutateAsync(id);
       setConfirmReleaseId(null);
-    } catch (err) {
-      setError((err as Error).message);
+    } catch {
+      // surfaced via MutationStatus below
     }
   }
 
   async function assign(numberId: string, campaignId: string) {
-    setError(null);
     try {
       await assignCampaign.mutateAsync({ numberId, campaign_id: campaignId || null });
-    } catch (err) {
-      setError((err as Error).message);
+    } catch {
+      // surfaced via MutationStatus below
     }
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 p-6">
+    <div className="dark mx-auto max-w-5xl space-y-8 bg-neutral-950 p-6 text-neutral-100">
       <div className="space-y-4">
-        <h1 className="text-lg font-semibold">Numbers</h1>
+        <div className="space-y-2">
+          <h1 className="text-lg font-semibold text-neutral-50">Numbers</h1>
+          <p className="text-sm text-neutral-400">
+            Search, order, release, and assign org numbers.
+          </p>
+        </div>
+
         <form className="flex gap-2" onSubmit={add}>
           <Input
             aria-label="Phone number"
@@ -98,31 +206,33 @@ export function NumbersPage() {
           <Button type="submit">Add</Button>
         </form>
         {error && (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-red-400">
             {error}
           </p>
         )}
 
         {isLoading ? (
           <Spinner />
-        ) : (data ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">No numbers yet.</p>
+        ) : (numbers ?? []).length === 0 ? (
+          <p className="text-sm text-neutral-400">No numbers yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-border">
+          <div className="overflow-x-auto rounded-md border border-neutral-800">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                <tr className="border-b border-neutral-800 text-left text-xs text-neutral-400">
                   <th className="px-3 py-2 font-medium">Number</th>
                   <th className="px-3 py-2 font-medium">Type</th>
                   <th className="px-3 py-2 font-medium">Carrier</th>
+                  <th className="px-3 py-2 font-medium">Cost</th>
+                  <th className="px-3 py-2 font-medium">Purchased</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Registration</th>
                   <th className="px-3 py-2 font-medium">Campaign</th>
                   <th className="px-3 py-2 font-medium">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
-                {(data ?? []).map((n) => (
+              <tbody className="divide-y divide-neutral-800">
+                {(numbers ?? []).map((n) => (
                   <NumberRow
                     key={n.id}
                     number={n}
@@ -145,6 +255,10 @@ export function NumbersPage() {
             </table>
           </div>
         )}
+        <div className="flex items-center gap-3">
+          <MutationStatus mutation={releaseNumber} />
+          <MutationStatus mutation={assignCampaign} />
+        </div>
       </div>
 
       <OrderNumberSection api={api} campaigns={campaigns ?? []} onOrdered={() => setError(null)} />
@@ -172,13 +286,36 @@ function NumberRow({
   releasePending: boolean;
 }) {
   const released = number.status === "released";
+  const status = numberStatusPill(number.status);
 
   return (
     <tr>
-      <td className="px-3 py-2">{formatPhone(number.e164)}</td>
-      <td className="px-3 py-2 text-xs text-muted-foreground">{number.number_type}</td>
-      <td className="px-3 py-2 text-xs text-muted-foreground">{number.carrier}</td>
-      <td className="px-3 py-2 text-xs text-muted-foreground">{number.status}</td>
+      <td className="px-3 py-2 text-neutral-100">{formatPhone(number.e164)}</td>
+      <td className="px-3 py-2 text-xs text-neutral-400">{number.number_type}</td>
+      <td className="px-3 py-2">
+        <div className="text-xs text-neutral-200">{number.carrier}</div>
+        {number.provider_account_label && (
+          <div className="text-xs text-neutral-500">{number.provider_account_label}</div>
+        )}
+      </td>
+      <td className="px-3 py-2 text-xs text-neutral-300">{formatMonthlyCost(number)}</td>
+      <td className="px-3 py-2 text-xs text-neutral-400">{formatPurchasedAt(number.purchased_at)}</td>
+      <td className="px-3 py-2">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs",
+            status.className,
+          )}
+        >
+          {number.status === "pending" && <Loader2 className="h-3 w-3 animate-spin" />}
+          {status.label}
+        </span>
+        {number.status === "failed" && number.order_detail && (
+          <span className="mt-1 block max-w-[240px] text-xs text-red-400">
+            {number.order_detail}
+          </span>
+        )}
+      </td>
       <td className="px-3 py-2">
         <Badge
           className={registrationBadgeClass(number.registration)}
@@ -191,7 +328,7 @@ function NumberRow({
         {number.number_type === "local" ? (
           <select
             aria-label={`Campaign for ${number.e164}`}
-            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 rounded-md border border-neutral-700 bg-neutral-950 px-2 text-xs text-neutral-100"
             value={number.campaign_id ?? ""}
             onChange={(e) => onAssign(e.target.value)}
             disabled={assignPending || released}
@@ -204,12 +341,12 @@ function NumberRow({
             ))}
           </select>
         ) : (
-          <span className="text-xs text-muted-foreground">{campaignName ?? "—"}</span>
+          <span className="text-xs text-neutral-400">{campaignName ?? "—"}</span>
         )}
       </td>
       <td className="px-3 py-2">
         {released ? (
-          <span className="text-xs text-muted-foreground">Released</span>
+          <span className="text-xs text-neutral-500">Released</span>
         ) : (
           <Button
             type="button"
@@ -240,19 +377,28 @@ function OrderNumberSection({
   const [numberType, setNumberType] = React.useState("local");
   const [carrier, setCarrier] = React.useState("");
   const [searchFilters, setSearchFilters] = React.useState<AvailableNumberFilters | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-
-  const { data: results, isFetching } = useAvailableNumbers(
-    api,
-    searchFilters ?? {},
-    searchFilters !== null,
+  const [orderedNumber, setOrderedNumber] = React.useState<{ e164: string; status: string } | null>(
+    null,
   );
+
+  const { data: catalog } = useCarrierCatalog(api);
+  const providerAccountsQuery = useQuery({
+    queryKey: ["provider-accounts"],
+    queryFn: () => fetchProviderAccounts(api),
+  });
+  const carrierOptions = React.useMemo(
+    () => buildCarrierOptions(catalog ?? [], providerAccountsQuery.data ?? []),
+    [catalog, providerAccountsQuery.data],
+  );
+
+  const availableQuery = useAvailableNumbers(api, searchFilters ?? {}, searchFilters !== null);
+  const results: SearchOut[] = availableQuery.data ?? [];
 
   const orderNumber = useOrderNumber(api);
 
   function search(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
+    setOrderedNumber(null);
     setSearchFilters({
       area_code: areaCode || undefined,
       contains: contains || undefined,
@@ -261,22 +407,37 @@ function OrderNumberSection({
     });
   }
 
-  async function order(e164: string) {
-    setError(null);
+  async function order(result: SearchOut) {
+    setOrderedNumber(null);
     try {
-      await orderNumber.mutateAsync({ e164, carrier: carrier || undefined });
+      const ordered = await orderNumber.mutateAsync({
+        e164: result.e164,
+        // The carrier the RESULTS were fetched with, not whatever the live dropdown
+        // state is now - the operator may have changed the dropdown after searching,
+        // and the result row's carrier must match what was actually searched/shown.
+        carrier: searchFilters?.carrier,
+        // Only send the cost fields the row actually priced - omit them entirely
+        // (rather than sending null) when the provider didn't quote a cents amount.
+        ...(typeof result.monthly_cost_cents === "number"
+          ? { monthly_cost_cents: result.monthly_cost_cents }
+          : {}),
+        ...(typeof result.setup_cost_cents === "number"
+          ? { setup_cost_cents: result.setup_cost_cents }
+          : {}),
+      });
+      setOrderedNumber({ e164: ordered.e164, status: ordered.status });
       onOrdered();
-    } catch (err) {
-      setError((err as Error).message);
+    } catch {
+      // surfaced via MutationStatus below
     }
   }
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-semibold">Order a number</h2>
+      <h2 className="text-base font-semibold text-neutral-50">Order a number</h2>
       <form className="flex flex-wrap items-end gap-2" onSubmit={search}>
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="area-code">
+          <label className="block text-xs text-neutral-400" htmlFor="area-code">
             Area code
           </label>
           <Input
@@ -289,7 +450,7 @@ function OrderNumberSection({
           />
         </div>
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="contains">
+          <label className="block text-xs text-neutral-400" htmlFor="contains">
             Contains
           </label>
           <Input
@@ -301,13 +462,13 @@ function OrderNumberSection({
           />
         </div>
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="number-type">
+          <label className="block text-xs text-neutral-400" htmlFor="number-type">
             Type
           </label>
           <select
             id="number-type"
             aria-label="Number type"
-            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+            className="h-9 rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100"
             value={numberType}
             onChange={(e) => setNumberType(e.target.value)}
           >
@@ -316,64 +477,80 @@ function OrderNumberSection({
           </select>
         </div>
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="carrier">
+          <label className="block text-xs text-neutral-400" htmlFor="carrier">
             Carrier
           </label>
           <select
             id="carrier"
             aria-label="Carrier"
-            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+            className="h-9 rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100"
             value={carrier}
             onChange={(e) => setCarrier(e.target.value)}
           >
-            {CARRIER_OPTIONS.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
+            <option value="">Any live provider</option>
+            {carrierOptions.map((option) => (
+              <option
+                key={option.value}
+                value={option.value}
+                disabled={option.disabled}
+                title={option.tooltip}
+              >
+                {option.label}
               </option>
             ))}
           </select>
         </div>
-        <Button type="submit" disabled={isFetching}>
+        <Button type="submit" disabled={availableQuery.isFetching}>
           Search
         </Button>
+        <MutationStatus mutation={orderNumber} />
       </form>
 
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
+      {orderedNumber && (
+        <div className="rounded-md border border-green-800 bg-green-950 p-3 text-sm text-green-200">
+          Ordered {orderedNumber.e164} ({orderedNumber.status}) —{" "}
+          <Link to="/settings/inboxes" className="text-green-400 underline">
+            Grant this inbox to a department or employee →
+          </Link>
+        </div>
       )}
 
-      {isFetching ? (
+      {availableQuery.isFetching ? (
         <Spinner label="Searching" />
-      ) : results && results.length > 0 ? (
-        <div className="overflow-x-auto rounded-md border border-border">
+      ) : availableQuery.isError ? (
+        <p role="alert" className="text-sm text-red-400">
+          {(availableQuery.error as Error).message}
+        </p>
+      ) : results.length > 0 ? (
+        <div className="overflow-x-auto rounded-md border border-neutral-800">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <tr className="border-b border-neutral-800 text-left text-xs text-neutral-400">
                 <th className="px-3 py-2 font-medium">Number</th>
                 <th className="px-3 py-2 font-medium">Type</th>
                 <th className="px-3 py-2 font-medium">Region</th>
                 <th className="px-3 py-2 font-medium">Locality</th>
                 <th className="px-3 py-2 font-medium">Monthly cost</th>
+                <th className="px-3 py-2 font-medium">Setup cost</th>
                 <th className="px-3 py-2 font-medium">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody className="divide-y divide-neutral-800">
               {results.map((r) => (
                 <tr key={r.e164}>
-                  <td className="px-3 py-2">{formatPhone(r.e164)}</td>
-                  <td className={cn("px-3 py-2 text-xs text-muted-foreground")}>
-                    {r.number_type}
+                  <td className="px-3 py-2 text-neutral-100">{formatPhone(r.e164)}</td>
+                  <td className={cn("px-3 py-2 text-xs text-neutral-400")}>{r.number_type}</td>
+                  <td className="px-3 py-2 text-xs text-neutral-400">{r.region}</td>
+                  <td className="px-3 py-2 text-xs text-neutral-400">{r.locality}</td>
+                  <td className="px-3 py-2 text-xs text-neutral-300">{formatMonthlyCost(r)}</td>
+                  <td className="px-3 py-2 text-xs text-neutral-300">
+                    {formatSetupCost(r.setup_cost_cents)}
                   </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.region}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.locality}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.monthly_cost}</td>
                   <td className="px-3 py-2">
                     <Button
                       type="button"
                       size="sm"
-                      onClick={() => order(r.e164)}
+                      onClick={() => order(r)}
                       disabled={orderNumber.isPending}
                     >
                       Order
@@ -385,11 +562,11 @@ function OrderNumberSection({
           </table>
         </div>
       ) : searchFilters ? (
-        <p className="text-sm text-muted-foreground">No numbers found.</p>
+        <p className="text-sm text-neutral-400">No numbers found.</p>
       ) : null}
 
       {campaigns.length === 0 && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-neutral-500">
           No campaigns registered yet — ordered local numbers can be assigned to one later from
           the table above.
         </p>

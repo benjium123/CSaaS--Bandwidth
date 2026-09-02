@@ -16,6 +16,7 @@ import structlog
 from app.providers.bandwidth import errors as bw_errors
 from app.providers.bandwidth import webhooks
 from app.providers.bandwidth.auth import BandwidthTokenProvider
+from app.providers.bandwidth.numbers import BandwidthNumberProviderMixin
 from app.providers.bandwidth.voice import BandwidthVoiceMixin
 from app.providers.domain import (
     CarrierCapabilities,
@@ -29,7 +30,7 @@ log = structlog.get_logger("carrier.bandwidth")
 DEFAULT_BASE_URL = "https://messaging.bandwidth.com/api/v2"
 
 
-class BandwidthMessagingCarrier(BandwidthVoiceMixin):
+class BandwidthMessagingCarrier(BandwidthVoiceMixin, BandwidthNumberProviderMixin):
     name = "bandwidth"
 
     def __init__(
@@ -47,6 +48,12 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
         webhook_username: str = "",
         webhook_password: str = "",
         base_url: str = DEFAULT_BASE_URL,
+        # P18: the Bandwidth Dashboard/IRIS "Site" (sub-account) id a number order is
+        # placed under - required by BandwidthNumberProviderMixin.order_number, not by
+        # messaging. Defaults empty; the caller (build_registry for the env carrier, or
+        # the P17 per-org registry for a DB-backed one) is responsible for passing the
+        # configured/credentialed value.
+        site_id: str = "",
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.account_id = account_id
@@ -55,6 +62,7 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
         self._webhook_username = webhook_username
         self._webhook_password = webhook_password
         self._auth = (api_username, api_password)
+        self.site_id = site_id
         # OAuth2 when the dashboard issued a Client ID / Client Secret (the current
         # Bandwidth model); Basic for legacy API-user credentials. Explicit config, not a
         # guess: sniffing the credential shape would silently change how we authenticate
@@ -151,13 +159,6 @@ class BandwidthMessagingCarrier(BandwidthVoiceMixin):
                 carrier_code=error.carrier_code,
             )
         return SendResult("rejected", None, error)
-
-    # NOTE: BandwidthMessagingCarrier deliberately does NOT implement NumberProvider.
-    # Bandwidth ordering runs through the IRIS/Dashboard XML API and needs a SiteId and
-    # SipPeerId that this account has not been given, plus credentials that currently
-    # return 401 (blocker R1). Writing an integration we cannot execute even once would
-    # produce code that looks finished and fails on first contact - `as_provider` raises a
-    # clear FeatureUnavailableError instead, and numbers can be added by hand meanwhile.
 
     async def auth_kwargs(self) -> dict:
         """How to authenticate ONE outbound request: Bearer header or Basic tuple."""

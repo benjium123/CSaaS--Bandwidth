@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     bandwidth_api_password: SecretStr = SecretStr("")
     bandwidth_messaging_application_id: str = ""
     bandwidth_voice_application_id: str = ""
+    # P18: Bandwidth Site (sub-account) id used for number orders. Optional.
+    bandwidth_site_id: str = ""
     #: "oauth2" for a dashboard Client ID / Client Secret (current Bandwidth model),
     #: "basic" for a legacy API-user username/password pair.
     bandwidth_auth_mode: str = "oauth2"

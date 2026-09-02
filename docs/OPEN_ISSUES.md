@@ -77,3 +77,9 @@
 | D34 | Org registry cache: a version bump leaves the previous `(org, old_version)` entry and its db-owned adapter open until 256-entry LRU pressure (bounded, not unbounded). | P17 Opus review | In `_cache_org_registry`, evict every existing key with `k[0] == org_id` (awaiting adapter close) before inserting. |
 | D35 | Voice webhooks have NO DB-account fallback — a DB-only provider org's inbound CALLS still resolve against the env registry (messaging fallback exists). P17's "no .env edits" goal holds for SMS only. | P17 Opus review | Mirror `_db_account_carrier_verifying` with `verify_voice_webhook` in `_handle_voice_webhook`; land with P18 number purchasing. |
 | D36 | Carrier catalog (`/routing/catalog`) mixes truths: registry part is per-org via the proxy, but `settings.provider_statuses()`/`carrier_requirements()` are env-derived, so an org with DB-only Telnyx may still see "Needs credentials" in the health section. | P17 review | Make provider_statuses/requirements account-aware in P18. |
+
+## Discovered during P18 (Opus review)
+| ID | Issue | Found | Recipe |
+|---|---|---|---|
+| D37 | Bandwidth Numbers API (dashboard.bandwidth.com) is called with Basic auth (api_username/api_password) while messaging/voice use OAuth2 client credentials — NOT verified against the live account (trial). 401/403 now maps to a clear ValidationFailedError. | P18 Opus review | Verify one real search once the account is upgraded; if the dashboard API user differs, add a separate credential pair. |
+| D38 | Bandwidth XML size cap runs on `resp.text` (after httpx buffered the body) — bounds parse cost, not memory. | P18 Opus review | Stream + cap `Content-Length`/bytes read if it ever matters. |

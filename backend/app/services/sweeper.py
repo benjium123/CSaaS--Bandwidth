@@ -36,6 +36,7 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     from app.services import dialer as dialer_svc
     from app.services import media as media_svc
     from app.services import messaging as messaging_svc
+    from app.services import number_orders
     from app.services import outbound as outbound_svc
     from app.services import recordings as recordings_svc
     from app.services import reputation as reputation_svc
@@ -54,6 +55,7 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
         "purged": 0,
         "reprocessed": 0,
         "recordings_fetched": 0,
+        "number_orders_polled": 0,
     }
 
     if store is not None:
@@ -82,6 +84,19 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
                 results["purged"] = await media_svc.purge_expired_media(session, store)
         except Exception:
             log.exception("sweeper_purge_failed")
+
+    # P18: async carrier number orders (Bandwidth's RECEIVED -> COMPLETE/FAILED) get
+    # polled to a terminal state here. Org-scoped and committed per row inside
+    # number_orders.py itself - this hook only owns the loop and the counter, same
+    # discipline as every other task in this function.
+    if registry is not None:
+        try:
+            async with get_sessionmaker()() as session:
+                results["number_orders_polled"] = await number_orders.poll_pending_number_orders(
+                    session, registry, settings=app.state.settings
+                )
+        except Exception:
+            log.exception("sweeper_number_order_poll_failed")
 
     if carrier is not None:
         try:
