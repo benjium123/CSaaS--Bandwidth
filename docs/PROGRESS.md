@@ -547,3 +547,19 @@ DeepSeek V4 Pro drafted every module from Fable specs (streaming caller with 64k
 budget — delegate.py's 32k returned empty on big drafts); Sonnet integrated + fixed;
 Opus reviewed. Deferred: department grouping in sidebar (D-series), global dark theme.
 NOTE deploy.sh builds frontend from the LOCAL tree — uncommitted frontend work ships.
+
+## P17 — Provider accounts in-app (2026-09-02, commit 8a4a843, migration 0018)
+Per-org Fernet-encrypted credentials for Bandwidth/Telnyx/Twilio/Plivo/SignalWire
+(`provider_accounts`), probe → active/failed, secrets write-only (mask sentinel ignored
+on write), SSRF guard on SignalWire space_url, revive-on-recreate, RBAC settings:read/
+write, audit without secrets. `app.state.carriers` is now `CarrierRegistryProxy`
+(contextvar org → per-org registry cached by (org, version) + 300s TTL; env fallback;
+transparent incl. len()/in/iter). Messaging webhooks verify against active DB accounts
+as fallback; empty env webhook creds never verify (bw verify primitive hardened).
+Providers page: five cards, create gating, blank-safe PATCH, non-admin read-only, 503
+banner, frontend↔backend field catalogue parity snapshot (tested both sides).
+Backend 985 / frontend 101 green. Opus: 2 blockers (proxy dunders would have broken
+every outbound send; empty-env webhook bypass) + 5 majors closed; D34–D36 ledgered
+(org-cache eviction on bump, voice webhook DB fallback, env-mixed carrier catalog).
+Deployed same day; live: head 0018, CREDENTIALS_MASTER_KEY loaded (backup
+/root/csaas-env-backup-*), endpoints 401 unauth, webhook empty-basic 401, 0 errors.
