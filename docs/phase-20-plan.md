@@ -78,3 +78,23 @@ Each step deep-links into the Settings section.
 
 ## Later (not P20)
 Self-serve signup + Stripe billing (today registration is invite-only); white-label.
+
+## Positioning → product requirements (user, 2026-09-03: "simple, ready to use,
+## plug and play with best routing")
+- **Ready to use** = a new org gets working defaults with zero configuration: quiet
+  hours (8am–9pm local), opt-out keywords + auto-replies, HELP/STOP templates, a default
+  call flow (ring the inbox's members → voicemail), recording off, AI off. Seeded on org
+  creation (backend: `services/defaults.py`, idempotent) — part of P20.
+- **Plug and play** = P20's provider dropdown + "Get a number" + the first-run checklist.
+  Honest constraint to state in marketing: SMS registration (10DLC or toll-free
+  verification) is carrier-mandated and takes days; the product tracks it, it cannot
+  skip it. Voice and inbound SMS work immediately.
+- **Best routing** = Phase 21 "Smart routing" (after P20): per message/call the system
+  picks the route automatically from (1) capability, (2) provider health/breaker state,
+  (3) number reputation, (4) cost from the P19 rate card, (5) org preference — and
+  records WHY on the message/call ("Sent via Telnyx — cheapest healthy route"). One
+  customer-facing switch: Smart routing On (default) / Prefer a provider. Failover
+  across providers becomes the default for outbound SMS when Smart routing is on
+  (today it is opt-in). Voice failover (D28) lands in the same phase. Existing routing
+  fabric (P3b/P14: RoutePlan, breakers, pinned_carrier) is the base; this adds the
+  ranking function + explainability + defaults.
