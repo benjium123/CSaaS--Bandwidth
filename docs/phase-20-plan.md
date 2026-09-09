@@ -98,3 +98,54 @@ Self-serve signup + Stripe billing (today registration is invite-only); white-la
   (today it is opt-in). Voice failover (D28) lands in the same phase. Existing routing
   fabric (P3b/P14: RoutePlan, breakers, pinned_carrier) is the base; this adds the
   ranking function + explainability + defaults.
+
+## Addendum (Fable, 2026-09-10) — OpenPhone-style layout, decided by the user
+User direction: "make the interface more like OpenPhone; combine settings in one place; in
+the inbox we can start a call or a new text". Binding for the P20 implementer.
+
+### Layout (desktop)
+1. **Left rail** (56 px, icons + tooltip; labels appear on hover/expand): Inbox, Contacts,
+   Calls, Campaigns (only with campaigns:read), then at the bottom the org avatar/switcher
+   and the **Settings** gear (only with any settings/admin permission). Nothing else, ever.
+2. **Inbox column** (220 px, inside Inbox): "All conversations", then **one row per inbox**
+   the user can see (P15 grants) with the inbox colour dot, name, and unread count — exactly
+   OpenPhone's phone-number list. Below it: Important, Unresponded, Snoozed (P26). A **"+ New"**
+   button at the top of this column opens the existing NewConversationPanel (New text /
+   New call) — this is the primary way to start anything; keep the header "+ New" too.
+3. **Conversation list** (320 px): the P16 list with search, filter dropdown, star, unread dot.
+4. **Thread** (flex): unified SMS/call timeline; composer at the bottom with Reply | Note
+   (P26) and a **call button** in the thread header (dials the contact from this inbox's
+   number via the softphone dock — no page change).
+5. **Contact panel** (300 px, collapsible, storageKey): name, numbers, owner/team (P22),
+   tags, notes, recent activity; "Open contact" link (404s when the visibility policy
+   excludes the user — documented P22 rule).
+6. **Global search** (⌘K) over contacts, numbers, and conversations.
+7. **Softphone dock**: bottom-right, always mounted; the dial pad is a slide-over opened
+   from the rail's Calls icon (long-press/secondary) or from any phone number shown in
+   the UI (every phone number is clickable → Text / Call menu).
+Routes: `/inbox/:inboxId?/:threadId?`, `/contacts/:contactId?`, `/calls`, `/campaigns`,
+`/settings/:section`. Legacy routes redirect: /dashboard → /inbox (until P30 gives it
+Reports), /lists → /contacts?tab=lists (P27 folds Lists), /agent and /appointments →
+/settings/ai, /flows and /queues → /settings/calling, /numbers → /settings/numbers,
+/providers → /settings/providers, /security and /team → /settings/team, /platform →
+/settings/developers, /settings/inboxes → /settings/inboxes (kept), /inbox/legacy removed.
+
+### Settings: ONE place
+`/settings` renders a two-column page: sectioned left nav (Workspace, Team, Departments &
+Inboxes, Phone numbers, Providers, Messaging, Calling, AI, Billing & usage, Developers —
+the ten sections above), content on the right. Existing pages are moved in as sections
+and restyled to the shared primitives; no page keeps its own palette. P22's Roles tab and
+Contact visibility radio live under Team. Security (2FA) is a sub-tab of Team.
+
+### Mobile (≤ 640 px)
+Rail becomes a bottom tab bar (Inbox, Contacts, Calls, Settings); the inbox column and
+contact panel become sheets; list ↔ thread toggle; composer sticks to the bottom.
+
+### Shared primitives to build first (frontend/src/components/ui/)
+Button, Input, Select, Pill, Card, Section, EmptyState, MutationStatus, Drawer, Sheet,
+Tabs, Collapsible (with storageKey), Kbd. Build these in P20a; migrate pages in P20b.
+
+### Done means
+An agent sees rail + inbox column + list + thread + contact panel and can text or call from
+"+ New", from the thread header, and from any phone number; an admin finds every setting
+under /settings in under 10 seconds; no legacy route renders a page; suites green.
