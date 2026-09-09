@@ -590,7 +590,9 @@ describe("ConversationHeader", () => {
       client,
     );
 
-    await userEvent.click(screen.getByRole("button", { expanded: false }));
+    // P20b: the header subtitle now carries a PhoneNumberMenu, which is a SECOND
+    // aria-expanded button - target the "more" trigger by its accessible name instead.
+    await userEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
     const toggleButton = await screen.findByRole("menuitem");
     expect(toggleButton).toBeDisabled();
     expect(toggleButton).toHaveAttribute(

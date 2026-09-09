@@ -9,6 +9,8 @@ import {
   type Conversation,
   type CursorPage,
 } from "@/api/conversations";
+import { Button } from "@/components/ui/primitives";
+import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -76,7 +78,11 @@ export function ConversationHeader({
       queryClient.setQueriesData<ConversationsCache>(
         { queryKey: ["conversations"] },
         (data) => {
-          if (!data) return data;
+          // Defensive: setQueriesData matches by key PREFIX, so any future query keyed
+          // under ["conversations", ...] that is not an infinite query would land here.
+          // Returning it untouched is always right; mapping .pages on it would throw
+          // inside onMutate and kill the mutation before mutationFn ever ran.
+          if (!data || !Array.isArray(data.pages)) return data;
           return {
             ...data,
             pages: data.pages.map((page) => ({
@@ -158,20 +164,24 @@ export function ConversationHeader({
       <div className="flex items-center justify-between gap-3 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           {onBack && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={onBack}
               aria-label="Back to conversation list"
-              className="shrink-0 rounded-md p-2 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 md:hidden"
+              className="shrink-0 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 md:hidden"
             >
               <ArrowLeft className="h-4 w-4" />
-            </button>
+            </Button>
           )}
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <h2 className="truncate text-sm font-semibold text-neutral-50">{title}</h2>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 onClick={toggleImportant}
                 disabled={!canSend || importantMutation.isPending}
                 aria-pressed={Boolean(conversation.important)}
@@ -183,7 +193,9 @@ export function ConversationHeader({
                     : "Read-only inbox — you can view but not mark important"
                 }
                 aria-label={conversation.important ? "Unmark as important" : "Mark as important"}
-                className="shrink-0 rounded-md p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-50 disabled:pointer-events-none disabled:opacity-40"
+                // size="icon" is a 36px box, which would double the height of this title
+                // row - the star sits INSIDE the heading line, so it keeps its old 0.5 padding.
+                className="h-auto w-auto shrink-0 rounded-md p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-50 disabled:pointer-events-none disabled:opacity-40"
               >
                 <Star
                   className={cn(
@@ -191,58 +203,82 @@ export function ConversationHeader({
                     conversation.important && "fill-amber-400 text-amber-400",
                   )}
                 />
-              </button>
+              </Button>
             </div>
-            <p className="truncate text-[11px] text-neutral-400">
-              {formatPhone(conversation.contact_e164)} · via{" "}
-              {formatPhone(conversation.our_e164)}
-            </p>
+            {/* A <div>, not the old <p>: PhoneNumberMenu renders a positioned <div> wrapper
+                for its pop-up menu, and a <div> inside a <p> is invalid HTML - the browser
+                closes the paragraph early and the layout breaks. OUR number is plain text:
+                you cannot text or call yourself. */}
+            <div className="flex min-w-0 items-center gap-1 text-[11px] text-neutral-400">
+              <PhoneNumberMenu
+                e164={conversation.contact_e164}
+                fromE164={conversation.our_e164}
+                onText={focusComposer}
+                disabled={!canSend}
+                disabledReason="Read-only inbox — you can view but not call"
+                className="h-auto min-w-0 px-0 py-0 text-[11px] font-normal text-neutral-400 hover:text-neutral-200"
+              />
+              <span className="shrink-0">· via</span>
+              <span className="truncate">{formatPhone(conversation.our_e164)}</span>
+            </div>
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={startCall}
             disabled={!canSend}
             title={canSend ? undefined : "Read-only inbox — you can view but not call"}
             aria-label={`Call ${title}`}
-            className="rounded-md p-2 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 disabled:pointer-events-none disabled:opacity-40"
+            className="text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 disabled:pointer-events-none disabled:opacity-40"
           >
             <Phone className="h-4 w-4" />
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={focusComposer}
             aria-label={`Message ${title}`}
-            className="rounded-md p-2 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50"
+            className="text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50"
           >
             <MessageSquare className="h-4 w-4" />
-          </button>
+          </Button>
           <div className="relative" ref={menuRef}>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               aria-haspopup="menu"
               aria-expanded={moreOpen}
+              // P20b: an icon-only trigger with no accessible name was already an a11y
+              // hole; it became ambiguous too once the subtitle gained its own
+              // aria-expanded PhoneNumberMenu trigger. Name it.
+              aria-label="Conversation actions"
               disabled={toggleThreadMutation.isPending}
               onClick={() => setMoreOpen((v) => !v)}
-              className="rounded-md p-2 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 disabled:opacity-50"
+              className="text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 disabled:opacity-50"
             >
               {toggleThreadMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <MoreHorizontal className="h-4 w-4" />
               )}
-            </button>
+            </Button>
             {moreOpen && (
               <div
                 role="menu"
                 aria-label="Conversation actions"
                 className="absolute right-0 top-9 z-20 w-44 rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg"
               >
-                <button
-                  role="menuitem"
+                <Button
                   type="button"
+                  role="menuitem"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => {
                     const threadId = conversation.thread_id;
                     if (!threadId) return;
@@ -259,10 +295,10 @@ export function ConversationHeader({
                         ? undefined
                         : "Read-only inbox — you can view but not close or reopen"
                   }
-                  className="block w-full rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+                  className="w-full justify-start rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
                 >
                   {conversation.status === "closed" ? "Reopen" : "Close"}
-                </button>
+                </Button>
               </div>
             )}
           </div>

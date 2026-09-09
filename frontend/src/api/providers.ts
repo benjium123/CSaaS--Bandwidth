@@ -14,6 +14,12 @@ export interface ProviderAccount {
   last_probe_at: string | null;
   last_probe_detail: string | null;
   credentials: Record<string, string>;
+  /**
+   * The backend's ProviderAccountOut returns these, and money is in MICROS.
+   * `spend_mtd_micros` is the UTC month-to-date spend sum for this provider.
+   */
+  numbers_count: number;
+  spend_mtd_micros: number;
 }
 
 export interface ProviderField {
@@ -29,8 +35,8 @@ export const PROVIDER_FIELDS: Record<ProviderName, ProviderField[]> = {
     { name: "api_password", label: "API password", secret: true },
     { name: "messaging_application_id", label: "Messaging application ID", secret: false },
     { name: "voice_application_id", label: "Voice application ID", secret: false },
-    { name: "webhook_username", label: "Webhook username", secret: false },
-    { name: "webhook_password", label: "Webhook password", secret: true },
+    { name: "webhook_username", label: "Callback username", secret: false },
+    { name: "webhook_password", label: "Callback password", secret: true },
     { name: "site_id", label: "Site ID (needed to order numbers)", secret: false },
   ],
   telnyx: [
@@ -63,6 +69,18 @@ export const PROVIDER_NAMES: ProviderName[] = [
   "plivo",
   "signalwire",
 ];
+
+export const PROVIDER_LABELS: Record<ProviderName, string> = {
+  bandwidth: "Bandwidth",
+  telnyx: "Telnyx",
+  twilio: "Twilio",
+  plivo: "Plivo",
+  signalwire: "SignalWire",
+};
+
+export function formatSpendMtd(micros: number): string {
+  return (micros / 1e6).toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
 
 export interface CreateProviderAccountInput {
   provider: ProviderName;

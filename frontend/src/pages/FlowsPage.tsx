@@ -14,7 +14,17 @@ import {
   useRingGroups,
   type FlowOut,
 } from "@/api/hooks";
-import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  MutationStatus,
+  Pill,
+  Section,
+  Select,
+  Spinner,
+} from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -231,16 +241,16 @@ function parseFlowValidationError(message: string): { byNode: Record<string, str
   return { byNode, general };
 }
 
-function flowStatusBadgeClass(status: string): string {
+function flowStatusTone(status: string): "neutral" | "success" | "warning" | "danger" | "info" {
   switch (status) {
     case "active":
-      return "bg-green-100 text-green-800";
+      return "success";
     case "draft":
-      return "bg-amber-100 text-amber-800";
+      return "warning";
     case "archived":
-      return "bg-gray-100 text-gray-600";
+      return "neutral";
     default:
-      return "bg-gray-100 text-gray-600";
+      return "neutral";
   }
 }
 
@@ -286,28 +296,36 @@ export function FlowsPage() {
               </Button>
             </div>
           ) : latestByName.length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">No flows yet.</p>
+            /* No CTA here: the one "New flow" button sits directly above this empty
+               state, and a second button with the same accessible name makes every
+               getByRole("button", {name: "New flow"}) ambiguous. Point at it instead. */
+            <EmptyState
+              className="m-4"
+              title="No flows yet."
+              description="Use New flow above to route incoming calls."
+            />
           ) : (
             <ul aria-label="Flows">
               {latestByName.map((f) => (
                 <li key={f.name}>
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     aria-current={f.name === selectedName ? "true" : undefined}
                     onClick={() => {
                       setCreatingNew(false);
                       setSelectedName(f.name);
                     }}
                     className={cn(
-                      "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted",
+                      "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-normal hover:bg-muted",
                       f.name === selectedName && !creatingNew && "bg-muted",
                     )}
                   >
                     <span className="truncate font-medium">{f.name}</span>
-                    <Badge className={flowStatusBadgeClass(f.status)}>
+                    <Pill tone={flowStatusTone(f.status)}>
                       v{f.version} {f.status}
-                    </Badge>
-                  </button>
+                    </Pill>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -331,7 +349,11 @@ export function FlowsPage() {
         ) : selectedName ? (
           <FlowVersionsEditor api={api} name={selectedName} />
         ) : (
-          <p className="text-sm text-muted-foreground">Select a flow or create a new one.</p>
+          /* Same reason as above - one "New flow" control on the page, in the header. */
+          <EmptyState
+            title="Select a flow"
+            description="Choose a flow from the list, or use New flow to create one."
+          />
         )}
       </section>
     </div>
@@ -352,7 +374,7 @@ function FlowVersionsEditor({ api, name }: { api: import("@/api/client").ApiClie
   }, [name]);
 
   if (isLoading) return <Spinner label="Loading versions" />;
-  if (!selected) return <p className="text-sm text-muted-foreground">No versions found.</p>;
+  if (!selected) return <EmptyState title="No versions found." />;
 
   async function activate() {
     setActivateError(null);
@@ -365,42 +387,42 @@ function FlowVersionsEditor({ api, name }: { api: import("@/api/client").ApiClie
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">{name}</h2>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-muted-foreground" htmlFor="flow-version-select">
-            Version
-          </label>
-          <select
-            id="flow-version-select"
-            aria-label="Flow version"
-            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-            value={selected.id}
-            onChange={(e) => setSelectedVersionId(e.target.value)}
-          >
-            {versionList.map((v) => (
-              <option key={v.id} value={v.id}>
-                v{v.version} ({v.status})
-              </option>
-            ))}
-          </select>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={activate}
-            disabled={selected.status === "active" || activateFlow.isPending}
-          >
-            {selected.status === "active" ? "Active" : "Activate"}
-          </Button>
+      {/* A heading plus one action row, not a Section: `Section` requires children and a
+          self-closing one would render an empty, unlabelled container. */}
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="min-w-0 truncate text-sm font-semibold">{name}</h2>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground" htmlFor="flow-version-select">
+              Version
+            </label>
+            <Select
+              id="flow-version-select"
+              aria-label="Flow version"
+              className="h-9 w-auto min-w-[130px] px-2 text-sm"
+              value={selected.id}
+              onChange={(e) => setSelectedVersionId(e.target.value)}
+            >
+              {versionList.map((v) => (
+                <option key={v.id} value={v.id}>
+                  v{v.version} ({v.status})
+                </option>
+              ))}
+            </Select>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={activate}
+              disabled={selected.status === "active" || activateFlow.isPending}
+            >
+              {selected.status === "active" ? "Active" : "Activate"}
+            </Button>
+          </div>
         </div>
       </div>
 
-      {activateError && (
-        <p role="alert" className="text-sm text-destructive">
-          {activateError}
-        </p>
-      )}
+      <MutationStatus error={activateError} />
 
       <FlowEditor api={api} key={selected.id} mode="version" flowName={name} flowId={selected.id} definition={selected.definition} />
     </div>
@@ -515,90 +537,102 @@ function FlowEditor({
   const canSubmit = mode === "version" ? nodes.length > 0 : name.trim().length > 0 && nodes.length > 0;
 
   return (
-    <form className="max-w-2xl space-y-4" onSubmit={save}>
-      {mode === "create" && (
+    <Section
+      title={mode === "create" ? "New flow" : "Edit flow"}
+      description={mode === "create" ? "Build the initial version of the flow." : "Edit this version's definition."}
+    >
+      <form className="max-w-2xl space-y-4" onSubmit={save}>
+        {mode === "create" && (
+          <div className="space-y-1">
+            <label className="block text-xs text-muted-foreground" htmlFor="new-flow-name">
+              Flow name
+            </label>
+            <Input
+              id="new-flow-name"
+              aria-label="Flow name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
+        )}
+
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="new-flow-name">
-            Flow name
+          <label className="block text-xs text-muted-foreground" htmlFor="flow-entry-node">
+            Entry node
           </label>
-          <Input
-            id="new-flow-name"
-            aria-label="Flow name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
+          <Select
+            id="flow-entry-node"
+            aria-label="Entry node"
+            value={entry}
+            onChange={(e) => setEntry(e.target.value)}
+          >
+            <option value="">Select entry node…</option>
+            {nodeIds.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </Select>
         </div>
-      )}
 
-      <div className="space-y-1">
-        <label className="block text-xs text-muted-foreground" htmlFor="flow-entry-node">
-          Entry node
-        </label>
-        <select
-          id="flow-entry-node"
-          aria-label="Entry node"
-          className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-          value={entry}
-          onChange={(e) => setEntry(e.target.value)}
-        >
-          <option value="">Select entry node…</option>
-          {nodeIds.map((id) => (
-            <option key={id} value={id}>
-              {id}
-            </option>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium">Nodes</h3>
+          <Button type="button" size="sm" variant="outline" onClick={addNode}>
+            Add node
+          </Button>
+        </div>
+
+        {generalErrors.length > 0 && (
+          <ul role="alert" className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+            {generalErrors.map((msg, i) => (
+              <li key={i}>{msg}</li>
+            ))}
+          </ul>
+        )}
+
+        <div className="space-y-3">
+          {nodes.length === 0 && (
+            /* No CTA: the one "Add node" button is in the header directly above, and a
+               duplicate with the same accessible name makes every
+               getByRole("button", {name: "Add node"}) in FlowsPage.test.tsx ambiguous. */
+            <EmptyState
+              title="No nodes yet."
+              description="Use Add node above to route the call."
+            />
+          )}
+          {nodes.map((draft) => (
+            <NodeCard
+              key={draft.id}
+              draft={draft}
+              nodeIds={nodeIds}
+              businessHours={businessHours ?? []}
+              ringGroups={ringGroups ?? []}
+              queues={queues ?? []}
+              errors={[
+                ...(fieldErrors[draft.id] ?? []),
+                ...(renameCollision?.id === draft.id
+                  ? [
+                      renameCollision.attempted.trim() === ""
+                        ? "Node id cannot be empty"
+                        : `A node named "${renameCollision.attempted}" already exists`,
+                    ]
+                  : []),
+              ]}
+              onRename={(newId) => renameNode(draft.id, newId)}
+              onChange={(node) => updateNode(draft.id, node)}
+              onRemove={() => removeNode(draft.id)}
+            />
           ))}
-        </select>
-      </div>
+        </div>
 
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">Nodes</h3>
-        <Button type="button" size="sm" variant="outline" onClick={addNode}>
-          Add node
-        </Button>
-      </div>
-
-      {generalErrors.length > 0 && (
-        <ul role="alert" className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          {generalErrors.map((msg, i) => (
-            <li key={i}>{msg}</li>
-          ))}
-        </ul>
-      )}
-
-      <div className="space-y-3">
-        {nodes.length === 0 && <p className="text-sm text-muted-foreground">No nodes yet.</p>}
-        {nodes.map((draft) => (
-          <NodeCard
-            key={draft.id}
-            draft={draft}
-            nodeIds={nodeIds}
-            businessHours={businessHours ?? []}
-            ringGroups={ringGroups ?? []}
-            queues={queues ?? []}
-            errors={[
-              ...(fieldErrors[draft.id] ?? []),
-              ...(renameCollision?.id === draft.id
-                ? [
-                    renameCollision.attempted.trim() === ""
-                      ? "Node id cannot be empty"
-                      : `A node named "${renameCollision.attempted}" already exists`,
-                  ]
-                : []),
-            ]}
-            onRename={(newId) => renameNode(draft.id, newId)}
-            onChange={(node) => updateNode(draft.id, node)}
-            onRemove={() => removeNode(draft.id)}
-          />
-        ))}
-      </div>
-
-      <div className="flex gap-2">
-        <Button type="submit" disabled={!canSubmit || saving}>
-          {saving ? "Saving…" : mode === "create" ? "Create flow" : "Save as new version"}
-        </Button>
-      </div>
-    </form>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={!canSubmit || saving}>
+            {saving ? "Saving…" : mode === "create" ? "Create flow" : "Save as new version"}
+          </Button>
+        </div>
+      </form>
+    </Section>
   );
 }
 
@@ -648,7 +682,7 @@ function NodeCard({
   );
 
   return (
-    <div className="space-y-3 rounded-md border border-border p-3" data-node-id={id}>
+    <Card className="space-y-3 p-3" data-node-id={id}>
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-xs text-muted-foreground" htmlFor={`node-id-${id}`}>
           Node id
@@ -669,10 +703,10 @@ function NodeCard({
         <label className="text-xs text-muted-foreground" htmlFor={`node-type-${id}`}>
           Type
         </label>
-        <select
+        <Select
           id={`node-type-${id}`}
           aria-label={`Node type for ${id}`}
-          className="h-8 rounded-md border border-border bg-background px-2 text-sm"
+          className="h-8 w-auto px-2 text-sm"
           value={node.type}
           onChange={(e) => onChange(defaultNode(e.target.value as NodeType))}
         >
@@ -681,7 +715,7 @@ function NodeCard({
               {t}
             </option>
           ))}
-        </select>
+        </Select>
         <Button type="button" size="sm" variant="destructive" className="ml-auto" onClick={onRemove}>
           Remove
         </Button>
@@ -715,9 +749,9 @@ function NodeCard({
                     onChange({ ...node, options });
                   }}
                 />
-                <select
+                <Select
                   aria-label={`Option target ${i + 1} for ${id}`}
-                  className="h-8 flex-1 rounded-md border border-border bg-background px-2 text-sm"
+                  className="h-8 flex-1 px-2 text-sm"
                   value={row.target}
                   onChange={(e) => {
                     const options = [...node.options];
@@ -726,7 +760,7 @@ function NodeCard({
                   }}
                 >
                   {targetOptions}
-                </select>
+                </Select>
                 <Button
                   type="button"
                   size="sm"
@@ -752,29 +786,29 @@ function NodeCard({
               <label className="block text-xs text-muted-foreground" htmlFor={`menu-timeout-${id}`}>
                 Timeout node
               </label>
-              <select
+              <Select
                 id={`menu-timeout-${id}`}
                 aria-label={`Timeout node for ${id}`}
-                className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+                className="h-8 w-full px-2 text-sm"
                 value={node.timeout_node}
                 onChange={(e) => onChange({ ...node, timeout_node: e.target.value })}
               >
                 {targetOptions}
-              </select>
+              </Select>
             </div>
             <div className="space-y-1">
               <label className="block text-xs text-muted-foreground" htmlFor={`menu-invalid-${id}`}>
                 Invalid-digit node
               </label>
-              <select
+              <Select
                 id={`menu-invalid-${id}`}
                 aria-label={`Invalid-digit node for ${id}`}
-                className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+                className="h-8 w-full px-2 text-sm"
                 value={node.invalid_node}
                 onChange={(e) => onChange({ ...node, invalid_node: e.target.value })}
               >
                 {targetOptions}
-              </select>
+              </Select>
             </div>
           </div>
           <div className="space-y-1">
@@ -804,12 +838,12 @@ function NodeCard({
             <label className="block text-xs text-muted-foreground" htmlFor={`hours-bh-${id}`}>
               Business hours <span aria-hidden="true">*</span>
             </label>
-            <select
+            <Select
               id={`hours-bh-${id}`}
               aria-label={`Business hours for ${id}`}
               aria-required="true"
               required
-              className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+              className="h-8 w-full px-2 text-sm"
               value={node.business_hours_id}
               onChange={(e) => onChange({ ...node, business_hours_id: e.target.value })}
             >
@@ -819,7 +853,7 @@ function NodeCard({
                   {h.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {(["open", "closed", "holiday"] as const).map((branch) => (
@@ -827,17 +861,17 @@ function NodeCard({
                 <label className="block text-xs capitalize text-muted-foreground" htmlFor={`hours-${branch}-${id}`}>
                   {branch} <span aria-hidden="true">*</span>
                 </label>
-                <select
+                <Select
                   id={`hours-${branch}-${id}`}
                   aria-label={`${branch[0].toUpperCase()}${branch.slice(1)} node for ${id}`}
                   aria-required="true"
                   required
-                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+                  className="h-8 w-full px-2 text-sm"
                   value={node[branch]}
                   onChange={(e) => onChange({ ...node, [branch]: e.target.value })}
                 >
                   {targetOptions}
-                </select>
+                </Select>
               </div>
             ))}
           </div>
@@ -850,10 +884,10 @@ function NodeCard({
             <label className="block text-xs text-muted-foreground" htmlFor={`rg-${id}`}>
               Ring group
             </label>
-            <select
+            <Select
               id={`rg-${id}`}
               aria-label={`Ring group for ${id}`}
-              className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+              className="h-8 w-full px-2 text-sm"
               value={node.ring_group_id}
               onChange={(e) => onChange({ ...node, ring_group_id: e.target.value })}
             >
@@ -863,21 +897,21 @@ function NodeCard({
                   {g.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="space-y-1">
             <label className="block text-xs text-muted-foreground" htmlFor={`rg-no-answer-${id}`}>
               No-answer node
             </label>
-            <select
+            <Select
               id={`rg-no-answer-${id}`}
               aria-label={`No-answer node for ${id}`}
-              className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+              className="h-8 w-full px-2 text-sm"
               value={node.no_answer}
               onChange={(e) => onChange({ ...node, no_answer: e.target.value })}
             >
               {targetOptions}
-            </select>
+            </Select>
           </div>
         </div>
       )}
@@ -887,10 +921,10 @@ function NodeCard({
           <label className="block text-xs text-muted-foreground" htmlFor={`queue-${id}`}>
             Queue
           </label>
-          <select
+          <Select
             id={`queue-${id}`}
             aria-label={`Queue for ${id}`}
-            className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+            className="h-8 w-full px-2 text-sm"
             value={node.queue_id}
             onChange={(e) => onChange({ ...node, queue_id: e.target.value })}
           >
@@ -900,7 +934,7 @@ function NodeCard({
                 {q.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       )}
 
@@ -935,15 +969,15 @@ function NodeCard({
             <label className="block text-xs text-muted-foreground" htmlFor={`speak-next-${id}`}>
               Next node
             </label>
-            <select
+            <Select
               id={`speak-next-${id}`}
               aria-label={`Next node for ${id}`}
-              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+              className="h-9 w-full px-2 text-sm"
               value={node.next}
               onChange={(e) => onChange({ ...node, next: e.target.value })}
             >
               {targetOptions}
-            </select>
+            </Select>
           </div>
         </div>
       )}
@@ -977,7 +1011,7 @@ function NodeCard({
           ))}
         </ul>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -1010,56 +1044,55 @@ function BindNumberSection({
   }
 
   return (
-    <form className="space-y-2 p-3" onSubmit={bind}>
-      <h3 className="text-sm font-medium">Bind number to flow</h3>
-      <div className="space-y-1">
-        <label className="block text-xs text-muted-foreground" htmlFor="bind-number">
-          Number
-        </label>
-        <select
-          id="bind-number"
-          aria-label="Number to bind"
-          className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-          value={numberId}
-          onChange={(e) => setNumberId(e.target.value)}
-          required
-        >
-          <option value="">Select a number…</option>
-          {(numbers ?? []).map((n) => (
-            <option key={n.id} value={n.id}>
-              {formatPhone(n.e164)}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="space-y-1">
-        <label className="block text-xs text-muted-foreground" htmlFor="bind-flow">
-          Flow (active version)
-        </label>
-        <select
-          id="bind-flow"
-          aria-label="Flow to bind"
-          className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-          value={flowId}
-          onChange={(e) => setFlowId(e.target.value)}
-        >
-          <option value="">None (default behavior)</option>
-          {activeFlows.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name} (v{f.version})
-            </option>
-          ))}
-        </select>
-      </div>
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      {ok && !error && <p className="text-xs text-green-700">Bound.</p>}
-      <Button type="submit" size="sm" disabled={!numberId || bindFlow.isPending}>
-        Bind
-      </Button>
-    </form>
+    <Section title="Bind number to flow" className="p-3">
+      <form className="space-y-2" onSubmit={bind}>
+        <div className="space-y-1">
+          <label className="block text-xs text-muted-foreground" htmlFor="bind-number">
+            Number
+          </label>
+          <Select
+            id="bind-number"
+            aria-label="Number to bind"
+            value={numberId}
+            onChange={(e) => setNumberId(e.target.value)}
+            required
+          >
+            <option value="">Select a number…</option>
+            {(numbers ?? []).map((n) => (
+              <option key={n.id} value={n.id}>
+                {formatPhone(n.e164)}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <label className="block text-xs text-muted-foreground" htmlFor="bind-flow">
+            Flow (active version)
+          </label>
+          <Select
+            id="bind-flow"
+            aria-label="Flow to bind"
+            value={flowId}
+            onChange={(e) => setFlowId(e.target.value)}
+          >
+            <option value="">None (default behavior)</option>
+            {activeFlows.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name} (v{f.version})
+              </option>
+            ))}
+          </Select>
+        </div>
+        <MutationStatus
+          error={error}
+          pending={bindFlow.isPending}
+          success={ok ? "Bound." : null}
+          pendingLabel="Binding…"
+        />
+        <Button type="submit" size="sm" disabled={!numberId || bindFlow.isPending}>
+          Bind
+        </Button>
+      </form>
+    </Section>
   );
 }

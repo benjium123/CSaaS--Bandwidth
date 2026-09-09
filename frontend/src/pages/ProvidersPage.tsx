@@ -1,6 +1,5 @@
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { ApiError, type ApiClient } from "@/api/client";
 import {
@@ -10,17 +9,18 @@ import {
   useRoutingPolicy,
   useUpdateRoutingPolicy,
   type CarrierCatalogOut,
-  type NumberOut,
   type ProbeOut,
   type RoutingPolicyIn,
 } from "@/api/hooks";
 import {
   PROVIDER_FIELDS,
+  PROVIDER_LABELS,
   PROVIDER_NAMES,
   SECRET_MASK,
   createProviderAccount,
   disableProviderAccount,
   fetchProviderAccounts,
+  formatSpendMtd,
   patchProviderAccount,
   probeProviderAccount,
   type PatchProviderAccountInput,
@@ -28,27 +28,66 @@ import {
   type ProviderAccountStatus,
   type ProviderName,
 } from "@/api/providers";
-import { Badge, Button, Spinner } from "@/components/ui/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  Collapsible,
+  EmptyState,
+  Input,
+  MutationStatus,
+  Pill,
+  Section,
+  Select,
+  Spinner,
+  type PillTone,
+} from "@/components/ui/primitives";
 import { RatesDrawer } from "@/components/spend/RatesDrawer";
 import { SpendCard } from "@/components/spend/SpendCard";
-import { formatPhone } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 type ProbeState = { kind: "result"; data: ProbeOut } | { kind: "error"; message: string };
 
-function accountStatusPill(status?: ProviderAccountStatus): { label: string; className: string } {
+function providerDisplayName(name: string): string {
+  return PROVIDER_LABELS[name as ProviderName] ?? name;
+}
+
+function accountStatusPill(status: ProviderAccountStatus): { label: string; tone: PillTone } {
   switch (status) {
     case "unverified":
-      return { label: "Unverified", className: "bg-amber-950 text-amber-400" };
+      return { label: "Not checked yet", tone: "neutral" };
     case "active":
-      return { label: "Active", className: "bg-green-950 text-green-400" };
+      return { label: "Working", tone: "success" };
     case "failed":
-      return { label: "Failed", className: "bg-red-950 text-red-400" };
+      return { label: "Not working", tone: "danger" };
     case "disabled":
-      return { label: "Disabled", className: "bg-neutral-800 text-neutral-400" };
+      return { label: "Turned off", tone: "neutral" };
     default:
-      return { label: "Not configured", className: "bg-neutral-800 text-neutral-500" };
+      return { label: "Not configured", tone: "neutral" };
   }
+}
+
+function carrierStatusPill(entry: CarrierCatalogOut): { label: string; tone: PillTone } {
+  if (entry.live) return { label: "Live", tone: "success" };
+  if (entry.enabled_flag === false) return { label: "Off", tone: "neutral" };
+  return { label: "Needs credentials", tone: "warning" };
+}
+
+function providerStatePill(state?: string): { label: string; tone: PillTone } | null {
+  if (!state) return null;
+  if (state === "closed") return { label: "Healthy", tone: "success" };
+  if (state === "open") return { label: "Not delivering right now", tone: "danger" };
+  return { label: "Recovering", tone: "warning" };
+}
+
+function hasMms(entry: CarrierCatalogOut): boolean {
+  const bytes = entry.capabilities?.max_media_bytes;
+  return typeof bytes === "number" && bytes > 0;
+}
+
+function numbersCountText(count: number): string {
+  if (count === 0) return "No numbers";
+  if (count === 1) return "1 number";
+  return `${count} numbers`;
 }
 
 /**
@@ -71,49 +110,15 @@ function buildCredentialsForSave(
   return next;
 }
 
-function MutationStatus({
-  mutation,
-  pendingLabel = "Saving…",
-  successLabel = "Saved",
-}: {
-  mutation: { isPending: boolean; isError: boolean; isSuccess: boolean; error: unknown };
-  pendingLabel?: string;
-  successLabel?: string;
-}) {
-  if (mutation.isPending) {
-    return (
-      <span className="flex items-center gap-1 text-[10px] text-neutral-500">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        {pendingLabel}
-      </span>
-    );
-  }
-  if (mutation.isError) {
-    return (
-      <span role="alert" className="text-[10px] text-red-400">
-        {(mutation.error as Error).message}
-      </span>
-    );
-  }
-  if (mutation.isSuccess) {
-    return <span className="text-[10px] text-green-400">{successLabel}</span>;
-  }
-  return null;
-}
-
 function ProviderAccountCard({
   provider,
   account,
-  numbers,
-  numbersLoading,
   readOnly,
   onError,
   onOpenRates,
 }: {
   provider: ProviderName;
-  account: ProviderAccount | undefined;
-  numbers: NumberOut[];
-  numbersLoading: boolean;
+  account: ProviderAccount;
   readOnly: boolean;
   onError: (error: unknown) => void;
   onOpenRates: () => void;
@@ -121,12 +126,12 @@ function ProviderAccountCard({
   const { api } = useAuth();
   const queryClient = useQueryClient();
   const fields = PROVIDER_FIELDS[provider];
-  const [label, setLabel] = React.useState(account?.label ?? "");
+  const [label, setLabel] = React.useState(account.label);
   const [credentials, setCredentials] = React.useState<Record<string, string>>(() =>
     Object.fromEntries(
       fields.map((field) => [
         field.name,
-        field.secret ? "" : (account?.credentials[field.name] ?? ""),
+        field.secret ? "" : (account.credentials[field.name] ?? ""),
       ]),
     ),
   );
@@ -134,20 +139,6 @@ function ProviderAccountCard({
   // F45: only the most recently triggered mutation's status is shown - otherwise a stale
   // isSuccess from an earlier action (e.g. probe) stays visible forever alongside a newer one.
   const [lastAction, setLastAction] = React.useState<"save" | "probe" | "disable" | null>(null);
-
-  // A brand-new account has no server-side fallback for a blank field, so every field must
-  // be filled in before Save is allowed (F6). An existing account can save partial changes -
-  // buildCredentialsForSave drops blanks there instead (F5).
-  const isCreate = !account;
-  const missingFields = isCreate
-    ? [
-        ...(label.trim() === "" ? ["Label"] : []),
-        ...fields
-          .filter((field) => (credentials[field.name] ?? "").trim() === "")
-          .map((field) => field.label),
-      ]
-    : [];
-  const createIncomplete = isCreate && missingFields.length > 0;
 
   // F13: a save/probe/disable can change which carriers are DB-backed and live, so the
   // catalog + routing policy the health/policy sections read must be refreshed too.
@@ -170,22 +161,15 @@ function ProviderAccountCard({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (account) {
-        const patch: PatchProviderAccountInput = {
-          credentials: buildCredentialsForSave(provider, account, credentials),
-        };
-        // F4: the backend rejects a blank label outright (min_length=1) - only send it
-        // when it is both non-blank and an actual change.
-        if (label.trim() !== "" && label !== account.label) {
-          patch.label = label;
-        }
-        return patchProviderAccount(api, account.id, patch);
+      const patch: PatchProviderAccountInput = {
+        credentials: buildCredentialsForSave(provider, account, credentials),
+      };
+      // F4: the backend rejects a blank label outright (min_length=1) - only send it
+      // when it is both non-blank and an actual change.
+      if (label.trim() !== "" && label.trim() !== account.label) {
+        patch.label = label.trim();
       }
-      return createProviderAccount(api, {
-        provider,
-        label,
-        credentials: buildCredentialsForSave(provider, undefined, credentials),
-      });
+      return patchProviderAccount(api, account.id, patch);
     },
     onSuccess: (saved) => {
       // The mutation response is the full, authoritative account record - write it straight
@@ -193,22 +177,17 @@ function ProviderAccountCard({
       // (and could race with it under a slow network).
       queryClient.setQueryData<ProviderAccount[]>(["provider-accounts"], (old) => {
         const list = old ?? [];
-        if (account) {
-          return list.map((item) => (item.id === saved.id ? saved : item));
-        }
-        return [...list, saved];
+        return list.map((item) => (item.id === saved.id ? saved : item));
       });
       invalidateRoutingQueries();
       clearSecretInputs();
+      setLabel(saved.label);
     },
     onError: (error) => onError(error),
   });
 
   const probeMutation = useMutation({
-    mutationFn: () => {
-      if (!account) return Promise.reject(new Error(`No ${provider} account to probe`));
-      return probeProviderAccount(api, account.id);
-    },
+    mutationFn: () => probeProviderAccount(api, account.id),
     onSuccess: (saved) => {
       queryClient.setQueryData<ProviderAccount[]>(["provider-accounts"], (old) =>
         (old ?? []).map((item) => (item.id === saved.id ? saved : item)),
@@ -219,10 +198,7 @@ function ProviderAccountCard({
   });
 
   const disableMutation = useMutation({
-    mutationFn: () => {
-      if (!account) return Promise.reject(new Error(`No ${provider} account to disable`));
-      return disableProviderAccount(api, account.id);
-    },
+    mutationFn: () => disableProviderAccount(api, account.id),
     onSuccess: () => {
       setConfirmingDisable(false);
       void queryClient.invalidateQueries({ queryKey: ["provider-accounts"] });
@@ -231,66 +207,64 @@ function ProviderAccountCard({
     onError: (error) => onError(error),
   });
 
-  const pill = accountStatusPill(account?.status);
+  const pill = accountStatusPill(account.status);
+  const providerName = providerDisplayName(provider);
 
   return (
-    <section
-      role="region"
-      aria-label={`${provider} account`}
-      className="space-y-4 rounded-md border border-neutral-800 bg-neutral-900 p-4"
-    >
+    /* A named group per connection: several providers share credential field labels
+       ("Auth token" is both Twilio's and Plivo's), so without a landmark every
+       getByLabelText across the page is ambiguous - and a screen-reader user has no
+       way to tell which connection a field belongs to either. */
+    <Card role="group" aria-label={`${account.label} connection`} className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-neutral-50">{provider}</h3>
-            <span className={cn("rounded-full px-2 py-0.5 text-xs", pill.className)}>
-              {pill.label}
-            </span>
+            <h3 className="text-sm font-semibold text-foreground">{account.label}</h3>
+            <Pill tone={pill.tone}>{pill.label}</Pill>
           </div>
-          {account?.last_probe_detail && (
-            <p className="text-xs text-neutral-500">{account.last_probe_detail}</p>
+          <p className="text-xs text-muted-foreground">{providerName}</p>
+          {account.last_probe_detail && (
+            <p className="text-xs text-muted-foreground">{account.last_probe_detail}</p>
           )}
         </div>
-        {account && (
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-label={`Probe ${provider}`}
-              disabled={readOnly || probeMutation.isPending}
-              onClick={() => {
-                setLastAction("probe");
-                probeMutation.mutate();
-              }}
-              className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
-            >
-              Probe
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-label={confirmingDisable ? `Confirm disable ${provider}` : `Disable ${provider}`}
-              disabled={readOnly || disableMutation.isPending}
-              onClick={() => {
-                if (confirmingDisable) {
-                  setLastAction("disable");
-                  disableMutation.mutate();
-                } else {
-                  setConfirmingDisable(true);
-                }
-              }}
-              className={cn(
-                "border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800",
-                confirmingDisable && "border-red-800 text-red-400 hover:bg-red-950",
-              )}
-            >
-              {confirmingDisable ? "Confirm disable" : "Disable"}
-            </Button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={`Test ${providerName}`}
+            disabled={readOnly || probeMutation.isPending}
+            onClick={() => {
+              setLastAction("probe");
+              probeMutation.mutate();
+            }}
+          >
+            Test
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={confirmingDisable ? `Confirm disable ${providerName}` : `Disable ${providerName}`}
+            disabled={readOnly || disableMutation.isPending}
+            onClick={() => {
+              if (confirmingDisable) {
+                setLastAction("disable");
+                disableMutation.mutate();
+              } else {
+                setConfirmingDisable(true);
+              }
+            }}
+          >
+            {confirmingDisable ? "Confirm disable" : "Disable"}
+          </Button>
+        </div>
       </div>
+
+      <p className="text-sm text-muted-foreground">{numbersCountText(account.numbers_count)}</p>
+      <p className="text-sm text-muted-foreground">
+        Spend this month: {formatSpendMtd(account.spend_mtd_micros)}
+      </p>
 
       <form
         onSubmit={(e) => {
@@ -301,24 +275,22 @@ function ProviderAccountCard({
         className="grid gap-3 md:grid-cols-2"
       >
         <div className="space-y-1">
-          <label htmlFor={`${provider}-label`} className="block text-xs text-neutral-400">
+          <label htmlFor={`${provider}-label`} className="block text-xs text-muted-foreground">
             Label
           </label>
-          <input
+          <Input
             id={`${provider}-label`}
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             disabled={readOnly}
-            aria-invalid={isCreate && label.trim() === ""}
-            className="h-9 w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100 placeholder:text-neutral-500 aria-[invalid=true]:border-red-800"
           />
         </div>
         {fields.map((field) => (
           <div key={field.name} className="space-y-1">
-            <label htmlFor={`${provider}-${field.name}`} className="block text-xs text-neutral-400">
+            <label htmlFor={`${provider}-${field.name}`} className="block text-xs text-muted-foreground">
               {field.label}
             </label>
-            <input
+            <Input
               id={`${provider}-${field.name}`}
               type={field.secret ? "password" : "text"}
               value={credentials[field.name] ?? ""}
@@ -326,81 +298,48 @@ function ProviderAccountCard({
                 setCredentials((prev) => ({ ...prev, [field.name]: e.target.value }))
               }
               placeholder={
-                field.secret && account?.credentials[field.name] === SECRET_MASK
+                field.secret && account.credentials[field.name] === SECRET_MASK
                   ? "stored — leave blank to keep"
                   : undefined
               }
               disabled={readOnly}
-              aria-invalid={isCreate && (credentials[field.name] ?? "").trim() === ""}
-              className="h-9 w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100 placeholder:text-neutral-500 aria-[invalid=true]:border-red-800"
             />
           </div>
         ))}
-        {createIncomplete && (
-          <p className="md:col-span-2 text-xs text-amber-400">
-            Missing: {missingFields.join(", ")}
-          </p>
-        )}
         <div className="md:col-span-2 flex flex-wrap items-center gap-3">
-          <Button
-            type="submit"
-            size="sm"
-            aria-label={`Save ${provider}`}
-            disabled={readOnly || saveMutation.isPending || createIncomplete}
-            className="bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:opacity-90"
-          >
+          <Button type="submit" size="sm" disabled={readOnly || saveMutation.isPending}>
             Save
           </Button>
           {lastAction === "save" && (
-            <MutationStatus mutation={saveMutation} pendingLabel="Saving…" successLabel="Saved" />
+            <MutationStatus
+              pending={saveMutation.isPending}
+              error={saveMutation.error}
+              success="Saved"
+              pendingLabel="Saving…"
+            />
           )}
           {lastAction === "probe" && (
-            <MutationStatus mutation={probeMutation} pendingLabel="Probing…" successLabel="Probed" />
+            <MutationStatus
+              pending={probeMutation.isPending}
+              error={probeMutation.error}
+              success="Tested"
+              pendingLabel="Testing…"
+            />
           )}
           {lastAction === "disable" && (
             <MutationStatus
-              mutation={disableMutation}
+              pending={disableMutation.isPending}
+              error={disableMutation.error}
+              success="Disabled"
               pendingLabel="Disabling…"
-              successLabel="Disabled"
             />
           )}
         </div>
       </form>
 
-      <div className="border-t border-neutral-800 pt-3">
-        <p className="text-xs font-medium text-neutral-400">Numbers on this provider</p>
-        {numbersLoading ? (
-          <p className="text-xs text-neutral-500">Loading numbers…</p>
-        ) : numbers.length === 0 ? (
-          <p className="text-xs text-neutral-500">None</p>
-        ) : (
-          <ul className="mt-2 flex flex-wrap gap-1">
-            {numbers.map((number) => (
-              <li
-                key={number.id}
-                className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200"
-              >
-                {formatPhone(number.e164)}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
       <SpendCard provider={provider} onOpenRates={onOpenRates} />
-    </section>
+    </Card>
   );
-}
-
-function statusPill(entry: CarrierCatalogOut): { label: string; className: string } {
-  if (entry.live) return { label: "Live", className: "bg-green-950 text-green-400" };
-  if (entry.enabled_flag === false) return { label: "Off", className: "bg-neutral-800 text-neutral-400" };
-  return { label: "Needs credentials", className: "bg-amber-950 text-amber-400" };
-}
-
-function hasMms(entry: CarrierCatalogOut): boolean {
-  const bytes = entry.capabilities?.max_media_bytes;
-  return typeof bytes === "number" && bytes > 0;
 }
 
 function CarrierCard({
@@ -416,26 +355,22 @@ function CarrierCard({
   result: ProbeState | undefined;
   readOnly: boolean;
 }) {
-  const pill = statusPill(entry);
-  const breakerLoud = entry.live && Boolean(entry.state) && entry.state !== "closed";
+  const pill = carrierStatusPill(entry);
+  const statePill = entry.live ? providerStatePill(entry.state) : null;
+  const circuitLoud = statePill !== null && entry.state !== "closed";
 
   return (
-    <li className="space-y-3 rounded-md border border-neutral-800 p-4">
+    <li className="space-y-3 rounded-md border border-border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-neutral-100">{entry.name}</span>
-          <Badge className={pill.className}>{pill.label}</Badge>
-          {entry.live && entry.state && (
-            <Badge
-              role={breakerLoud ? "alert" : undefined}
-              className={cn(
-                breakerLoud
-                  ? "bg-red-950 font-semibold text-red-400"
-                  : "bg-neutral-800 text-neutral-400",
-              )}
-            >
-              {breakerLoud ? `Breaker ${entry.state} — failing` : `Breaker ${entry.state}`}
-            </Badge>
+          <span className="text-sm font-medium text-foreground">
+            {providerDisplayName(entry.name)}
+          </span>
+          <Pill tone={pill.tone}>{pill.label}</Pill>
+          {statePill && (
+            <Pill tone={statePill.tone} role={circuitLoud ? "alert" : undefined}>
+              {statePill.label}
+            </Pill>
           )}
         </div>
         <Button
@@ -444,50 +379,49 @@ function CarrierCard({
           variant="outline"
           onClick={onProbe}
           disabled={entry.missing.length > 0 || probing || readOnly}
-          className="border-neutral-700 bg-transparent text-neutral-300 hover:bg-neutral-800"
         >
           {probing ? "Testing…" : "Test credentials"}
         </Button>
       </div>
 
       <div className="flex flex-wrap gap-1">
-        <Badge className="bg-neutral-800 text-neutral-300">SMS</Badge>
-        {hasMms(entry) && <Badge className="bg-neutral-800 text-neutral-300">MMS</Badge>}
-        {entry.supports_voice && <Badge className="bg-neutral-800 text-neutral-300">Voice</Badge>}
-        {entry.supports_numbers && <Badge className="bg-neutral-800 text-neutral-300">Numbers</Badge>}
-        {entry.primary && <Badge className="bg-blue-950 text-blue-400">Primary</Badge>}
+        <Badge className="bg-muted text-muted-foreground">SMS</Badge>
+        {hasMms(entry) && <Badge className="bg-muted text-muted-foreground">MMS</Badge>}
+        {entry.supports_voice && <Badge className="bg-muted text-muted-foreground">Voice</Badge>}
+        {entry.supports_numbers && <Badge className="bg-muted text-muted-foreground">Numbers</Badge>}
+        {entry.primary && <Badge className="bg-muted text-muted-foreground">Primary</Badge>}
       </div>
 
       {!entry.live && (
-        <div className="space-y-1 text-xs text-neutral-400">
+        <div className="space-y-1 text-xs text-muted-foreground">
           <p>{entry.reason}</p>
           {entry.missing.length > 0 && (
             <div className="space-y-1">
-              <code className="block rounded bg-neutral-950 p-2 text-[11px] text-neutral-300">
+              <code className="block rounded bg-muted p-2 text-[11px] text-foreground">
                 {entry.missing.map((name) => (
                   <div key={name}>{name}</div>
                 ))}
               </code>
-              <p>Add these to the server .env and restart.</p>
+              <p>Ask your administrator to add these connection settings on the server, then restart it.</p>
             </div>
           )}
         </div>
       )}
 
       {result && result.kind === "error" && (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-destructive">
           {result.message}
         </p>
       )}
       {result && result.kind === "result" && result.data.ok && (
-        <p className="text-xs text-green-400">{result.data.detail}</p>
+        <p className="text-xs text-muted-foreground">{result.data.detail}</p>
       )}
       {result && result.kind === "result" && !result.data.ok && (
         <div className="space-y-1">
-          <p role="alert" className="text-xs text-red-400">
+          <p role="alert" className="text-xs text-destructive">
             {result.data.detail}
           </p>
-          <p className="break-all font-mono text-[10px] text-neutral-400">
+          <p className="break-all font-mono text-[10px] text-muted-foreground">
             {result.data.checked}
           </p>
         </div>
@@ -522,27 +456,21 @@ function CarrierHealthSection({ api, readOnly }: { api: ApiClient; readOnly: boo
   }
 
   return (
-    <section className="space-y-4 rounded-md border border-neutral-800 p-4">
-      <h2 className="text-base font-semibold text-neutral-50">Carrier health</h2>
+    <section className="space-y-4 rounded-lg border border-border p-4">
+      <h2 className="text-base font-semibold text-foreground">Provider health</h2>
       {isLoading ? (
         <Spinner />
       ) : isError ? (
-        <div role="alert" className="space-y-2 text-sm text-red-400">
+        <div role="alert" className="space-y-2 text-sm text-destructive">
           <p>{(error as Error).message}</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
-          >
+          <Button type="button" variant="outline" size="sm" onClick={() => refetch()}>
             Retry
           </Button>
         </div>
       ) : sorted.length === 0 ? (
-        <p className="text-sm text-neutral-400">No carriers found.</p>
+        <p className="text-sm text-muted-foreground">No providers found.</p>
       ) : (
-        <ul aria-label="Carriers" className="space-y-3">
+        <ul aria-label="Providers" className="space-y-3">
           {sorted.map((entry) => (
             <CarrierCard
               key={entry.name}
@@ -585,52 +513,46 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
   }
 
   return (
-    <section className="space-y-4 rounded-md border border-neutral-800 p-4">
-      <h2 className="text-base font-semibold text-neutral-50">Routing policy</h2>
+    <section className="space-y-4 rounded-lg border border-border p-4">
+      <h2 className="text-base font-semibold text-foreground">Delivery preferences</h2>
 
       {error && (
-        <p role="alert" className="text-sm text-red-400">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
 
       {isError ? (
-        <div role="alert" className="space-y-2 text-sm text-red-400">
+        <div role="alert" className="space-y-2 text-sm text-destructive">
           <p>{(queryError as Error).message}</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
-          >
+          <Button type="button" variant="outline" size="sm" onClick={() => refetch()}>
             Retry
           </Button>
         </div>
       ) : isLoading || !policy ? (
-        <Spinner label="Loading routing policy" />
+        <Spinner label="Loading delivery preferences" />
       ) : (
         <>
           {policy.preference.length === 0 ? (
-            <p className="text-sm text-neutral-400">
-              No carriers in the preference order yet.
+            <p className="text-sm text-muted-foreground">
+              No providers in the preference order yet.
             </p>
           ) : (
-            <ol aria-label="Carrier preference order" className="max-w-md space-y-1">
+            <ol aria-label="Provider preference order" className="max-w-md space-y-1">
               {policy.preference.map((name, i) => (
                 <li
                   key={name}
-                  className="flex items-center justify-between gap-2 rounded-md border border-neutral-800 px-3 py-1.5 text-sm text-neutral-100"
+                  className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-sm text-foreground"
                 >
                   <span>
-                    {i + 1}. {name}
+                    {i + 1}. {providerDisplayName(name)}
                   </span>
                   <div className="flex gap-1">
                     <Button
                       type="button"
                       size="sm"
                       variant="ghost"
-                      aria-label={`Move ${name} up`}
+                      aria-label={`Move ${providerDisplayName(name)} up`}
                       onClick={() => move(name, -1)}
                       disabled={i === 0 || updatePolicy.isPending || readOnly}
                     >
@@ -640,7 +562,7 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
                       type="button"
                       size="sm"
                       variant="ghost"
-                      aria-label={`Move ${name} down`}
+                      aria-label={`Move ${providerDisplayName(name)} down`}
                       onClick={() => move(name, 1)}
                       disabled={i === policy.preference.length - 1 || updatePolicy.isPending || readOnly}
                     >
@@ -652,27 +574,181 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
             </ol>
           )}
 
-          <label className="flex items-center gap-2 text-sm text-neutral-200">
+          <label className="flex items-center gap-2 text-sm text-foreground">
             <input
               type="checkbox"
               checked={policy.allow_intra_carrier_failover}
               onChange={(e) => patch({ allow_intra_carrier_failover: e.target.checked })}
               disabled={updatePolicy.isPending || readOnly}
             />
-            Allow intra-carrier failover
+            Allow intra-provider failover
           </label>
-          <label className="flex items-center gap-2 text-sm text-neutral-200">
+          <label className="flex items-center gap-2 text-sm text-foreground">
             <input
               type="checkbox"
               checked={policy.allow_cross_carrier_failover}
               onChange={(e) => patch({ allow_cross_carrier_failover: e.target.checked })}
               disabled={updatePolicy.isPending || readOnly}
             />
-            Allow cross-carrier failover
+            Allow cross-provider failover
           </label>
         </>
       )}
     </section>
+  );
+}
+
+function ConnectProviderSection({
+  api,
+  availableProviders,
+  isLoading,
+  readOnly,
+  onError,
+}: {
+  api: ApiClient;
+  availableProviders: ProviderName[];
+  isLoading: boolean;
+  readOnly: boolean;
+  onError: (error: unknown) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [selectedProvider, setSelectedProvider] = React.useState<ProviderName | "">("");
+  const [label, setLabel] = React.useState("");
+  const [credentials, setCredentials] = React.useState<Record<string, string>>({});
+
+  function handleProviderChange(value: string) {
+    const next = value as ProviderName | "";
+    setSelectedProvider(next);
+    if (next) {
+      const fields = PROVIDER_FIELDS[next];
+      setCredentials(Object.fromEntries(fields.map((field) => [field.name, ""])));
+    } else {
+      setCredentials({});
+    }
+  }
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedProvider) return Promise.reject(new Error("Choose a provider first."));
+      return createProviderAccount(api, {
+        provider: selectedProvider,
+        label: label.trim(),
+        credentials: buildCredentialsForSave(selectedProvider, undefined, credentials),
+      });
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData<ProviderAccount[]>(["provider-accounts"], (old) => [
+        ...(old ?? []),
+        saved,
+      ]);
+      void queryClient.invalidateQueries({ queryKey: ["carrier-catalog"] });
+      void queryClient.invalidateQueries({ queryKey: ["routing-policy"] });
+      setSelectedProvider("");
+      setLabel("");
+      setCredentials({});
+    },
+    onError: (error) => onError(error),
+  });
+
+  if (isLoading) {
+    return <Spinner label="Loading providers" />;
+  }
+
+  if (availableProviders.length === 0) {
+    return <p className="text-sm text-muted-foreground">All providers are connected.</p>;
+  }
+
+  const fields = selectedProvider ? PROVIDER_FIELDS[selectedProvider] : [];
+  // A brand-new account has no server-side fallback for a blank field, so every field must
+  // be filled in before Save is allowed (F6). An existing account can save partial changes -
+  // buildCredentialsForSave drops blanks there instead (F5).
+  const missingFields = [
+    ...(selectedProvider ? [] : ["Provider"]),
+    ...(label.trim() === "" ? ["Label"] : []),
+    ...fields
+      .filter((field) => (credentials[field.name] ?? "").trim() === "")
+      .map((field) => field.label),
+  ];
+  const createIncomplete = missingFields.length > 0;
+
+  return (
+    <div className="space-y-3">
+      <Select
+        aria-label="Connect a provider"
+        value={selectedProvider}
+        onChange={(e) => handleProviderChange(e.target.value)}
+        disabled={readOnly}
+      >
+        <option value="">Choose a provider…</option>
+        {availableProviders.map((provider) => (
+          <option key={provider} value={provider}>
+            {providerDisplayName(provider)}
+          </option>
+        ))}
+      </Select>
+
+      {selectedProvider && (
+        <Card className="space-y-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              createMutation.mutate();
+            }}
+            className="grid gap-3 md:grid-cols-2"
+          >
+            <div className="space-y-1">
+              <label htmlFor="connect-provider-label" className="block text-xs text-muted-foreground">
+                Name this connection
+              </label>
+              <Input
+                id="connect-provider-label"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                disabled={readOnly}
+                aria-invalid={label.trim() === ""}
+              />
+            </div>
+            {fields.map((field) => (
+              <div key={field.name} className="space-y-1">
+                <label htmlFor={`connect-${field.name}`} className="block text-xs text-muted-foreground">
+                  {field.label}
+                </label>
+                <Input
+                  id={`connect-${field.name}`}
+                  type={field.secret ? "password" : "text"}
+                  value={credentials[field.name] ?? ""}
+                  onChange={(e) =>
+                    setCredentials((prev) => ({ ...prev, [field.name]: e.target.value }))
+                  }
+                  disabled={readOnly}
+                  aria-invalid={(credentials[field.name] ?? "").trim() === ""}
+                />
+              </div>
+            ))}
+            {createIncomplete && (
+              <p className="md:col-span-2 text-xs text-destructive">
+                Missing: {missingFields.join(", ")}
+              </p>
+            )}
+            <div className="md:col-span-2 flex flex-wrap items-center gap-3">
+              <Button
+                type="submit"
+                size="sm"
+                disabled={readOnly || createMutation.isPending || createIncomplete}
+              >
+                Save
+              </Button>
+              <MutationStatus
+                pending={createMutation.isPending}
+                error={createMutation.error}
+                success="Saved"
+                pendingLabel="Saving…"
+              />
+            </div>
+          </form>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -698,6 +774,11 @@ export function ProvidersPage() {
   const roleReadOnly = me != null && roleName !== "owner" && roleName !== "admin";
   const readOnly = roleReadOnly || forcedReadOnly;
 
+  const availableProviders = React.useMemo(() => {
+    const connected = new Set((providerAccountsQuery.data ?? []).map((account) => account.provider));
+    return PROVIDER_NAMES.filter((provider) => !connected.has(provider));
+  }, [providerAccountsQuery.data]);
+
   const handleError = React.useCallback((error: unknown) => {
     if (error instanceof ApiError) {
       if (error.status === 403) setForcedReadOnly(true);
@@ -711,38 +792,32 @@ export function ProvidersPage() {
     if (providerAccountsQuery.error) handleError(providerAccountsQuery.error);
   }, [handleError, providerAccountsQuery.error]);
 
-  const accountByProvider = React.useMemo(() => {
-    const map = new Map<ProviderName, ProviderAccount>();
-    (providerAccountsQuery.data ?? []).forEach((account) => map.set(account.provider, account));
-    return map;
-  }, [providerAccountsQuery.data]);
+  // `isError`/`isLoading` do not narrow `data` for TypeScript - name the fallback once
+  // rather than sprinkling non-null assertions through the JSX.
+  const accounts = providerAccountsQuery.data ?? [];
 
   return (
-    <div className="dark mx-auto max-w-5xl space-y-8 bg-neutral-950 p-6 text-neutral-100">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-2">
-          <h1 className="text-lg font-semibold text-neutral-50">Providers</h1>
-          <p className="text-sm text-neutral-400">Provider accounts and carrier health.</p>
+    <div className="mx-auto max-w-5xl space-y-8 p-6 text-foreground">
+      {/* The page header is a heading + one action, not a Section: `Section` requires
+          children and an empty one would render a stray, unlabelled container. */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold">Providers</h1>
+          <p className="text-sm text-muted-foreground">
+            Connect the account that sends your messages and places your calls.
+          </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setRatesOpen(true)}
-          className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
-        >
+        <Button type="button" variant="outline" size="sm" onClick={() => setRatesOpen(true)}>
           Rates
         </Button>
       </div>
 
-      {ratesOpen && (
-        <RatesDrawer readOnly={readOnly} onClose={() => setRatesOpen(false)} />
-      )}
+      {ratesOpen && <RatesDrawer readOnly={readOnly} onClose={() => setRatesOpen(false)} />}
 
       {storageError && (
         <div
           role="alert"
-          className="rounded-md border border-red-800 bg-red-950 p-3 text-sm text-red-300"
+          className="rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
         >
           {storageError}
         </div>
@@ -750,70 +825,81 @@ export function ProvidersPage() {
       {numbersQuery.isError && (
         <div
           role="alert"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-800 bg-red-950 p-3 text-sm text-red-300"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
         >
           <span>{(numbersQuery.error as Error).message}</span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => numbersQuery.refetch()}
-            className="border-red-800 bg-transparent px-3 py-1.5 text-xs text-red-300 hover:bg-red-900"
-          >
+          <Button type="button" variant="outline" size="sm" onClick={() => numbersQuery.refetch()}>
             Retry
           </Button>
         </div>
       )}
       {readOnly && (
-        <p className="text-sm text-amber-400">
+        <p className="text-sm text-destructive">
           Read-only: your role can view provider status but not edit credentials.
         </p>
       )}
 
-      <section className="space-y-4">
-        <h2 className="text-base font-semibold text-neutral-50">Provider accounts</h2>
+      {/* No heading here on purpose. `Section` labels its <section> with the heading, so a
+          heading reading "Connect a provider" would give the landmark the SAME accessible
+          name as the picker inside it - every getByLabelText("Connect a provider") then
+          matches two elements, and a screen reader announces the phrase twice in a row.
+          The dropdown is the control the plan names, so the name lives on the dropdown. */}
+      <div id="connect-provider">
+        <ConnectProviderSection
+          api={api}
+          availableProviders={availableProviders}
+          isLoading={providerAccountsQuery.isLoading}
+          readOnly={readOnly}
+          onError={handleError}
+        />
+      </div>
+
+      <Section title="Connected providers">
         {providerAccountsQuery.isLoading ? (
-          <p className="text-sm text-neutral-400">Loading provider accounts…</p>
+          <p className="text-sm text-muted-foreground">Loading provider connections…</p>
         ) : providerAccountsQuery.isError ? (
           // F9: the list call itself failed (usually the 503 above) - every card's account
           // data is unknown, not "not configured", so render nothing that invites an edit
           // that will just fail the same way.
-          <div role="alert" className="space-y-2 text-sm text-neutral-400">
+          <div role="alert" className="space-y-2 text-sm text-destructive">
             <p>Provider accounts are unavailable.</p>
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => providerAccountsQuery.refetch()}
-              className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
             >
               Retry
             </Button>
           </div>
+        ) : accounts.length === 0 ? (
+          /* No CTA: the "Connect a provider" picker is the section directly above this
+             one, so a button repeating that exact phrase adds nothing and makes every
+             getByText("Connect a provider") in the suite ambiguous. */
+          <EmptyState
+            title="No provider connections yet"
+            description="Use the Connect a provider picker above to add your first one."
+          />
         ) : (
-          PROVIDER_NAMES.map((provider) => {
-            const account = accountByProvider.get(provider);
-            const numbers = (numbersQuery.data ?? []).filter(
-              (number) => number.carrier === provider,
-            );
-            return (
-              <ProviderAccountCard
-                key={account?.id ?? `${provider}-none`}
-                provider={provider}
-                account={account}
-                numbers={numbers}
-                numbersLoading={numbersQuery.isLoading}
-                readOnly={readOnly}
-                onError={handleError}
-                onOpenRates={() => setRatesOpen(true)}
-              />
-            );
-          })
+          accounts.map((account) => (
+            <ProviderAccountCard
+              key={account.id}
+              provider={account.provider}
+              account={account}
+              readOnly={readOnly}
+              onError={handleError}
+              onOpenRates={() => setRatesOpen(true)}
+            />
+          ))
         )}
-      </section>
+      </Section>
 
-      <CarrierHealthSection api={api} readOnly={readOnly} />
-      <PolicySection api={api} readOnly={readOnly} />
+      <Collapsible storageKey="settings.providers.advanced" defaultOpen={false} title="Advanced">
+        <div className="space-y-4">
+          <CarrierHealthSection api={api} readOnly={readOnly} />
+          <PolicySection api={api} readOnly={readOnly} />
+        </div>
+      </Collapsible>
     </div>
   );
 }

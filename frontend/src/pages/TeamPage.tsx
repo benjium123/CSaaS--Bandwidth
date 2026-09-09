@@ -18,7 +18,7 @@ import {
   useUpdateRole,
   type RoleOut,
 } from "@/api/roles";
-import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import { Button, Input, Pill, Select, Spinner, type PillTone } from "@/components/ui/primitives";
 import { RoleMatrix } from "@/components/team/RoleMatrix";
 
 const INVITABLE_ROLES = [
@@ -35,16 +35,19 @@ function inviteStatus(invite: InviteOut): InviteStatus {
   return "Pending";
 }
 
-function statusBadgeClass(status: InviteStatus): string {
+/** P20b: these were LIGHT-mode palette classes (bg-amber-100/text-amber-800 ...) rendering
+ * inside a dark app shell - washed-out chips nobody could read. Statuses now go through the
+ * shared `Pill` tones, which are the one place status colour is defined. */
+function statusBadgeTone(status: InviteStatus): PillTone {
   switch (status) {
     case "Pending":
-      return "bg-amber-100 text-amber-800";
+      return "warning";
     case "Accepted":
-      return "bg-green-100 text-green-800";
+      return "success";
     case "Revoked":
-      return "bg-gray-100 text-gray-600";
+      return "neutral";
     case "Expired":
-      return "bg-red-100 text-red-800";
+      return "danger";
   }
 }
 
@@ -303,7 +306,7 @@ export function TeamPage() {
                             {invite.role_name}
                           </td>
                           <td className="px-3 py-2">
-                            <Badge className={statusBadgeClass(status)}>{status}</Badge>
+                            <Pill tone={statusBadgeTone(status)}>{status}</Pill>
                           </td>
                           <td className="px-3 py-2">
                             {status === "Pending" ? (
@@ -348,10 +351,10 @@ export function TeamPage() {
                 <label className="block text-xs text-muted-foreground" htmlFor="invite-role">
                   Role
                 </label>
-                <select
+                <Select
                   id="invite-role"
                   aria-label="Role"
-                  className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                  className="h-9 w-auto px-2"
                   value={role}
                   onChange={(event) => setRole(event.target.value)}
                 >
@@ -360,7 +363,7 @@ export function TeamPage() {
                       {entry.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <Button type="submit" disabled={createInvite.isPending}>
                 Send invite
@@ -374,7 +377,7 @@ export function TeamPage() {
             )}
 
             {created && (
-              <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm">
+              <div className="space-y-2 rounded-md border border-border bg-muted p-4 text-sm">
                 <p className="font-medium">Invitation created for {created.email}</p>
                 <p className="text-xs text-muted-foreground">
                   This link is shown once and cannot be retrieved again. If it is lost, revoke this
@@ -430,7 +433,7 @@ export function TeamPage() {
             </Button>
           </div>
 
-          {roleSaved && <Badge className="bg-green-100 text-green-800">Saved</Badge>}
+          {roleSaved && <Pill tone="success">Saved</Pill>}
           {roleError && (
             <p role="alert" className="text-sm text-destructive">
               {roleError}
@@ -474,7 +477,7 @@ export function TeamPage() {
                       <td className="px-3 py-2">{target.name}</td>
                       <td className="px-3 py-2">
                         {target.is_system ? (
-                          <Badge className="bg-gray-100 text-gray-600">Built-in</Badge>
+                          <Pill tone="neutral">Built-in</Pill>
                         ) : null}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">

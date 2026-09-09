@@ -1,7 +1,15 @@
 import * as React from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { useAppointments, useUpdateAppointment, type AppointmentOut } from "@/api/hooks";
-import { Badge, Spinner } from "@/components/ui/primitives";
+import {
+  Card,
+  EmptyState,
+  Pill,
+  Section,
+  Select,
+  Spinner,
+  type PillTone,
+} from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 
 const STATUS_OPTIONS = ["booked", "canceled", "done"];
@@ -13,14 +21,14 @@ const STATUS_FILTERS = [
   { key: "done", label: "Done" },
 ];
 
-function statusBadgeClass(status: string): string {
+function statusTone(status: string): PillTone {
   switch (status) {
     case "done":
-      return "bg-green-100 text-green-800";
+      return "success";
     case "canceled":
-      return "bg-gray-100 text-gray-600";
+      return "neutral";
     default:
-      return "bg-amber-100 text-amber-800";
+      return "warning";
   }
 }
 
@@ -53,9 +61,9 @@ function AppointmentRow({ appt }: { appt: AppointmentOut }) {
       </td>
       <td className="max-w-xs px-3 py-2 text-sm text-muted-foreground">{appt.notes || "—"}</td>
       <td className="px-2 py-2">
-        <select
+        <Select
           aria-label={`Status for appointment with ${appt.contact_e164}`}
-          className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+          className="h-8 px-2 text-xs"
           value={appt.status}
           onChange={(e) => changeStatus(e.target.value)}
           disabled={updateAppointment.isPending}
@@ -65,8 +73,8 @@ function AppointmentRow({ appt }: { appt: AppointmentOut }) {
               {s}
             </option>
           ))}
-        </select>
-        <Badge className={`ml-2 ${statusBadgeClass(appt.status)}`}>{appt.status}</Badge>
+        </Select>
+        <Pill className="ml-2" tone={statusTone(appt.status)}>{appt.status}</Pill>
         {error && (
           <p role="alert" className="mt-1 text-xs text-destructive">
             {error}
@@ -75,7 +83,7 @@ function AppointmentRow({ appt }: { appt: AppointmentOut }) {
       </td>
       <td className="px-2 py-2">
         {appt.created_by === "ai" ? (
-          <Badge className="bg-blue-100 text-blue-800">AI</Badge>
+          <Pill tone="info">AI</Pill>
         ) : (
           <span className="text-xs text-muted-foreground">{appt.created_by}</span>
         )}
@@ -91,50 +99,55 @@ export function AppointmentsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col p-6">
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <h1 className="text-lg font-semibold">Appointments</h1>
-        <select
-          aria-label="Filter by status"
-          className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          {STATUS_FILTERS.map((s) => (
-            <option key={s.key} value={s.key}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {isLoading ? (
-          <Spinner label="Loading appointments" />
-        ) : error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {(error as Error).message}
-          </p>
-        ) : (appointments ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">No appointments yet.</p>
-        ) : (
-          <table className="w-full text-sm" aria-label="Appointments">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Contact</th>
-                <th className="px-3 py-2 font-medium">When</th>
-                <th className="px-3 py-2 font-medium">Notes</th>
-                <th className="px-2 py-2 font-medium">Status</th>
-                <th className="px-2 py-2 font-medium">Booked by</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {(appointments ?? []).map((appt) => (
-                <AppointmentRow key={appt.id} appt={appt} />
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <Section
+        title="Appointments"
+        actions={
+          <Select
+            aria-label="Filter by status"
+            className="h-8 px-2 text-xs"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+          >
+            {STATUS_FILTERS.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label}
+              </option>
+            ))}
+          </Select>
+        }
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {isLoading ? (
+            <Spinner label="Loading appointments" />
+          ) : error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {(error as Error).message}
+            </p>
+          ) : (appointments ?? []).length === 0 ? (
+            <EmptyState title="No appointments yet." />
+          ) : (
+            <Card className="p-0">
+              <table className="w-full text-sm" aria-label="Appointments">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2 font-medium">Contact</th>
+                    <th className="px-3 py-2 font-medium">When</th>
+                    <th className="px-3 py-2 font-medium">Notes</th>
+                    <th className="px-2 py-2 font-medium">Status</th>
+                    <th className="px-2 py-2 font-medium">Booked by</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {(appointments ?? []).map((appt) => (
+                    <AppointmentRow key={appt.id} appt={appt} />
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </div>
+      </Section>
     </div>
   );
 }

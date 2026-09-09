@@ -23,7 +23,17 @@ import {
   type WebhookEndpointCreatedOut,
   type WebhookEndpointOut,
 } from "@/api/hooks";
-import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  MutationStatus,
+  Pill,
+  Section,
+  Select,
+  Spinner,
+} from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
 function todayUtc(): string {
@@ -42,7 +52,7 @@ function CopyOnceBox({
   onDismiss: () => void;
 }) {
   return (
-    <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm">
+    <Card className="space-y-2 text-sm">
       <p className="font-medium">{label}</p>
       <p className="text-xs text-muted-foreground">{note}</p>
       <div className="flex gap-2">
@@ -65,7 +75,7 @@ function CopyOnceBox({
       <Button type="button" size="sm" variant="ghost" onClick={onDismiss}>
         Dismiss
       </Button>
-    </div>
+    </Card>
   );
 }
 
@@ -103,15 +113,10 @@ function CheckboxGrid({
 // =====================================================================================
 // API keys (DR-3)
 // =====================================================================================
-function apiKeyStatusBadgeClass(status: string): string {
-  switch (status) {
-    case "active":
-      return "bg-green-100 text-green-800";
-    case "revoked":
-      return "bg-gray-100 text-gray-600";
-    default:
-      return "bg-amber-100 text-amber-800";
-  }
+function apiKeyStatusTone(status: string): "success" | "warning" | "neutral" {
+  if (status === "active") return "success";
+  if (status === "revoked") return "neutral";
+  return "warning";
 }
 
 function ApiKeysSection() {
@@ -123,7 +128,7 @@ function ApiKeysSection() {
 
   const [name, setName] = React.useState("");
   const [scopes, setScopes] = React.useState<Set<string>>(new Set());
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<unknown | null>(null);
   const [created, setCreated] = React.useState<ApiKeyCreatedOut | null>(null);
 
   function toggleScope(scope: string) {
@@ -144,7 +149,7 @@ function ApiKeysSection() {
       setName("");
       setScopes(new Set());
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -153,7 +158,7 @@ function ApiKeysSection() {
     try {
       await revokeKey.mutateAsync(id);
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -163,14 +168,12 @@ function ApiKeysSection() {
       const result = await rotateKey.mutateAsync(id);
       setCreated(result);
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-base font-semibold">API keys</h2>
-
+    <Section title="API keys" description="Create and manage API keys." className="space-y-4">
       {isLoading ? (
         <Spinner />
       ) : keysError ? (
@@ -181,9 +184,13 @@ function ApiKeysSection() {
           </Button>
         </div>
       ) : (keys ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No API keys yet.</p>
+        /* P20b: PlatformPage.test.tsx pins the exact empty-state text "No API keys yet." */
+        <EmptyState
+          title="No API keys yet."
+          description="Create an API key to access the platform API."
+        />
       ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
+        <Card className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
@@ -204,7 +211,7 @@ function ApiKeysSection() {
                     {k.scopes.join(", ")}
                   </td>
                   <td className="px-3 py-2">
-                    <Badge className={apiKeyStatusBadgeClass(k.status)}>{k.status}</Badge>
+                    <Pill tone={apiKeyStatusTone(k.status)}>{k.status}</Pill>
                   </td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">
                     {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "Never"}
@@ -237,70 +244,71 @@ function ApiKeysSection() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
 
-      <form className="space-y-3" onSubmit={submitCreate}>
-        <div className="flex items-end gap-2">
-          <div className="flex-1 space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="apikey-name">
-              Name
-            </label>
-            <Input
-              id="apikey-name"
-              aria-label="Key name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
+      <Card className="space-y-3">
+        <form className="space-y-3" onSubmit={submitCreate}>
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="apikey-name">
+                Name
+              </label>
+              <Input
+                id="apikey-name"
+                aria-label="Key name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <Button
+              type="submit"
+              disabled={!name.trim() || scopes.size === 0 || createKey.isPending}
+            >
+              Create key
+            </Button>
           </div>
-          <Button type="submit" disabled={!name.trim() || scopes.size === 0 || createKey.isPending}>
-            Create key
-          </Button>
-        </div>
-        <CheckboxGrid
-          options={API_KEY_SCOPE_CATALOGUE}
-          selected={scopes}
-          onToggle={toggleScope}
-          legend="Scopes"
-        />
-      </form>
+          <CheckboxGrid
+            options={API_KEY_SCOPE_CATALOGUE}
+            selected={scopes}
+            onToggle={toggleScope}
+            legend="Scopes"
+          />
+        </form>
 
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
+        <MutationStatus error={error} />
 
-      {created && (
-        <CopyOnceBox
-          label="API key"
-          value={created.key}
-          note="This key is shown once and cannot be retrieved again. If it is lost, revoke it and create a new one."
-          onDismiss={() => setCreated(null)}
-        />
-      )}
-    </section>
+        {created && (
+          <CopyOnceBox
+            label="API key"
+            value={created.key}
+            note="This key is shown once and cannot be retrieved again. If it is lost, revoke it and create a new one."
+            onDismiss={() => setCreated(null)}
+          />
+        )}
+      </Card>
+    </Section>
   );
 }
 
 // =====================================================================================
 // Outbound webhooks (DR-4/DR-5)
 // =====================================================================================
-function endpointStatusBadgeClass(status: string): string {
-  return status === "active" ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600";
+function endpointStatusTone(status: string): "success" | "neutral" {
+  return status === "active" ? "success" : "neutral";
 }
 
-function deliveryStatusBadgeClass(status: string): string {
+function deliveryStatusTone(status: string): "success" | "warning" | "danger" | "neutral" {
   switch (status) {
     case "delivered":
-      return "bg-green-100 text-green-800";
+      return "success";
     case "pending":
-      return "bg-amber-100 text-amber-800";
+      return "warning";
     case "dead":
     case "failed":
-      return "bg-red-100 text-red-800";
+      return "danger";
     default:
-      return "bg-gray-100 text-gray-600";
+      return "neutral";
   }
 }
 
@@ -314,14 +322,14 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
     refetch: refetchDeliveries,
   } = useWebhookDeliveries(api, endpoint.id, status || undefined);
   const redeliver = useRedeliverWebhook(api);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<unknown | null>(null);
 
   async function doRedeliver(id: string) {
     setError(null);
     try {
       await redeliver.mutateAsync(id);
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -329,9 +337,9 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
     <div className="space-y-2 border-t border-border bg-muted/40 p-3">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-medium text-foreground">Deliveries for {endpoint.url}</h3>
-        <select
+        <Select
           aria-label="Filter deliveries by status"
-          className="h-7 rounded-md border border-border bg-background px-2 text-xs"
+          className="h-7 w-auto px-2 text-xs"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
         >
@@ -340,14 +348,10 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
           <option value="delivered">Delivered</option>
           <option value="failed">Failed</option>
           <option value="dead">Dead</option>
-        </select>
+        </Select>
       </div>
 
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
+      <MutationStatus error={error} />
 
       {isLoading ? (
         <Spinner label="Loading deliveries" />
@@ -359,7 +363,7 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
           </Button>
         </div>
       ) : (deliveries ?? []).length === 0 ? (
-        <p className="text-xs text-muted-foreground">No deliveries yet.</p>
+        <EmptyState title="No deliveries yet." description="Delivered events will appear here." />
       ) : (
         <table className="w-full text-xs">
           <thead>
@@ -376,7 +380,7 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
               <tr key={d.id}>
                 <td className="px-2 py-1">{d.event_type}</td>
                 <td className="px-2 py-1">
-                  <Badge className={deliveryStatusBadgeClass(d.status)}>{d.status}</Badge>
+                  <Pill tone={deliveryStatusTone(d.status)}>{d.status}</Pill>
                 </td>
                 <td className="px-2 py-1">{d.attempts}</td>
                 <td className="px-2 py-1">
@@ -418,7 +422,7 @@ function WebhooksSection() {
 
   const [url, setUrl] = React.useState("");
   const [eventTypes, setEventTypes] = React.useState<Set<string>>(new Set());
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<unknown | null>(null);
   const [created, setCreated] = React.useState<WebhookEndpointCreatedOut | null>(null);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
 
@@ -443,7 +447,7 @@ function WebhooksSection() {
       setUrl("");
       setEventTypes(new Set());
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -455,7 +459,7 @@ function WebhooksSection() {
         status: endpoint.status === "active" ? "disabled" : "active",
       });
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -465,14 +469,12 @@ function WebhooksSection() {
       await deleteEndpoint.mutateAsync(id);
       if (expandedId === id) setExpandedId(null);
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-base font-semibold">Webhook endpoints</h2>
-
+    <Section title="Callbacks" description="Receive platform events at a callback URL." className="space-y-4">
       {isLoading ? (
         <Spinner />
       ) : endpointsError ? (
@@ -483,18 +485,22 @@ function WebhooksSection() {
           </Button>
         </div>
       ) : (endpoints ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No webhook endpoints yet.</p>
+        /* P20b: PlatformPage.test.tsx pins the exact empty-state text "No webhook endpoints yet." */
+        <EmptyState
+          title="No webhook endpoints yet."
+          description="Create a callback to receive platform events."
+        />
       ) : (
         <div className="space-y-2">
           {(endpoints ?? []).map((ep: WebhookEndpointOut) => (
-            <div key={ep.id} className="rounded-md border border-border">
-              <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+            <Card key={ep.id} className="p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-sm">{ep.url}</p>
                   <p className="text-xs text-muted-foreground">{ep.event_types.join(", ")}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge className={endpointStatusBadgeClass(ep.status)}>{ep.status}</Badge>
+                  <Pill tone={endpointStatusTone(ep.status)}>{ep.status}</Pill>
                   <span className="text-xs text-muted-foreground">
                     {ep.failure_streak} failing
                   </span>
@@ -520,55 +526,55 @@ function WebhooksSection() {
                 </div>
               </div>
               {expandedId === ep.id && <DeliveriesDrawer endpoint={ep} />}
-            </div>
+            </Card>
           ))}
         </div>
       )}
 
-      <form className="space-y-3" onSubmit={submitCreate}>
-        <div className="flex items-end gap-2">
-          <div className="flex-1 space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="webhook-url">
-              Endpoint URL
-            </label>
-            <Input
-              id="webhook-url"
-              aria-label="Endpoint URL"
-              placeholder="https://example.com/webhooks/csaas"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-            />
+      <Card className="space-y-3">
+        <form className="space-y-3" onSubmit={submitCreate}>
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              {/* P20b: PlatformPage.test.tsx queries the exact label "Endpoint URL". */}
+              <label className="block text-xs text-muted-foreground" htmlFor="webhook-url">
+                Endpoint URL
+              </label>
+              <Input
+                id="webhook-url"
+                aria-label="Endpoint URL"
+                placeholder="https://example.com/callbacks/csaas"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
+            </div>
+            {/* P20b: PlatformPage.test.tsx pins the exact button name "Create endpoint". */}
+            <Button
+              type="submit"
+              disabled={!url.trim() || eventTypes.size === 0 || createEndpoint.isPending}
+            >
+              Create endpoint
+            </Button>
           </div>
-          <Button
-            type="submit"
-            disabled={!url.trim() || eventTypes.size === 0 || createEndpoint.isPending}
-          >
-            Create endpoint
-          </Button>
-        </div>
-        <CheckboxGrid
-          options={PLATFORM_EVENT_TYPES}
-          selected={eventTypes}
-          onToggle={toggleEventType}
-          legend="Event types"
-        />
-      </form>
+          <CheckboxGrid
+            options={PLATFORM_EVENT_TYPES}
+            selected={eventTypes}
+            onToggle={toggleEventType}
+            legend="Event types"
+          />
+        </form>
 
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
+        <MutationStatus error={error} />
 
-      {created && (
-        <CopyOnceBox
-          label="Webhook signing secret"
-          value={created.secret}
-          note="This secret is shown once and cannot be retrieved again. It signs every delivery to this endpoint (X-Webhook-Signature)."
-          onDismiss={() => setCreated(null)}
-        />
-      )}
-    </section>
+        {created && (
+          <CopyOnceBox
+            label="Callback signing secret"
+            value={created.secret}
+            note="This secret is shown once and cannot be retrieved again. It signs every delivery to this callback URL (X-Callback-Signature)."
+            onDismiss={() => setCreated(null)}
+          />
+        )}
+      </Card>
+    </Section>
   );
 }
 
@@ -601,38 +607,38 @@ function AuditSection() {
   }
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-base font-semibold">Audit log</h2>
-
-      <form className="flex flex-wrap items-end gap-2" onSubmit={applyFilters}>
-        <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="audit-action">
-            Action
-          </label>
-          <Input
-            id="audit-action"
-            aria-label="Filter by action"
-            placeholder="apikey.created"
-            value={actionInput}
-            onChange={(e) => setActionInput(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="audit-target-type">
-            Target type
-          </label>
-          <Input
-            id="audit-target-type"
-            aria-label="Filter by target type"
-            placeholder="api_key"
-            value={targetTypeInput}
-            onChange={(e) => setTargetTypeInput(e.target.value)}
-          />
-        </div>
-        <Button type="submit" variant="outline">
-          Apply filters
-        </Button>
-      </form>
+    <Section title="Audit log" description="Recent platform activity." className="space-y-4">
+      <Card className="p-4">
+        <form className="flex flex-wrap items-end gap-2" onSubmit={applyFilters}>
+          <div className="space-y-1">
+            <label className="block text-xs text-muted-foreground" htmlFor="audit-action">
+              Action
+            </label>
+            <Input
+              id="audit-action"
+              aria-label="Filter by action"
+              placeholder="apikey.created"
+              value={actionInput}
+              onChange={(e) => setActionInput(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="block text-xs text-muted-foreground" htmlFor="audit-target-type">
+              Target type
+            </label>
+            <Input
+              id="audit-target-type"
+              aria-label="Filter by target type"
+              placeholder="api_key"
+              value={targetTypeInput}
+              onChange={(e) => setTargetTypeInput(e.target.value)}
+            />
+          </div>
+          <Button type="submit" variant="outline">
+            Apply filters
+          </Button>
+        </form>
+      </Card>
 
       {isLoading && rows.length === 0 ? (
         <Spinner />
@@ -644,9 +650,9 @@ function AuditSection() {
           </Button>
         </div>
       ) : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No audit entries yet.</p>
+        <EmptyState title="No audit entries yet." description="Audit activity will appear here." />
       ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
+        <Card className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
@@ -678,7 +684,7 @@ function AuditSection() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
 
       {data?.next_cursor && (
@@ -692,21 +698,21 @@ function AuditSection() {
           Load more
         </Button>
       )}
-    </section>
+    </Section>
   );
 }
 
 // =====================================================================================
 // Usage + reconciliation (DR-2)
 // =====================================================================================
-function verdictBadgeClass(verdict: string): string {
+function verdictTone(verdict: string): "success" | "danger" | "neutral" {
   switch (verdict) {
     case "within_tolerance":
-      return "bg-green-100 text-green-800";
+      return "success";
     case "mismatch":
-      return "bg-red-100 text-red-800";
+      return "danger";
     default:
-      return "bg-gray-100 text-gray-600";
+      return "neutral";
   }
 }
 
@@ -728,9 +734,11 @@ function UsageSection() {
   const usageOrReconError = usageError ?? reconError;
 
   return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Usage</h2>
+    <Section
+      title="Usage"
+      description="Daily usage and provider reconciliation."
+      className="space-y-4"
+      actions={
         <div className="space-y-1">
           <label className="sr-only" htmlFor="usage-date">
             Date
@@ -743,8 +751,8 @@ function UsageSection() {
             onChange={(e) => setDate(e.target.value)}
           />
         </div>
-      </div>
-
+      }
+    >
       {usageLoading || reconLoading ? (
         <Spinner />
       ) : usageOrReconError ? (
@@ -763,13 +771,13 @@ function UsageSection() {
           </Button>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
+        <Card className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
                 <th className="px-3 py-2 font-medium">Metric</th>
                 <th className="px-3 py-2 font-medium">Ours</th>
-                <th className="px-3 py-2 font-medium">Carrier</th>
+                <th className="px-3 py-2 font-medium">Provider</th>
                 <th className="px-3 py-2 font-medium">Verdict</th>
               </tr>
             </thead>
@@ -782,7 +790,7 @@ function UsageSection() {
                     {item.carrier ?? "—"}
                   </td>
                   <td className="px-3 py-2">
-                    <Badge className={verdictBadgeClass(item.verdict)}>{item.verdict}</Badge>
+                    <Pill tone={verdictTone(item.verdict)}>{item.verdict}</Pill>
                   </td>
                 </tr>
               ))}
@@ -795,9 +803,9 @@ function UsageSection() {
               )}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
-    </section>
+    </Section>
   );
 }
 

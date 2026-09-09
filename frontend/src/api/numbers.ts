@@ -22,6 +22,8 @@ export type NumberOut = Omit<GeneratedNumberOut, "status"> & {
   status: NumberStatus;
   provider_account_id: string | null;
   provider_account_label: string | null;
+  // Backend NumberOut schema already returns inbox_name; the generated types predate it.
+  inbox_name: string | null;
   purchase_cost_cents: number | null;
   monthly_cost_cents: number | null;
   purchased_at: string | null;

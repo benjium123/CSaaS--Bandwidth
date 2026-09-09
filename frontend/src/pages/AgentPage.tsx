@@ -14,7 +14,16 @@ import {
   type AgentProfileFields,
   type AgentProfileOut,
 } from "@/api/hooks";
-import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  MutationStatus,
+  Pill,
+  Section,
+  Spinner,
+} from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
 /** Item 47: a two-step "click again to confirm" destructive-action pattern - the first
@@ -91,7 +100,7 @@ export function AgentPage() {
 
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<AgentProfileFields>(EMPTY_FORM);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<unknown | null>(null);
   // Item 19: true the moment the user changes anything, cleared on a real selection
   // switch or a successful save.
   const [dirty, setDirty] = React.useState(false);
@@ -149,7 +158,7 @@ export function AgentPage() {
         setSelectedId(created.id);
       }
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -159,7 +168,7 @@ export function AgentPage() {
       await deleteProfile.mutateAsync(id);
       if (selectedId === id) startNew();
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -168,7 +177,7 @@ export function AgentPage() {
     try {
       await setDefault.mutateAsync(id);
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -187,25 +196,27 @@ export function AgentPage() {
           {isLoading ? (
             <Spinner label="Loading profiles" />
           ) : (profiles ?? []).length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">No agent profiles yet.</p>
+            <EmptyState
+              title="No agent profiles yet."
+              description="Create an agent profile to begin."
+            />
           ) : (
             <ul aria-label="Agent profiles">
               {(profiles ?? []).map((p) => (
                 <li key={p.id}>
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     aria-current={p.id === selectedId ? "true" : undefined}
                     onClick={() => setSelectedId(p.id)}
                     className={cn(
-                      "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted",
+                      "h-auto w-full justify-between px-3 py-2 text-left text-sm",
                       p.id === selectedId && "bg-muted",
                     )}
                   >
                     <span>{p.name}</span>
-                    {p.is_default && (
-                      <Badge className="bg-green-100 text-green-800">Default</Badge>
-                    )}
-                  </button>
+                    {p.is_default && <Pill tone="success">Default</Pill>}
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -214,235 +225,236 @@ export function AgentPage() {
       </aside>
 
       <section className="min-h-0 overflow-y-auto p-6">
-        <form className="max-w-xl space-y-4" onSubmit={save}>
-          <h2 className="flex items-center gap-2 text-base font-semibold">
-            {selectedId ? "Edit profile" : "New profile"}
-            {dirty && (
+        <Section
+          title={selectedId ? "Edit profile" : "New profile"}
+          className="max-w-xl space-y-4"
+          actions={
+            dirty ? (
               <span className="text-[11px] font-normal text-muted-foreground">
                 Unsaved changes
               </span>
-            )}
-          </h2>
-
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="agent-name">
-              Name
-            </label>
-            <Input
-              id="agent-name"
-              aria-label="Profile name"
-              value={form.name}
-              onChange={(e) => field("name")(e.target.value)}
-              required
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="agent-prompt">
-              System prompt
-            </label>
-            <textarea
-              id="agent-prompt"
-              aria-label="System prompt"
-              rows={6}
-              className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
-              value={form.system_prompt}
-              onChange={(e) => field("system_prompt")(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="agent-greeting">
-              Greeting
-            </label>
-            <Input
-              id="agent-greeting"
-              aria-label="Greeting"
-              value={form.greeting}
-              onChange={(e) => field("greeting")(e.target.value)}
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-2">
-            <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="agent-voice">
-                Voice ID
-              </label>
-              <Input
-                id="agent-voice"
-                aria-label="Voice ID"
-                value={form.voice_id}
-                onChange={(e) => field("voice_id")(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="agent-llm-provider">
-                LLM provider
-              </label>
-              <Input
-                id="agent-llm-provider"
-                aria-label="LLM provider"
-                value={form.llm_provider}
-                onChange={(e) => field("llm_provider")(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="agent-llm-model">
-                LLM model
-              </label>
-              <Input
-                id="agent-llm-model"
-                aria-label="LLM model"
-                value={form.llm_model}
-                onChange={(e) => field("llm_model")(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="agent-voicemail-message">
-              Voicemail message
-            </label>
-            <textarea
-              id="agent-voicemail-message"
-              aria-label="Voicemail message"
-              rows={3}
-              placeholder="Spoken after the beep on outbound calls that hit voicemail. Leave empty to skip the drop."
-              className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
-              value={form.voicemail_message ?? ""}
-              onChange={(e) => field("voicemail_message")(e.target.value)}
-            />
-          </div>
-
-          <fieldset className="space-y-3 rounded-md border border-border p-3">
-            <legend className="px-1 text-xs font-medium text-muted-foreground">
-              SMS agent
-            </legend>
-
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.sms_enabled ?? false}
-                onChange={(e) => {
-                  setDirty(true);
-                  setForm((f) => ({ ...f, sms_enabled: e.target.checked }));
-                }}
-              />
-              Reply to inbound SMS automatically
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
+            ) : undefined
+          }
+        >
+          <Card className="space-y-4">
+            <form className="space-y-4" onSubmit={save}>
               <div className="space-y-1">
-                <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-turn-ceiling">
-                  Turn ceiling
+                <label className="block text-xs text-muted-foreground" htmlFor="agent-name">
+                  Name
                 </label>
                 <Input
-                  id="agent-sms-turn-ceiling"
-                  aria-label="Turn ceiling"
-                  type="number"
-                  min={1}
-                  value={form.sms_turn_ceiling ?? 10}
-                  onChange={(e) => {
-                    setDirty(true);
-                    setForm((f) => ({ ...f, sms_turn_ceiling: Number(e.target.value) }));
-                  }}
+                  id="agent-name"
+                  aria-label="Profile name"
+                  value={form.name}
+                  onChange={(e) => field("name")(e.target.value)}
+                  required
                 />
               </div>
+
               <div className="space-y-1">
-                <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-max-reply-chars">
-                  Max reply chars
+                <label className="block text-xs text-muted-foreground" htmlFor="agent-prompt">
+                  System prompt
+                </label>
+                <textarea
+                  id="agent-prompt"
+                  aria-label="System prompt"
+                  rows={6}
+                  className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
+                  value={form.system_prompt}
+                  onChange={(e) => field("system_prompt")(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs text-muted-foreground" htmlFor="agent-greeting">
+                  Greeting
                 </label>
                 <Input
-                  id="agent-sms-max-reply-chars"
-                  aria-label="Max reply chars"
-                  type="number"
-                  min={1}
-                  value={form.sms_max_reply_chars ?? 480}
-                  onChange={(e) => {
-                    setDirty(true);
-                    setForm((f) => ({ ...f, sms_max_reply_chars: Number(e.target.value) }));
-                  }}
+                  id="agent-greeting"
+                  aria-label="Greeting"
+                  value={form.greeting}
+                  onChange={(e) => field("greeting")(e.target.value)}
                 />
               </div>
-            </div>
 
-            <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-handoff-keywords">
-                Handoff keywords
-              </label>
-              <Input
-                id="agent-sms-handoff-keywords"
-                aria-label="Handoff keywords"
-                placeholder="human, agent, representative"
-                value={keywordsInput}
-                onChange={(e) => {
-                  const text = e.target.value;
-                  setDirty(true);
-                  setKeywordsInput(text);
-                  setForm((f) => ({
-                    ...f,
-                    sms_handoff_keywords: text
-                      .split(",")
-                      .map((k) => k.trim())
-                      .filter(Boolean),
-                  }));
-                }}
-              />
-              <p className="text-[11px] text-muted-foreground">Comma-separated.</p>
-            </div>
-          </fieldset>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <label className="block text-xs text-muted-foreground" htmlFor="agent-voice">
+                    Voice ID
+                  </label>
+                  <Input
+                    id="agent-voice"
+                    aria-label="Voice ID"
+                    value={form.voice_id}
+                    onChange={(e) => field("voice_id")(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs text-muted-foreground" htmlFor="agent-llm-provider">
+                    LLM provider
+                  </label>
+                  <Input
+                    id="agent-llm-provider"
+                    aria-label="LLM provider"
+                    value={form.llm_provider}
+                    onChange={(e) => field("llm_provider")(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs text-muted-foreground" htmlFor="agent-llm-model">
+                    LLM model
+                  </label>
+                  <Input
+                    id="agent-llm-model"
+                    aria-label="LLM model"
+                    value={form.llm_model}
+                    onChange={(e) => field("llm_model")(e.target.value)}
+                  />
+                </div>
+              </div>
 
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
+              <div className="space-y-1">
+                <label className="block text-xs text-muted-foreground" htmlFor="agent-voicemail-message">
+                  Voicemail message
+                </label>
+                <textarea
+                  id="agent-voicemail-message"
+                  aria-label="Voicemail message"
+                  rows={3}
+                  placeholder="Spoken after the beep on outbound calls that hit voicemail. Leave empty to skip the drop."
+                  className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
+                  value={form.voicemail_message ?? ""}
+                  onChange={(e) => field("voicemail_message")(e.target.value)}
+                />
+              </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={!form.name.trim() || saving}>
-              {selectedId ? "Save" : "Create"}
-            </Button>
-            {selected && (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => makeDefault(selected.id)}
-                  disabled={selected.is_default || setDefault.isPending}
-                >
-                  {selected.is_default ? "Default" : "Make default"}
+              <fieldset className="space-y-3 rounded-md border border-border p-3">
+                <legend className="px-1 text-xs font-medium text-muted-foreground">
+                  SMS agent
+                </legend>
+
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.sms_enabled ?? false}
+                    onChange={(e) => {
+                      setDirty(true);
+                      setForm((f) => ({ ...f, sms_enabled: e.target.checked }));
+                    }}
+                  />
+                  Reply to inbound SMS automatically
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-turn-ceiling">
+                      Turn ceiling
+                    </label>
+                    <Input
+                      id="agent-sms-turn-ceiling"
+                      aria-label="Turn ceiling"
+                      type="number"
+                      min={1}
+                      value={form.sms_turn_ceiling ?? 10}
+                      onChange={(e) => {
+                        setDirty(true);
+                        setForm((f) => ({ ...f, sms_turn_ceiling: Number(e.target.value) }));
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-max-reply-chars">
+                      Max reply chars
+                    </label>
+                    <Input
+                      id="agent-sms-max-reply-chars"
+                      aria-label="Max reply chars"
+                      type="number"
+                      min={1}
+                      value={form.sms_max_reply_chars ?? 480}
+                      onChange={(e) => {
+                        setDirty(true);
+                        setForm((f) => ({ ...f, sms_max_reply_chars: Number(e.target.value) }));
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs text-muted-foreground" htmlFor="agent-sms-handoff-keywords">
+                    Handoff keywords
+                  </label>
+                  <Input
+                    id="agent-sms-handoff-keywords"
+                    aria-label="Handoff keywords"
+                    placeholder="human, agent, representative"
+                    value={keywordsInput}
+                    onChange={(e) => {
+                      const text = e.target.value;
+                      setDirty(true);
+                      setKeywordsInput(text);
+                      setForm((f) => ({
+                        ...f,
+                        sms_handoff_keywords: text
+                          .split(",")
+                          .map((k) => k.trim())
+                          .filter(Boolean),
+                      }));
+                    }}
+                  />
+                  <p className="text-[11px] text-muted-foreground">Comma-separated.</p>
+                </div>
+              </fieldset>
+
+              <MutationStatus error={error} />
+
+              <div className="flex flex-wrap gap-2">
+                <Button type="submit" disabled={!form.name.trim() || saving}>
+                  {selectedId ? "Save" : "Create"}
                 </Button>
-                {deleteConfirm.confirming ? (
+                {selected && (
                   <>
                     <Button
                       type="button"
-                      variant="destructive"
-                      onClick={() => {
-                        deleteConfirm.cancel();
-                        void remove(selected.id);
-                      }}
-                      disabled={deleteProfile.isPending}
+                      variant="outline"
+                      onClick={() => makeDefault(selected.id)}
+                      disabled={selected.is_default || setDefault.isPending}
                     >
-                      Confirm delete?
+                      {selected.is_default ? "Default" : "Make default"}
                     </Button>
-                    <Button type="button" variant="outline" onClick={deleteConfirm.cancel}>
-                      Cancel
-                    </Button>
+                    {deleteConfirm.confirming ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => {
+                            deleteConfirm.cancel();
+                            void remove(selected.id);
+                          }}
+                          disabled={deleteProfile.isPending}
+                        >
+                          Confirm delete?
+                        </Button>
+                        <Button type="button" variant="outline" onClick={deleteConfirm.cancel}>
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={deleteConfirm.requestConfirm}
+                        disabled={deleteProfile.isPending}
+                      >
+                        Delete
+                      </Button>
+                    )}
                   </>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={deleteConfirm.requestConfirm}
-                    disabled={deleteProfile.isPending}
-                  >
-                    Delete
-                  </Button>
                 )}
-              </>
-            )}
-          </div>
-        </form>
+              </div>
+            </form>
+          </Card>
+        </Section>
 
         <KbSection />
       </section>
@@ -460,7 +472,7 @@ function KbSection() {
 
   const [title, setTitle] = React.useState("");
   const [text, setText] = React.useState("");
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<unknown | null>(null);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const { data: detail } = useKbDocument(api, expandedId);
   // Item 47/48: same two-step confirm as the agent profile Delete button, but keyed per
@@ -493,7 +505,7 @@ function KbSection() {
       setTitle("");
       setText("");
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
@@ -503,18 +515,16 @@ function KbSection() {
       await deleteDoc.mutateAsync(id);
       if (expandedId === id) setExpandedId(null);
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
   }
 
   return (
-    <section className="mt-8 max-w-xl space-y-4 border-t border-border pt-6">
-      <h2 className="text-base font-semibold">Knowledge base</h2>
-      <p className="text-xs text-muted-foreground">
-        Text the AI agent can search mid-call. Pasted text is split into chunks
-        automatically.
-      </p>
-
+    <Section
+      title="Knowledge base"
+      description="Text the AI agent can search mid-call. Pasted text is split into chunks automatically."
+      className="mt-8 max-w-xl space-y-4 border-t border-border pt-6"
+    >
       <form className="space-y-2" onSubmit={create}>
         <Input
           aria-label="Document title"
@@ -532,79 +542,93 @@ function KbSection() {
           onChange={(e) => setText(e.target.value)}
           required
         />
-        <Button type="submit" size="sm" disabled={!title.trim() || !text.trim() || createDoc.isPending}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={!title.trim() || !text.trim() || createDoc.isPending}
+        >
           Add document
         </Button>
       </form>
 
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
+      <MutationStatus error={error} />
 
       {isLoading ? (
         <Spinner label="Loading knowledge base" />
       ) : (documents ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No documents yet.</p>
+        <EmptyState
+          title="No documents yet."
+          description="Add a document to give the agent knowledge."
+        />
       ) : (
-        <ul aria-label="Knowledge base documents" className="divide-y divide-border rounded-md border border-border">
-          {(documents ?? []).map((doc) => (
-            <li key={doc.id} className="p-3">
-              <div className="flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  className="text-left text-sm font-medium hover:underline"
-                  onClick={() => setExpandedId((prev) => (prev === doc.id ? null : doc.id))}
-                >
-                  {doc.title}
-                </button>
-                {confirmDeleteId === doc.id ? (
-                  <div className="flex shrink-0 gap-2">
+        <Card className="p-0">
+          <ul
+            aria-label="Knowledge base documents"
+            className="divide-y divide-border"
+          >
+            {(documents ?? []).map((doc) => (
+              <li key={doc.id} className="p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-auto p-0 text-left text-sm font-medium hover:underline"
+                    onClick={() => setExpandedId((prev) => (prev === doc.id ? null : doc.id))}
+                  >
+                    {doc.title}
+                  </Button>
+                  {confirmDeleteId === doc.id ? (
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => {
+                          cancelDelete();
+                          void remove(doc.id);
+                        }}
+                        disabled={deleteDoc.isPending}
+                      >
+                        Confirm delete?
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={cancelDelete}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
                     <Button
                       type="button"
                       size="sm"
                       variant="destructive"
-                      onClick={() => {
-                        cancelDelete();
-                        void remove(doc.id);
-                      }}
+                      onClick={() => armDelete(doc.id)}
                       disabled={deleteDoc.isPending}
                     >
-                      Confirm delete?
+                      Delete
                     </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={cancelDelete}>
-                      Cancel
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => armDelete(doc.id)}
-                    disabled={deleteDoc.isPending}
-                  >
-                    Delete
-                  </Button>
+                  )}
+                </div>
+                {expandedId === doc.id && detail && detail.id === doc.id && (
+                  <ul className="mt-2 space-y-2">
+                    {detail.chunks.map((chunk) => (
+                      <li
+                        key={chunk.seq}
+                        className="rounded-md bg-muted p-2 text-xs text-muted-foreground"
+                      >
+                        {chunk.text}
+                      </li>
+                    ))}
+                  </ul>
                 )}
-              </div>
-              {expandedId === doc.id && detail && detail.id === doc.id && (
-                <ul className="mt-2 space-y-2">
-                  {detail.chunks.map((chunk) => (
-                    <li
-                      key={chunk.seq}
-                      className="rounded-md bg-muted p-2 text-xs text-muted-foreground"
-                    >
-                      {chunk.text}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
-    </section>
+    </Section>
   );
 }

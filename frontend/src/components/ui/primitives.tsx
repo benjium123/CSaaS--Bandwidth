@@ -302,10 +302,25 @@ function Overlay({
 }) {
   const titleId = React.useId();
   const closeRef = React.useRef<HTMLButtonElement | null>(null);
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
+  /** P20b (gap A1): the element that had focus when the dialog opened, so that closing -
+   * by Escape, the backdrop, or the Close button - hands focus back to it instead of
+   * dumping the user at the top of the document. Held in a ref so the restore survives
+   * the re-render that unmounts the panel. */
+  const openerRef = React.useRef<HTMLElement | null>(null);
 
   React.useEffect(() => {
     if (!open) return;
+    openerRef.current = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
+    return () => {
+      const opener = openerRef.current;
+      openerRef.current = null;
+      // Only restore when the opener is still on the page: a dialog that closed because
+      // its whole surface unmounted has nothing left to hand focus back to, and calling
+      // focus() on a detached node would silently move focus to <body> instead.
+      if (opener && document.contains(opener)) opener.focus();
+    };
   }, [open]);
 
   React.useEffect(() => {
@@ -319,15 +334,52 @@ function Overlay({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, onClose]);
 
+  /** P20b (gap A1): a real focus trap. Tab from the last focusable wraps to the first and
+   * Shift+Tab from the first wraps to the last, so keyboard focus cannot walk out of an
+   * aria-modal dialog onto the inert page behind it. Deliberately NOT filtered by
+   * visibility: jsdom has no layout, so an offsetParent/getClientRects check would empty
+   * the list in tests while working in the browser - a trap that silently does nothing is
+   * worse than none. */
+  function handlePanelKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab") return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const focusable = Array.from(
+      panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+
+    if (event.shiftKey) {
+      if (active === first || !panel.contains(active)) {
+        event.preventDefault();
+        last.focus();
+      }
+      return;
+    }
+    if (active === last || !panel.contains(active)) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   if (!open) return null;
 
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/50" onClick={onClose} aria-hidden="true" />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        onKeyDown={handlePanelKeyDown}
         className={cn(
           "fixed z-50 flex flex-col bg-background border-border",
           panelClassName,

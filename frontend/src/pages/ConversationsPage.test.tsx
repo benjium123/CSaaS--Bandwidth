@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -711,7 +711,11 @@ describe("ConversationsPage", () => {
     renderPage(client);
     await screen.findByText("Ada Lovelace");
 
-    await userEvent.click(screen.getByRole("button", { name: "Important" }));
+    // P20b: "Important" now exists twice - as this chip in the conversation list AND as
+    // a row in the new inbox column (two controls over one `filter` value). Scope the
+    // query to the list so the assertion keeps testing the chip specifically.
+    const list = screen.getByRole("complementary", { name: "Conversation list" });
+    await userEvent.click(within(list).getByRole("button", { name: "Important" }));
 
     await waitFor(() => {
       const call = client.calls.find(

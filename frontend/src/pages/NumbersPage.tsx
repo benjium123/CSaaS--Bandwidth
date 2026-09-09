@@ -28,9 +28,19 @@ import {
   type SearchOut,
 } from "@/api/numbers";
 import { formatMicros, monthToDateRange, useSpendSummary } from "@/api/spend";
-import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  MutationStatus,
+  Pill,
+  Section,
+  Select,
+  Spinner,
+  type PillTone,
+} from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
   bandwidth: "Bandwidth",
@@ -71,7 +81,7 @@ function buildCarrierOptions(
     const label = account
       ? `${PROVIDER_LABELS[name]} (account: ${account.label})`
       : envLive
-        ? `${PROVIDER_LABELS[name]} (env)`
+        ? `${PROVIDER_LABELS[name]} (shared)`
         : PROVIDER_LABELS[name];
 
     return {
@@ -83,62 +93,45 @@ function buildCarrierOptions(
   });
 }
 
-function registrationBadgeClass(registration: string): string {
+function registrationTone(registration: string): PillTone {
   switch (registration) {
     case "approved":
-      return "bg-green-950 text-green-400";
+      return "success";
     case "pending":
-      return "bg-amber-950 text-amber-400";
+      return "warning";
     case "rejected":
-      return "bg-red-950 text-red-400";
+      return "danger";
     default:
-      return "bg-neutral-800 text-neutral-400";
+      return "neutral";
   }
 }
 
-function numberStatusPill(status: string): { label: string; className: string } {
+function numberStatusPill(status: string): { label: string; tone: PillTone } {
   switch (status) {
     case "active":
-      return { label: "Active", className: "bg-green-950 text-green-400" };
+      return { label: "Active", tone: "success" };
     case "pending":
-      return { label: "Pending", className: "bg-amber-950 text-amber-400" };
+      return { label: "Pending", tone: "warning" };
     case "failed":
-      return { label: "Failed", className: "bg-red-950 text-red-400" };
+      return { label: "Failed", tone: "danger" };
     case "released":
-      return { label: "Released", className: "bg-neutral-800 text-neutral-400" };
+      return { label: "Released", tone: "neutral" };
     default:
-      return { label: status, className: "bg-neutral-800 text-neutral-400" };
+      return { label: status, tone: "neutral" };
   }
+}
+
+function providerDisplayLabel(number: NumberOut): string {
+  const friendly = (PROVIDER_LABELS as Record<string, string | undefined>)[number.carrier];
+  if (friendly) return friendly;
+  if (number.provider_account_label) return number.provider_account_label;
+  return "—";
 }
 
 function formatPurchasedAt(value: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
-}
-
-/** Small inline pending/error readout - same local pattern as ProvidersPage /
- * InboxSettingsPage (P16/P17); not shared since neither exports it. */
-function MutationStatus({
-  mutation,
-}: {
-  mutation: { isPending: boolean; isError: boolean; error: unknown };
-}) {
-  if (mutation.isPending) {
-    return (
-      <span className="flex items-center gap-1 text-[10px] text-neutral-500">
-        <Loader2 className="h-3 w-3 animate-spin" /> Saving…
-      </span>
-    );
-  }
-  if (mutation.isError) {
-    return (
-      <span role="alert" className="text-[10px] text-red-400">
-        {(mutation.error as Error).message}
-      </span>
-    );
-  }
-  return null;
 }
 
 export function NumbersPage() {
@@ -199,91 +192,109 @@ export function NumbersPage() {
   }
 
   return (
-    <div className="dark mx-auto max-w-5xl space-y-8 bg-neutral-950 p-6 text-neutral-100">
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <h1 className="text-lg font-semibold text-neutral-50">Numbers</h1>
-          <p className="text-sm text-neutral-400">
-            Search, order, release, and assign org numbers.
-          </p>
-        </div>
+    <div className="dark mx-auto max-w-5xl space-y-8 bg-background p-6 text-foreground">
+      <Section
+        title="Phone numbers"
+        description="Search, order, release, and assign org numbers."
+      >
+        <div className="space-y-4">
+          <form className="flex gap-2" onSubmit={add}>
+            <Input
+              aria-label="Phone number"
+              placeholder="+12145550100"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+            <Button type="submit">Add</Button>
+          </form>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
 
-        <form className="flex gap-2" onSubmit={add}>
-          <Input
-            aria-label="Phone number"
-            placeholder="+12145550100"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-          />
-          <Button type="submit">Add</Button>
-        </form>
-        {error && (
-          <p role="alert" className="text-sm text-red-400">
-            {error}
-          </p>
-        )}
-
-        {isLoading ? (
-          <Spinner />
-        ) : isError ? (
-          <div role="alert" className="flex items-center gap-3 text-sm text-red-400">
-            <span>{(numbersError as Error).message}</span>
-            <Button type="button" size="sm" variant="outline" onClick={() => refetchNumbers()}>
-              Retry
-            </Button>
+          {isLoading ? (
+            <Spinner />
+          ) : isError ? (
+            <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
+              <span>{(numbersError as Error).message}</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => refetchNumbers()}>
+                Retry
+              </Button>
+            </div>
+          ) : (numbers ?? []).length === 0 ? (
+            <EmptyState
+              title="No numbers yet"
+              description="Add a number above or order one from the order section."
+              action={
+                <Button
+                  type="button"
+                  onClick={() => document.getElementById("order-a-number")?.scrollIntoView()}
+                >
+                  Order a number
+                </Button>
+              }
+            />
+          ) : (
+            <Card className="overflow-x-auto p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2 font-medium">Number</th>
+                    {/* Inbox is the only routing column we can honestly show today; human-vs-assistant routing is Phase 23. */}
+                    <th className="px-3 py-2 font-medium">Inbox</th>
+                    <th className="px-3 py-2 font-medium">Type</th>
+                    <th className="px-3 py-2 font-medium">Provider</th>
+                    <th className="px-3 py-2 font-medium">Cost</th>
+                    <th className="px-3 py-2 font-medium">
+                      Spend MTD <span className="font-normal text-muted-foreground">(UTC days)</span>
+                    </th>
+                    <th className="px-3 py-2 font-medium">Purchased</th>
+                    <th className="px-3 py-2 font-medium">Status</th>
+                    <th
+                      className="px-3 py-2 font-medium"
+                      title="Registration status for SMS messaging"
+                    >
+                      SMS registration
+                    </th>
+                    <th className="px-3 py-2 font-medium">Campaign</th>
+                    <th className="px-3 py-2 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {(numbers ?? []).map((n) => (
+                    <NumberRow
+                      key={n.id}
+                      number={n}
+                      campaignName={campaignName(n.campaign_id)}
+                      campaigns={campaigns ?? []}
+                      spendMicros={spendMicrosByNumberId(n.id, n.carrier)}
+                      spendUnavailable={spendSummaryQuery.isLoading || spendSummaryQuery.isError}
+                      onAssign={(campaignId) => assign(n.id, campaignId)}
+                      assignPending={assignCampaign.isPending}
+                      confirming={confirmReleaseId === n.id}
+                      onRelease={() => {
+                        if (confirmReleaseId === n.id) {
+                          void release(n.id);
+                        } else {
+                          setConfirmReleaseId(n.id);
+                        }
+                      }}
+                      releasePending={releaseNumber.isPending}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+          <div className="flex items-center gap-3">
+            {/* Small inline pending/error readout - same local pattern as ProvidersPage /
+                InboxSettingsPage (P16/P17); not shared since neither exports it. */}
+            <MutationStatus pending={releaseNumber.isPending} error={releaseNumber.error} pendingLabel="Saving…" />
+            <MutationStatus pending={assignCampaign.isPending} error={assignCampaign.error} pendingLabel="Saving…" />
           </div>
-        ) : (numbers ?? []).length === 0 ? (
-          <p className="text-sm text-neutral-400">No numbers yet.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-md border border-neutral-800">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-neutral-800 text-left text-xs text-neutral-400">
-                  <th className="px-3 py-2 font-medium">Number</th>
-                  <th className="px-3 py-2 font-medium">Type</th>
-                  <th className="px-3 py-2 font-medium">Carrier</th>
-                  <th className="px-3 py-2 font-medium">Cost</th>
-                  <th className="px-3 py-2 font-medium">
-                    Spend MTD <span className="font-normal text-neutral-600">(UTC days)</span>
-                  </th>
-                  <th className="px-3 py-2 font-medium">Purchased</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Registration</th>
-                  <th className="px-3 py-2 font-medium">Campaign</th>
-                  <th className="px-3 py-2 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {(numbers ?? []).map((n) => (
-                  <NumberRow
-                    key={n.id}
-                    number={n}
-                    campaignName={campaignName(n.campaign_id)}
-                    campaigns={campaigns ?? []}
-                    spendMicros={spendMicrosByNumberId(n.id, n.carrier)}
-                    spendUnavailable={spendSummaryQuery.isLoading || spendSummaryQuery.isError}
-                    onAssign={(campaignId) => assign(n.id, campaignId)}
-                    assignPending={assignCampaign.isPending}
-                    confirming={confirmReleaseId === n.id}
-                    onRelease={() => {
-                      if (confirmReleaseId === n.id) {
-                        void release(n.id);
-                      } else {
-                        setConfirmReleaseId(n.id);
-                      }
-                    }}
-                    releasePending={releaseNumber.isPending}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div className="flex items-center gap-3">
-          <MutationStatus mutation={releaseNumber} />
-          <MutationStatus mutation={assignCampaign} />
         </div>
-      </div>
+      </Section>
 
       <OrderNumberSection api={api} campaigns={campaigns ?? []} onOrdered={() => setError(null)} />
     </div>
@@ -315,51 +326,52 @@ function NumberRow({
 }) {
   const released = number.status === "released";
   const status = numberStatusPill(number.status);
+  const providerLabel = providerDisplayLabel(number);
 
   return (
     <tr>
-      <td className="px-3 py-2 text-neutral-100">{formatPhone(number.e164)}</td>
-      <td className="px-3 py-2 text-xs text-neutral-400">{number.number_type}</td>
+      <td className="px-3 py-2 text-foreground">{formatPhone(number.e164)}</td>
+      <td className="px-3 py-2 text-xs text-muted-foreground">
+        {number.inbox_name ?? "Not in an inbox"}
+      </td>
+      <td className="px-3 py-2 text-xs text-muted-foreground">{number.number_type}</td>
       <td className="px-3 py-2">
-        <div className="text-xs text-neutral-200">{number.carrier}</div>
-        {number.provider_account_label && (
-          <div className="text-xs text-neutral-500">{number.provider_account_label}</div>
+        <div className="text-xs text-foreground">{providerLabel}</div>
+        {number.provider_account_label && providerLabel !== number.provider_account_label && (
+          <div className="text-xs text-muted-foreground">{number.provider_account_label}</div>
         )}
       </td>
-      <td className="px-3 py-2 text-xs text-neutral-300">{formatMonthlyCost(number)}</td>
-      <td className="px-3 py-2 text-xs text-neutral-300">
+      <td className="px-3 py-2 text-xs text-foreground">{formatMonthlyCost(number)}</td>
+      <td className="px-3 py-2 text-xs text-foreground">
         {spendUnavailable ? "—" : formatMicros(spendMicros ?? 0)}
       </td>
-      <td className="px-3 py-2 text-xs text-neutral-400">{formatPurchasedAt(number.purchased_at)}</td>
+      <td className="px-3 py-2 text-xs text-muted-foreground">{formatPurchasedAt(number.purchased_at)}</td>
       <td className="px-3 py-2">
-        <span
-          className={cn(
-            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs",
-            status.className,
-          )}
-        >
+        <Pill tone={status.tone} className="gap-1">
           {number.status === "pending" && <Loader2 className="h-3 w-3 animate-spin" />}
           {status.label}
-        </span>
+        </Pill>
         {number.status === "failed" && number.order_detail && (
-          <span className="mt-1 block max-w-[240px] text-xs text-red-400">
+          <span className="mt-1 block max-w-[240px] text-xs text-destructive">
             {number.order_detail}
           </span>
         )}
       </td>
       <td className="px-3 py-2">
-        <Badge
-          className={registrationBadgeClass(number.registration)}
+        {/* registration_detail comes from the backend and may contain carrier campaign
+            terms; keep the surrounding label plain and render the backend text as the tooltip. */}
+        <Pill
+          tone={registrationTone(number.registration)}
           title={number.registration_detail || undefined}
         >
           {number.registration}
-        </Badge>
+        </Pill>
       </td>
       <td className="px-3 py-2">
         {number.number_type === "local" ? (
-          <select
+          <Select
             aria-label={`Campaign for ${number.e164}`}
-            className="h-8 rounded-md border border-neutral-700 bg-neutral-950 px-2 text-xs text-neutral-100"
+            className="h-8 px-2 text-xs text-foreground"
             value={number.campaign_id ?? ""}
             onChange={(e) => onAssign(e.target.value)}
             disabled={assignPending || released}
@@ -370,14 +382,14 @@ function NumberRow({
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         ) : (
-          <span className="text-xs text-neutral-400">{campaignName ?? "—"}</span>
+          <span className="text-xs text-muted-foreground">{campaignName ?? "—"}</span>
         )}
       </td>
       <td className="px-3 py-2">
         {released ? (
-          <span className="text-xs text-neutral-500">Released</span>
+          <span className="text-xs text-muted-foreground">Released</span>
         ) : (
           <Button
             type="button"
@@ -464,11 +476,10 @@ function OrderNumberSection({
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-base font-semibold text-neutral-50">Order a number</h2>
+    <Section id="order-a-number" title="Order a number">
       <form className="flex flex-wrap items-end gap-2" onSubmit={search}>
         <div className="space-y-1">
-          <label className="block text-xs text-neutral-400" htmlFor="area-code">
+          <label className="block text-xs text-muted-foreground" htmlFor="area-code">
             Area code
           </label>
           <Input
@@ -481,7 +492,7 @@ function OrderNumberSection({
           />
         </div>
         <div className="space-y-1">
-          <label className="block text-xs text-neutral-400" htmlFor="contains">
+          <label className="block text-xs text-muted-foreground" htmlFor="contains">
             Contains
           </label>
           <Input
@@ -493,28 +504,26 @@ function OrderNumberSection({
           />
         </div>
         <div className="space-y-1">
-          <label className="block text-xs text-neutral-400" htmlFor="number-type">
+          <label className="block text-xs text-muted-foreground" htmlFor="number-type">
             Type
           </label>
-          <select
+          <Select
             id="number-type"
             aria-label="Number type"
-            className="h-9 rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100"
             value={numberType}
             onChange={(e) => setNumberType(e.target.value)}
           >
             <option value="local">Local</option>
             <option value="tollfree">Toll-free</option>
-          </select>
+          </Select>
         </div>
         <div className="space-y-1">
-          <label className="block text-xs text-neutral-400" htmlFor="carrier">
-            Carrier
+          <label className="block text-xs text-muted-foreground" htmlFor="carrier">
+            Provider
           </label>
-          <select
+          <Select
             id="carrier"
-            aria-label="Carrier"
-            className="h-9 rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100"
+            aria-label="Provider"
             value={carrier}
             onChange={(e) => setCarrier(e.target.value)}
           >
@@ -529,34 +538,36 @@ function OrderNumberSection({
                 {option.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <Button type="submit" disabled={availableQuery.isFetching}>
           Search
         </Button>
-        <MutationStatus mutation={orderNumber} />
+        <MutationStatus pending={orderNumber.isPending} error={orderNumber.error} pendingLabel="Saving…" />
       </form>
 
       {orderedNumber && (
-        <div className="rounded-md border border-green-800 bg-green-950 p-3 text-sm text-green-200">
-          Ordered {orderedNumber.e164} ({orderedNumber.status}) —{" "}
-          <Link to="/settings/inboxes" className="text-green-400 underline">
-            Grant this inbox to a department or employee →
-          </Link>
-        </div>
+        <Card className="flex items-center justify-between gap-3">
+          <span>
+            Ordered {orderedNumber.e164} ({orderedNumber.status}) —{" "}
+            <Link to="/settings/inboxes" className="underline">
+              Grant this inbox to a department or employee →
+            </Link>
+          </span>
+        </Card>
       )}
 
       {availableQuery.isFetching ? (
         <Spinner label="Searching" />
       ) : availableQuery.isError ? (
-        <p role="alert" className="text-sm text-red-400">
+        <p role="alert" className="text-sm text-destructive">
           {(availableQuery.error as Error).message}
         </p>
       ) : results.length > 0 ? (
-        <div className="overflow-x-auto rounded-md border border-neutral-800">
+        <Card className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-neutral-800 text-left text-xs text-neutral-400">
+              <tr className="border-b border-border text-left text-xs text-muted-foreground">
                 <th className="px-3 py-2 font-medium">Number</th>
                 <th className="px-3 py-2 font-medium">Type</th>
                 <th className="px-3 py-2 font-medium">Region</th>
@@ -566,15 +577,15 @@ function OrderNumberSection({
                 <th className="px-3 py-2 font-medium">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-800">
+            <tbody className="divide-y divide-border">
               {results.map((r) => (
                 <tr key={r.e164}>
-                  <td className="px-3 py-2 text-neutral-100">{formatPhone(r.e164)}</td>
-                  <td className={cn("px-3 py-2 text-xs text-neutral-400")}>{r.number_type}</td>
-                  <td className="px-3 py-2 text-xs text-neutral-400">{r.region}</td>
-                  <td className="px-3 py-2 text-xs text-neutral-400">{r.locality}</td>
-                  <td className="px-3 py-2 text-xs text-neutral-300">{formatMonthlyCost(r)}</td>
-                  <td className="px-3 py-2 text-xs text-neutral-300">
+                  <td className="px-3 py-2 text-foreground">{formatPhone(r.e164)}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.number_type}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.region}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.locality}</td>
+                  <td className="px-3 py-2 text-xs text-foreground">{formatMonthlyCost(r)}</td>
+                  <td className="px-3 py-2 text-xs text-foreground">
                     {formatSetupCost(r.setup_cost_cents)}
                   </td>
                   <td className="px-3 py-2">
@@ -591,17 +602,25 @@ function OrderNumberSection({
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       ) : searchFilters ? (
-        <p className="text-sm text-neutral-400">No numbers found.</p>
+        <EmptyState
+          title="No numbers found"
+          description="Try a different area code, phrase, type, or provider."
+          action={
+            <Button type="button" variant="outline" onClick={() => setSearchFilters(null)}>
+              Clear search
+            </Button>
+          }
+        />
       ) : null}
 
       {campaigns.length === 0 && (
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-muted-foreground">
           No campaigns registered yet — ordered local numbers can be assigned to one later from
           the table above.
         </p>
       )}
-    </div>
+    </Section>
   );
 }

@@ -4,15 +4,11 @@
  * CHARACTERISATION tests, same rule as navGating.verify.test.tsx: they pin today's
  * behaviour, and the "CORRECT" comment says what to assert once the gap is closed.
  *
- * GAP A1 - Drawer/Sheet do NOT trap focus and do NOT restore it.
- *   primitives.tsx:288-356 (`Overlay`) focuses the Close button on open and closes on
- *   Escape or backdrop click, but there is no Tab wrap and nothing refocuses the
- *   element that opened it. Non-blocking today only because nothing in the app imports
- *   the new Drawer/Sheet yet (the existing AssignOwnerDrawer / RatesDrawer /
- *   DeliveriesDrawer are hand-rolled). P20b puts real content behind them - mobile
- *   sheets, the contact panel - so it must be closed before then.
- *   CORRECT: Tab from the last focusable wraps to the first, Shift+Tab from the first
- *   wraps to the last, and closing returns focus to the opener.
+ * GAP A1 - CLOSED in P20b. `Overlay` in primitives.tsx now traps Tab/Shift+Tab inside the
+ *   aria-modal dialog and restores focus to the element that opened it on close. The two
+ *   tests below were characterisation tests pinning the OLD (wrong) behaviour; they now
+ *   assert the correct behaviour, which is what P20b's mobile inbox sheet and contact
+ *   sheet depend on. Do not weaken them back.
  */
 import * as React from "react";
 import { describe, expect, it } from "vitest";
@@ -45,30 +41,37 @@ describe("Drawer accessibility", () => {
     expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
   });
 
-  it("GAP A1: focus is not trapped inside the dialog", async () => {
+  it("traps Tab inside the dialog", async () => {
     render(<DrawerHarness />);
     await userEvent.click(screen.getByRole("button", { name: "Open drawer" }));
     expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
 
-    await userEvent.tab(); // Close -> Inside drawer
+    await userEvent.tab(); // Close -> Inside drawer (the last focusable in the panel)
     expect(screen.getByRole("button", { name: "Inside drawer" })).toHaveFocus();
-    await userEvent.tab(); // ...and straight back out to the page behind the overlay.
-    // CORRECT once A1 is fixed: focus wraps to the Close button instead.
-    expect(screen.getByRole("button", { name: "Inside drawer" })).not.toHaveFocus();
-    expect(screen.getByRole("dialog", { name: "Assign owner" })).not.toContainElement(
+    await userEvent.tab(); // ...and wraps back to Close instead of escaping the overlay.
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(screen.getByRole("dialog", { name: "Assign owner" })).toContainElement(
       document.activeElement as HTMLElement,
     );
   });
 
-  it("GAP A1: closing does not restore focus to the element that opened it", async () => {
+  it("traps Shift+Tab inside the dialog", async () => {
+    render(<DrawerHarness />);
+    await userEvent.click(screen.getByRole("button", { name: "Open drawer" }));
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+
+    await userEvent.tab({ shift: true }); // from the first focusable, wrap to the last
+    expect(screen.getByRole("button", { name: "Inside drawer" })).toHaveFocus();
+  });
+
+  it("restores focus to the element that opened it on close", async () => {
     render(<DrawerHarness />);
     const opener = screen.getByRole("button", { name: "Open drawer" });
     await userEvent.click(opener);
     await userEvent.keyboard("{Escape}");
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    // CORRECT once A1 is fixed: expect(opener).toHaveFocus();
-    expect(opener).not.toHaveFocus();
+    expect(opener).toHaveFocus();
   });
 });
 

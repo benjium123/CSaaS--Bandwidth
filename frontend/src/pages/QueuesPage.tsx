@@ -14,9 +14,19 @@ import {
   useVoicemails,
   type QueueOut,
 } from "@/api/hooks";
-import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  Pill,
+  Section,
+  Select,
+  Spinner,
+  type PillTone,
+} from "@/components/ui/primitives";
 import { relativeTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 const WEEKDAYS = [
   { key: "mon", label: "Mon" },
@@ -106,9 +116,7 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
   }
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-base font-semibold">Business hours</h2>
-
+    <Section title="Business hours">
       {isLoading ? (
         <Spinner label="Loading business hours" />
       ) : hoursError ? (
@@ -121,120 +129,126 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
           </Button>
         </div>
       ) : (hours ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No business hours configured yet.</p>
+        <EmptyState title="No business hours configured yet." />
       ) : (
-        <ul aria-label="Business hours" className="divide-y divide-border rounded-md border border-border">
-          {(hours ?? []).map((h) => (
-            <li key={h.id} className="p-3 text-sm">
-              <span className="font-medium">{h.name}</span>{" "}
-              <span className="text-xs text-muted-foreground">
-                {h.timezone} · {h.holidays.length} holiday{h.holidays.length === 1 ? "" : "s"}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <Card className="p-0">
+          <ul aria-label="Business hours" className="divide-y divide-border">
+            {(hours ?? []).map((h) => (
+              <li key={h.id} className="p-3 text-sm">
+                <span className="font-medium">{h.name}</span>{" "}
+                <span className="text-xs text-muted-foreground">
+                  {h.timezone} · {h.holidays.length} holiday{h.holidays.length === 1 ? "" : "s"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
 
-      <form className="space-y-3 rounded-md border border-border p-3" onSubmit={submit}>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="bh-name">
-              Name
-            </label>
-            <Input id="bh-name" aria-label="Business hours name" value={name} onChange={(e) => setName(e.target.value)} />
+      <Card className="p-3">
+        <form className="space-y-3" onSubmit={submit}>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="bh-name">
+                Name
+              </label>
+              <Input id="bh-name" aria-label="Business hours name" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="bh-tz">
+                Timezone (IANA)
+              </label>
+              <Input
+                id="bh-tz"
+                aria-label="Timezone"
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+              />
+            </div>
           </div>
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="bh-tz">
-              Timezone (IANA)
-            </label>
-            <Input
-              id="bh-tz"
-              aria-label="Timezone"
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-            />
-          </div>
-        </div>
 
-        <div className="space-y-2">
-          {WEEKDAYS.map((day) => (
-            <div key={day.key} className="flex flex-wrap items-center gap-2">
-              <span className="w-10 text-xs text-muted-foreground">{day.label}</span>
-              {windowsFor(day.key).map((w, i) => (
-                <div key={i} className="flex items-center gap-1">
-                  <Input
-                    aria-label={`${day.label} window ${i + 1} open`}
-                    className="h-8 w-24"
-                    value={w[0]}
-                    onChange={(e) => updateWindow(day.key, i, 0, e.target.value)}
-                  />
-                  <span className="text-xs text-muted-foreground">–</span>
-                  <Input
-                    aria-label={`${day.label} window ${i + 1} close`}
-                    className="h-8 w-24"
-                    value={w[1]}
-                    onChange={(e) => updateWindow(day.key, i, 1, e.target.value)}
-                  />
+          <div className="space-y-2">
+            {WEEKDAYS.map((day) => (
+              <div key={day.key} className="flex flex-wrap items-center gap-2">
+                <span className="w-10 text-xs text-muted-foreground">{day.label}</span>
+                {windowsFor(day.key).map((w, i) => (
+                  <div key={i} className="flex items-center gap-1">
+                    <Input
+                      aria-label={`${day.label} window ${i + 1} open`}
+                      className="h-8 w-24"
+                      value={w[0]}
+                      onChange={(e) => updateWindow(day.key, i, 0, e.target.value)}
+                    />
+                    <span className="text-xs text-muted-foreground">–</span>
+                    <Input
+                      aria-label={`${day.label} window ${i + 1} close`}
+                      className="h-8 w-24"
+                      value={w[1]}
+                      onChange={(e) => updateWindow(day.key, i, 1, e.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Remove ${day.label} window ${i + 1}`}
+                      onClick={() => removeWindow(day.key, i)}
+                    >
+                      ×
+                    </Button>
+                  </div>
+                ))}
+                <Button type="button" size="sm" variant="outline" onClick={() => addWindow(day.key)}>
+                  Add window
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-1">
+            <span className="block text-xs text-muted-foreground">Holidays (ISO dates)</span>
+            <div className="flex flex-wrap gap-1">
+              {holidays.map((d) => (
+                <Badge key={d} className="bg-muted text-foreground">
+                  {d}
                   <Button
                     type="button"
-                    size="sm"
                     variant="ghost"
-                    aria-label={`Remove ${day.label} window ${i + 1}`}
-                    onClick={() => removeWindow(day.key, i)}
+                    size="icon"
+                    aria-label={`Remove holiday ${d}`}
+                    className="ml-1 h-4 w-4 p-0 text-foreground hover:text-destructive"
+                    onClick={() => setHolidays((prev) => prev.filter((x) => x !== d))}
                   >
                     ×
                   </Button>
-                </div>
+                </Badge>
               ))}
-              <Button type="button" size="sm" variant="outline" onClick={() => addWindow(day.key)}>
-                Add window
+            </div>
+            <div className="flex gap-2">
+              <Input
+                aria-label="Add holiday date"
+                placeholder="2026-12-25"
+                className="h-8 w-40"
+                value={holidayInput}
+                onChange={(e) => setHolidayInput(e.target.value)}
+              />
+              <Button type="button" size="sm" variant="outline" onClick={addHoliday}>
+                Add holiday
               </Button>
             </div>
-          ))}
-        </div>
-
-        <div className="space-y-1">
-          <span className="block text-xs text-muted-foreground">Holidays (ISO dates)</span>
-          <div className="flex flex-wrap gap-1">
-            {holidays.map((d) => (
-              <Badge key={d} className="bg-muted text-foreground">
-                {d}
-                <button
-                  type="button"
-                  aria-label={`Remove holiday ${d}`}
-                  className="ml-1"
-                  onClick={() => setHolidays((prev) => prev.filter((x) => x !== d))}
-                >
-                  ×
-                </button>
-              </Badge>
-            ))}
           </div>
-          <div className="flex gap-2">
-            <Input
-              aria-label="Add holiday date"
-              placeholder="2026-12-25"
-              className="h-8 w-40"
-              value={holidayInput}
-              onChange={(e) => setHolidayInput(e.target.value)}
-            />
-            <Button type="button" size="sm" variant="outline" onClick={addHoliday}>
-              Add holiday
-            </Button>
-          </div>
-        </div>
 
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
 
-        <Button type="submit" size="sm" disabled={createHours.isPending}>
-          Save business hours
-        </Button>
-      </form>
-    </section>
+          <Button type="submit" size="sm" disabled={createHours.isPending}>
+            Save business hours
+          </Button>
+        </form>
+      </Card>
+    </Section>
   );
 }
 
@@ -274,9 +288,7 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
   }
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-base font-semibold">Ring groups</h2>
-
+    <Section title="Ring groups">
       {isLoading ? (
         <Spinner label="Loading ring groups" />
       ) : groupsError ? (
@@ -289,93 +301,97 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
           </Button>
         </div>
       ) : (groups ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No ring groups yet.</p>
+        <EmptyState title="No ring groups yet." />
       ) : (
-        <ul aria-label="Ring groups" className="divide-y divide-border rounded-md border border-border">
-          {(groups ?? []).map((g) => (
-            <li key={g.id} className="flex items-center justify-between p-3 text-sm">
-              <span className="font-medium">{g.name}</span>
-              <span className="text-xs text-muted-foreground">
-                {g.strategy} · {g.member_user_ids.length} member{g.member_user_ids.length === 1 ? "" : "s"} ·{" "}
-                {g.ring_timeout_seconds}s
-              </span>
-            </li>
-          ))}
-        </ul>
+        <Card className="p-0">
+          <ul aria-label="Ring groups" className="divide-y divide-border">
+            {(groups ?? []).map((g) => (
+              <li key={g.id} className="flex items-center justify-between p-3 text-sm">
+                <span className="font-medium">{g.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {g.strategy} · {g.member_user_ids.length} member{g.member_user_ids.length === 1 ? "" : "s"} ·{" "}
+                  {g.ring_timeout_seconds}s
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
 
-      <form className="space-y-3 rounded-md border border-border p-3" onSubmit={submit}>
-        <div className="grid grid-cols-2 gap-2">
+      <Card className="p-3">
+        <form className="space-y-3" onSubmit={submit}>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="rg-name">
+                Name
+              </label>
+              <Input id="rg-name" aria-label="Ring group name" value={name} onChange={(e) => setName(e.target.value)} required />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="rg-strategy">
+                Strategy
+              </label>
+              <Select
+                id="rg-strategy"
+                aria-label="Ring strategy"
+                className="h-9 w-full px-2 text-sm"
+                value={strategy}
+                onChange={(e) => setStrategy(e.target.value as "simultaneous" | "sequential")}
+              >
+                <option value="simultaneous">Simultaneous</option>
+                <option value="sequential">Sequential</option>
+              </Select>
+            </div>
+          </div>
+
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="rg-name">
-              Name
-            </label>
-            <Input id="rg-name" aria-label="Ring group name" value={name} onChange={(e) => setName(e.target.value)} required />
+            <span className="block text-xs text-muted-foreground">Members</span>
+            <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-border p-2" role="group" aria-label="Members">
+              {(members ?? []).length === 0 ? (
+                <EmptyState title="No team members." />
+              ) : (
+                (members ?? []).map((m) => (
+                  <label key={m.user_id} className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={memberIds.includes(m.user_id)}
+                      onChange={() => toggleMember(m.user_id)}
+                    />
+                    {m.full_name} ({m.email})
+                  </label>
+                ))
+              )}
+            </div>
           </div>
+
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="rg-strategy">
-              Strategy
+            <label className="block text-xs text-muted-foreground" htmlFor="rg-timeout">
+              Ring timeout (seconds)
             </label>
-            <select
-              id="rg-strategy"
-              aria-label="Ring strategy"
-              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value as "simultaneous" | "sequential")}
-            >
-              <option value="simultaneous">Simultaneous</option>
-              <option value="sequential">Sequential</option>
-            </select>
+            <Input
+              id="rg-timeout"
+              aria-label="Ring timeout seconds"
+              type="number"
+              min={1}
+              max={120}
+              className="h-8 w-24"
+              value={ringTimeout}
+              onChange={(e) => setRingTimeout(Number(e.target.value))}
+            />
           </div>
-        </div>
 
-        <div className="space-y-1">
-          <span className="block text-xs text-muted-foreground">Members</span>
-          <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-border p-2" role="group" aria-label="Members">
-            {(members ?? []).length === 0 ? (
-              <p className="text-xs text-muted-foreground">No team members.</p>
-            ) : (
-              (members ?? []).map((m) => (
-                <label key={m.user_id} className="flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={memberIds.includes(m.user_id)}
-                    onChange={() => toggleMember(m.user_id)}
-                  />
-                  {m.full_name} ({m.email})
-                </label>
-              ))
-            )}
-          </div>
-        </div>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
 
-        <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="rg-timeout">
-            Ring timeout (seconds)
-          </label>
-          <Input
-            id="rg-timeout"
-            aria-label="Ring timeout seconds"
-            type="number"
-            min={1}
-            max={120}
-            className="h-8 w-24"
-            value={ringTimeout}
-            onChange={(e) => setRingTimeout(Number(e.target.value))}
-          />
-        </div>
-
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-
-        <Button type="submit" size="sm" disabled={!name.trim() || createGroup.isPending}>
-          Create ring group
-        </Button>
-      </form>
-    </section>
+          <Button type="submit" size="sm" disabled={!name.trim() || createGroup.isPending}>
+            Create ring group
+          </Button>
+        </form>
+      </Card>
+    </Section>
   );
 }
 
@@ -414,9 +430,7 @@ function QueuesSection({ api }: { api: ApiClient }) {
   }
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-base font-semibold">Queues</h2>
-
+    <Section title="Queues">
       {isLoading ? (
         <Spinner label="Loading queues" />
       ) : queuesError ? (
@@ -429,133 +443,138 @@ function QueuesSection({ api }: { api: ApiClient }) {
           </Button>
         </div>
       ) : (queues ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No queues yet.</p>
+        <EmptyState title="No queues yet." />
       ) : (
-        <ul aria-label="Queues" className="divide-y divide-border rounded-md border border-border">
-          {(queues ?? []).map((q) => (
-            <li key={q.id} className="p-3 text-sm">
-              <button
-                type="button"
-                className="flex w-full items-center justify-between gap-2 text-left"
-                onClick={() => setExpandedId((prev) => (prev === q.id ? null : q.id))}
-              >
-                <span className="font-medium">{q.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  overflow: {q.overflow} · max wait {q.max_wait_seconds}s
-                </span>
-              </button>
-              {expandedId === q.id && <QueueEntriesList api={api} queue={q} />}
-            </li>
-          ))}
-        </ul>
+        <Card className="p-0">
+          <ul aria-label="Queues" className="divide-y divide-border">
+            {(queues ?? []).map((q) => (
+              <li key={q.id} className="p-3 text-sm">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-auto w-full justify-between gap-2 px-0 py-0 text-left"
+                  onClick={() => setExpandedId((prev) => (prev === q.id ? null : q.id))}
+                >
+                  <span className="font-medium">{q.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    overflow: {q.overflow} · max wait {q.max_wait_seconds}s
+                  </span>
+                </Button>
+                {expandedId === q.id && <QueueEntriesList api={api} queue={q} />}
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
 
-      <form className="space-y-3 rounded-md border border-border p-3" onSubmit={submit}>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="q-name">
-              Name
-            </label>
-            <Input id="q-name" aria-label="Queue name" value={name} onChange={(e) => setName(e.target.value)} required />
+      <Card className="p-3">
+        <form className="space-y-3" onSubmit={submit}>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="q-name">
+                Name
+              </label>
+              <Input id="q-name" aria-label="Queue name" value={name} onChange={(e) => setName(e.target.value)} required />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="q-ring-group">
+                Ring group
+              </label>
+              <Select
+                id="q-ring-group"
+                aria-label="Queue ring group"
+                className="h-9 w-full px-2 text-sm"
+                value={ringGroupId}
+                onChange={(e) => setRingGroupId(e.target.value)}
+              >
+                <option value="">None</option>
+                {(ringGroups ?? []).map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="q-ring-group">
-              Ring group
-            </label>
-            <select
-              id="q-ring-group"
-              aria-label="Queue ring group"
-              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-              value={ringGroupId}
-              onChange={(e) => setRingGroupId(e.target.value)}
-            >
-              <option value="">None</option>
-              {(ringGroups ?? []).map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
 
-        <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="q-hold-audio">
-            Hold audio URL
-          </label>
-          <Input
-            id="q-hold-audio"
-            aria-label="Hold audio URL"
-            placeholder="https://…"
-            value={holdAudioUrl}
-            onChange={(e) => setHoldAudioUrl(e.target.value)}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="q-max-wait">
-              Max wait (seconds)
+            <label className="block text-xs text-muted-foreground" htmlFor="q-hold-audio">
+              Hold audio URL
             </label>
             <Input
-              id="q-max-wait"
-              aria-label="Max wait seconds"
-              type="number"
-              min={10}
-              max={3600}
-              value={maxWaitSeconds}
-              onChange={(e) => setMaxWaitSeconds(Number(e.target.value))}
+              id="q-hold-audio"
+              aria-label="Hold audio URL"
+              placeholder="https://…"
+              value={holdAudioUrl}
+              onChange={(e) => setHoldAudioUrl(e.target.value)}
             />
           </div>
-          <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="q-overflow">
-              Overflow
-            </label>
-            <select
-              id="q-overflow"
-              aria-label="Overflow action"
-              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-              value={overflow}
-              onChange={(e) => setOverflow(e.target.value)}
-            >
-              {OVERFLOW_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="q-max-wait">
+                Max wait (seconds)
+              </label>
+              <Input
+                id="q-max-wait"
+                aria-label="Max wait seconds"
+                type="number"
+                min={10}
+                max={3600}
+                value={maxWaitSeconds}
+                onChange={(e) => setMaxWaitSeconds(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="q-overflow">
+                Overflow
+              </label>
+              <Select
+                id="q-overflow"
+                aria-label="Overflow action"
+                className="h-9 w-full px-2 text-sm"
+                value={overflow}
+                onChange={(e) => setOverflow(e.target.value)}
+              >
+                {OVERFLOW_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
-        </div>
 
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
 
-        <Button type="submit" size="sm" disabled={!name.trim() || createQueue.isPending}>
-          Create queue
-        </Button>
-      </form>
-    </section>
+          <Button type="submit" size="sm" disabled={!name.trim() || createQueue.isPending}>
+            Create queue
+          </Button>
+        </form>
+      </Card>
+    </Section>
   );
 }
 
-function queueEntryBadgeClass(state: string): string {
+function queueEntryTone(state: string): PillTone {
   switch (state) {
     case "waiting":
-      return "bg-amber-100 text-amber-800";
+      return "warning";
     case "offered":
-      return "bg-blue-100 text-blue-800";
+      return "info";
     case "connected":
-      return "bg-green-100 text-green-800";
+      return "success";
     case "abandoned":
     case "overflowed":
-      return "bg-red-100 text-red-800";
+      return "danger";
     case "callback_requested":
-      return "bg-purple-100 text-purple-800";
+      return "info";
     default:
-      return "bg-gray-100 text-gray-600";
+      return "neutral";
   }
 }
 
@@ -583,7 +602,7 @@ function QueueEntriesList({ api, queue }: { api: ApiClient; queue: QueueOut }) {
           </Button>
         </div>
       ) : (entries ?? []).length === 0 ? (
-        <p className="text-xs text-muted-foreground">No entries.</p>
+        <EmptyState title="No entries." />
       ) : (
         <ul aria-label={`${queue.name} entries`} className="space-y-1">
           {(entries ?? []).map((e) => (
@@ -592,7 +611,7 @@ function QueueEntriesList({ api, queue }: { api: ApiClient; queue: QueueOut }) {
                 {e.state === "waiting" && e.position != null ? `#${e.position + 1}` : e.call_id.slice(0, 8)}
                 {e.callback_e164 ? ` · ${e.callback_e164}` : ""}
               </span>
-              <Badge className={cn(queueEntryBadgeClass(e.state))}>{e.state}</Badge>
+              <Pill tone={queueEntryTone(e.state)}>{e.state}</Pill>
             </li>
           ))}
         </ul>
@@ -625,21 +644,21 @@ function VoicemailsSection({ api }: { api: ApiClient }) {
   }
 
   return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">Voicemails</h2>
-        <select
+    <Section
+      title="Voicemails"
+      actions={
+        <Select
           aria-label="Voicemail status filter"
-          className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+          className="h-8 px-2 text-xs"
           value={statusFilter ?? ""}
           onChange={(e) => setStatusFilter(e.target.value || undefined)}
         >
           <option value="new">New</option>
           <option value="read">Read</option>
           <option value="">All</option>
-        </select>
-      </div>
-
+        </Select>
+      }
+    >
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -658,36 +677,36 @@ function VoicemailsSection({ api }: { api: ApiClient }) {
           </Button>
         </div>
       ) : (voicemails ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No voicemails.</p>
+        <EmptyState title="No voicemails." />
       ) : (
-        <ul aria-label="Voicemails" className="divide-y divide-border rounded-md border border-border">
-          {(voicemails ?? []).map((v) => (
-            <li key={v.id} className="space-y-1 p-3 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">{relativeTime(v.created_at)}</span>
-                <div className="flex items-center gap-2">
-                  <Badge className="bg-gray-100 text-gray-600">{v.transcript_status}</Badge>
-                  <Badge className={v.status === "new" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600"}>
-                    {v.status}
-                  </Badge>
-                  {v.status === "new" && (
-                    <Button type="button" size="sm" variant="outline" onClick={() => markAsRead(v.id)} disabled={markRead.isPending}>
-                      Mark read
-                    </Button>
-                  )}
+        <Card className="p-0">
+          <ul aria-label="Voicemails" className="divide-y divide-border">
+            {(voicemails ?? []).map((v) => (
+              <li key={v.id} className="space-y-1 p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">{relativeTime(v.created_at)}</span>
+                  <div className="flex items-center gap-2">
+                    <Pill tone="neutral">{v.transcript_status}</Pill>
+                    <Pill tone={v.status === "new" ? "warning" : "neutral"}>{v.status}</Pill>
+                    {v.status === "new" && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => markAsRead(v.id)} disabled={markRead.isPending}>
+                        Mark read
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-              {v.transcript ? (
-                <p className="text-xs text-muted-foreground">{v.transcript}</p>
-              ) : (
-                <p className="text-xs italic text-muted-foreground">
-                  {v.transcript_status === "disabled" ? "Transcription not configured." : "Transcript pending."}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
+                {v.transcript ? (
+                  <p className="text-xs text-muted-foreground">{v.transcript}</p>
+                ) : (
+                  <p className="text-xs italic text-muted-foreground">
+                    {v.transcript_status === "disabled" ? "Transcription not configured." : "Transcript pending."}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
-    </section>
+    </Section>
   );
 }

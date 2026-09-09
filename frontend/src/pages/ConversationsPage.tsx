@@ -1,11 +1,12 @@
 import * as React from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { PanelRight } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import {
   fetchConversations,
   fetchInboxes,
+  fetchUnreadByInbox,
   type ConversationFilter,
   type ConversationTab,
 } from "@/api/conversations";
@@ -20,6 +21,8 @@ import {
   type NewConversationKind,
 } from "@/components/conversations/NewConversationPanel";
 import { Composer } from "@/components/inbox/Composer";
+import { InboxColumn, type InboxColumnSelection } from "@/components/conversations/InboxColumn";
+import { Button, Sheet } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
 /** Item 2: the list is kept fresh two ways - a background poll while the tab is visible
@@ -41,6 +44,21 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = React.useState(false);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia(query);
+    const update = () => setMatches(mql.matches);
+    update();
+    mql.addEventListener("change", update);
+    return () => mql.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
+}
+
 const ALL_INBOXES = "all";
 
 /** ConversationsPage renders inside the app Shell (frontend/src/App.tsx), which already
@@ -50,6 +68,8 @@ export function ConversationsPage() {
   const { api, orgId } = useAuth();
   const softphone = useSoftphone();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { inboxId: routeInboxId } = useParams<{ inboxId?: string; threadId?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [tab, setTab] = React.useState<ConversationTab>("chats");
@@ -57,9 +77,12 @@ export function ConversationsPage() {
   const [q, setQ] = React.useState("");
   const debouncedQ = useDebouncedValue(q, 300);
   const [contactPanelOpen, setContactPanelOpen] = React.useState(false);
+  const [mobileInboxSheetOpen, setMobileInboxSheetOpen] = React.useState(false);
   // Item 1: "+ New" compose mode - independent of the URL-selected conversation, so
   // Cancel can return to whatever was selected before without losing/mangling it.
   const [composeMode, setComposeMode] = React.useState<NewConversationKind | null>(null);
+
+  const isBelowSm = useMediaQuery("(max-width: 639px)");
 
   const inboxesQuery = useQuery({
     queryKey: ["inboxes"],
@@ -68,24 +91,44 @@ export function ConversationsPage() {
   });
   const inboxes = inboxesQuery.data ?? [];
 
+  // Unread counts for the InboxColumn are decorative. This query must never gate/block
+  // anything and its failure must never surface as a page-level error - while it loads
+  // or after it fails, the column simply shows no counts.
+  //
+  // The key is DELIBERATELY outside the ["conversations"] family. ConversationHeader's
+  // optimistic star toggle does setQueriesData({queryKey:["conversations"]}, d => ...
+  // d.pages.map(...)), so anything sharing that prefix but not shaped like an infinite
+  // query would throw inside onMutate and kill the mutation before it ever fired. The
+  // message.received effect below invalidates this key explicitly instead.
+  const unreadQuery = useQuery({
+    queryKey: ["inbox-unread-counts"],
+    queryFn: () => fetchUnreadByInbox(api),
+    staleTime: 5000,
+    refetchInterval: 15000,
+  });
+
   const urlInboxId = searchParams.get("inbox");
+  const requestedInboxId = routeInboxId ?? urlInboxId;
   // F7: ?inbox=all is an explicit "every inbox I can see" mode, distinct from "no inbox
   // chosen yet" - it must never be overwritten by the auto-select-first effect below.
-  const isAllInboxes = urlInboxId === ALL_INBOXES;
+  const isAllInboxes = requestedInboxId === ALL_INBOXES;
   const selectedInboxId = React.useMemo(() => {
     if (isAllInboxes) return null;
-    if (urlInboxId && inboxes.some((inbox) => inbox.id === urlInboxId)) return urlInboxId;
+    if (requestedInboxId && inboxes.some((inbox) => inbox.id === requestedInboxId)) {
+      return requestedInboxId;
+    }
     return inboxes[0]?.id ?? null;
-  }, [isAllInboxes, urlInboxId, inboxes]);
+  }, [isAllInboxes, requestedInboxId, inboxes]);
 
   React.useEffect(() => {
+    if (routeInboxId) return;
     if (isAllInboxes) return;
     if (!searchParams.has("inbox") && inboxes.length > 0) {
       const next = new URLSearchParams(searchParams);
       next.set("inbox", inboxes[0].id);
       setSearchParams(next, { replace: true });
     }
-  }, [isAllInboxes, inboxes, searchParams, setSearchParams]);
+  }, [isAllInboxes, inboxes, searchParams, setSearchParams, routeInboxId]);
 
   const conversationsQuery = useInfiniteQuery({
     queryKey: ["conversations", isAllInboxes ? ALL_INBOXES : selectedInboxId, tab, filter, debouncedQ],
@@ -114,6 +157,7 @@ export function ConversationsPage() {
     return softphone.subscribe((event) => {
       if (event.type !== "message.received") return;
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox-unread-counts"] });
     });
   }, [softphone, queryClient]);
 
@@ -134,6 +178,10 @@ export function ConversationsPage() {
 
   const urlContact = searchParams.get("contact");
   const urlOur = searchParams.get("our");
+
+  // :threadId is intentionally not used to select a conversation. A conversation is
+  // the pair (our_e164, contact_e164) and thread_id is null for call-only pairs, so it
+  // cannot address every conversation. Keep ?contact= / ?our= as the thread selector.
   const selectedConversation = React.useMemo(
     () => items.find((item) => item.contact_e164 === urlContact) ?? null,
     [items, urlContact],
@@ -153,6 +201,9 @@ export function ConversationsPage() {
     inboxes.find((inbox) => inbox.id === selectedConversation?.inbox_id) ??
     inboxes.find((inbox) => inbox.id === selectedInboxId) ??
     null;
+  // T8: the only gate on this surface stays the per-inbox `my_role !== "viewer"` check
+  // (`canSend` / `canCompose`). Do NOT add useCapabilities / useGate here. The backend
+  // stays the authority; this page only decides what to render.
   // canSend defaults to false until we actually know the answer (inboxes still loading,
   // or the conversation resolved before its inbox did) - true only once we positively
   // know either the inbox role allows it, or there is no inbox system at all to gate on
@@ -178,6 +229,39 @@ export function ConversationsPage() {
   }, [inboxes]);
   const canCompose = fromOptions.length > 0;
 
+  const inboxSelection = React.useMemo<InboxColumnSelection>(() => {
+    if (filter === "important" || filter === "unresponded") {
+      return { kind: "view", view: filter };
+    }
+    if (isAllInboxes) return { kind: "all" };
+    if (selectedInboxId) return { kind: "inbox", inboxId: selectedInboxId };
+    return { kind: "all" };
+  }, [filter, isAllInboxes, selectedInboxId]);
+
+  const scopeLabel = React.useMemo(() => {
+    if (filter === "important") return "Important";
+    if (filter === "unresponded") return "Unresponded";
+    if (isAllInboxes) return "All conversations";
+    if (selectedInboxId) {
+      return inboxes.find((inbox) => inbox.id === selectedInboxId)?.name ?? "All conversations";
+    }
+    return "All conversations";
+  }, [filter, isAllInboxes, selectedInboxId, inboxes]);
+
+  function handleInboxSelect(selection: InboxColumnSelection) {
+    setMobileInboxSheetOpen(false);
+    if (selection.kind === "view") {
+      setFilter((current) => (current === selection.view ? "open" : selection.view));
+      return;
+    }
+
+    const pathname = selection.kind === "all" ? "/inbox/all" : `/inbox/${selection.inboxId}`;
+    const next = new URLSearchParams(searchParams);
+    next.delete("inbox");
+    const search = next.toString();
+    navigate({ pathname, search: search ? `?${search}` : "" });
+  }
+
   const sendMessage = useMutation({
     mutationFn: async (vars: { to: string; body: string; allow_reassign: boolean; from: string }) =>
       api.request("/api/v1/messages", { method: "POST", json: vars }),
@@ -201,7 +285,10 @@ export function ConversationsPage() {
     next.set("contact", contactE164);
     if (conversation) next.set("our", conversation.our_e164);
     setSearchParams(next);
-    setContactPanelOpen(true);
+    // Below sm the contact panel is a MODAL bottom sheet (aria-modal + focus trap), so
+    // auto-opening it on every row click would trap the user the instant they pick a
+    // conversation. On sm and up it is an ordinary side panel and may open eagerly.
+    if (!isBelowSm) setContactPanelOpen(true);
   }
 
   /** Below md the conversation list and the selected conversation share one column
@@ -222,7 +309,7 @@ export function ConversationsPage() {
     next.set("contact", contactE164);
     next.set("our", ourE164);
     setSearchParams(next);
-    setContactPanelOpen(true);
+    if (!isBelowSm) setContactPanelOpen(true);
   }
 
   async function handleComposeSendMessage(vars: {
@@ -247,9 +334,64 @@ export function ConversationsPage() {
     selectPair(vars.to, vars.from);
   }
 
+  const inboxColumnElement = (
+    <InboxColumn
+      inboxes={inboxes}
+      isLoading={inboxesQuery.isLoading}
+      error={inboxesQuery.error ? (inboxesQuery.error as Error).message : null}
+      selection={inboxSelection}
+      onSelect={handleInboxSelect}
+      unread={unreadQuery.data?.counts ?? {}}
+      unreadTruncated={unreadQuery.data?.truncated ?? false}
+      onNew={(kind) => setComposeMode(kind)}
+      canCompose={canCompose}
+      canComposeLoading={inboxesQuery.isLoading}
+      className={cn("h-full", isBelowSm ? "!w-full border-r-0" : "")}
+    />
+  );
+
+  const contactPanelElement = (
+    <ContactPanel
+      conversation={composeMode ? null : selectedConversation}
+      inbox={activeInbox}
+      canSend={canSend}
+      className={cn(
+        !isBelowSm && (contactPanelOpen ? "fixed inset-y-0 right-0 z-40 w-80" : "hidden"),
+        "lg:static lg:z-auto lg:block lg:w-auto",
+      )}
+    />
+  );
+
   return (
-    <div className="dark grid h-full grid-cols-[minmax(0,1fr)] bg-neutral-950 text-neutral-100 lg:grid-cols-[minmax(0,1fr)_320px]">
-      <main className="grid min-w-0 grid-cols-[1fr] md:grid-cols-[minmax(280px,360px)_1fr]">
+    <div className="dark grid h-full grid-cols-[minmax(0,1fr)] bg-neutral-950 text-neutral-100 lg:grid-cols-[220px_minmax(0,1fr)_300px]">
+      {isBelowSm ? (
+        <>
+          <div className="sm:hidden bg-neutral-950 p-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="Choose inbox"
+              onClick={() => setMobileInboxSheetOpen(true)}
+            >
+              {scopeLabel}
+            </Button>
+          </div>
+
+          <Sheet
+            open={mobileInboxSheetOpen}
+            onClose={() => setMobileInboxSheetOpen(false)}
+            side="left"
+            title="Inboxes"
+          >
+            {inboxColumnElement}
+          </Sheet>
+        </>
+      ) : (
+        inboxColumnElement
+      )}
+
+      <main className="grid min-w-0 grid-cols-[1fr] md:grid-cols-[320px_1fr]">
         <ConversationList
           items={items}
           selectedContactE164={urlContact}
@@ -291,14 +433,16 @@ export function ConversationsPage() {
                     onBack={selectedConversation ? handleBack : undefined}
                   />
                 </div>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   aria-label="Toggle contact panel"
                   onClick={() => setContactPanelOpen((v) => !v)}
-                  className="mr-2 rounded-md p-2 text-neutral-300 hover:bg-neutral-800 lg:hidden"
+                  className="mr-2 text-neutral-300 hover:bg-neutral-800 lg:hidden"
                 >
                   <PanelRight className="h-4 w-4" />
-                </button>
+                </Button>
               </div>
 
               <Timeline
@@ -335,15 +479,18 @@ export function ConversationsPage() {
         </section>
       </main>
 
-      <ContactPanel
-        conversation={composeMode ? null : selectedConversation}
-        inbox={activeInbox}
-        canSend={canSend}
-        className={cn(
-          contactPanelOpen ? "fixed inset-y-0 right-0 z-40 w-80" : "hidden",
-          "lg:static lg:z-auto lg:block lg:w-auto",
-        )}
-      />
+      {isBelowSm ? (
+        <Sheet
+          open={contactPanelOpen}
+          onClose={() => setContactPanelOpen(false)}
+          side="bottom"
+          title="Contact"
+        >
+          {contactPanelElement}
+        </Sheet>
+      ) : (
+        contactPanelElement
+      )}
     </div>
   );
 }

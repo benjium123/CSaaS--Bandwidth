@@ -125,6 +125,8 @@ const ACCOUNTS: ProviderAccount[] = [
       messaging_profile_id: "mp-1",
       voice_connection_id: "vc-1",
     },
+    numbers_count: 123,
+    spend_mtd_micros: 5_000_000,
   },
   {
     id: "p-twilio",
@@ -138,6 +140,8 @@ const ACCOUNTS: ProviderAccount[] = [
       auth_token: SECRET_MASK,
       messaging_service_sid: "MS-original",
     },
+    numbers_count: 0,
+    spend_mtd_micros: 0,
   },
   {
     id: "p-plivo",
@@ -151,6 +155,8 @@ const ACCOUNTS: ProviderAccount[] = [
       auth_token: SECRET_MASK,
       powerpack_uuid: "powerpack-1",
     },
+    numbers_count: 1,
+    spend_mtd_micros: 2_000_000,
   },
   {
     id: "p-signalwire",
@@ -164,6 +170,8 @@ const ACCOUNTS: ProviderAccount[] = [
       api_token: SECRET_MASK,
       space_url: "example.signalwire.com",
     },
+    numbers_count: 45,
+    spend_mtd_micros: 1_000_000,
   },
 ];
 
@@ -173,7 +181,7 @@ function baseRoutes(overrides: Record<string, unknown> = {}) {
     // definition order. The id-scoped route MUST be defined before the bare list/create
     // route below, or every /provider-accounts/<id>... call (PATCH, probe, DELETE) would
     // incorrectly match the list route instead.
-    "/api/v1/provider-accounts/": (path: string) => {
+    "/api/v1/provider-accounts/": (path: string): ProviderAccount => {
       const parts = path.split("/");
       const id = parts[4];
       const isProbe = parts[5] === "probe";
@@ -182,7 +190,7 @@ function baseRoutes(overrides: Record<string, unknown> = {}) {
         id,
         provider,
         label: "Twilio prod",
-        status: "active" as const,
+        status: "active",
         last_probe_at: isProbe ? "2025-01-01T00:00:00Z" : null,
         last_probe_detail: isProbe ? "Twilio: authenticated" : null,
         credentials: {
@@ -190,6 +198,8 @@ function baseRoutes(overrides: Record<string, unknown> = {}) {
           auth_token: SECRET_MASK,
           messaging_service_sid: "MS-updated",
         },
+        numbers_count: 0,
+        spend_mtd_micros: 0,
       };
     },
     "/api/v1/provider-accounts": ACCOUNTS,
@@ -204,24 +214,25 @@ function baseRoutes(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ProvidersPage", () => {
-  it("renders five provider account cards with their statuses", async () => {
+  // P20b: old name was "renders five provider account cards with their statuses".
+  // The rebuilt page renders one card per /api/v1/provider-accounts entry, so a
+  // provider with no account is reached through Connect a provider instead.
+  it("renders connected provider account cards with their statuses", async () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const bandwidthCard = await screen.findByRole("region", { name: "bandwidth account" });
-    expect(within(bandwidthCard).getByText("Not configured")).toBeInTheDocument();
+    const telnyxHeading = await screen.findByRole("heading", { name: "Telnyx prod" });
+    expect(telnyxHeading).toBeInTheDocument();
+    expect(screen.getByText("Not checked yet")).toBeInTheDocument();
 
-    expect(screen.getByRole("region", { name: "telnyx account" })).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "telnyx account" })).getByText("Unverified")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Twilio prod" })).toBeInTheDocument();
+    expect(screen.getByText("Working")).toBeInTheDocument();
 
-    expect(screen.getByRole("region", { name: "twilio account" })).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "twilio account" })).getByText("Active")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Plivo prod" })).toBeInTheDocument();
+    expect(screen.getByText("Not working")).toBeInTheDocument();
 
-    expect(screen.getByRole("region", { name: "plivo account" })).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "plivo account" })).getByText("Failed")).toBeInTheDocument();
-
-    expect(screen.getByRole("region", { name: "signalwire account" })).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "signalwire account" })).getByText("Disabled")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "SignalWire prod" })).toBeInTheDocument();
+    expect(screen.getByText("Turned off")).toBeInTheDocument();
   });
 
   // F16(a): keeps the frontend field catalogue honest against the backend's
@@ -240,14 +251,17 @@ describe("ProvidersPage", () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
-    const authTokenInput = within(twilioCard).getByLabelText(/^auth token$/i) as HTMLInputElement;
+    await screen.findByRole("heading", { name: "Twilio prod" });
+    // "Auth token" is a field on BOTH the Twilio and the Plivo connection, so every
+    // lookup has to be scoped to one card's group landmark.
+    const twilio = within(screen.getByRole("group", { name: "Twilio prod connection" }));
+    const authTokenInput = twilio.getByLabelText(/^auth token$/i) as HTMLInputElement;
 
     expect(authTokenInput.type).toBe("password");
     expect(authTokenInput.value).toBe("");
     expect(authTokenInput.placeholder).toBe("stored — leave blank to keep");
 
-    const accountSidInput = within(twilioCard).getByLabelText(/^account sid$/i) as HTMLInputElement;
+    const accountSidInput = twilio.getByLabelText(/^account sid$/i) as HTMLInputElement;
     expect(accountSidInput.value).toBe("AC-original");
   });
 
@@ -264,6 +278,8 @@ describe("ProvidersPage", () => {
               last_probe_at: null,
               last_probe_detail: null,
               credentials: {},
+              numbers_count: 0,
+              spend_mtd_micros: 0,
             };
           }
           return ACCOUNTS.filter((account) => account.provider !== "telnyx");
@@ -272,18 +288,21 @@ describe("ProvidersPage", () => {
     );
     renderWithProviders(<ProvidersPage />, client);
 
-    const telnyxCard = await screen.findByRole("region", { name: "telnyx account" });
+    await screen.findByLabelText("Connect a provider");
+    await userEvent.selectOptions(screen.getByLabelText("Connect a provider"), "telnyx");
+
+    const connectForm = screen.getByLabelText(/name this connection/i).closest("form")!;
 
     // F6: Save must stay disabled until every field for this provider is filled in.
-    const saveButton = within(telnyxCard).getByRole("button", { name: "Save telnyx" });
+    const saveButton = within(connectForm).getByRole("button", { name: "Save" });
     expect(saveButton).toBeDisabled();
-    expect(within(telnyxCard).getByText(/missing:/i)).toBeInTheDocument();
+    expect(within(connectForm).getByText(/missing:/i)).toBeInTheDocument();
 
-    await userEvent.type(within(telnyxCard).getByLabelText(/^label$/i), "Main");
-    await userEvent.type(within(telnyxCard).getByLabelText(/^api key$/i), "key-123");
-    await userEvent.type(within(telnyxCard).getByLabelText(/^public key$/i), "pub-123");
-    await userEvent.type(within(telnyxCard).getByLabelText(/^messaging profile id$/i), "mp-1");
-    await userEvent.type(within(telnyxCard).getByLabelText(/^voice connection id$/i), "vc-1");
+    await userEvent.type(within(connectForm).getByLabelText(/^name this connection$/i), "Main");
+    await userEvent.type(within(connectForm).getByLabelText(/^api key$/i), "key-123");
+    await userEvent.type(within(connectForm).getByLabelText(/^public key$/i), "pub-123");
+    await userEvent.type(within(connectForm).getByLabelText(/^messaging profile id$/i), "mp-1");
+    await userEvent.type(within(connectForm).getByLabelText(/^voice connection id$/i), "vc-1");
 
     expect(saveButton).toBeEnabled();
     await userEvent.click(saveButton);
@@ -318,17 +337,18 @@ describe("ProvidersPage", () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
-
-    const accountSidInput = within(twilioCard).getByLabelText(/^account sid$/i) as HTMLInputElement;
-    const messagingSidInput = within(twilioCard).getByLabelText(/^messaging service sid$/i) as HTMLInputElement;
+    const accountSidInput = await screen.findByLabelText(/^account sid$/i) as HTMLInputElement;
+    const twilioForm = accountSidInput.closest("form")!;
+    const messagingSidInput = within(twilioForm).getByLabelText(
+      /^messaging service sid$/i,
+    ) as HTMLInputElement;
 
     await userEvent.clear(accountSidInput);
     await userEvent.type(accountSidInput, "AC-new");
     await userEvent.clear(messagingSidInput);
     await userEvent.type(messagingSidInput, "MS-new");
 
-    await userEvent.click(within(twilioCard).getByRole("button", { name: "Save twilio" }));
+    await userEvent.click(within(twilioForm).getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       const call = client.calls.find(
@@ -355,11 +375,12 @@ describe("ProvidersPage", () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
-    const labelInput = within(twilioCard).getByLabelText(/^label$/i) as HTMLInputElement;
+    const accountSidInput = await screen.findByLabelText(/^account sid$/i) as HTMLInputElement;
+    const twilioForm = accountSidInput.closest("form")!;
+    const labelInput = within(twilioForm).getByLabelText(/^label$/i) as HTMLInputElement;
 
     await userEvent.clear(labelInput);
-    await userEvent.click(within(twilioCard).getByRole("button", { name: "Save twilio" }));
+    await userEvent.click(within(twilioForm).getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       const call = client.calls.find(
@@ -381,10 +402,13 @@ describe("ProvidersPage", () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
+    const twilioCard = await screen.findByRole("group", { name: "Twilio prod connection" });
+    const authTokenInput = within(twilioCard).getByLabelText(/^auth token$/i) as HTMLInputElement;
+    const twilioForm = authTokenInput.closest("form")!;
+
     // Submit without touching anything - auth_token's input holds "" (F1/initial load),
     // never the mask string itself.
-    await userEvent.click(within(twilioCard).getByRole("button", { name: "Save twilio" }));
+    await userEvent.click(within(twilioForm).getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       const call = client.calls.find(
@@ -407,13 +431,14 @@ describe("ProvidersPage", () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
+    const twilioCard = await screen.findByRole("group", { name: "Twilio prod connection" });
     const authTokenInput = within(twilioCard).getByLabelText(/^auth token$/i) as HTMLInputElement;
+    const twilioForm = authTokenInput.closest("form")!;
 
     await userEvent.type(authTokenInput, "sk-new-secret");
     expect(authTokenInput.value).toBe("sk-new-secret");
 
-    await userEvent.click(within(twilioCard).getByRole("button", { name: "Save twilio" }));
+    await userEvent.click(within(twilioForm).getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(authTokenInput.value).toBe(""));
   });
@@ -431,12 +456,12 @@ describe("ProvidersPage", () => {
     );
     renderWithProviders(<ProvidersPage />, client);
 
-    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
-    expect(within(twilioCard).getByText("Unverified")).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Twilio prod" });
+    expect(screen.getAllByText("Not checked yet").length).toBe(2);
 
-    await userEvent.click(within(twilioCard).getByRole("button", { name: "Probe twilio" }));
+    await userEvent.click(screen.getByRole("button", { name: "Test Twilio" }));
 
-    expect(await within(twilioCard).findByText("Active")).toBeInTheDocument();
+    expect(await screen.findByText("Working")).toBeInTheDocument();
   });
 
   it("renders a clear banner when credential storage is not configured", async () => {
@@ -450,8 +475,8 @@ describe("ProvidersPage", () => {
     renderWithProviders(<ProvidersPage />, client);
 
     expect(await screen.findByText("credential storage not configured")).toBeInTheDocument();
-    // F9: the list call failed - none of the five cards should offer an editable form.
-    expect(screen.queryByRole("region", { name: /account$/ })).not.toBeInTheDocument();
+    // F9: the list call failed - none of the connected cards should offer an editable form.
+    expect(screen.queryByLabelText(/^account sid$/i)).not.toBeInTheDocument();
   });
 
   it("renders a clear banner verbatim for any other 503, not just the credential-storage message", async () => {
@@ -486,12 +511,14 @@ describe("ProvidersPage", () => {
     );
     renderWithProviders(<ProvidersPage />, client);
 
-    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
+    const accountSidInput = await screen.findByLabelText(/^account sid$/i) as HTMLInputElement;
+    const twilioForm = accountSidInput.closest("form")!;
+
     await waitFor(() =>
-      expect(within(twilioCard).getByRole("button", { name: "Save twilio" })).toBeDisabled(),
+      expect(within(twilioForm).getByRole("button", { name: "Save" })).toBeDisabled(),
     );
-    expect(within(twilioCard).getByRole("button", { name: "Probe twilio" })).toBeDisabled();
-    expect(within(twilioCard).getByRole("button", { name: "Disable twilio" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Test Twilio" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Disable Twilio" })).toBeDisabled();
     expect(
       screen.getByText(/read-only: your role can view provider status/i),
     ).toBeInTheDocument();
@@ -501,11 +528,11 @@ describe("ProvidersPage", () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const signalwireCard = await screen.findByRole("region", { name: "signalwire account" });
+    await screen.findByRole("heading", { name: "SignalWire prod" });
 
-    await userEvent.click(within(signalwireCard).getByRole("button", { name: "Disable signalwire" }));
+    await userEvent.click(screen.getByRole("button", { name: "Disable SignalWire" }));
     await userEvent.click(
-      within(signalwireCard).getByRole("button", { name: "Confirm disable signalwire" }),
+      screen.getByRole("button", { name: "Confirm disable SignalWire" }),
     );
 
     await waitFor(() => {
@@ -519,17 +546,16 @@ describe("ProvidersPage", () => {
     });
   });
 
-  // F16(b): carrier-health + routing-policy coverage re-added from the pre-P17 version of
-  // this page (git show HEAD:frontend/src/pages/ProvidersPage.test.tsx) - the P17 rework
-  // kept these sections verbatim, so their tests must survive verbatim too.
-  it("renders capability badges and the primary marker for a live carrier", async () => {
+  // P20b: old name was "renders capability badges and the primary marker for a live carrier".
+  // The page now speaks about providers, and this list lives behind the Advanced disclosure.
+  it("renders capability badges and the primary marker for a live provider", async () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    // Scoped to the carrier-health list: "bandwidth" also appears as a provider-account
-    // card heading elsewhere on the page.
-    const carriersList = await screen.findByRole("list", { name: "Carriers" });
-    const bandwidthCard = within(carriersList).getByText("bandwidth").closest("li")!;
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+
+    const providersList = await screen.findByRole("list", { name: "Providers" });
+    const bandwidthCard = within(providersList).getByText("Bandwidth").closest("li")!;
     expect(within(bandwidthCard).getByText("Live")).toBeInTheDocument();
     expect(within(bandwidthCard).getByText("SMS")).toBeInTheDocument();
     expect(within(bandwidthCard).getByText("MMS")).toBeInTheDocument();
@@ -538,12 +564,16 @@ describe("ProvidersPage", () => {
     expect(within(bandwidthCard).getByText("Primary")).toBeInTheDocument();
   });
 
-  it("shows every missing variable name and disables Test for a carrier missing credentials", async () => {
+  // P20b: old name was "shows every missing variable name and disables Test for a carrier
+  // missing credentials".
+  it("shows every missing variable name and disables Test for a provider missing credentials", async () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const carriersList = await screen.findByRole("list", { name: "Carriers" });
-    const twilioCarrierCard = within(carriersList).getByText("twilio").closest("li")!;
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+
+    const providersList = await screen.findByRole("list", { name: "Providers" });
+    const twilioCarrierCard = within(providersList).getByText("Twilio").closest("li")!;
     expect(within(twilioCarrierCard).getByText("TWILIO_ACCOUNT_SID")).toBeInTheDocument();
     expect(within(twilioCarrierCard).getByText("TWILIO_AUTH_TOKEN")).toBeInTheDocument();
     expect(
@@ -577,11 +607,15 @@ describe("ProvidersPage", () => {
     );
     renderWithProviders(<ProvidersPage />, client);
 
-    const carriersList = await screen.findByRole("list", { name: "Carriers" });
-    const bandwidthCard = within(carriersList).getByText("bandwidth").closest("li")!;
-    const telnyxCard = within(carriersList).getByText("telnyx").closest("li")!;
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
 
-    await userEvent.click(within(bandwidthCard).getByRole("button", { name: "Test credentials" }));
+    const providersList = await screen.findByRole("list", { name: "Providers" });
+    const bandwidthCard = within(providersList).getByText("Bandwidth").closest("li")!;
+    const telnyxCard = within(providersList).getByText("Telnyx").closest("li")!;
+
+    await userEvent.click(
+      within(bandwidthCard).getByRole("button", { name: "Test credentials" }),
+    );
 
     await waitFor(() =>
       expect(
@@ -597,7 +631,9 @@ describe("ProvidersPage", () => {
     ).toBeInTheDocument();
 
     // Probing carrier A must not clear carrier B's previously-shown result.
-    await userEvent.click(within(telnyxCard).getByRole("button", { name: "Test credentials" }));
+    await userEvent.click(
+      within(telnyxCard).getByRole("button", { name: "Test credentials" }),
+    );
     await waitFor(() =>
       expect(client.calls.some((c) => c.path === "/api/v1/routing/carriers/telnyx/probe")).toBe(
         true,
@@ -610,27 +646,32 @@ describe("ProvidersPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("visually flags a carrier whose breaker state is open", async () => {
+  // P20b: old name was "visually flags a carrier whose breaker state is open".
+  // Breaker state now renders as "Not delivering right now", and the page uses "provider"
+  // rather than "carrier".
+  it("visually flags a provider that is not delivering right now", async () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const carriersList = await screen.findByRole("list", { name: "Carriers" });
-    const telnyxCard = within(carriersList).getByText("telnyx").closest("li")!;
-    expect(within(telnyxCard).getByRole("alert")).toHaveTextContent(/open/i);
-    expect(within(telnyxCard).getByRole("alert")).toHaveTextContent(/failing/i);
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+
+    const providersList = await screen.findByRole("list", { name: "Providers" });
+    const telnyxCard = within(providersList).getByText("Telnyx").closest("li")!;
+    expect(within(telnyxCard).getByRole("alert")).toHaveTextContent(
+      "Not delivering right now",
+    );
   });
 
-  // P19: per-card spend line, and the page-level Rates drawer.
+  // P20b: the old "five cards" page had a per-card spend line from the spend summary;
+  // the rebuilt provider account card renders this directly from spend_mtd_micros.
   it("shows a spend line on the provider card that has spend this month", async () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const telnyxCard = await screen.findByRole("region", { name: "telnyx account" });
-    expect(await within(telnyxCard).findByText("$5.00")).toBeInTheDocument();
-    expect(within(telnyxCard).getByText(/Spend this month/)).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Telnyx prod" });
+    expect(screen.getByText(/Spend this month: \$5\.00/)).toBeInTheDocument();
 
-    const bandwidthCard = await screen.findByRole("region", { name: "bandwidth account" });
-    expect(within(bandwidthCard).getByText("No spend yet.")).toBeInTheDocument();
+    expect(screen.getByText(/Spend this month: \$0\.00/)).toBeInTheDocument();
   });
 
   it("opens the rates drawer from the Rates button and lets an owner save a rate", async () => {
@@ -683,7 +724,8 @@ describe("ProvidersPage", () => {
     await waitFor(() => expect(screen.queryByText("numbers unavailable")).not.toBeInTheDocument());
   });
 
-  // Item 8: carrier catalog query has no error/retry affordance of its own.
+  // Item 8: carrier catalog query is behind Advanced now; open that disclosure before
+  // asserting on its error/retry affordance.
   it("shows a retry affordance when the carrier catalog fails to load, and refetches on retry", async () => {
     let calls = 0;
     const client = makeStubClient(
@@ -697,14 +739,17 @@ describe("ProvidersPage", () => {
     );
     renderWithProviders(<ProvidersPage />, client);
 
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+
     const errorText = await screen.findByText("catalog unavailable");
     const alertBox = errorText.closest('[role="alert"]') as HTMLElement;
     await userEvent.click(within(alertBox).getByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByRole("list", { name: "Carriers" })).toBeInTheDocument();
+    expect(await screen.findByRole("list", { name: "Providers" })).toBeInTheDocument();
   });
 
-  // Item 8: routing policy query has no error/retry affordance of its own.
+  // Item 8: routing policy query is behind Advanced now; open that disclosure before
+  // asserting on its error/retry affordance.
   it("shows a retry affordance when the routing policy fails to load, and refetches on retry", async () => {
     let calls = 0;
     const client = makeStubClient(
@@ -718,11 +763,15 @@ describe("ProvidersPage", () => {
     );
     renderWithProviders(<ProvidersPage />, client);
 
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+
     const errorText = await screen.findByText("policy unavailable");
     const alertBox = errorText.closest('[role="alert"]') as HTMLElement;
     await userEvent.click(within(alertBox).getByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByRole("list", { name: "Carrier preference order" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("list", { name: "Provider preference order" }),
+    ).toBeInTheDocument();
   });
 
   // Item 14: CarrierHealthSection and PolicySection must respect the same readOnly signal
@@ -742,17 +791,19 @@ describe("ProvidersPage", () => {
     );
     renderWithProviders(<ProvidersPage />, client);
 
-    const carriersList = await screen.findByRole("list", { name: "Carriers" });
-    const bandwidthCard = within(carriersList).getByText("bandwidth").closest("li")!;
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+
+    const providersList = await screen.findByRole("list", { name: "Providers" });
+    const bandwidthCard = within(providersList).getByText("Bandwidth").closest("li")!;
     expect(
       within(bandwidthCard).getByRole("button", { name: "Test credentials" }),
     ).toBeDisabled();
 
     // bandwidth is first in POLICY.preference, so "down" is normally enabled - only readOnly
     // should disable it here.
-    expect(screen.getByRole("button", { name: "Move bandwidth down" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move Bandwidth down" })).toBeDisabled();
     expect(
-      screen.getByRole("checkbox", { name: /Allow intra-carrier failover/i }),
+      screen.getByRole("checkbox", { name: /Allow intra-provider failover/i }),
     ).toBeDisabled();
   });
 
@@ -762,13 +813,63 @@ describe("ProvidersPage", () => {
     const client = makeStubClient(baseRoutes());
     renderWithProviders(<ProvidersPage />, client);
 
-    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
+    const accountSidInput = await screen.findByLabelText(/^account sid$/i) as HTMLInputElement;
+    const twilioForm = accountSidInput.closest("form")!;
 
-    await userEvent.click(within(twilioCard).getByRole("button", { name: "Probe twilio" }));
-    expect(await within(twilioCard).findByText("Probed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Test Twilio" }));
+    expect(await screen.findByText("Tested")).toBeInTheDocument();
 
-    await userEvent.click(within(twilioCard).getByRole("button", { name: "Save twilio" }));
-    await waitFor(() => expect(within(twilioCard).queryByText("Probed")).not.toBeInTheDocument());
-    expect(within(twilioCard).getByText("Saved")).toBeInTheDocument();
+    await userEvent.click(within(twilioForm).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByText("Tested")).not.toBeInTheDocument());
+    expect(screen.getByText("Saved")).toBeInTheDocument();
+  });
+
+  it("shows the connected numbers count and this month's spend on a provider card", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<ProvidersPage />, client);
+
+    await screen.findByRole("heading", { name: "Telnyx prod" });
+    expect(screen.getByText("123 numbers")).toBeInTheDocument();
+    expect(screen.getByText(/Spend this month: \$5\.00/)).toBeInTheDocument();
+
+    expect(screen.getByText("No numbers")).toBeInTheDocument();
+    expect(screen.getByText(/Spend this month: \$0\.00/)).toBeInTheDocument();
+  });
+
+  it("only offers providers that are not connected in the Connect a provider picker", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<ProvidersPage />, client);
+
+    const picker = await screen.findByLabelText("Connect a provider") as HTMLSelectElement;
+
+    expect(within(picker).getByRole("option", { name: "Bandwidth" })).toBeInTheDocument();
+    expect(within(picker).queryByRole("option", { name: "Telnyx" })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole("option", { name: "Twilio" })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole("option", { name: "Plivo" })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole("option", { name: "SignalWire" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Advanced collapsed until it is opened", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<ProvidersPage />, client);
+
+    expect(screen.queryByRole("list", { name: "Providers" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+
+    expect(await screen.findByRole("list", { name: "Providers" })).toBeInTheDocument();
+  });
+
+  it("never renders a lowercase provider slug", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<ProvidersPage />, client);
+
+    await screen.findByText("Telnyx");
+    expect(screen.queryByText("telnyx")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await screen.findByRole("list", { name: "Providers" });
+
+    expect(screen.queryByText("telnyx")).not.toBeInTheDocument();
   });
 });

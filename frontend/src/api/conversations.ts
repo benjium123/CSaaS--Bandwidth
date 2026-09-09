@@ -34,6 +34,10 @@ export interface Contact {
   attributes: ContactAttributes;
   notes?: string | null;
   phones: ContactPhone[];
+  // P22 ownership fields returned by the backend's ContactOut. Optional because older
+  // fixtures/callers omit them, while the backend ContactOut now carries them.
+  owner_user_id?: string | null;
+  department_id?: string | null;
 }
 
 export interface ContactSummary {
@@ -243,6 +247,26 @@ export async function fetchConversations(
       cursor: params.cursor,
     })}`,
   );
+}
+
+/** The API has NO per-inbox unread count endpoint, so this is a CLIENT-SIDE tally over
+ * the FIRST page of unread conversations only; when `truncated` is true the displayed
+ * counts are a floor, not a total, and the UI must say so rather than lie. Do not loop
+ * over pages.
+ */
+export async function fetchUnreadByInbox(api: ApiClient): Promise<{
+  counts: Record<string, number>;
+  truncated: boolean;
+}> {
+  const page = await fetchConversations(api, { filter: "unread" });
+  const counts: Record<string, number> = {};
+
+  for (const item of page.items) {
+    if (!item.inbox_id) continue;
+    counts[item.inbox_id] = (counts[item.inbox_id] ?? 0) + 1;
+  }
+
+  return { counts, truncated: page.next_cursor != null };
 }
 
 export async function fetchConversationTimeline(

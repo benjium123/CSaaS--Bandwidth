@@ -103,6 +103,7 @@ function numberFixture(overrides: Record<string, unknown> = {}) {
     campaign_id: null,
     registration: "approved",
     registration_detail: "10DLC campaign verified",
+    inbox_name: null, // new NumberOut field; overrides per-test for Inbox column coverage
     ...overrides,
   };
 }
@@ -198,8 +199,8 @@ describe("NumbersPage", () => {
     ).toBeInTheDocument();
 
     // Env-live, no DB account.
-    expect(screen.getByRole("option", { name: "Bandwidth (env)" })).not.toBeDisabled();
-    expect(screen.getByRole("option", { name: "SignalWire (env)" })).not.toBeDisabled();
+    expect(screen.getByRole("option", { name: "Bandwidth (shared)" })).not.toBeDisabled(); // env -> shared: plain words
+    expect(screen.getByRole("option", { name: "SignalWire (shared)" })).not.toBeDisabled(); // env -> shared: plain words
 
     // Not live anywhere - disabled, tooltip carries the catalog's reason.
     const twilio = screen.getByRole("option", { name: "Twilio" });
@@ -275,7 +276,7 @@ describe("NumbersPage", () => {
     );
     renderWithProviders(<NumbersPage />, client);
 
-    const carrierSelect = await screen.findByLabelText("Carrier");
+    const carrierSelect = await screen.findByLabelText("Provider"); // renamed visible label from Carrier to Provider
     await userEvent.selectOptions(carrierSelect, "bandwidth");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -321,7 +322,7 @@ describe("NumbersPage", () => {
     );
     renderWithProviders(<NumbersPage />, client);
 
-    const carrierSelect = await screen.findByLabelText("Carrier");
+    const carrierSelect = await screen.findByLabelText("Provider"); // renamed visible label from Carrier to Provider
     await userEvent.selectOptions(carrierSelect, "bandwidth");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -555,5 +556,31 @@ describe("NumbersPage", () => {
       );
       expect(availableCalls.length).toBeGreaterThan(callsBefore);
     });
+  });
+
+  it("shows the inbox name in the Inbox column for a number that has one", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/numbers": [numberFixture({ inbox_name: "Front desk" })],
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    expect(await screen.findByText("Front desk")).toBeInTheDocument();
+  });
+
+  it("shows 'Not in an inbox' in the Inbox column for a number without one", async () => {
+    const client = makeStubClient(baseStubs());
+    renderWithProviders(<NumbersPage />, client);
+
+    expect(await screen.findByText("Not in an inbox")).toBeInTheDocument();
+  });
+
+  it("shows the friendly provider label instead of the raw carrier slug", async () => {
+    const client = makeStubClient(baseStubs());
+    renderWithProviders(<NumbersPage />, client);
+
+    expect(await screen.findByText("Bandwidth")).toBeInTheDocument();
+    expect(screen.queryByText("bandwidth")).not.toBeInTheDocument();
   });
 });
