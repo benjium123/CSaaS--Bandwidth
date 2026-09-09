@@ -16,6 +16,7 @@ from app.models import WILDCARD, Invite, OrgMembership, Role, User
 from app.repositories import orgs as orgs_repo
 from app.services import audit as audit_svc
 from app.services import contact_visibility
+from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
@@ -56,6 +57,7 @@ async def create_org(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OrgOut:
     org = await orgs_repo.create_org_with_owner(session, name=payload.name, owner_id=user.id)
+    await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
     await session.commit()
     return OrgOut(id=org.id, name=org.name, slug=org.slug)
 
@@ -96,6 +98,29 @@ async def update_org_settings(
     )
     await ctx.session.commit()
     return {"contact_visibility": ctx.org.contact_visibility}
+
+
+@router.post("/current/seed-defaults")
+async def seed_defaults(
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+) -> dict:
+    summary = await defaults_svc.seed_org_defaults(
+        ctx.session,
+        ctx.org.id,
+        owner_user_id=ctx.actor_user_id,
+    )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="org.seed_defaults",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail=summary,
+    )
+    await ctx.session.commit()
+    return summary
 
 
 @router.get("/current/roles", response_model=list[RoleOut])

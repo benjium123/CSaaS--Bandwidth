@@ -23,6 +23,7 @@ from app.api.routes import flows as flow_routes
 from app.api.routes import health as health_routes
 from app.api.routes import inbox as inbox_routes
 from app.api.routes import inboxes as inboxes_routes
+from app.api.routes import me as me_routes
 from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
 from app.api.routes import numbers as number_routes
@@ -209,6 +210,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(status_routes.router)
     app.include_router(auth_routes.router)
     app.include_router(org_routes.router)
+    app.include_router(me_routes.router)
     app.include_router(roles_routes.router)
     app.include_router(twofa_routes.router)
     app.include_router(number_routes.router)

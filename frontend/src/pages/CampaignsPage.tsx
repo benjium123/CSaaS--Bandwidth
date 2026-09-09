@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import type { ApiClient } from "@/api/client";
 import {
@@ -46,6 +47,7 @@ function campaignStatusBadgeClass(status: string): string {
 
 export function CampaignsPage() {
   const { api } = useAuth();
+  const navigate = useNavigate();
   const { data: campaigns, isLoading, error } = useOutboundCampaigns(api);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [creating, setCreating] = React.useState(false);
@@ -55,16 +57,21 @@ export function CampaignsPage() {
       <aside className="flex min-h-0 flex-col border-r border-border">
         <div className="flex items-center justify-between gap-2 border-b border-border p-3">
           <h1 className="text-lg font-semibold">Campaigns</h1>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => {
-              setSelectedId(null);
-              setCreating(true);
-            }}
-          >
-            New
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => navigate("/lists")}>
+              Contact lists
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                setSelectedId(null);
+                setCreating(true);
+              }}
+            >
+              New
+            </Button>
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">

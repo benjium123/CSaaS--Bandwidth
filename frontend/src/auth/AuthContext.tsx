@@ -25,6 +25,8 @@ export function hasPermission(me: Me | null, orgId: string | null, permission: s
 }
 
 export type Me = {
+  /** Effective permissions of the current membership (top-level on /auth/me). */
+  permissions?: string[];
   id: string;
   email: string;
   full_name: string;

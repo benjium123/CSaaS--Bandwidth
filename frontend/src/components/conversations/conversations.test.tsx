@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Sidebar } from "@/components/shell/Sidebar";
 import { ConversationList } from "./ConversationList";
 import { Timeline } from "./Timeline";
 import { ContactPanel } from "./ContactPanel";
@@ -39,18 +38,11 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
   };
 }
 
-describe("Sidebar", () => {
-  it("renders inboxes and an All inboxes entry for admins", async () => {
-    const client = makeStubClient({
-      "/api/v1/inboxes": [inbox()],
-    });
-    renderWithProviders(<Sidebar />, client);
-
-    expect(await screen.findByText("Sales")).toBeInTheDocument();
-    expect(screen.getByText("All inboxes")).toBeInTheDocument();
-    expect(screen.getByText("(469) 461-7576")).toBeInTheDocument();
-  });
-});
+// P20a: the old 280px sidebar listed every inbox (name, colour dot, number) and an
+// "All inboxes" entry. The new 56px rail carries navigation ONLY - the per-inbox list
+// moves into the Inbox page's own column in P20b - so that assertion no longer describes
+// anything that exists. The rail's own behaviour (which items render, permission gating,
+// the org switcher) is covered by src/components/shell/Sidebar.test.tsx.
 
 describe("ConversationList", () => {
   it("renders message, missed call, and voicemail snippets with icons", () => {

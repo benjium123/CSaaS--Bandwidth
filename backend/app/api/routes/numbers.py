@@ -65,6 +65,8 @@ class NumberOut(BaseModel):
     #: carrier, or added by hand).
     provider_account_id: uuid.UUID | None = None
     provider_account_label: str | None = None
+    #: The Inbox row's name for this number, or null when the number has no inbox row.
+    inbox_name: str | None = None
     purchase_cost_cents: int | None = None
     monthly_cost_cents: int | None = None
     purchased_at: datetime | None = None
@@ -175,11 +177,13 @@ async def list_numbers(
     labels = await _provider_account_labels(
         ctx.session, {n.provider_account_id for n in rows if n.provider_account_id is not None}
     )
+    inbox_names = await _inbox_names(ctx.session, {n.id for n in rows})
     return [
         await _out(
             ctx.session,
             n,
             account_label=labels.get(n.provider_account_id) if n.provider_account_id else None,
+            inbox_name=inbox_names.get(n.id),
         )
         for n in rows
     ]
@@ -191,6 +195,7 @@ _TOLLFREE_PREFIXES = frozenset({"+1800", "+1833", "+1844", "+1855", "+1866", "+1
 #: "the caller looked it up already (possibly as None)". `None` itself is a valid,
 #: meaningful value (no provider_account_id, or an account with a blank label).
 _LABEL_UNSET = object()
+_INBOX_UNSET = object()
 
 
 async def _provider_account_labels(session, account_ids: set[uuid.UUID]) -> dict:
@@ -206,7 +211,20 @@ async def _provider_account_labels(session, account_ids: set[uuid.UUID]) -> dict
     return {row.id: (row.label or None) for row in rows}
 
 
-async def _out(session, n: OrgNumber, *, account_label=_LABEL_UNSET) -> NumberOut:
+async def _inbox_names(session, number_ids: set[uuid.UUID]) -> dict:
+    if not number_ids:
+        return {}
+    rows = (
+        await session.execute(
+            sa.select(Inbox.number_id, Inbox.name).where(Inbox.number_id.in_(number_ids))
+        )
+    ).all()
+    return {row.number_id: row.name for row in rows}
+
+
+async def _out(
+    session, n: OrgNumber, *, account_label=_LABEL_UNSET, inbox_name=_INBOX_UNSET
+) -> NumberOut:
     state = await registration.registration_state(session, n)
     if account_label is _LABEL_UNSET:
         account_label = None
@@ -218,6 +236,14 @@ async def _out(session, n: OrgNumber, *, account_label=_LABEL_UNSET) -> NumberOu
             account = await session.get(ProviderAccount, n.provider_account_id)
             if account is not None:
                 account_label = account.label or None
+    if inbox_name is _INBOX_UNSET:
+        # Same reasoning as account_label: single-row callers may look this up here;
+        # list_numbers() batches it with _inbox_names() and always passes the value.
+        inbox_name = (
+            await session.execute(
+                sa.select(Inbox.name).where(Inbox.number_id == n.id)
+            )
+        ).scalar_one_or_none()
     return NumberOut(
         id=n.id,
         e164=n.e164,
@@ -231,6 +257,7 @@ async def _out(session, n: OrgNumber, *, account_label=_LABEL_UNSET) -> NumberOu
         registration_detail=state.detail,
         provider_account_id=n.provider_account_id,
         provider_account_label=account_label,
+        inbox_name=inbox_name,
         purchase_cost_cents=n.purchase_cost_cents,
         monthly_cost_cents=n.monthly_cost_cents,
         purchased_at=n.purchased_at,

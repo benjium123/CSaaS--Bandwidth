@@ -1,50 +1,53 @@
+import * as React from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
-import { DashboardPage } from "@/pages/DashboardPage";
 import { ConversationsPage } from "@/pages/ConversationsPage";
-import { InboxSettingsPage } from "@/pages/InboxSettingsPage";
-// F9: kept reachable (never deleted) at its own route - linked under Sidebar "More" as
-// "Legacy inbox".
-import { InboxPage } from "@/pages/InboxPage";
 import { ContactsPage } from "@/pages/ContactsPage";
-import { ListsPage } from "@/pages/ListsPage";
 import { CampaignsPage } from "@/pages/CampaignsPage";
-import { NumbersPage } from "@/pages/NumbersPage";
-import { ProvidersPage } from "@/pages/ProvidersPage";
 import { CallsPage } from "@/pages/CallsPage";
-import { AgentPage } from "@/pages/AgentPage";
-import { AppointmentsPage } from "@/pages/AppointmentsPage";
-import { FlowsPage } from "@/pages/FlowsPage";
-import { QueuesPage } from "@/pages/QueuesPage";
+import { ListsPage } from "@/pages/ListsPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
-import { PlatformPage } from "@/pages/PlatformPage";
-import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
-import { TeamPage } from "@/pages/TeamPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
+import { SettingsPage } from "@/pages/SettingsPage";
+import { SettingsIndexRedirect } from "@/pages/SettingsIndexRedirect";
 import { Spinner } from "@/components/ui/primitives";
-import { Sidebar } from "@/components/shell/Sidebar";
+import { Sidebar, MobileTabBar } from "@/components/shell/Sidebar";
+import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
 import { ErrorBoundary } from "@/components/shell/ErrorBoundary";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 
-/** Replaces the old top nav (plan phase-16-plan.md): the Sidebar is now the one
- * persistent nav frame for every authed route, with the inbox as the app's home.
- *
- * Item 12: a SECOND ErrorBoundary, scoped to just the routed page content, sits inside
- * the root one (main.tsx) - a crash in a single page falls back to the recovery screen
- * there while the Sidebar (and the softphone dock) stay mounted and usable, instead of
- * the whole app blanking out.
+/**
+ * Legacy routes kept as redirects so saved links still land somewhere useful:
+ * /dashboard, /agent, /appointments, /flows, /queues, /numbers,
+ * /providers, /security, /team, /platform, and /inbox/legacy.
+ * Every one of these now points into the new /settings surface (or the inbox).
+ * /lists stays a live route (no rail entry) — it is still the only UI for
+ * list import/management until P27 folds it into Contacts.
  */
+
+function InboxRoute() {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <OnboardingChecklist />
+      <div className="min-h-0 flex-1">
+        <ConversationsPage />
+      </div>
+    </div>
+  );
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <SoftphoneProvider>
-      <div className="flex h-full">
+      <div className="dark flex h-full bg-background text-foreground">
         <Sidebar />
-        <main className="min-h-0 flex-1">
+        <main className="min-h-0 flex-1 pb-14 sm:pb-0">
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>
+      <MobileTabBar />
       <SoftphonePanel />
     </SoftphoneProvider>
   );
@@ -56,8 +59,6 @@ export function App() {
   if (!ready) return <Spinner label="Starting" />;
 
   if (!me) {
-    // /accept-invite must be reachable without being logged in - it is how a brand new
-    // account gets created. Every other path when unauthenticated falls back to login.
     return (
       <Routes>
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
@@ -65,32 +66,41 @@ export function App() {
       </Routes>
     );
   }
+
   if (!orgId) return <OrgPickerPage />;
 
   return (
     <Shell>
       <Routes>
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/inbox" element={<ConversationsPage />} />
-        <Route path="/inbox/legacy" element={<InboxPage />} />
-        <Route path="/settings/inboxes" element={<InboxSettingsPage />} />
+        <Route path="/inbox" element={<InboxRoute />} />
+        <Route path="/inbox/legacy" element={<Navigate to="/inbox" replace />} />
+        {/* ConversationsPage still reads the inbox from ?inbox= for now; it will
+            start reading :inboxId/:threadId in the next phase. */}
+        <Route path="/inbox/:inboxId" element={<InboxRoute />} />
+        <Route path="/inbox/:inboxId/:threadId" element={<InboxRoute />} />
+
         <Route path="/contacts" element={<ContactsPage />} />
-        <Route path="/lists" element={<ListsPage />} />
-        <Route path="/campaigns" element={<CampaignsPage />} />
+        <Route path="/contacts/:contactId" element={<ContactsPage />} />
         <Route path="/calls" element={<CallsPage />} />
-        <Route path="/agent" element={<AgentPage />} />
-        <Route path="/appointments" element={<AppointmentsPage />} />
-        <Route path="/flows" element={<FlowsPage />} />
-        <Route path="/queues" element={<QueuesPage />} />
-        <Route path="/numbers" element={<NumbersPage />} />
-        <Route path="/providers" element={<ProvidersPage />} />
-        <Route path="/security" element={<SettingsSecurityPage />} />
-        <Route path="/team" element={<TeamPage />} />
-        <Route path="/platform" element={<PlatformPage />} />
-        {/* D1.5: an already-authenticated user can still land here to accept an invite
-         * to a SECOND org (POST /invites/accept while authed) - not just brand-new
-         * accounts, which is the only path the logged-out branch above covers. */}
+        <Route path="/campaigns" element={<CampaignsPage />} />
+
+        <Route path="/settings" element={<SettingsIndexRedirect />} />
+        <Route path="/settings/:section" element={<SettingsPage />} />
+
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
+
+        <Route path="/dashboard" element={<Navigate to="/settings/billing?tab=dashboard" replace />} />
+        <Route path="/lists" element={<ListsPage />} />
+        <Route path="/agent" element={<Navigate to="/settings/ai" replace />} />
+        <Route path="/appointments" element={<Navigate to="/settings/ai" replace />} />
+        <Route path="/flows" element={<Navigate to="/settings/calling" replace />} />
+        <Route path="/queues" element={<Navigate to="/settings/calling" replace />} />
+        <Route path="/numbers" element={<Navigate to="/settings/numbers" replace />} />
+        <Route path="/providers" element={<Navigate to="/settings/providers" replace />} />
+        <Route path="/security" element={<Navigate to="/settings/team?tab=security" replace />} />
+        <Route path="/team" element={<Navigate to="/settings/team" replace />} />
+        <Route path="/platform" element={<Navigate to="/settings/developers" replace />} />
+
         <Route path="*" element={<Navigate to="/inbox" replace />} />
       </Routes>
     </Shell>

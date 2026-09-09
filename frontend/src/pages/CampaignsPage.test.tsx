@@ -48,6 +48,17 @@ const CAMPAIGN_DRAFT = {
 };
 
 describe("CampaignsPage", () => {
+  it("links to the contact lists page", async () => {
+    const client = makeStubClient({
+      "/api/v1/outbound/campaigns": [],
+      "/api/v1/outbound/lists": [LIST_1],
+      "/api/v1/numbers": [],
+    });
+    renderWithProviders(<CampaignsPage />, client);
+
+    expect(await screen.findByRole("button", { name: "Contact lists" })).toBeInTheDocument();
+  });
+
   it("creates an SMS campaign", async () => {
     const client = makeStubClient({
       // Registered longest-prefix-first: makeStubClient matches via path.startsWith(key)
