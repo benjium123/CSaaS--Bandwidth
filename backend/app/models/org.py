@@ -18,6 +18,12 @@ class Org(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     slug: Mapped[str] = mapped_column(sa.String(63), nullable=False, unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    # P22: who may see a contact record. 'everyone' (default; pre-P22 behaviour),
+    # 'department' (own + my departments' contacts), 'owner' (own + teams I lead).
+    # contacts:read_all bypasses all three. Enforced by services/contact_visibility.py.
+    contact_visibility: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="everyone", server_default="everyone"
+    )
 
     def __repr__(self) -> str:
         return f"<Org {self.slug}>"

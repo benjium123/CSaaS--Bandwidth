@@ -59,6 +59,11 @@ class DepartmentMember(Base, TenantScoped, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    # P22: a lead sees every contact owned by or assigned to their department under the
+    # 'owner' visibility policy. Not a permission - it is scoped to THIS department.
+    is_lead: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
 
     def __repr__(self) -> str:
         return f"<DepartmentMember dept={self.department_id} user={self.user_id}>"

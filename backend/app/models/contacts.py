@@ -50,6 +50,16 @@ class Contact(Base, TenantScoped, TimestampMixin):
     # per-field indexed query requirement, and EAV would cost joins + SQLite parity for
     # nothing we ship this year.
     attributes: Mapped[dict] = mapped_column(PortableJSON(), nullable=False, default=dict)
+    # P22 ownership. Both nullable: "unowned" is a real state (inbound auto-created contacts
+    # with no assignee). Visibility is decided by orgs.contact_visibility +
+    # services/contact_visibility.py, never by these columns alone. Inbox grants still
+    # govern THREADS; these govern the contact RECORD.
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("departments.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class ContactPhone(Base, TenantScoped, TimestampMixin):

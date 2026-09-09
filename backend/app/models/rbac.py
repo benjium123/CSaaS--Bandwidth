@@ -40,6 +40,11 @@ PERMISSIONS: tuple[str, ...] = (
     "departments:manage",
     "contacts:read",
     "contacts:write",
+    # P22: read_all bypasses orgs.contact_visibility; assign changes owner/department.
+    # Owner via wildcard; admin via the comprehension below + migration 0024 backfill;
+    # agents get neither (a lead's extra reach comes from department_members.is_lead).
+    "contacts:read_all",
+    "contacts:assign",
     "numbers:read",
     "numbers:manage",
     "campaigns:read",
