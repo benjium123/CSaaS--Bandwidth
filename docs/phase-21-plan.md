@@ -26,7 +26,11 @@ provider from Settings → Providers → Advanced.
      must own the number for kind=sms/mms (a text must leave from the number it belongs
      to; failover for texts means "another number of ours on a healthy provider" only
      when the org has enabled cross-provider failover — today's rule, unchanged);
-   - health: breaker not open (open = excluded; half-open = allowed, penalised);
+   - health: breaker not open (open = excluded). Half-open: if the breaker's single probe
+     token is available the candidate ranks as HEALTHY (penalty 0) so the probe is spent
+     and P14's automatic recovery still works; a half-open breaker whose token is already
+     spent keeps the penalty. (Fable amendment 2026-09-10 after the Opus supervisor showed a
+     fixed penalty starves recovery.)
    - reputation: number not in a breach state from `check_reputation` (breach = excluded
      for campaigns, penalised for 1:1 replies);
    - cost: `resolve_rate(provider, metric)` — lower cost scores higher, weight 1.0;
@@ -42,6 +46,8 @@ provider from Settings → Providers → Advanced.
    same taxonomy the SMS path feeds into `opens_breaker`; `routes/calls.py` and
    `services/dialer.py` iterate `rank_routes(kind="voice")` exactly like the SMS sender:
    attempt → on a breaker-opening error mark and try the next → record `route_reason`.
+   The walk honours `allow_cross_carrier_failover` and `pinned_carrier` exactly like the
+   SMS walk (policy off = one attempt, plain failure sentence).
    Human calls over LiveKit SIP use the SIP trunk list (Telnyx today) — the ranking applies
    to provider-API calls (AI assistant, BXML paths); the LiveKit path records
    `route_reason="Via your calling trunk"`.
@@ -59,11 +65,14 @@ provider from Settings → Providers → Advanced.
 - `routing_policies.smart_routing` BOOL NOT NULL DEFAULT true.
 
 ## Allowed files
-Backend: `services/smart_routing.py` (new), `services/sender.py` (call rank_routes; keep
-existing failover walk), `routes/calls.py`, `services/dialer.py`, `providers/base.py`
-(`CreateCallResult.error`), `providers/{bandwidth,telnyx,twilio,plivo,signalwire}/voice.py`
-(populate the error taxonomy on rejection — same mapping the SMS adapters use), `routes/
-routing.py` (smart_routing field), `services/defaults.py`, tests `tests/test_p21_*.py`.
+Backend (corrected 2026-09-10 to the files that actually hold these paths): `services/
+smart_routing.py` (new), `routing/router.py` + `services/messaging.py` + `routes/messages.py`
+(the real SMS walk and where route_reason is written), `services/calls.py` (the real dial
+path), `providers/voice.py` (`CreateCallResult.error`), `providers/{bandwidth,telnyx,twilio,
+plivo,signalwire}/voice.py` (error taxonomy on rejection — same mapping the SMS adapters use),
+`routes/routing.py` (smart_routing field), `services/defaults.py`, tests `tests/test_p21_*.py`.
+`services/sender.py` is sticky-sender selection only and `services/dialer.py` dials LiveKit
+only — neither is in scope.
 Frontend: ProvidersPage (switch + dropdown), message bubble tooltip + call card reason
 (components/conversations/Timeline.tsx), tests.
 Forbidden: migrations (Fable writes 0039), models, `.env`, `deploy/**`, LiveKit/SIP code.
@@ -78,7 +87,10 @@ Unit:
 - [ ] sms_send_records_route_reason_sentence; sms_failover_records_failed_over_sentence
 - [ ] voice_create_call_walks_plan_on_breaker_error (D28 regression: mutate the loop to a
       single attempt and the test must fail)
-- [ ] voice_non_breaker_error_does_not_trip_breaker (auth error stays ours)
+- [ ] voice_non_breaker_error_does_not_trip_breaker (an invalid_request is ours; auth errors
+      ARE carrier faults per P14 DR-1 and do trip it — do not weaken health.py)
+- [ ] half_open_probe_token_ranks_healthy_and_success_closes_breaker
+- [ ] voice_walk_honours_cross_provider_policy_off_single_attempt
 - [ ] livekit_human_call_records_trunk_reason_and_skips_ranking
 - [ ] defaults_seed_cross_provider_failover_on_for_new_org; existing_policy_untouched
 - [ ] policy_patch_smart_routing_false_requires_pinned_or_preference
