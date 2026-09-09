@@ -9,6 +9,15 @@ rtc:
   tcp_port: 7881
   # The VPS has a static public IP; advertising it directly beats STUN round-trips.
   use_external_ip: true
+  # Under network_mode: host LiveKit enumerates EVERY host interface, including the
+  # 172.x docker bridges of the other tenants' stacks, and advertised all of them as
+  # external IPs (seen live 2026-09-09: nine candidates, one real). Dead candidates
+  # slow ICE and can be selected first. Pin the advertised node IP and restrict
+  # candidate gathering to the public NIC.
+  node_ip: 144.126.152.175
+  interfaces:
+    includes:
+      - eth0
 redis:
   # Addendum to 8.16: `livekit` runs network_mode: host (deploy/livekit/docker-compose.
   # livekit.yaml), so it no longer sees the compose bridge network's DNS - "redis" would
