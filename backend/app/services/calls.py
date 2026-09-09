@@ -270,10 +270,17 @@ async def create_outbound_call(
     )
     session.add(call)
     session.add(leg)
+    # 3.19: make the queued rows durable BEFORE carrier I/O - a crash mid-dial must
+    # never lose the row entirely, only leave it stuck queued (recovered elsewhere).
+    await session.commit()
 
     result = await voice_carrier.create_call(
         to=to, from_=from_, machine_detection=machine_detection, tag=tag
     )
+    call = await session.get(Call, call.id)
+    leg = await session.get(CallLeg, leg.id)
+    if call is None or leg is None:  # pragma: no cover - just inserted FK
+        raise RuntimeError("call/leg disappeared before carrier result")
     if result.status == "accepted":
         leg.provider_call_id = result.provider_call_id
         advance_leg(leg, "dialing")
@@ -363,6 +370,8 @@ async def adopt_transfer_leg(
             CallLeg.reason == "transfer",
             CallLeg.provider_call_id.is_(None),
             CallLeg.to_e164 == event.to,
+            CallLeg.from_e164 == event.from_,
+            Call.our_e164 == event.from_,
             Call.status.notin_(TERMINAL_CALL_STATUSES),
         )
         .order_by(CallLeg.created_at)

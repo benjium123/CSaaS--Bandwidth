@@ -347,9 +347,16 @@ def test_parse_delivery_status_mapping(status, canonical):
     assert events[0].provider_message_id == "dlr-1"
 
 
-def test_parse_delivery_unknown_status_skips():
+def test_parse_delivery_unknown_status_emits_unknown_event():
+    """Bugfix ledger 2.10: an unmapped status must not silently vanish - it is
+    dead-lettered as an UnknownEvent instead of being dropped entirely."""
+    from app.providers.domain import UnknownEvent
+
     body = form_body({"MessageUUID": "dlr-2", "Status": "some-new-status"})
-    assert pl_webhooks.parse(body) == []
+    events = pl_webhooks.parse(body)
+    assert len(events) == 1
+    assert isinstance(events[0], UnknownEvent)
+    assert events[0].event_type == "status:some-new-status"
 
 
 @pytest.mark.parametrize(

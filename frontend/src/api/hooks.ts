@@ -172,13 +172,17 @@ export function useSetThreadAiState(api: ApiClient) {
   });
 }
 
-export function useContacts(api: ApiClient, q = "") {
+/** `enabled` defaults to true (every existing caller - ContactsPage - keeps its current
+ * "fetch on mount, refetch as q changes" behavior); NewConversationPanel passes false
+ * until its debounced query is long enough to bother searching on. */
+export function useContacts(api: ApiClient, q = "", enabled = true) {
   return useQuery({
     queryKey: ["contacts", q],
     queryFn: () =>
       api.request<
         { id: string; display_name: string; phones: { e164: string }[] }[]
       >(`/api/v1/contacts${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+    enabled,
   });
 }
 
@@ -269,6 +273,7 @@ export function usePlaceCall(api: ApiClient) {
       carrier?: string;
       machine_detection?: string;
       tag?: string;
+      via?: "carrier" | "room";
     }) => api.request<CallDetailOut>("/api/v1/calls", { method: "POST", json: vars }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["calls"] }),
   });

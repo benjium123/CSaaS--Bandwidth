@@ -249,9 +249,10 @@ async def test_ordered_control_run_matches_out_of_order(app_with_carrier, sessio
 
 
 async def test_reprocess_pending_is_idempotent(app_with_carrier, session):
+    from app.providers.registry import CarrierRegistry
     from app.services.messaging import reprocess_pending
 
-    client, _, _ = app_with_carrier
+    client, fake, _ = app_with_carrier
     token, org, _ = await make_org_with_number(client, "rp@example.com", "Org A", OUR)
     msg = await _send_one(client, token, org)
 
@@ -268,8 +269,11 @@ async def test_reprocess_pending_is_idempotent(app_with_carrier, session):
     )
     await session.commit()
 
-    assert await reprocess_pending(session) == 1
-    assert await reprocess_pending(session) == 0  # nothing left pending
+    # Bugfix ledger 2.9: reprocess_pending now re-parses via the OWNING carrier adapter
+    # (found through a registry) rather than assuming a Bandwidth payload shape.
+    registry = CarrierRegistry({fake.name: fake}, primary=fake.name)
+    assert await reprocess_pending(session, registry=registry) == 1
+    assert await reprocess_pending(session, registry=registry) == 0  # nothing left pending
 
     got = await client.get(
         f"/api/v1/messages/{msg['id']}", headers=auth_headers(token, org["id"])

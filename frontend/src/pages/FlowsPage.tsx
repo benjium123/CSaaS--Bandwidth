@@ -25,7 +25,15 @@ import { cn } from "@/lib/utils";
  * optional target selects) that get folded back into the wire shape on save.
  * ------------------------------------------------------------------------------------- */
 
-type NodeType = "menu" | "hours" | "ring_group" | "queue" | "voicemail" | "speak" | "hangup";
+type NodeType =
+  | "menu"
+  | "hours"
+  | "ring_group"
+  | "queue"
+  | "voicemail"
+  | "speak"
+  | "hangup"
+  | "transfer";
 
 const NODE_TYPES: NodeType[] = [
   "menu",
@@ -35,6 +43,7 @@ const NODE_TYPES: NodeType[] = [
   "voicemail",
   "speak",
   "hangup",
+  "transfer",
 ];
 
 type MenuOptionRow = { digit: string; target: string };
@@ -53,7 +62,11 @@ type DraftNode =
   | { type: "queue"; queue_id: string }
   | { type: "voicemail"; greeting: string }
   | { type: "speak"; text: string; next: string }
-  | { type: "hangup" };
+  | { type: "hangup" }
+  // Item 6: matches backend/app/services/flow_engine.py's "transfer" node - a required
+  // `to` phone number, no outgoing edge (terminal="transferred", same shape class as
+  // "queue"'s single required id field).
+  | { type: "transfer"; to: string };
 
 type NodeDraft = { id: string; node: DraftNode };
 
@@ -73,6 +86,8 @@ function defaultNode(type: NodeType): DraftNode {
       return { type, text: "", next: "" };
     case "hangup":
       return { type };
+    case "transfer":
+      return { type, to: "" };
   }
 }
 
@@ -127,6 +142,8 @@ function fromWireDefinition(definition: unknown): { entry: string; nodes: NodeDr
         return { id, node: { type: "voicemail", greeting: str(raw.greeting) } };
       case "speak":
         return { id, node: { type: "speak", text: str(raw.text), next: str(raw.next) } };
+      case "transfer":
+        return { id, node: { type: "transfer", to: str(raw.to) } };
       case "hangup":
       default:
         return { id, node: { type: "hangup" } };
@@ -177,10 +194,17 @@ function toWireDefinition(entry: string, drafts: NodeDraft[]): { entry: string; 
         nodes[id] = { type: "voicemail", greeting: node.greeting };
         break;
       case "speak":
-        nodes[id] = { type: "speak", text: node.text, next: node.next };
+        nodes[id] = {
+          type: "speak",
+          text: node.text,
+          ...(node.next ? { next: node.next } : {}),
+        };
         break;
       case "hangup":
         nodes[id] = { type: "hangup" };
+        break;
+      case "transfer":
+        nodes[id] = { type: "transfer", to: node.to };
         break;
     }
   }
@@ -222,7 +246,7 @@ function flowStatusBadgeClass(status: string): string {
 
 export function FlowsPage() {
   const { api } = useAuth();
-  const { data: flows, isLoading } = useFlows(api);
+  const { data: flows, isLoading, error, refetch } = useFlows(api);
   const [selectedName, setSelectedName] = React.useState<string | null>(null);
   const [creatingNew, setCreatingNew] = React.useState(false);
 
@@ -252,6 +276,15 @@ export function FlowsPage() {
           </div>
           {isLoading ? (
             <Spinner label="Loading flows" />
+          ) : error ? (
+            <div className="space-y-2 p-4">
+              <p role="alert" className="text-sm text-destructive">
+                {(error as Error).message}
+              </p>
+              <Button type="button" size="sm" variant="outline" onClick={() => refetch()}>
+                Retry
+              </Button>
+            </div>
           ) : latestByName.length === 0 ? (
             <p className="p-4 text-sm text-muted-foreground">No flows yet.</p>
           ) : (
@@ -401,6 +434,13 @@ function FlowEditor({
   const [nodes, setNodes] = React.useState<NodeDraft[]>(initial.nodes);
   const [generalErrors, setGeneralErrors] = React.useState<string[]>([]);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string[]>>({});
+  // Item 7: which node id currently has a rejected (colliding) rename in progress, and
+  // what the attempted id was - shown inline on that node's card, cleared the moment a
+  // non-colliding id is typed (including reverting back to the original).
+  const [renameCollision, setRenameCollision] = React.useState<{
+    id: string;
+    attempted: string;
+  } | null>(null);
   const counterRef = React.useRef(1);
 
   function addNode() {
@@ -418,7 +458,26 @@ function FlowEditor({
     if (entry === id) setEntry("");
   }
 
+  /** Item 7/6: a rename that collides with ANOTHER existing node's id, or is empty, is
+   * rejected outright (not applied) rather than silently producing two nodes sharing one
+   * id - the wire shape is a `{ [id]: node }` dict, so a collision would make one node
+   * invisibly overwrite the other on save, and an empty id can't round-trip through it at
+   * all. Called only on blur/Enter (see NodeCard's own draft state below), not per
+   * keystroke - a per-keystroke commit against this same-render `nodes` list means an
+   * intermediate keystroke that happens to collide with an existing id (e.g. typing
+   * `x` -> `xy` -> `xyz` when a node `xy` already exists) gets silently rejected and the
+   * controlled input snaps back, making it impossible to ever type past that point. */
   function renameNode(oldId: string, newId: string) {
+    if (newId.trim() === "") {
+      setRenameCollision({ id: oldId, attempted: newId });
+      return;
+    }
+    const collides = newId !== oldId && nodes.some((n) => n.id === newId);
+    if (collides) {
+      setRenameCollision({ id: oldId, attempted: newId });
+      return;
+    }
+    setRenameCollision((prev) => (prev?.id === oldId ? null : prev));
     setNodes((prev) => prev.map((n) => (n.id === oldId ? { ...n, id: newId } : n)));
     if (entry === oldId) setEntry(newId);
   }
@@ -517,7 +576,16 @@ function FlowEditor({
             businessHours={businessHours ?? []}
             ringGroups={ringGroups ?? []}
             queues={queues ?? []}
-            errors={fieldErrors[draft.id] ?? []}
+            errors={[
+              ...(fieldErrors[draft.id] ?? []),
+              ...(renameCollision?.id === draft.id
+                ? [
+                    renameCollision.attempted.trim() === ""
+                      ? "Node id cannot be empty"
+                      : `A node named "${renameCollision.attempted}" already exists`,
+                  ]
+                : []),
+            ]}
             onRename={(newId) => renameNode(draft.id, newId)}
             onChange={(node) => updateNode(draft.id, node)}
             onRemove={() => removeNode(draft.id)}
@@ -556,6 +624,18 @@ function NodeCard({
   onRemove: () => void;
 }) {
   const { id, node } = draft;
+  // Item 6: a per-card draft id, uncommitted while typing. The card is keyed by
+  // `draft.id` in the parent's list (see FlowsPageForm), so a SUCCESSFUL rename changes
+  // the key and remounts this component with `idDraft` freshly seeded from the new
+  // committed id; a REJECTED rename (empty/collision) leaves this mounted with whatever
+  // the user typed still in the box, so they can keep editing it rather than having it
+  // snapped back to the old value mid-keystroke.
+  const [idDraft, setIdDraft] = React.useState(id);
+
+  function commitRename() {
+    if (idDraft !== id) onRename(idDraft);
+  }
+
   const targetOptions = (
     <>
       <option value="">(none)</option>
@@ -577,8 +657,14 @@ function NodeCard({
           id={`node-id-${id}`}
           aria-label={`Node id for ${id}`}
           className="h-8 w-40"
-          value={id}
-          onChange={(e) => onRename(e.target.value)}
+          value={idDraft}
+          onChange={(e) => setIdDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            commitRename();
+          }}
         />
         <label className="text-xs text-muted-foreground" htmlFor={`node-type-${id}`}>
           Type
@@ -645,6 +731,7 @@ function NodeCard({
                   type="button"
                   size="sm"
                   variant="ghost"
+                  aria-label={`Remove option ${i + 1} for ${id}`}
                   onClick={() => onChange({ ...node, options: node.options.filter((_, j) => j !== i) })}
                 >
                   ×
@@ -715,11 +802,13 @@ function NodeCard({
         <div className="space-y-2">
           <div className="space-y-1">
             <label className="block text-xs text-muted-foreground" htmlFor={`hours-bh-${id}`}>
-              Business hours
+              Business hours <span aria-hidden="true">*</span>
             </label>
             <select
               id={`hours-bh-${id}`}
               aria-label={`Business hours for ${id}`}
+              aria-required="true"
+              required
               className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
               value={node.business_hours_id}
               onChange={(e) => onChange({ ...node, business_hours_id: e.target.value })}
@@ -736,11 +825,13 @@ function NodeCard({
             {(["open", "closed", "holiday"] as const).map((branch) => (
               <div key={branch} className="space-y-1">
                 <label className="block text-xs capitalize text-muted-foreground" htmlFor={`hours-${branch}-${id}`}>
-                  {branch}
+                  {branch} <span aria-hidden="true">*</span>
                 </label>
                 <select
                   id={`hours-${branch}-${id}`}
                   aria-label={`${branch[0].toUpperCase()}${branch.slice(1)} node for ${id}`}
+                  aria-required="true"
+                  required
                   className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
                   value={node[branch]}
                   onChange={(e) => onChange({ ...node, [branch]: e.target.value })}
@@ -854,6 +945,26 @@ function NodeCard({
               {targetOptions}
             </select>
           </div>
+        </div>
+      )}
+
+      {node.type === "transfer" && (
+        <div className="space-y-1">
+          <label className="block text-xs text-muted-foreground" htmlFor={`transfer-to-${id}`}>
+            Transfer to <span aria-hidden="true">*</span>
+          </label>
+          <Input
+            id={`transfer-to-${id}`}
+            aria-label={`Transfer to for ${id}`}
+            aria-required="true"
+            required
+            placeholder="+19725550199"
+            value={node.to}
+            onChange={(e) => onChange({ ...node, to: e.target.value })}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Ends the call flow by transferring to this number - it has no outgoing node.
+          </p>
         </div>
       )}
 

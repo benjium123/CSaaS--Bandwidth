@@ -24,7 +24,6 @@ from app.compliance.keywords import classify_keyword, normalize
         ("END", "opt_out"),
         ("quit", "opt_out"),
         ("START", "opt_in"),
-        ("yes", "opt_in"),
         ("UNSTOP", "opt_in"),
         ("HELP", "help"),
         ("info", "help"),
@@ -56,6 +55,12 @@ def test_exact_keywords_are_hits(text, kind):
         "no",
         "",
         None,
+        # Bugfix ledger 2.14: a bare "yes" is NOT a universal opt-in on its own - it only
+        # confirms a prior opt-out, which classify_keyword (a pure, DB-free module)
+        # cannot check itself. See test_bare_yes_confirms_only_a_standing_optout below.
+        "yes",
+        "Yes",
+        "YES!",
     ],
 )
 def test_non_keywords_are_never_hits(text):
@@ -79,3 +84,12 @@ def test_multiword_is_never_a_keyword():
         assert classify_keyword(word) is not None
         assert classify_keyword(f"{word} please") is None
         assert classify_keyword(f"please {word}") is None
+
+
+def test_opt_in_confirmation_words_include_yes_and_start():
+    """Bugfix ledger 2.14: OPT_IN_CONFIRMATION_WORDS is the contextual set the
+    compliance service checks against a standing opt-out - "yes" belongs here even
+    though classify_keyword itself never returns opt_in for it alone."""
+    from app.compliance.keywords import OPT_IN_CONFIRMATION_WORDS
+
+    assert OPT_IN_CONFIRMATION_WORDS == frozenset({"start", "yes"})

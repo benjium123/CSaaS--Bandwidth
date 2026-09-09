@@ -3,6 +3,15 @@
 # Postgres instances on 5433 / 5544.
 name: csaas
 
+# 8.6: bounded JSON log files on every service - unbounded `docker logs` output has
+# filled disks on this shared box before. Applied per-service below (YAML anchors are
+# avoided here so each service block stays independently readable/greppable).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   api:
     build:
@@ -12,11 +21,30 @@ services:
     env_file: [../.env]
     environment:
       DATABASE_URL: postgresql+asyncpg://csaas:${CSAAS_DB_PASSWORD:?set CSAAS_DB_PASSWORD in .env}@db:5432/csaas
-      REDIS_URL: redis://redis:6379/0
+      # 8.7: password is optional today (defaults to today's passwordless behaviour) so
+      # this stays backward-compatible until CSAAS_REDIS_PASSWORD is set in .env. Once
+      # it is, this MUST carry it too - redis with a password rejects an unauthenticated
+      # client outright.
+      REDIS_URL: redis://:${CSAAS_REDIS_PASSWORD:-}@redis:6379/0
     depends_on:
       db: {condition: service_healthy}
+      redis: {condition: service_started}
     # Loopback ONLY. Public exposure is a later phase's nginx concern.
     ports: ["127.0.0.1:8080:8080"]
+    # 8.1: named volume for MMS media, call recordings, voicemail, transcripts
+    # (MEDIA_LOCAL_ROOT=var/media) - previously unmounted, so every deploy wiped it.
+    volumes: ["csaas_media:/app/var/media"]
+    # Addendum to 8.16: deploy/livekit/docker-compose.livekit.yml's `livekit` service
+    # now runs network_mode: host, so it is off this compose network entirely and the
+    # "livekit" DNS name (used by .env's LIVEKIT_URL=ws://livekit:7880 on the box) would
+    # otherwise stop resolving from here. `host-gateway` is Docker's special sentinel
+    # for "the host's own IP as seen from this container" - livekit's signal port binds
+    # every host interface under host networking (see the ufw note in the livekit
+    # compose file), so this reaches it. Only takes effect when the livekit compose file
+    # is actually included (deploy.sh 8.9 always includes it); harmless otherwise.
+    extra_hosts:
+      - "livekit:host-gateway"
+    logging: *default-logging
 
   db:
     image: postgres:16
@@ -32,6 +60,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
@@ -40,7 +69,40 @@ services:
     # with network_mode: host and reaches this redis via 127.0.0.1:6380 (deploy/livekit/).
     ports: ["127.0.0.1:6380:6379"]
     volumes: ["csaas_redisdata:/data"]
+    # 8.7: CSAAS_REDIS_PASSWORD is optional (empty = today's passwordless behaviour, kept
+    # for backward compatibility until the .env is updated). When set, requirepass locks
+    # down this instance - it is reachable from any container/tenant on the host today.
+    # The `sh -c` wrapper is needed because --requirepass with an empty string is itself
+    # a (weak) password, not "no auth"; we must omit the flag entirely when unset.
+    entrypoint: ["sh", "-c"]
+    # 8.16 addendum: LiveKit's SIP trunk/dispatch-rule state lives in this same redis
+    # (see deploy/livekit/README.md); allkeys-lru would silently evict that state under
+    # memory pressure. noeviction on both branches instead - redis returns OOM errors
+    # (which surface as visible failures) rather than quietly dropping LiveKit config.
+    command:
+      - |
+        if [ -n "$$CSAAS_REDIS_PASSWORD" ]; then
+          exec redis-server --requirepass "$$CSAAS_REDIS_PASSWORD" --maxmemory 256mb --maxmemory-policy noeviction
+        else
+          exec redis-server --maxmemory 256mb --maxmemory-policy noeviction
+        fi
+    environment:
+      CSAAS_REDIS_PASSWORD: ${CSAAS_REDIS_PASSWORD:-}
+    # Custom entrypoint above bypasses the image's default gosu step-down, so redis
+    # would otherwise run as root inside the container. Pin it back to the redis user.
+    user: redis
+    healthcheck:
+      # 8.20/D1: -a "" still sends an AUTH "" command, which a passwordless redis
+      # rejects with ERR Client sent AUTH, but no password is set - so the healthcheck
+      # never goes healthy and the api (which depends_on redis: service_healthy) never
+      # starts. Only pass -a when a password is actually configured.
+      test: ["CMD-SHELL", "if [ -n \"$$CSAAS_REDIS_PASSWORD\" ]; then redis-cli -a \"$$CSAAS_REDIS_PASSWORD\" --no-auth-warning ping; else redis-cli ping; fi | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
 
 volumes:
   csaas_pgdata:
   csaas_redisdata:
+  csaas_media:

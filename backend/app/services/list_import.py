@@ -60,19 +60,23 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def parse_upload(filename: str, data: bytes) -> ParsedFile:
+def parse_upload(filename: str, data: bytes, *, max_rows: int | None = None) -> ParsedFile:
     """Dispatch on extension - CSV (stdlib) or XLSX (openpyxl), the only two DR-8 approves."""
     lower = (filename or "").lower()
     if lower.endswith(".xlsx"):
-        return parse_xlsx_bytes(data)
+        return parse_xlsx_bytes(data, max_rows=max_rows)
     if lower.endswith(".csv"):
-        return parse_csv_bytes(data)
+        return parse_csv_bytes(data, max_rows=max_rows)
     raise ValidationFailedError("Only .csv and .xlsx files are supported")
 
 
 def preview(filename: str, data: bytes) -> dict:
-    """Step 1: headers + first five rows + a suggested mapping. No DB write."""
-    parsed = parse_upload(filename, data)
+    """Step 1: headers + first five rows + a suggested mapping. No DB write.
+
+    6.7: aborts DURING parsing once MAX_LIST_ROWS is exceeded, rather than fully
+    materializing an oversized file before rejecting it.
+    """
+    parsed = parse_upload(filename, data, max_rows=MAX_LIST_ROWS)
     if not parsed.headers:
         raise ValidationFailedError("The file has no header row")
     return {
@@ -136,6 +140,11 @@ def spawn_import(
                     if row is not None and row.status == "importing":
                         row.status = "failed"
                         row.error = "Import crashed; see server logs"[:255]
+                        # D5: clear the one-shot claim on terminal failure too - a
+                        # status reset back to "importing" (a retry path) must not
+                        # find import_started_at already set and be treated as a
+                        # phantom concurrent import.
+                        row.import_started_at = None
                         await session.commit()
             except Exception:  # noqa: BLE001 - best-effort failure recording only
                 log.exception("list_import_failure_record_failed", list_id=str(list_id))
@@ -157,7 +166,7 @@ async def run_import(
     if "phone" not in mapping:
         raise ValidationFailedError("mapping must include 'phone'")
 
-    parsed = parse_upload(filename, data)
+    parsed = parse_upload(filename, data, max_rows=MAX_LIST_ROWS)
 
     async with sessionmaker() as session:
         set_org_context(session, org_id)
@@ -215,6 +224,12 @@ async def run_import(
 
             if row_number % COMMIT_EVERY == 0:
                 await session.commit()
+                # 6.17: the periodic commit already bounds the DB-side transaction size,
+                # but the ORM identity map keeps every row/contact object from every
+                # earlier batch alive in memory for the rest of the run unless expunged -
+                # a 100k-row import would otherwise hold the whole thing regardless of
+                # how often it commits.
+                session.expunge_all()
                 set_org_context(session, org_id)
 
         lst = await session.get(ContactList, list_id)

@@ -28,7 +28,7 @@ from app.models import (
     QueueEntry,
     User,
 )
-from app.models.voice import TERMINAL_CALL_STATUSES
+from app.models.voice import TERMINAL_CALL_STATUSES, TERMINAL_LEG_STATUSES
 from app.providers.voice import as_voice_carrier
 from app.services import calls as calls_svc
 from app.services import inbox_access as inbox_access_svc
@@ -339,7 +339,7 @@ async def create_call(
         if not access.can_use(from_norm):
             raise PermissionDeniedError(f"You do not have call access to {from_norm}")
         bus = request.app.state.event_bus
-        call, _leg, room, token = await voice_service.start_room_call(
+        call, leg, room, token = await voice_service.start_room_call(
             ctx.session,
             api,
             settings,
@@ -351,6 +351,14 @@ async def create_call(
             name=user.email,
             tag=payload.tag,
         )
+        if call.status == "failed":
+            # 3.22: create_room failed inline (start_room_call already recorded it) -
+            # never report 201 for a call that never got a room.
+            detail_msg = ((leg.extra or {}).get("error_detail")) or "LiveKit room creation failed"
+            return JSONResponse(
+                status_code=502,
+                content={"error": {"code": "livekit_room_create_failed", "message": detail_msg}},
+            )
         detail = await _detail_out(ctx.session, request, call, include_transcript=False)
         body = detail.model_dump(mode="json")
         url = settings.livekit_public_url or settings.livekit_url
@@ -465,22 +473,33 @@ async def answer_call(
         raise ConflictError("This call has already ended")
 
     settings = request.app.state.settings
-    token = mint_access_token(
-        api_key=settings.livekit_api_key,
-        api_secret=settings.livekit_api_secret.get_secret_value(),
-        identity=f"user-{user.id}",
-        name=user.email,
-        room=room,
+
+    # 3.3 + 3.4: advance the active inbound room leg to answered with a conditional
+    # UPDATE. WHERE answered_at IS NULL makes this first-answer-wins; a second agent's
+    # UPDATE matches 0 rows and gets a 409 instead of a token, and the leg now actually
+    # records answered_at/status for duration + analytics.
+    legs = await calls_svc.load_legs(ctx.session, call.id)
+    leg = calls_svc.active_leg(legs)
+    if leg is None:
+        raise ConflictError("This call has no active leg to answer")
+    answered_at = datetime.now(timezone.utc)
+    claim_result = await ctx.session.execute(
+        sa.update(CallLeg)
+        .where(
+            CallLeg.id == leg.id,
+            CallLeg.org_id == call.org_id,
+            CallLeg.answered_at.is_(None),
+            CallLeg.status.notin_(TERMINAL_LEG_STATUSES),
+        )
+        .values(status="answered", answered_at=answered_at)
     )
-    # F9: tell every OTHER operator's softphone this ring/handoff card is already
-    # claimed so it disappears from their incoming list too - cheap and harmless to
-    # publish unconditionally for every room-call answer (we already know this is a
-    # room call from the check above).
-    bus = request.app.state.event_bus
-    bus.publish(
-        call.org_id,
-        {"type": "call.handoff.claimed", "call_id": str(call.id)},
-    )
+    if claim_result.rowcount != 1:
+        await ctx.session.rollback()
+        raise ConflictError("This call has already been answered")
+
+    legs = await calls_svc.load_legs(ctx.session, call.id)
+    calls_svc.derive_call_status(call, legs)
+
     # P12 (Opus B12): a queued room call answered through the normal console must also
     # resolve its QueueEntry, or the routing tick overflows it to voicemail mid-talk.
     # Conditional UPDATE = first-answer-wins; losing nothing when the call was never
@@ -496,6 +515,28 @@ async def answer_call(
         )
     )
     await ctx.session.commit()
+
+    token = mint_access_token(
+        api_key=settings.livekit_api_key,
+        api_secret=settings.livekit_api_secret.get_secret_value(),
+        identity=f"user-{user.id}",
+        name=user.email,
+        room=room,
+        ttl_seconds=120,
+    )
+    # F9: tell every OTHER operator's softphone this ring/handoff card is already
+    # claimed so it disappears from their incoming list too - cheap and harmless to
+    # publish unconditionally for every room-call answer (we already know this is a
+    # room call from the check above).
+    bus = request.app.state.event_bus
+    bus.publish(
+        call.org_id,
+        {"type": "call.handoff.claimed", "call_id": str(call.id)},
+    )
+    bus.publish(
+        call.org_id,
+        {"type": "call.status", "call_id": str(call.id), "status": call.status},
+    )
     return SoftphoneAnswerOut(
         url=settings.livekit_public_url or settings.livekit_url, token=token, room=room
     )

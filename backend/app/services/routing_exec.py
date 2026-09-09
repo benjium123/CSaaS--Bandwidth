@@ -242,9 +242,18 @@ async def _drive(
             elif isinstance(action, fe.EvaluateHours):
                 bh = await session.get(BusinessHours, uuid.UUID(action.business_hours_id))
                 hours_result = flows_svc.evaluate_hours(bh, moment) if bh is not None else "closed"
-                result = fe.step(
-                    flow.definition, result.state, {"kind": "hours", "result": hours_result}
-                )
+                try:
+                    result = fe.step(
+                        flow.definition, result.state, {"kind": "hours", "result": hours_result}
+                    )
+                except fe.FlowError:
+                    # 3.18: an unwrapped fe.step here previously propagated out of _drive
+                    # entirely - the webhook route's exception shield swallowed it and the
+                    # call got dead air instead of the flow's own fallback command.
+                    log.exception(
+                        "flow_step_failed", flow_id=str(flow.id), call_id=str(call.id)
+                    )
+                    return await _fallback(session, bus, call, flow)
                 looped = True
                 break
             elif isinstance(action, fe.RingGroup):
@@ -255,9 +264,15 @@ async def _drive(
                     CARRIER_HOLD_CAP_SECONDS,
                 )
                 commands.append(voice.Pause(seconds=wait_seconds))
-                result = fe.step(
-                    flow.definition, result.state, {"kind": "ring_result", "result": "no_answer"}
-                )
+                try:
+                    result = fe.step(
+                        flow.definition, result.state, {"kind": "ring_result", "result": "no_answer"}
+                    )
+                except fe.FlowError:
+                    log.exception(
+                        "flow_step_failed", flow_id=str(flow.id), call_id=str(call.id)
+                    )
+                    return await _fallback(session, bus, call, flow)
                 looped = True
                 break
             elif isinstance(action, fe.Enqueue):

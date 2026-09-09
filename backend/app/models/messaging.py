@@ -95,6 +95,10 @@ class OrgNumber(Base, TenantScoped, TimestampMixin):
     )
     #: Last provider order status / error text (async orders are polled by the sweeper).
     order_detail: Mapped[str | None] = mapped_column(sa.String(512), nullable=True)
+    #: Bugfix ledger 4.14: how many times the sweeper has polled this pending order.
+    #: Uncapped polling meant an order permanently stuck at the carrier (never COMPLETE,
+    #: never FAILED) would be retried forever; services/number_orders.py caps this.
+    order_poll_attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
 
 
 class MessageThread(Base, TenantScoped, TimestampMixin):
@@ -133,6 +137,11 @@ class MessageThread(Base, TenantScoped, TimestampMixin):
     # would drift on replay. A derived count cannot.
     last_read_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
+    )
+    #: Operator-set "important" star (2026-09-09): a conversation-list filter and a
+    #: toggle in the header. Per-thread, not per-user - the whole team shares it.
+    is_important: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )
 
     # --- P10 AI state machine (plan DR-5): off | active | handed_off ------------

@@ -24,6 +24,7 @@ from urllib.parse import parse_qsl
 import structlog
 
 from app.providers.domain import CarrierEvent, DeliveryReceipt, InboundMessage, UnknownEvent
+from app.providers.webhook_replay import check_and_record
 
 log = structlog.get_logger("carrier.twilio.webhooks")
 
@@ -59,7 +60,9 @@ def verify(headers: Mapping[str, str], auth_token: str, raw_body: bytes, url: st
     provided = lower.get("x-twilio-signature", "")
     if not provided:
         return False
-    return hmac.compare_digest(expected_signature(url, _form(raw_body), auth_token), provided)
+    if not hmac.compare_digest(expected_signature(url, _form(raw_body), auth_token), provided):
+        return False
+    return check_and_record(provided)
 
 
 def parse(raw_body: bytes) -> list[CarrierEvent]:
@@ -74,7 +77,10 @@ def parse(raw_body: bytes) -> list[CarrierEvent]:
 
     status = params.get("MessageStatus") or params.get("SmsStatus") or ""
 
-    if status:
+    # 2.1: "received" (present on EVERY inbound SMS via SmsStatus) is not a delivery
+    # status at all - treating it as one dead-lettered every inbound message and STOP
+    # was never processed. Mirrors signalwire/webhooks.py's own guard.
+    if status and status != "received":
         canonical = _STATUS_TO_EVENT.get(status)
         if canonical is None:
             # Never guess an unmapped status into a terminal state - dead-letter it, which is

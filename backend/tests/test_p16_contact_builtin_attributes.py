@@ -73,11 +73,13 @@ async def test_patch_unknown_attribute_key_is_422(client):
     assert r.status_code == 422, r.text
 
 
-async def test_custom_field_named_role_still_enforces_select_options(client):
-    """A real CustomFieldDef named "role" takes precedence over the built-in text
-    attribute of the same key and keeps enforcing its own kind/options (per
-    app/services/contacts.py:validate_attributes - defs lookup happens before the
-    BUILTIN_CONTACT_ATTRIBUTES fallback)."""
+async def test_custom_field_named_role_is_rejected(client):
+    """Bugfix ledger 5.16: a CustomFieldDef sharing a key with a P16 built-in attribute
+    (company, role, email, address) is now rejected outright at creation. Previously it
+    was silently accepted, and it WAS enforced - validate_attributes looked up
+    `defs.get(key)` first, so a colliding custom definition's own kind/options took
+    precedence over the built-in and shadowed it (e.g. "role" would have to satisfy the
+    custom def's `select` options instead of accepting plain text)."""
     token = await register_and_login(client, "p16-builtin-d@example.com")
     org = await create_org(client, token, "P16 Builtin Org D")
     h = auth_headers(token, org["id"])
@@ -92,21 +94,14 @@ async def test_custom_field_named_role_still_enforces_select_options(client):
         },
         headers=h,
     )
-    assert cf.status_code == 201, cf.text
+    assert cf.status_code == 422, cf.text
 
+    # The built-in "role" attribute still works as plain text, unaffected.
     contact = await _make_contact(client, h)
-
-    bad = await client.patch(
-        f"/api/v1/contacts/{contact['id']}",
-        json={"attributes": {"role": "not-an-option"}},
-        headers=h,
-    )
-    assert bad.status_code == 422, bad.text
-
     ok = await client.patch(
         f"/api/v1/contacts/{contact['id']}",
-        json={"attributes": {"role": "buyer"}},
+        json={"attributes": {"role": "Buyer"}},
         headers=h,
     )
     assert ok.status_code == 200, ok.text
-    assert ok.json()["attributes"] == {"role": "buyer"}
+    assert ok.json()["attributes"] == {"role": "Buyer"}

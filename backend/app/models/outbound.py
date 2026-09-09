@@ -69,6 +69,14 @@ class ContactList(Base, TenantScoped, TimestampMixin):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    #: Bugfix ledger 6.8: set exactly once, by the conditional UPDATE that claims a list
+    #: for /commit's background import - `status` stays "importing" for the WHOLE
+    #: import (import_started_at IS NULL -> NOT NULL is the atomic double-commit guard),
+    #: so this is deliberately a separate column rather than a new status value the
+    #: frontend would need to learn about.
+    import_started_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
 
 class ContactListRow(Base, TenantScoped, TimestampMixin):

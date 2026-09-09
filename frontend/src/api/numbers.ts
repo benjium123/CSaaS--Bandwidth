@@ -105,7 +105,10 @@ export function useOrderNumber(api: ApiClient) {
       monthly_cost_cents?: number;
       setup_cost_cents?: number;
     }) => api.request<NumberOut>("/api/v1/numbers/order", { method: "POST", json: vars }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: NUMBERS_QUERY_KEY }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: NUMBERS_QUERY_KEY });
+      qc.invalidateQueries({ queryKey: ["numbers-available"] });
+    },
   });
 }
 

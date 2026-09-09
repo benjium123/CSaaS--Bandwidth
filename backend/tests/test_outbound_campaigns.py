@@ -27,7 +27,7 @@ from app.providers.domain import CarrierError, SendResult
 from app.services import list_import as list_import_svc
 from app.services import outbound as outbound_svc
 from app.services import pacing
-from tests.conftest import auth_headers, make_org_with_number
+from tests.conftest import auth_headers, make_org_with_number, make_settings
 
 OUR = "+12145550100"
 SECOND_NUMBER = "+12145550111"
@@ -374,6 +374,115 @@ async def test_campaign_auto_completes(app_with_loopback, session):
 
     await session.refresh(campaign)
     assert campaign.status == "completed"
+
+
+# ----------------------------------------------------------------------------------
+# D1: outbound_tick bypasses routing.plan_route (plan=None), which is otherwise the
+# only place the registration gate runs - require_registration must be threaded
+# through to send_message from the deployment's actual setting. Exercised as a direct
+# call in the exact shape outbound_tick uses (plan=None), rather than end-to-end
+# through the scheduler - D2 (below) pre-filters the campaign's number pool through
+# this same eligibility check, so an end-to-end run never lets an ineligible number
+# reach send_message at all once BOTH fixes are in place.
+# ----------------------------------------------------------------------------------
+async def test_d1_send_message_blocks_unknown_registration_when_required(
+    app_with_loopback, session
+):
+    from app.errors import ComplianceBlockedError
+    from app.services.messaging import send_message
+
+    client, carrier, _app = app_with_loopback
+    _token, org_id = await _make_org(client)
+    set_org_context(session, org_id)
+
+    # OUR is a freshly added local number with no campaign_id linked at all -
+    # registration_state() reads that as "unknown".
+    with pytest.raises(ComplianceBlockedError):
+        await send_message(
+            session,
+            org_id,
+            carrier,
+            to_e164=CONTACT,
+            from_e164=OUR,
+            body="hi",
+            plan=None,
+            require_registration=True,
+        )
+
+
+# ----------------------------------------------------------------------------------
+# D2: the campaign pool must be filtered by registration eligibility BEFORE
+# select_sender ever runs - otherwise an ineligible number gets selected, send_message
+# rejects it, and the row is marked "blocked" (terminal) from a single attempt. When
+# the WHOLE pool is ineligible, the row must stay "queued" (with next_attempt_at
+# bumped so it isn't re-selected every tick), never "blocked".
+# ----------------------------------------------------------------------------------
+async def test_d2_ineligible_pool_leaves_row_queued_not_blocked(app_with_loopback, session):
+    client, carrier, _app = app_with_loopback
+    _token, org_id = await _make_org(client)
+    lst = await _ready_list(session, org_id, [{"e164": CONTACT}])
+    campaign = await _campaign(session, org_id, lst.id)
+    campaign = await outbound_svc.start_campaign(session, campaign)
+
+    # OUR (the campaign's only from_number) has no campaign_id linked - "unknown"
+    # registration - so with require_number_registration on, the pool is empty.
+    settings = make_settings(require_number_registration=True)
+    counts = await outbound_svc.outbound_tick(
+        session, carrier, settings, Random(1), now=FROZEN
+    )
+    assert counts["blocked"] == 0
+    assert counts["sent"] == 0
+
+    set_org_context(session, org_id)
+    rows = (
+        await session.execute(
+            sa.select(OutboundSend).where(OutboundSend.campaign_id == campaign.id)
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == "queued"
+    # Bumped (not left at its prior None/due value) so this row isn't immediately
+    # re-selected on the very next tick - see test_carrier_failure_retries_then_fails
+    # for the same is-not-None-only assertion style (naive vs aware tz on SQLite).
+    assert rows[0].next_attempt_at is not None
+
+
+# ----------------------------------------------------------------------------------
+# E4: select_sender's ValidationFailedError path (no eligible number for this ONE
+# contact right now) must bump next_attempt_at too - the empty-pool path already did,
+# but this per-contact path left the row's next_attempt_at untouched, re-selecting it
+# on every subsequent tick forever (a busy loop) instead of backing off.
+# ----------------------------------------------------------------------------------
+async def test_e4_no_eligible_sender_for_contact_bumps_next_attempt_at(
+    app_with_loopback, session, monkeypatch
+):
+    from app.errors import ValidationFailedError
+
+    client, carrier, _app = app_with_loopback
+    _token, org_id = await _make_org(client)
+    lst = await _ready_list(session, org_id, [{"e164": CONTACT}])
+    campaign = await _campaign(session, org_id, lst.id)
+    campaign = await outbound_svc.start_campaign(session, campaign)
+
+    async def fake_select_sender(*args, **kwargs):
+        raise ValidationFailedError("no eligible number for this contact right now")
+
+    monkeypatch.setattr(outbound_svc.sender_svc, "select_sender", fake_select_sender)
+
+    counts = await outbound_svc.outbound_tick(session, carrier, None, Random(1), now=FROZEN)
+    assert counts["sent"] == 0
+    assert counts["blocked"] == 0
+    assert counts["failed"] == 0
+
+    set_org_context(session, org_id)
+    rows = (
+        await session.execute(
+            sa.select(OutboundSend).where(OutboundSend.campaign_id == campaign.id)
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == "queued"
+    assert rows[0].next_attempt_at is not None
 
 
 async def test_daily_cap_limits_sends_per_number(app_with_loopback, session):

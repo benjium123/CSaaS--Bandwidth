@@ -8,11 +8,13 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 
+from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
-from app.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
-from app.models import MessageThread, OrgMembership, Tag, ThreadLabel
+from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
+from app.models import Call, Message, MessageThread, OrgMembership, OrgNumber, Tag, ThreadLabel
 from app.services import inbox as inbox_svc
 from app.services import inbox_access as inbox_access_svc
+from app.services import messaging as messaging_svc
 
 router = APIRouter(prefix="/api/v1", tags=["inbox"])
 
@@ -33,6 +35,17 @@ class ThreadAiIn(BaseModel):
     #: here - it is the thread's birth state, entered only by never having had an
     #: sms_enabled profile see it.
     state: str = Field(pattern="^(active|handed_off)$")
+
+
+class ReadPairIn(BaseModel):
+    our_e164: str = Field(min_length=3, max_length=32)
+    contact_e164: str = Field(min_length=3, max_length=32)
+
+
+class ImportantPairIn(BaseModel):
+    our_e164: str = Field(min_length=3, max_length=32)
+    contact_e164: str = Field(min_length=3, max_length=32)
+    important: bool
 
 
 @router.get("/inbox/threads")
@@ -115,7 +128,33 @@ async def patch_thread(
         ).scalar_one_or_none()
         if member is None:
             raise ValidationFailedError("Assignee is not a member of this organization")
-        thread.assigned_user_id = payload.assigned_user_id
+        if payload.assigned_user_id == ctx.actor_user_id:
+            # 5.14: self-claiming an unassigned thread races two operators clicking
+            # "claim" on the same thread at once - a plain attribute set here would let
+            # the second click silently steal it with no signal. An atomic conditional
+            # UPDATE makes "someone already claimed it" observable as a 409 instead. An
+            # explicit reassignment TO SOMEONE ELSE (the branch below) is a deliberate
+            # management action, not a claim race, so it stays unconditional.
+            # 5(b): also succeed when the thread is ALREADY assigned to the caller
+            # themselves - a repeated/retried claim by the same operator is idempotent
+            # (200), not a race to report as a conflict. Only someone else's assignment
+            # blocks the claim (409).
+            result = await ctx.session.execute(
+                sa.update(MessageThread)
+                .where(
+                    MessageThread.id == thread.id,
+                    sa.or_(
+                        MessageThread.assigned_user_id.is_(None),
+                        MessageThread.assigned_user_id == payload.assigned_user_id,
+                    ),
+                )
+                .values(assigned_user_id=payload.assigned_user_id)
+            )
+            if result.rowcount == 0:
+                raise ConflictError("This thread has already been claimed")
+            thread.assigned_user_id = payload.assigned_user_id
+        else:
+            thread.assigned_user_id = payload.assigned_user_id
 
     await ctx.session.commit()
     return {
@@ -123,6 +162,7 @@ async def patch_thread(
         "status": thread.status,
         "assigned_user_id": thread.assigned_user_id,
         "ai_state": thread.ai_state,
+        "important": thread.is_important,
     }
 
 
@@ -161,8 +201,127 @@ async def mark_read(
     thread_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:read"))],
 ) -> Response:
-    thread = await _get_thread(ctx, thread_id)
+    # 5.4: marking read requires MANAGE access to this inbox, not merely VIEW - a viewer
+    # who reads a thread they cannot use should not be able to zero out its unread state
+    # for every member who can.
+    thread = await _get_thread(ctx, thread_id, require_use=True)
     thread.last_read_at = datetime.now(timezone.utc)
+    await ctx.session.commit()
+    return Response(status_code=204)
+
+
+@router.post("/inbox/read-pair", status_code=204)
+async def mark_read_pair(
+    payload: ReadPairIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("inbox:read"))],
+) -> Response:
+    """5.11: a call-only conversation (no inbound/outbound SMS yet, so no MessageThread
+    row exists) could never be marked read - there was no thread to PATCH. This upserts
+    the (our_e164, contact_e164) thread first (same helper the send/inbound paths use),
+    then marks it read - after which conversations.py::_call_unread respects the new
+    last_read_at exactly like it already does for a message-backed pair."""
+    our_e164 = to_e164(payload.our_e164)
+    contact_e164 = to_e164(payload.contact_e164)
+
+    # 5(a): our_e164 must be a number this org actually owns - otherwise this endpoint
+    # would happily fabricate a thread under a number nobody in the org can see.
+    number = (
+        await ctx.session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == our_e164))
+    ).scalar_one_or_none()
+    if number is None:
+        raise NotFoundError("Number not found")
+
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin:
+        if not access.can_view(our_e164):
+            raise NotFoundError("Conversation not found")
+        if not access.can_use(our_e164):
+            raise PermissionDeniedError("You do not have manage access to this inbox")
+
+    # 5(a): only mark-read an ALREADY-EXISTING conversation (a Call or a Message on a
+    # matching thread) - otherwise any caller could invent arbitrary (our, contact) pairs
+    # and upsert threads for conversations that never happened.
+    has_call = (
+        await ctx.session.execute(
+            sa.select(Call.id)
+            .where(Call.our_e164 == our_e164, Call.contact_e164 == contact_e164)
+            .limit(1)
+        )
+    ).first()
+    if has_call is None:
+        has_message = (
+            await ctx.session.execute(
+                sa.select(Message.id)
+                .join(MessageThread, Message.thread_id == MessageThread.id)
+                .where(
+                    MessageThread.our_e164 == our_e164,
+                    MessageThread.contact_e164 == contact_e164,
+                )
+                .limit(1)
+            )
+        ).first()
+        if has_message is None:
+            raise NotFoundError("Conversation not found")
+
+    thread = await messaging_svc.upsert_thread(ctx.session, ctx.org.id, our_e164, contact_e164)
+    thread.last_read_at = datetime.now(timezone.utc)
+    await ctx.session.commit()
+    return Response(status_code=204)
+
+
+@router.post("/inbox/important-pair", status_code=204)
+async def mark_important_pair(
+    payload: ImportantPairIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("inbox:read"))],
+) -> Response:
+    """Toggle the "important" star on a conversation pair. Mirrors mark_read_pair
+    exactly (same normalize / OrgNumber-exists / access-resolve / existing-Call-or-
+    Message precondition / upsert_thread sequence) so a call-only pair can be starred
+    the same way it can be marked read."""
+    our_e164 = to_e164(payload.our_e164)
+    contact_e164 = to_e164(payload.contact_e164)
+
+    number = (
+        await ctx.session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == our_e164))
+    ).scalar_one_or_none()
+    if number is None:
+        raise NotFoundError("Number not found")
+
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin:
+        if not access.can_view(our_e164):
+            raise NotFoundError("Conversation not found")
+        if not access.can_use(our_e164):
+            raise PermissionDeniedError("You do not have manage access to this inbox")
+
+    has_call = (
+        await ctx.session.execute(
+            sa.select(Call.id)
+            .where(Call.our_e164 == our_e164, Call.contact_e164 == contact_e164)
+            .limit(1)
+        )
+    ).first()
+    if has_call is None:
+        has_message = (
+            await ctx.session.execute(
+                sa.select(Message.id)
+                .join(MessageThread, Message.thread_id == MessageThread.id)
+                .where(
+                    MessageThread.our_e164 == our_e164,
+                    MessageThread.contact_e164 == contact_e164,
+                )
+                .limit(1)
+            )
+        ).first()
+        if has_message is None:
+            raise NotFoundError("Conversation not found")
+
+    thread = await messaging_svc.upsert_thread(ctx.session, ctx.org.id, our_e164, contact_e164)
+    thread.is_important = payload.important
     await ctx.session.commit()
     return Response(status_code=204)
 

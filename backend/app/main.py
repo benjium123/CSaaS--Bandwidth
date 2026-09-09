@@ -78,17 +78,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (app/auth/deps.py) transparently gets its own per-org registry; every
         # existing caller with no org context (here, the sweeper, webhooks) still
         # resolves straight through to this global env-configured registry.
-        app.state.carriers = CarrierRegistryProxy(build_registry(settings))
-        # Kept as the PRIMARY, not as "the" carrier: the P1/P2 seam tests read it,
-        # and they are the evidence the abstraction held.
+        # State objects are built once in create_app, before the lifespan starts.
+        # Do not rebuild carriers/media_store/event_bus here -- that is the double-build
+        # that leaked clients and meant routes could hold a different EventBus (8.25).
         app.state.carrier = app.state.carriers.primary()
-        app.state.media_store = build_store(
-            settings.media_store_backend, root=settings.media_local_root
-        )
-        # P6: media plane, not a carrier - app.state.livekit is None when unconfigured
-        # (settings.livekit_url / livekit_api_secret unset), and every route/webhook that
-        # needs it 503s or 404s on that None rather than crashing boot.
-        app.state.event_bus = EventBus()
         # (finding 15d) built ONCE, eagerly below - never rebuilt here, so there is only
         # ever one LiveKitApi (and one owned httpx client) to close, right next to the
         # carrier registry's own aclose().
@@ -125,6 +118,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="CSaaS API",
         version=VERSION,
         lifespan=lifespan,
+        docs_url=None if settings.is_production else "/docs",
+        redoc_url=None if settings.is_production else "/redoc",
+        openapi_url=None if settings.is_production else "/openapi.json",
     )
     app.state.settings = settings
     # Set eagerly too: tests drive the app without running lifespan, and override it.
@@ -177,11 +173,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             structlog.get_logger("error").error(
                 "server_error", code=exc.code, message=exc.message
             )
+        # C7: RateLimitExceededError carries retry_after (seconds) - preserve it as the
+        # Retry-After header even though this response now goes through the standard
+        # {"error": {...}} envelope rather than a bare HTTPException.
+        headers = {}
+        retry_after = getattr(exc, "retry_after", None)
+        if retry_after is not None:
+            headers["Retry-After"] = str(int(retry_after))
         return JSONResponse(
             status_code=exc.http_status,
             content={
                 "error": {"code": exc.code, "message": exc.message, "request_id": request_id}
             },
+            headers=headers,
         )
 
     @app.exception_handler(Exception)

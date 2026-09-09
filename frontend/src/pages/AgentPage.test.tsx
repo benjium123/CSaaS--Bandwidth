@@ -109,8 +109,14 @@ describe("AgentPage", () => {
     // updated both the form and the refetched list.
     expect(await screen.findAllByText("Default")).toHaveLength(2);
 
-    // Delete.
+    // Delete requires two clicks (item 47/48): the first arms a "Confirm delete?" state.
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(
+      client.calls.some(
+        (c) => c.path === "/api/v1/agent/profiles/p1" && c.init.method === "DELETE",
+      ),
+    ).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Confirm delete?" }));
     await waitFor(() =>
       expect(
         client.calls.some(
@@ -229,8 +235,14 @@ describe("AgentPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Hours" }));
     expect(await screen.findByText("We are open weekdays from 9 to 5.")).toBeInTheDocument();
 
-    // Delete.
+    // Delete requires two clicks (item 47/48): the first arms a "Confirm delete?" state.
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(
+      client.calls.some(
+        (c) => c.path === "/api/v1/kb/documents/d1" && c.init.method === "DELETE",
+      ),
+    ).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Confirm delete?" }));
     await waitFor(() =>
       expect(
         client.calls.some(
@@ -239,5 +251,71 @@ describe("AgentPage", () => {
       ).toBe(true),
     );
     expect(await screen.findByText("No documents yet.")).toBeInTheDocument();
+  });
+
+  // Item 19
+  it("keeps an in-progress edit when the profiles list refetches in the background for the same selection", async () => {
+    let profiles: Record<string, unknown>[] = [makeProfile({ id: "p1", name: "Main" })];
+
+    const client = makeStubClient({
+      "/api/v1/agent/profiles": (path: string) => {
+        const defaultMatch = path.match(/^\/api\/v1\/agent\/profiles\/([^/]+)\/default$/);
+        if (defaultMatch) {
+          const id = defaultMatch[1];
+          // A fresh array/object each time - simulates a real background refetch, not
+          // just a re-render of the same reference.
+          profiles = profiles.map((p) => ({ ...p, is_default: p.id === id }));
+          return profiles.find((p) => p.id === id);
+        }
+        return profiles;
+      },
+    });
+
+    renderWithProviders(<AgentPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Main" }));
+    const greeting = await screen.findByLabelText("Greeting");
+    await userEvent.type(greeting, "Hi there");
+    expect(await screen.findByText("Unsaved changes")).toBeInTheDocument();
+
+    // Triggers an unrelated background refetch of the SAME profiles list (selectedId
+    // stays "p1") - the old bug keyed the resync effect on the `selected` object
+    // reference, so this refetch alone would silently wipe the in-progress edit.
+    await userEvent.click(screen.getByRole("button", { name: "Make default" }));
+    await waitFor(() =>
+      expect(
+        client.calls.some((c) => c.path === "/api/v1/agent/profiles/p1/default"),
+      ).toBe(true),
+    );
+
+    expect(greeting).toHaveValue("Hi there");
+  });
+
+  // Item 44
+  it("selects the newly created profile only once it is actually in the refetched list", async () => {
+    let profiles: Record<string, unknown>[] = [];
+    let nextId = 1;
+
+    const client = makeStubClient({
+      "/api/v1/agent/profiles": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if ((init.method ?? "GET") === "POST") {
+          const body = init.json as Record<string, unknown>;
+          const created = makeProfile({ id: `p${nextId++}`, ...body });
+          profiles = [...profiles, created];
+          return created;
+        }
+        return profiles;
+      },
+    });
+
+    renderWithProviders(<AgentPage />, client);
+    expect(await screen.findByText("No agent profiles yet.")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Profile name"), "Main");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    const sidebarButton = await screen.findByRole("button", { name: "Main" });
+    await waitFor(() => expect(sidebarButton).toHaveAttribute("aria-current", "true"));
+    expect(screen.getByText("Edit profile")).toBeInTheDocument();
   });
 });

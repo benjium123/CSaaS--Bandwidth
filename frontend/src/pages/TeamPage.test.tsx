@@ -69,4 +69,24 @@ describe("TeamPage", () => {
     expect(await screen.findByDisplayValue(CREATED_INVITE.accept_url)).toBeInTheDocument();
     expect(screen.getByText(/shown once/i)).toBeInTheDocument();
   });
+
+  it("shows a retry affordance when members fail to load, and recovers on retry", async () => {
+    let membersCalls = 0;
+    const client = makeStubClient({
+      "/api/v1/orgs/current/members": (() => {
+        membersCalls += 1;
+        if (membersCalls === 1) return new Error("Failed to load members");
+        return MEMBERS;
+      }) as RouteStub,
+      "/api/v1/orgs/current/invites": INVITES,
+    });
+    renderWithProviders(<TeamPage />, client);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load members");
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("owner@example.com")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

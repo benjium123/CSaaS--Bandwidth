@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from urllib.parse import parse_qsl
 
 from app.providers.domain import CarrierEvent, DeliveryReceipt, InboundMessage, UnknownEvent
+from app.providers.webhook_replay import check_and_record
 
 #: Twilio-compatible MessageStatus -> our canonical event vocabulary.
 _STATUS_TO_EVENT = {
@@ -55,7 +56,9 @@ def verify(headers: Mapping[str, str], auth_token: str, url: str, raw_body: byte
     provided = lower.get("x-signalwire-signature") or lower.get("x-twilio-signature") or ""
     if not provided:
         return False
-    return hmac.compare_digest(expected_signature(url, _form(raw_body), auth_token), provided)
+    if not hmac.compare_digest(expected_signature(url, _form(raw_body), auth_token), provided):
+        return False
+    return check_and_record(provided)
 
 
 def parse(raw_body: bytes) -> list[CarrierEvent]:

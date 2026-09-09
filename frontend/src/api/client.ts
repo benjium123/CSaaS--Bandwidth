@@ -103,3 +103,19 @@ export function createClient(baseUrl = ""): ApiClient {
   };
   return client;
 }
+
+/**
+ * Item 41: recording playback needs the raw audio bytes, not JSON - `ApiClient.request`
+ * always parses the body as JSON, so it can't be reused as-is for this. This is the one
+ * other place allowed to build auth headers by hand, so both CallsPage's RecordingRow and
+ * Timeline's CallRecordingPlayer go through it instead of each reimplementing the same
+ * Authorization/X-Org-Id header logic.
+ */
+export async function fetchAuthedBlob(api: ApiClient, path: string): Promise<Blob> {
+  const headers = new Headers();
+  if (api.auth.token) headers.set("Authorization", `Bearer ${api.auth.token}`);
+  if (api.auth.orgId) headers.set("X-Org-Id", api.auth.orgId);
+  const res = await fetch(path, { headers });
+  if (!res.ok) throw new Error(`Failed to load recording (${res.status})`);
+  return res.blob();
+}

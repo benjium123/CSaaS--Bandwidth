@@ -7,8 +7,10 @@ async def test_healthz_green(client, settings):
     body = r.json()
     assert body["status"] == "ok"
     assert body["db"] == "ok"
-    assert body["env"] == settings.app_env
-    assert body["version"]
+    # Bugfix ledger 4.23: an unauthenticated liveness probe must not leak deployment
+    # fingerprinting detail - env/version are gone from the response.
+    assert "env" not in body
+    assert "version" not in body
     assert r.headers.get("X-Request-Id")
 
 

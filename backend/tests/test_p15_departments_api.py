@@ -462,8 +462,9 @@ async def test_inbox_threads_filter_and_mark_read_gating(app_with_carrier, sessi
     denied_read = await client.post(f"/api/v1/threads/{thread_id}/read", headers=h_agent)
     assert denied_read.status_code == 404
 
-    # Grant VIEWER access on A: the thread is now listed, and mark-read succeeds - a
-    # viewer may read/acknowledge, only sending/managing needs "member".
+    # Grant VIEWER access on A: the thread is now listed, but mark-read is a 403 - a
+    # viewer may READ a thread, but marking it read zeroes the unread state for every
+    # MEMBER too (bugfix ledger 5.4), so that needs "member" (can_use), not "viewer".
     set_org_context(session, org_id)
     agent_user = await users_repo.get_by_email(session, "agentd7@example.com")
     inbox_a_id = await _inbox_id_for(client, h_owner, A)
@@ -482,5 +483,19 @@ async def test_inbox_threads_filter_and_mark_read_gating(app_with_carrier, sessi
     ids = {item["thread"]["id"] for item in threads_granted["items"]}
     assert thread_id in ids
 
+    viewer_read = await client.post(f"/api/v1/threads/{thread_id}/read", headers=h_agent)
+    assert viewer_read.status_code == 403
+
+    # Upgrading the grant to MEMBER makes mark-read succeed.
+    upgrade = await client.put(
+        f"/api/v1/inboxes/{inbox_a_id}/grants",
+        json={
+            "grants": [
+                {"grantee_type": "user", "grantee_id": str(agent_user.id), "role": "member"}
+            ]
+        },
+        headers=h_owner,
+    )
+    assert upgrade.status_code == 200, upgrade.text
     ok_read = await client.post(f"/api/v1/threads/{thread_id}/read", headers=h_agent)
     assert ok_read.status_code == 204

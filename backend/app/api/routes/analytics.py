@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from app.auth.deps import OrgContext, require_permission
 from app.services import analytics as analytics_svc
+from app.services import inbox_access as inbox_access_svc
 from app.services import search as search_svc
 
 router = APIRouter(prefix="/api/v1", tags=["analytics"])
@@ -92,5 +93,13 @@ async def search_transcripts(
     q: str = Query(..., min_length=1),
     limit: int = Query(20, ge=1, le=100),
 ) -> list[TranscriptSearchResultOut]:
-    results = await search_svc.search_transcripts(ctx.session, ctx.org.id, q, limit=limit)
+    # P15 (5.3): scope to numbers this caller may view - unfiltered, this returned
+    # transcript content across every inbox in the org.
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    allowed_e164s = None if access.is_admin else (access.member_e164s | access.viewer_e164s)
+    results = await search_svc.search_transcripts(
+        ctx.session, ctx.org.id, q, limit=limit, allowed_e164s=allowed_e164s
+    )
     return [TranscriptSearchResultOut(**r) for r in results]

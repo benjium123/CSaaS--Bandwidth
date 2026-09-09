@@ -62,7 +62,9 @@ describe("CallsPage", () => {
     const createCall = client.calls.find(
       (c) => c.path === "/api/v1/calls" && c.init.method === "POST",
     );
-    expect(createCall?.init.json).toEqual({ to: "+19725550111", from: undefined });
+    // Item 20: matches SoftphoneProvider.dial() - always via="room" so a subsequent
+    // "Send AI agent" (which requires via=room) can work on this call too.
+    expect(createCall?.init.json).toEqual({ to: "+19725550111", from: undefined, via: "room" });
 
     expect(await screen.findByText(/status: queued/)).toBeInTheDocument();
   });
@@ -168,5 +170,39 @@ describe("CallsPage", () => {
     expect(
       await screen.findByText("Agents can only join room calls (via=room)"),
     ).toBeInTheDocument();
+  });
+
+  // Item 42
+  it("disables Transfer/Send AI agent/Hang up when the call's own inbox is viewer-role", async () => {
+    const detail = { ...NEW_CALL_DETAIL, id: "call-6", status: "bridged" };
+    const listRow = { ...CALL_1, id: "call-6", status: "bridged" };
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/inboxes": [
+        {
+          id: "i1",
+          name: "Sales",
+          color: "#22c55e",
+          e164: "+12145550100",
+          number_id: "n1",
+          my_role: "viewer",
+        },
+      ],
+      "/api/v1/calls": (path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return detail;
+        if (/^\/api\/v1\/calls(\?|$)/.test(path)) return [listRow];
+        return detail;
+      },
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await userEvent.click(await screen.findByText("(972) 555-0199"));
+
+    expect(
+      await screen.findByText("Read-only inbox — you can view but not act on this call"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Transfer" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send AI agent" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Hang up" })).toBeDisabled();
   });
 });

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import date
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
@@ -111,16 +112,16 @@ async def validate_attributes(
     }
     clean: dict = {}
     for key, value in attributes.items():
+        # 5(c): built-ins are checked BEFORE any custom-field definition. A colliding
+        # definition may pre-date the 5.16 create-time guard (or have been inserted
+        # directly) - it must never shadow the built-in P16 kind/validation.
+        if key in BUILTIN_CONTACT_ATTRIBUTES:
+            if value is not None and not isinstance(value, str):
+                raise ValidationFailedError(f"Contact field {key!r} expects text")
+            clean[key] = value
+            continue
         definition = defs.get(key)
         if definition is None:
-            # P16: the contact panel's built-in detail fields need no custom-field
-            # definition. They are plain text; an org-defined custom field of the same
-            # key (handled above) takes precedence and keeps its own kind/options.
-            if key in BUILTIN_CONTACT_ATTRIBUTES:
-                if value is not None and not isinstance(value, str):
-                    raise ValidationFailedError(f"Contact field {key!r} expects text")
-                clean[key] = value
-                continue
             raise ValidationFailedError(f"Unknown custom field: {key!r}")
         if value is None:
             clean[key] = None
@@ -133,6 +134,17 @@ async def validate_attributes(
                 raise ValidationFailedError(
                     f"Custom field {key!r} must be one of: {', '.join(definition.options or [])}"
                 )
+        elif definition.kind == "date":
+            # 5.15: a "date" custom field previously accepted ANY string - nothing ever
+            # parsed it, so an unparseable value only broke whatever read it back later.
+            if not isinstance(value, str):
+                raise ValidationFailedError(f"Custom field {key!r} expects a date string")
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValidationFailedError(
+                    f"Custom field {key!r} must be a valid date (YYYY-MM-DD)"
+                ) from exc
         elif not isinstance(value, str):
             raise ValidationFailedError(f"Custom field {key!r} expects text")
         clean[key] = value
@@ -143,5 +155,13 @@ def validate_field_key(key: str) -> str:
     if not KEY_RE.match(key or ""):
         raise ValidationFailedError(
             "Custom field key must be snake_case starting with a letter"
+        )
+    if key in BUILTIN_CONTACT_ATTRIBUTES:
+        # 5.16: a custom field sharing a key with a P16 built-in attribute (company,
+        # role, email, address) would collide with it in validate_attributes above -
+        # this definition's own kind/options would never actually be enforced, since the
+        # built-in branch is checked first and wins.
+        raise ValidationFailedError(
+            f"{key!r} is a built-in contact field and cannot be redefined as a custom field"
         )
     return key

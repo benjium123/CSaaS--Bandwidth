@@ -24,6 +24,7 @@ from app.db.session import get_session
 from app.errors import PermissionDeniedError, UnauthenticatedError, ValidationFailedError
 from app.models import ApiKey, Org, OrgMembership, Role, User
 from app.providers import registry_org
+from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import credentials as credential_svc
@@ -48,7 +49,7 @@ async def get_current_user(
     if user is None:
         raise UnauthenticatedError("Invalid or expired token")
     if not user.is_active:
-        raise PermissionDeniedError("This account is disabled")
+        raise UnauthenticatedError("Invalid or expired token")
     return user
 
 
@@ -71,13 +72,14 @@ class OrgContext:
 
 
 async def _org_context_from_api_key(
-    token: str, session: AsyncSession
+    token: str, session: AsyncSession, request: Request
 ) -> OrgContext:
     """P13 DR-3. Key format ``csk_<prefix>_<secret>``; storage is hash-only; lookup by
     unique prefix then constant-time hash compare. 401 for any invalid/revoked/expired
     key — 403 is reserved for a VALID key missing a scope (require_permission)."""
     prefix = parse_api_key_prefix(token)
     if prefix is None:
+        await enforce_rate_limit(request, "apikey:malformed")
         raise UnauthenticatedError("Malformed API key")
     # JUSTIFIED allow_unscoped: pre-tenant-resolution — the key row IS what resolves the
     # org, constrained to one exact unique prefix.
@@ -89,8 +91,10 @@ async def _org_context_from_api_key(
         )
     ).scalar_one_or_none()
     if row is None or not api_key_hash_matches(token, row.key_hash):
+        await enforce_rate_limit(request, f"apikey:{prefix}")
         raise UnauthenticatedError("Invalid API key")
     if row.status != "active":
+        await enforce_rate_limit(request, f"apikey:{prefix}")
         raise UnauthenticatedError("This API key has been revoked")
     if row.expires_at is not None:
         now = datetime.now(timezone.utc)
@@ -98,6 +102,7 @@ async def _org_context_from_api_key(
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
         if expires <= now:
+            await enforce_rate_limit(request, f"apikey:{prefix}")
             raise UnauthenticatedError("This API key has expired")
 
     set_org_context(session, row.org_id)
@@ -135,7 +140,7 @@ async def get_current_org(
     # P13 DR-11: an API key authenticates against the SAME org-scoped routes. The key is
     # org-bound, so X-Org-Id is optional — but when present it must agree.
     if creds is not None and creds.credentials.startswith(f"{API_KEY_TOKEN_PREFIX}_"):
-        ctx = await _org_context_from_api_key(creds.credentials, session)
+        ctx = await _org_context_from_api_key(creds.credentials, session, request)
         if x_org_id and x_org_id != str(ctx.org.id):
             raise PermissionDeniedError("X-Org-Id does not match this API key's organization")
     else:

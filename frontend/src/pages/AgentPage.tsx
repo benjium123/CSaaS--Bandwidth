@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import {
   useAgentProfiles,
@@ -15,6 +16,38 @@ import {
 } from "@/api/hooks";
 import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+
+/** Item 47: a two-step "click again to confirm" destructive-action pattern - the first
+ * click arms a "Confirm...?" state (with a Cancel escape hatch), the second click
+ * within CONFIRM_TIMEOUT_MS actually performs the action. Left alone, it silently
+ * reverts to the plain button so a stale armed state doesn't linger and get triggered
+ * by an unrelated later click. */
+const CONFIRM_TIMEOUT_MS = 8000;
+
+function useConfirm() {
+  const [confirming, setConfirming] = React.useState(false);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clear = React.useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }, []);
+
+  const requestConfirm = React.useCallback(() => {
+    setConfirming(true);
+    clear();
+    timerRef.current = setTimeout(() => setConfirming(false), CONFIRM_TIMEOUT_MS);
+  }, [clear]);
+
+  const cancel = React.useCallback(() => {
+    setConfirming(false);
+    clear();
+  }, [clear]);
+
+  React.useEffect(() => clear, [clear]);
+
+  return { confirming, requestConfirm, cancel };
+}
 
 const EMPTY_FORM: AgentProfileFields = {
   name: "",
@@ -48,15 +81,20 @@ function formFromProfile(p: AgentProfileOut): AgentProfileFields {
 
 export function AgentPage() {
   const { api } = useAuth();
+  const queryClient = useQueryClient();
   const { data: profiles, isLoading } = useAgentProfiles(api);
   const createProfile = useCreateAgentProfile(api);
   const updateProfile = useUpdateAgentProfile(api);
   const deleteProfile = useDeleteAgentProfile(api);
   const setDefault = useSetDefaultAgentProfile(api);
+  const deleteConfirm = useConfirm();
 
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<AgentProfileFields>(EMPTY_FORM);
   const [error, setError] = React.useState<string | null>(null);
+  // Item 19: true the moment the user changes anything, cleared on a real selection
+  // switch or a successful save.
+  const [dirty, setDirty] = React.useState(false);
 
   const selected = (profiles ?? []).find((p) => p.id === selectedId) ?? null;
 
@@ -65,11 +103,20 @@ export function AgentPage() {
   // immediately collapsed away by round-tripping through the array.
   const [keywordsInput, setKeywordsInput] = React.useState("");
 
+  // Item 19: keyed on `selectedId` (a stable primitive), NOT on `selected` (a fresh
+  // object reference on every background refetch of the profiles list) - a refetch
+  // that leaves the same profile selected must never re-run this and clobber whatever
+  // the user is mid-typing. A real switch (including to "New profile", selectedId ->
+  // null) always resyncs and always wins over a stale dirty flag from the profile just
+  // left.
   React.useEffect(() => {
     const next = selected ? formFromProfile(selected) : EMPTY_FORM;
     setForm(next);
     setKeywordsInput((next.sms_handoff_keywords ?? []).join(", "));
-  }, [selected]);
+    setDirty(false);
+    deleteConfirm.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   function startNew() {
     setSelectedId(null);
@@ -79,7 +126,10 @@ export function AgentPage() {
   }
 
   function field<K extends keyof AgentProfileFields>(key: K) {
-    return (value: string) => setForm((f) => ({ ...f, [key]: value }));
+    return (value: string) => {
+      setDirty(true);
+      setForm((f) => ({ ...f, [key]: value }));
+    };
   }
 
   async function save(e: React.FormEvent) {
@@ -88,8 +138,14 @@ export function AgentPage() {
     try {
       if (selectedId) {
         await updateProfile.mutateAsync({ id: selectedId, ...form });
+        setDirty(false);
       } else {
         const created = await createProfile.mutateAsync(form);
+        // Item 44: make sure the just-created profile is actually IN `profiles` before
+        // selecting it - otherwise `selected` resolves to null for a beat (the create
+        // mutation's own onSuccess invalidation may not have finished refetching yet)
+        // and the form flashes back to EMPTY_FORM instead of showing what was just made.
+        await queryClient.invalidateQueries({ queryKey: ["agent-profiles"], refetchType: "active" });
         setSelectedId(created.id);
       }
     } catch (err) {
@@ -159,8 +215,13 @@ export function AgentPage() {
 
       <section className="min-h-0 overflow-y-auto p-6">
         <form className="max-w-xl space-y-4" onSubmit={save}>
-          <h2 className="text-base font-semibold">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
             {selectedId ? "Edit profile" : "New profile"}
+            {dirty && (
+              <span className="text-[11px] font-normal text-muted-foreground">
+                Unsaved changes
+              </span>
+            )}
           </h2>
 
           <div className="space-y-1">
@@ -262,7 +323,10 @@ export function AgentPage() {
               <input
                 type="checkbox"
                 checked={form.sms_enabled ?? false}
-                onChange={(e) => setForm((f) => ({ ...f, sms_enabled: e.target.checked }))}
+                onChange={(e) => {
+                  setDirty(true);
+                  setForm((f) => ({ ...f, sms_enabled: e.target.checked }));
+                }}
               />
               Reply to inbound SMS automatically
             </label>
@@ -278,9 +342,10 @@ export function AgentPage() {
                   type="number"
                   min={1}
                   value={form.sms_turn_ceiling ?? 10}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, sms_turn_ceiling: Number(e.target.value) }))
-                  }
+                  onChange={(e) => {
+                    setDirty(true);
+                    setForm((f) => ({ ...f, sms_turn_ceiling: Number(e.target.value) }));
+                  }}
                 />
               </div>
               <div className="space-y-1">
@@ -293,9 +358,10 @@ export function AgentPage() {
                   type="number"
                   min={1}
                   value={form.sms_max_reply_chars ?? 480}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, sms_max_reply_chars: Number(e.target.value) }))
-                  }
+                  onChange={(e) => {
+                    setDirty(true);
+                    setForm((f) => ({ ...f, sms_max_reply_chars: Number(e.target.value) }));
+                  }}
                 />
               </div>
             </div>
@@ -311,6 +377,7 @@ export function AgentPage() {
                 value={keywordsInput}
                 onChange={(e) => {
                   const text = e.target.value;
+                  setDirty(true);
                   setKeywordsInput(text);
                   setForm((f) => ({
                     ...f,
@@ -345,14 +412,33 @@ export function AgentPage() {
                 >
                   {selected.is_default ? "Default" : "Make default"}
                 </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={() => remove(selected.id)}
-                  disabled={deleteProfile.isPending}
-                >
-                  Delete
-                </Button>
+                {deleteConfirm.confirming ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => {
+                        deleteConfirm.cancel();
+                        void remove(selected.id);
+                      }}
+                      disabled={deleteProfile.isPending}
+                    >
+                      Confirm delete?
+                    </Button>
+                    <Button type="button" variant="outline" onClick={deleteConfirm.cancel}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={deleteConfirm.requestConfirm}
+                    disabled={deleteProfile.isPending}
+                  >
+                    Delete
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -377,6 +463,27 @@ function KbSection() {
   const [error, setError] = React.useState<string | null>(null);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const { data: detail } = useKbDocument(api, expandedId);
+  // Item 47/48: same two-step confirm as the agent profile Delete button, but keyed per
+  // document since this is a list - only one row at a time may be "armed".
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+  const confirmTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function armDelete(id: string) {
+    setConfirmDeleteId(id);
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    confirmTimerRef.current = setTimeout(() => setConfirmDeleteId(null), CONFIRM_TIMEOUT_MS);
+  }
+
+  function cancelDelete() {
+    setConfirmDeleteId(null);
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+  }
+
+  React.useEffect(() => {
+    return () => {
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    };
+  }, []);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -452,15 +559,35 @@ function KbSection() {
                 >
                   {doc.title}
                 </button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => remove(doc.id)}
-                  disabled={deleteDoc.isPending}
-                >
-                  Delete
-                </Button>
+                {confirmDeleteId === doc.id ? (
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => {
+                        cancelDelete();
+                        void remove(doc.id);
+                      }}
+                      disabled={deleteDoc.isPending}
+                    >
+                      Confirm delete?
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={cancelDelete}>
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => armDelete(doc.id)}
+                    disabled={deleteDoc.isPending}
+                  >
+                    Delete
+                  </Button>
+                )}
               </div>
               {expandedId === doc.id && detail && detail.id === doc.id && (
                 <ul className="mt-2 space-y-2">

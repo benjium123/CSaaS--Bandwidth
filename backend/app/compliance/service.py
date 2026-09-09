@@ -17,7 +17,12 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.compliance.keywords import KeywordHit, classify_keyword
+from app.compliance.keywords import (
+    OPT_IN_CONFIRMATION_WORDS,
+    KeywordHit,
+    classify_keyword,
+    normalize,
+)
 from app.errors import ConflictError
 from app.models import ComplianceSettings, ConsentEvent, DncEntry, Org
 
@@ -317,7 +322,16 @@ async def handle_inbound_keyword(
     """
     hit = classify_keyword(message.body)
     if hit is None:
-        return
+        # 2.14: "yes" alone is not a universal opt-in keyword (classify_keyword no
+        # longer treats it as one) - it only CONFIRMS a prior opt-out for this contact.
+        # Check that standing context before ever treating a bare "yes" as consent.
+        word = normalize(message.body or "")
+        if word in OPT_IN_CONFIRMATION_WORDS and await is_opted_out(
+            session, message.from_e164
+        ):
+            hit = KeywordHit("opt_in", word)
+        if hit is None:
+            return
 
     # HELP is ledgered as its own event type: it must be answered (even for someone
     # already opted out) but it must NOT change consent state.
@@ -352,6 +366,13 @@ async def handle_inbound_keyword(
     from app.services import messaging as messaging_svc
 
     try:
+        # D1: this reply is sent straight from the number the human texted (never
+        # through routing.plan_route), so the 10DLC/TFV registration gate must be
+        # threaded through explicitly. `on_inbound`'s 3-argument shape is pinned by the
+        # P1/P2 seam tests, so app settings travel on the session (webhooks.py stashes
+        # them there) exactly like the carrier and event bus already do, rather than as
+        # a new parameter down the handle_inbound_keyword/on_inbound call chain.
+        app_settings = session.info.get("settings")
         await messaging_svc.send_message(
             session,
             org_id,
@@ -360,6 +381,9 @@ async def handle_inbound_keyword(
             from_e164=message.to_e164,
             body=body,
             exemption=AUTO_REPLY_EXEMPTION,
+            require_registration=bool(
+                app_settings is not None and app_settings.require_number_registration
+            ),
         )
     except Exception:
         # An auto-reply failure must never break ingestion. The opt-out already landed.

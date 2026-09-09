@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FlowsPage } from "./FlowsPage";
 import { ApiError } from "@/api/client";
@@ -103,6 +103,67 @@ describe("FlowsPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows an error with a retry button when the flow list fails to load", async () => {
+    let failFlows = true;
+    const client = makeStubClient({
+      "/api/v1/flows": () => {
+        if (failFlows) throw new Error("network down");
+        return [FLOW_V1];
+      },
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("network down");
+
+    failFlows = false;
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByRole("button", { name: /Sales/ })).toBeInTheDocument();
+  });
+
+  it("omits an empty next field from a speak node's wire payload", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return CREATED_FLOW;
+        return [];
+      },
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.type(screen.getByLabelText("Flow name"), "Sales IVR");
+
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.selectOptions(screen.getByLabelText("Node type for node1"), "speak");
+    await userEvent.type(screen.getByLabelText("Text for node1"), "Hello");
+    await userEvent.selectOptions(screen.getByLabelText("Entry node"), "node1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Create flow" }));
+
+    const createCall = await waitForCall(client, "/api/v1/flows", "POST");
+    const json = createCall.init.json as { definition: { nodes: Record<string, unknown> } };
+    expect(json.definition.nodes.node1).not.toHaveProperty("next");
+  });
+
+  it("marks the hours node's fields as required", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": [],
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.selectOptions(screen.getByLabelText("Node type for node1"), "hours");
+
+    expect(screen.getByLabelText("Business hours for node1")).toBeRequired();
+    expect(screen.getByLabelText("Open node for node1")).toBeRequired();
+    expect(screen.getByLabelText("Closed node for node1")).toBeRequired();
+    expect(screen.getByLabelText("Holiday node for node1")).toBeRequired();
+  });
+
   it("activates a flow version", async () => {
     const client = makeStubClient({
       "/api/v1/flows/by-name/Sales/versions": [FLOW_V1],
@@ -117,5 +178,150 @@ describe("FlowsPage", () => {
     await userEvent.click(activateButton);
 
     await waitForCall(client, "/api/v1/flows/flow-1/activate", "POST");
+  });
+
+  // Item 6
+  it("creates a flow with a transfer node, sending {type: 'transfer', to}", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return CREATED_FLOW;
+        return [];
+      },
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.type(screen.getByLabelText("Flow name"), "Sales IVR");
+
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.selectOptions(screen.getByLabelText("Node type for node1"), "transfer");
+    expect(screen.getByLabelText("Transfer to for node1")).toBeRequired();
+    await userEvent.type(screen.getByLabelText("Transfer to for node1"), "+19725550199");
+    await userEvent.selectOptions(screen.getByLabelText("Entry node"), "node1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Create flow" }));
+
+    const createCall = await waitForCall(client, "/api/v1/flows", "POST");
+    const json = createCall.init.json as { definition: { nodes: Record<string, unknown> } };
+    expect(json.definition.nodes.node1).toEqual({ type: "transfer", to: "+19725550199" });
+  });
+
+  // Item 6 (round-trip)
+  it("round-trips a transfer node loaded from an existing flow version", async () => {
+    const flowWithTransfer = {
+      ...FLOW_V1,
+      definition: {
+        entry: "node1",
+        nodes: { node1: { type: "transfer", to: "+19725550199" } },
+      },
+    };
+    const client = makeStubClient({
+      "/api/v1/flows/by-name/Sales/versions": [flowWithTransfer],
+      "/api/v1/flows": [flowWithTransfer],
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Sales/ }));
+
+    const toField = await screen.findByLabelText("Transfer to for node1");
+    expect(toField).toHaveValue("+19725550199");
+  });
+
+  // Item 7/6: a rename now only commits on blur/Enter (see item 6 below) - typing the
+  // colliding value in and then blurring is what actually attempts the rename.
+  it("rejects renaming a node to an id that already exists", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": [],
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+
+    // Two nodes now exist: node1 and node2. Renaming node2 to node1 must be rejected.
+    const node2IdField = screen.getByLabelText("Node id for node2");
+    fireEvent.change(node2IdField, { target: { value: "node1" } });
+    fireEvent.blur(node2IdField);
+
+    expect(await screen.findByText('A node named "node1" already exists')).toBeInTheDocument();
+    // The rename never applied - node2's own card (and its id field) is still there.
+    expect(screen.getByLabelText("Node id for node2")).toBeInTheDocument();
+    expect((screen.getByLabelText("Node id for node2") as HTMLInputElement).value).toBe("node1");
+  });
+
+  // Item 6: typing a colliding INTERMEDIATE value (here "node1" while renaming node2 to
+  // "node1x") must not get stuck - the old per-keystroke commit rejected the mid-typing
+  // collision and snapped the controlled input back, making it impossible to ever type
+  // past it. Renames now only commit on blur/Enter, so the whole typed value lands at
+  // once and only the FINAL value is validated.
+  it("allows typing through a value that would collide mid-keystroke, since only blur/Enter commits", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": [],
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+
+    // node1 and node2 exist. Retype node2's id character by character to "node1x" - the
+    // "node1" intermediate value collides with the other node, but since nothing commits
+    // until Enter, that never blocks the keystrokes.
+    const node2IdField = screen.getByLabelText("Node id for node2");
+    await userEvent.clear(node2IdField);
+    await userEvent.type(node2IdField, "node1x");
+    expect((screen.getByLabelText("Node id for node2") as HTMLInputElement).value).toBe("node1x");
+
+    fireEvent.keyDown(node2IdField, { key: "Enter" });
+
+    // "node1x" doesn't collide with anything - the rename commits, remounting the card
+    // under its new id.
+    await waitFor(() => expect(screen.queryByLabelText("Node id for node2")).toBeNull());
+    expect(screen.getByLabelText("Node id for node1x")).toBeInTheDocument();
+    expect(screen.queryByText('A node named "node1" already exists')).toBeNull();
+  });
+
+  // Item 6
+  it("rejects renaming a node to an empty id, with an inline message, and keeps the card", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": [],
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+
+    const node1IdField = screen.getByLabelText("Node id for node1");
+    await userEvent.clear(node1IdField);
+    fireEvent.blur(node1IdField);
+
+    expect(await screen.findByText("Node id cannot be empty")).toBeInTheDocument();
+    // The rename never applied - the card is still addressable under its old id.
+    expect(screen.getByLabelText("Node id for node1")).toBeInTheDocument();
+  });
+
+  // Item 55
+  it("labels the remove-option button so it's reachable by accessible name", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": [],
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.selectOptions(screen.getByLabelText("Node type for node1"), "menu");
+    await userEvent.click(screen.getByRole("button", { name: "Add option" }));
+
+    const removeButton = await screen.findByRole("button", { name: "Remove option 1 for node1" });
+    await userEvent.click(removeButton);
+
+    expect(screen.queryByLabelText("Option digit 1 for node1")).not.toBeInTheDocument();
   });
 });

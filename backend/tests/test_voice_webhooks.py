@@ -94,6 +94,13 @@ def install_voice_carrier(application, carrier) -> None:
     application.state.carrier = carrier
 
 
+async def _always_owned(e164: str) -> bool:
+    """Bugfix ledger 1.1: stub for `lookup_owned_number` on a REAL provider mixin fixture
+    whose mock transport (or lack of one) has no handler for the new ownership-lookup
+    HTTP call - these fixtures are about voice webhook mechanics, not number ownership."""
+    return True
+
+
 @pytest.fixture
 async def app_with_voice_carrier(engine):
     """App wired with a FakeVoiceCarrier named 'bandwidth' (matches the default carrier
@@ -131,6 +138,7 @@ async def app_with_bandwidth_voice(engine):
     carrier.voice_callback_url = "https://example.test/api/v1/webhooks/bandwidth/voice"
     carrier.voice_webhook_username = WEBHOOK_USER
     carrier.voice_webhook_password = WEBHOOK_PASS
+    carrier.lookup_owned_number = _always_owned
     install_voice_carrier(application, carrier)
     transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
@@ -481,6 +489,7 @@ async def app_with_real_bandwidth_voice_and_mock_transport(engine):
     carrier.voice_callback_url = "https://example.test/api/v1/webhooks/bandwidth/voice"
     carrier.voice_webhook_username = WEBHOOK_USER
     carrier.voice_webhook_password = WEBHOOK_PASS
+    carrier.lookup_owned_number = _always_owned
     install_voice_carrier(application, carrier)
     transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:

@@ -36,6 +36,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
@@ -44,11 +45,14 @@ from app.models import (
     AgentSmsTurn,
     Call,
     CallRecording,
+    CallScore,
     MediaAsset,
     Message,
     Org,
     UsageRecord,
 )
+
+log = structlog.get_logger("usage")
 
 #: Relative tolerance for the reconciliation verdict (DR-2).
 TOLERANCE = 0.05
@@ -135,7 +139,22 @@ async def _compute_day(
         )
     ).all()
     out["ai_sms_turns"] = (len(turns), None)
-    out["ai_tokens"] = (sum((ti or 0) + (to or 0) for ti, to in turns), None)
+    sms_ai_tokens = sum((ti or 0) + (to or 0) for ti, to in turns)
+
+    # 6.14: call-scoring LLM usage is AI work too, billable the same way as an SMS turn -
+    # it was computed (llm_client.ChatResult) but never counted anywhere before.
+    scores = (
+        await session.execute(
+            sa.select(CallScore.tokens_in, CallScore.tokens_out).where(
+                CallScore.org_id == org_id,
+                CallScore.updated_at >= start,
+                CallScore.updated_at < end,
+            )
+        )
+    ).all()
+    call_score_tokens = sum((ti or 0) + (to or 0) for ti, to in scores)
+
+    out["ai_tokens"] = (sms_ai_tokens + call_score_tokens, None)
 
     # storage_bytes: a SNAPSHOT of everything currently held (media + recordings), not a
     # delta added that day. Only written for "today" - see module docstring, B4.
@@ -226,10 +245,15 @@ async def rollup_day(
     counts = {"orgs": 0, "metrics_written": 0}
     for oid in org_ids:
         set_org_context(session, oid)
-        quantities = await _compute_day(session, oid, day, include_snapshot=include_snapshot)
-        for metric, (qty, carrier_qty) in quantities.items():
-            await _upsert(session, oid, day, metric, qty, carrier_qty)
-        await session.commit()
+        try:
+            quantities = await _compute_day(session, oid, day, include_snapshot=include_snapshot)
+            for metric, (qty, carrier_qty) in quantities.items():
+                await _upsert(session, oid, day, metric, qty, carrier_qty)
+            await session.commit()
+        except Exception:  # noqa: BLE001 - 4.7: one org's collision must not abort the pass
+            log.exception("usage_rollup_org_failed", org_id=str(oid))
+            await session.rollback()
+            continue
         counts["orgs"] += 1
         counts["metrics_written"] += len(quantities)
     return counts

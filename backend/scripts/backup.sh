@@ -22,7 +22,11 @@ OUT="${BACKUP_DIR}/csaas-${STAMP}.dump"
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nABORT: %s\n' "$*" >&2; exit 1; }
 
-if ! docker inspect -f '{{.State.Running}}' "$CONTAINER" >/dev/null 2>&1; then
+# 8.24: `docker inspect` exits 0 (and prints "false") for a container that EXISTS but is
+# STOPPED, not just for a running one - checking only the exit code let backup.sh march
+# ahead and `docker exec` into a dead container. Compare the actual state string.
+RUNNING="$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || true)"
+if [ "$RUNNING" != "true" ]; then
   die "${CONTAINER} is not running - is the stack up? (docker compose -f deploy/docker-compose.prod.yml ps)"
 fi
 

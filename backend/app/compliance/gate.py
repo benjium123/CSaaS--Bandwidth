@@ -117,6 +117,7 @@ async def check_outbound(
     draft: OutboundDraft,
     *,
     exemption: str | None = None,
+    bulk: bool = False,
 ) -> ComplianceVerdict:
     """The single gate every outbound message passes through."""
     if exemption == AUTO_REPLY_EXEMPTION:
@@ -142,8 +143,17 @@ async def check_outbound(
     if not settings.quiet_hours_enforced:
         return ComplianceVerdict(True)
 
+    # 2.4: defensive - existing PERSISTED settings could already be inverted (created
+    # before the route-level guard existed). An inverted window has no valid "open"
+    # interval, so treat it as an immediate block rather than a perpetual silent defer.
+    if settings.window_start >= settings.window_end:
+        log.error("invalid_quiet_hours_window", org_id=str(org_id))
+        return ComplianceVerdict(False, "invalid_quiet_hours_window")
+
     now = qh._now()
-    if await _in_active_conversation(session, draft.to_e164, now):
+    # 2.7: a bulk (campaign) send must not ride the 24h active-conversation carve-out -
+    # that exception exists for a live human reply thread, not a mass send.
+    if not bulk and await _in_active_conversation(session, draft.to_e164, now):
         return ComplianceVerdict(True, reason="active_conversation")
 
     result = qh.evaluate(

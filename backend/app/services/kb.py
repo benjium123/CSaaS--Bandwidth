@@ -25,6 +25,20 @@ SENTENCE_LOOKBACK = 200
 MIN_TERM_LEN = 3
 TITLE_BONUS = 2
 SEARCH_LIMIT = 4
+#: 6.13: hard ceiling on chunks per document, independent of the input-schema max_length
+#: (belt-and-suspenders - this is what actually bounds the DB writes in create_document).
+MAX_CHUNKS_PER_DOCUMENT = 2000
+#: 6.12: cap on SQL candidate rows pulled in for Python-side scoring - an org with a huge
+#: KB and a common term must not pull its entire chunk table into memory every search.
+SEARCH_CANDIDATE_LIMIT = 500
+
+
+def _escape_like(s: str) -> str:
+    """Escape LIKE metacharacters so a caller-supplied query term cannot smuggle its own
+    % / _ wildcards into the pattern (6.12, same discipline as services/search.py's
+    5.9 fix). Backslash first - escaping % and _ before it would double-escape a literal
+    backslash already present in the input."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def chunk_text(text: str) -> list[str]:
@@ -60,7 +74,7 @@ async def create_document(
     doc = KbDocument(id=uuid.uuid4(), org_id=org_id, title=title, source="pasted")
     session.add(doc)
     await session.flush()
-    for seq, piece in enumerate(chunk_text(text)):
+    for seq, piece in enumerate(chunk_text(text)[:MAX_CHUNKS_PER_DOCUMENT]):
         session.add(
             KbChunk(id=uuid.uuid4(), org_id=org_id, document_id=doc.id, seq=seq, text=piece)
         )
@@ -113,13 +127,18 @@ async def search(session: AsyncSession, org_id: uuid.UUID, query: str) -> list[d
     # A term matching only the document's TITLE (not any chunk's text) must still pull
     # that doc's chunks into the candidate set - scoring below already awards
     # TITLE_BONUS for a title match, so a title-only hit still lands with score > 0.
-    conditions = [KbChunk.text.ilike(f"%{t}%") for t in terms]
-    conditions += [KbDocument.title.ilike(f"%{t}%") for t in terms]
+    conditions = [
+        KbChunk.text.ilike(f"%{_escape_like(t)}%", escape="\\") for t in terms
+    ]
+    conditions += [
+        KbDocument.title.ilike(f"%{_escape_like(t)}%", escape="\\") for t in terms
+    ]
     rows = (
         await session.execute(
             sa.select(KbChunk, KbDocument.title)
             .join(KbDocument, KbChunk.document_id == KbDocument.id)
             .where(KbDocument.org_id == org_id, sa.or_(*conditions))
+            .limit(SEARCH_CANDIDATE_LIMIT)
         )
     ).all()
 

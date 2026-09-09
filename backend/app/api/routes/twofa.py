@@ -24,6 +24,7 @@ from app.auth.security import (
     decode_pending_2fa_token,
     decrypt_credential,
     encrypt_credential,
+    verify_password,
 )
 from app.config import Settings
 from app.db.session import get_session
@@ -33,6 +34,7 @@ from app.errors import (
     ValidationFailedError,
 )
 from app.models import User
+from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
 
 router = APIRouter(prefix="/api/v1/auth/2fa", tags=["auth"])
@@ -50,6 +52,14 @@ class VerifyIn(BaseModel):
     code: str = Field(min_length=6, max_length=8)
 
 
+class PasswordIn(BaseModel):
+    password: str
+
+
+class DisableIn(CodeIn):
+    password: str
+
+
 class EnrollOut(BaseModel):
     secret: str
     provisioning_uri: str
@@ -65,23 +75,30 @@ def _fernet_key(settings: Settings) -> str:
 
 
 def _check_code(user: User, secret: str, code: str) -> int:
-    """Verify a TOTP code and return its timestep, or raise."""
+    """Verify a TOTP code and return its actual timestep, or raise."""
     totp = pyotp.TOTP(secret)
-    if not totp.verify(code, valid_window=VALID_WINDOW):
-        raise UnauthenticatedError("Invalid verification code")
-    step = int(time.time()) // TOTP_STEP
-    # Replay guard: a code already accepted cannot be reused inside its window.
-    if user.totp_last_used_step is not None and step <= user.totp_last_used_step:
-        raise UnauthenticatedError("That code was already used")
-    return step
+    now = int(time.time())
+    counter = now // TOTP_STEP
+    for drift in range(-VALID_WINDOW, VALID_WINDOW + 1):
+        step = counter + drift
+        if not totp.verify(code, valid_window=0, for_time=step * TOTP_STEP):
+            continue
+        # Replay guard: comparing the actual step rejects reuse inside +/-1.
+        if user.totp_last_used_step is not None and step <= user.totp_last_used_step:
+            raise UnauthenticatedError("That code was already used")
+        return step
+    raise UnauthenticatedError("Invalid verification code")
 
 
 @router.post("/enroll", response_model=EnrollOut)
 async def enroll(
+    payload: PasswordIn,
     request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EnrollOut:
+    if not verify_password(payload.password, user.hashed_password):
+        raise UnauthenticatedError("Incorrect password")
     settings: Settings = request.app.state.settings
     key = _fernet_key(settings)
     if user.totp_enabled:
@@ -125,6 +142,7 @@ async def verify(
 ) -> dict:
     """Exchange a pending-2FA token + code for a real access token."""
     settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"totp:{payload.pending_token}")
     key = _fernet_key(settings)
 
     user_id = decode_pending_2fa_token(
@@ -147,11 +165,13 @@ async def verify(
 
 @router.post("/disable")
 async def disable(
-    payload: CodeIn,
+    payload: DisableIn,
     request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
+    if not verify_password(payload.password, user.hashed_password):
+        raise UnauthenticatedError("Incorrect password")
     settings: Settings = request.app.state.settings
     key = _fernet_key(settings)
     if not user.totp_enabled or not user.totp_secret:

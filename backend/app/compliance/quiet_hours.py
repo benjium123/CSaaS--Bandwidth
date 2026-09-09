@@ -110,6 +110,12 @@ def evaluate(
 
     start = parse_hhmm(window_start, DEFAULT_WINDOW_START)
     end = parse_hhmm(window_end, DEFAULT_WINDOW_END)
+    # 2.4: an inverted window (start >= end) has no valid "open" interval at all under
+    # this function's same-day model - every instant would otherwise evaluate as
+    # perpetually held. Defensive: the route below is the primary gate, but bad data
+    # already persisted (or a caller bypassing the route) must not silently freeze sends.
+    if start >= end:
+        raise ValueError("window_start must be earlier than window_end")
     zones = resolve_zones(to_e164, contact_timezone)
 
     opens: list[datetime] = []

@@ -57,7 +57,18 @@ export function MessageBubble({
   );
 }
 
-export function ThreadView({ api, item }: { api: ApiClient; item: InboxItem | null }) {
+export function ThreadView({
+  api,
+  item,
+  canSend = true,
+}: {
+  api: ApiClient;
+  item: InboxItem | null;
+  /** Item 13: viewer-role inboxes can see a thread but not act on it - defaults to true
+   * so every existing caller (and every prior test) that doesn't know about inbox roles
+   * keeps behaving exactly as before. */
+  canSend?: boolean;
+}) {
   const threadId = item?.thread.id ?? null;
   const { data: messages, isLoading } = useThreadMessages(api, threadId);
   const send = useSendMessage(api);
@@ -94,6 +105,8 @@ export function ThreadView({ api, item }: { api: ApiClient; item: InboxItem | nu
         <Button
           size="sm"
           variant="outline"
+          disabled={!canSend}
+          title={canSend ? undefined : "Read-only inbox — you can view but not close or reopen"}
           onClick={() =>
             patch.mutate({ threadId: item.thread.id, status: closed ? "open" : "closed" })
           }
@@ -101,6 +114,12 @@ export function ThreadView({ api, item }: { api: ApiClient; item: InboxItem | nu
           {closed ? "Reopen" : "Close"}
         </Button>
       </header>
+
+      {!canSend && (
+        <p className="border-t border-border px-3 pt-2 text-xs text-muted-foreground">
+          Read-only inbox — you can view but not send
+        </p>
+      )}
 
       <div className="flex-1 overflow-y-auto p-3">
         {isLoading ? (
@@ -122,6 +141,7 @@ export function ThreadView({ api, item }: { api: ApiClient; item: InboxItem | nu
       </div>
 
       <Composer
+        disabled={!canSend}
         onSend={async (body, allowReassign) => {
           await send.mutateAsync({
             to: item.thread.contact_e164,

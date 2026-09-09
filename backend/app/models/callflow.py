@@ -95,6 +95,14 @@ class QueueEntry(Base, TenantScoped, TimestampMixin):
         GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     offered_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    #: Bugfix ledger 3.13: set exactly once, by the /queue-entries/{id}/dial-now claim
+    #: (routes/flows.py::dial_callback_now). Distinct from `offered_at` on purpose - that
+    #: field is reused by the agent-offer flow and can carry a stale value from an earlier
+    #: offer cycle before this entry overflowed to `callback_requested`, which would make
+    #: it an unsafe double-dial guard.
+    dial_now_claimed_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
     callback_e164: Mapped[str | None] = mapped_column(sa.String(20), nullable=True)
     enqueued_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(

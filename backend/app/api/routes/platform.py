@@ -94,6 +94,9 @@ async def create_api_key(
         created_by=actor_user_id,
         actor_user_id=actor_user_id,
         actor_api_key_id=actor_api_key_id,
+        # C2: an API-key-authenticated caller has no actor_user_id - the service needs
+        # this key's own scopes to gate the new key's scopes against.
+        actor_key_scopes=list(ctx.api_key.scopes or []) if ctx.api_key is not None else None,
     )
     return ApiKeyCreatedOut(**_key_out(row).model_dump(), key=full_key)
 

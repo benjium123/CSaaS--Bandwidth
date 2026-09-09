@@ -52,6 +52,21 @@ class ConflictError(CsaasError):
     message = "Conflict"
 
 
+class RateLimitExceededError(CsaasError):
+    """C7: raised by app/rate_limit.py so a 429 uses the SAME ``{"error": {...}}``
+    envelope every other error already does, instead of FastAPI's bare
+    ``{"detail": ...}`` HTTPException shape. ``retry_after`` (seconds) is read by
+    main.py's CsaasError handler and re-attached as the ``Retry-After`` header."""
+
+    code = "rate_limited"
+    http_status = 429
+    message = "Too many requests"
+
+    def __init__(self, message: str | None = None, *, retry_after: int) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class MissingTenantContextError(CsaasError):
     """A tenant-scoped query ran with no org context.
 

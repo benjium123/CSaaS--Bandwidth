@@ -7,8 +7,9 @@ import {
   Play,
   Voicemail,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
-import type { ApiClient } from "@/api/client";
+import { fetchAuthedBlob, type ApiClient } from "@/api/client";
 import {
   fetchConversationTimeline,
   type CallTimelineItem,
@@ -16,8 +17,15 @@ import {
   type TimelineItem,
   type VoicemailTimelineItem,
 } from "@/api/conversations";
+import { useSoftphone } from "@/softphone/SoftphoneProvider";
 import { relativeTime, statusTick } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+/** Item 2: keeps the open thread's timeline fresh two ways - a background poll while
+ * visible (TanStack pauses refetchInterval in the background by default), PLUS an
+ * immediate refetch the moment a `message.received` event for THIS pair arrives over
+ * the realtime socket. */
+const TIMELINE_POLL_MS = 3000;
 
 function formatDuration(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);
@@ -124,13 +132,7 @@ function CallRecordingPlayer({
     }
     setLoading(true);
     try {
-      const path = `/api/v1/calls/${callId}/recordings/${recordingId}`;
-      const headers = new Headers();
-      if (api.auth.token) headers.set("Authorization", `Bearer ${api.auth.token}`);
-      if (api.auth.orgId) headers.set("X-Org-Id", api.auth.orgId);
-      const res = await fetch(path, { headers });
-      if (!res.ok) throw new Error(`Failed to load recording (${res.status})`);
-      const blob = await res.blob();
+      const blob = await fetchAuthedBlob(api, `/api/v1/calls/${callId}/recordings/${recordingId}`);
       setAudioUrl(URL.createObjectURL(blob));
     } catch (err) {
       setError((err as Error).message);
@@ -252,6 +254,8 @@ export function Timeline({
   ourE164: string | null;
 }) {
   const { api } = useAuth();
+  const softphone = useSoftphone();
+  const queryClient = useQueryClient();
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
   const enabled = Boolean(contactE164 && ourE164);
@@ -267,7 +271,17 @@ export function Timeline({
     enabled,
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    refetchInterval: TIMELINE_POLL_MS,
   });
+
+  React.useEffect(() => {
+    if (!enabled) return undefined;
+    return softphone.subscribe((event) => {
+      if (event.type !== "message.received") return;
+      if (event.our_e164 !== ourE164 || event.contact_e164 !== contactE164) return;
+      void queryClient.invalidateQueries({ queryKey: ["timeline", contactE164, ourE164] });
+    });
+  }, [softphone, queryClient, enabled, contactE164, ourE164]);
 
   const items = React.useMemo(
     () => query.data?.pages.flatMap((page) => page.items).reverse() ?? [],
@@ -324,6 +338,9 @@ export function Timeline({
   return (
     <div
       ref={scrollAreaRef}
+      role="log"
+      aria-live="polite"
+      aria-label="Conversation timeline"
       className="min-h-0 flex-1 overflow-y-auto bg-neutral-900 p-3"
     >
       <div className="space-y-4">

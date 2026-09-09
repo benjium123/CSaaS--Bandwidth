@@ -47,18 +47,28 @@ export interface Conversation {
   our_e164: string;
   contact_e164: string;
   inbox_id: string;
-  thread_id: string;
+  // Item 11/12: a call-only conversation (no message ever sent/received on this pair)
+  // has no MessageThread row yet - backend/app/api/routes/conversations.py ConversationOut
+  // types this `uuid.UUID | None`. Close/Reopen (thread-status actions) have nothing to
+  // act on until a thread exists.
+  thread_id: string | null;
   contact: ContactSummary | null;
   snippet: string | null;
   last_event_type: ConversationEventType;
-  direction: "inbound" | "outbound" | "unknown";
+  // Item 36: null when the pair's latest event has no clear direction (backend types
+  // this `str | None`) - render neutrally rather than defaulting to either arrow.
+  direction: "inbound" | "outbound" | null;
   last_event_at: string;
-  unread: number;
+  // Item 35: the backend sends a plain boolean, not a count.
+  unread: boolean;
   status: "open" | "closed";
+  /** Starred/important pair (POST /api/v1/inbox/important-pair). Optional because older
+   * callers/fixtures may omit it entirely - treat undefined the same as false. */
+  important?: boolean;
 }
 
 export type ConversationTab = "chats" | "calls";
-export type ConversationFilter = "open" | "unread" | "unresponded" | "all";
+export type ConversationFilter = "open" | "unread" | "unresponded" | "important" | "all";
 
 export interface CursorPage<T> {
   items: T[];
@@ -276,6 +286,36 @@ export async function updateContactAttributes(
   return updateContact(api, id, { attributes: { ...currentAttributes, ...patch } });
 }
 
+// ----------------------------------------------------------------------------------
+// Notes (item 3) - a proper list via GET/POST /api/v1/contacts/{id}/notes, replacing
+// the single free-text `Contact.notes` field ContactPanel used to PATCH (a field
+// backend/app/api/routes/contacts.py's ContactPatch schema never actually accepted, so
+// those saves silently no-op'd).
+// ----------------------------------------------------------------------------------
+export interface ContactNote {
+  id: string;
+  body: string;
+  // Item 7: backend add_note only returns {id, body, created_at} - author_user_id is not
+  // sent back on creation, only on later GETs of the full note list.
+  author_user_id?: string | null;
+  created_at: string;
+}
+
+export async function fetchContactNotes(api: ApiClient, contactId: string): Promise<ContactNote[]> {
+  return api.request<ContactNote[]>(`/api/v1/contacts/${contactId}/notes`);
+}
+
+export async function addContactNote(
+  api: ApiClient,
+  contactId: string,
+  body: string,
+): Promise<ContactNote> {
+  return api.request<ContactNote>(`/api/v1/contacts/${contactId}/notes`, {
+    method: "POST",
+    json: { body },
+  });
+}
+
 export async function patchThread(
   api: ApiClient,
   threadId: string,
@@ -284,5 +324,17 @@ export async function patchThread(
   await api.request<void>(`/api/v1/threads/${threadId}`, {
     method: "PATCH",
     json: { status },
+  });
+}
+
+export async function putImportantPair(
+  api: ApiClient,
+  ourE164: string,
+  contactE164: string,
+  important: boolean,
+): Promise<void> {
+  await api.request<void>("/api/v1/inbox/important-pair", {
+    method: "POST",
+    json: { our_e164: ourE164, contact_e164: contactE164, important },
   });
 }

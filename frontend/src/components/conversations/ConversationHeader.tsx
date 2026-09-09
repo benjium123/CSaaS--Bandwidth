@@ -1,9 +1,14 @@
 import * as React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Loader2, MessageSquare, MoreHorizontal, Phone } from "lucide-react";
+import { ArrowLeft, Loader2, MessageSquare, MoreHorizontal, Phone, Star } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { useSoftphone } from "@/softphone/SoftphoneProvider";
-import { patchThread, type Conversation } from "@/api/conversations";
+import {
+  patchThread,
+  putImportantPair,
+  type Conversation,
+  type CursorPage,
+} from "@/api/conversations";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +58,59 @@ export function ConversationHeader({
       setMoreOpen(false);
     },
   });
+
+  // Item: star toggle (POST /api/v1/inbox/important-pair). Optimistically flips
+  // `important` on this pair everywhere it appears in the conversations cache - the list
+  // row's star and this header both read off that same cache, so both update together
+  // without waiting on the round trip - then reverts on error and reconciles with the
+  // server on settle.
+  type ConversationsCache = { pages: CursorPage<Conversation>[]; pageParams: unknown[] };
+  const importantMutation = useMutation({
+    mutationFn: (vars: { ourE164: string; contactE164: string; important: boolean }) =>
+      putImportantPair(api, vars.ourE164, vars.contactE164, vars.important),
+    onMutate: async (vars) => {
+      await queryClient.cancelQueries({ queryKey: ["conversations"] });
+      const previous = queryClient.getQueriesData<ConversationsCache>({
+        queryKey: ["conversations"],
+      });
+      queryClient.setQueriesData<ConversationsCache>(
+        { queryKey: ["conversations"] },
+        (data) => {
+          if (!data) return data;
+          return {
+            ...data,
+            pages: data.pages.map((page) => ({
+              ...page,
+              items: page.items.map((item) =>
+                item.our_e164 === vars.ourE164 && item.contact_e164 === vars.contactE164
+                  ? { ...item, important: vars.important }
+                  : item,
+              ),
+            })),
+          };
+        },
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      context?.previous.forEach(([key, data]) => {
+        queryClient.setQueryData(key, data);
+      });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+  });
+
+  const toggleImportant = React.useCallback(() => {
+    if (!conversation || !canSend) return;
+    importantMutation.mutate({
+      ourE164: conversation.our_e164,
+      contactE164: conversation.contact_e164,
+      important: !conversation.important,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation, canSend]);
 
   // F19: close the "more" menu on outside click and Escape.
   React.useEffect(() => {
@@ -110,7 +168,31 @@ export function ConversationHeader({
             </button>
           )}
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-neutral-50">{title}</h2>
+            <div className="flex items-center gap-1.5">
+              <h2 className="truncate text-sm font-semibold text-neutral-50">{title}</h2>
+              <button
+                type="button"
+                onClick={toggleImportant}
+                disabled={!canSend || importantMutation.isPending}
+                aria-pressed={Boolean(conversation.important)}
+                title={
+                  canSend
+                    ? conversation.important
+                      ? "Unmark as important"
+                      : "Mark as important"
+                    : "Read-only inbox — you can view but not mark important"
+                }
+                aria-label={conversation.important ? "Unmark as important" : "Mark as important"}
+                className="shrink-0 rounded-md p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-50 disabled:pointer-events-none disabled:opacity-40"
+              >
+                <Star
+                  className={cn(
+                    "h-3.5 w-3.5",
+                    conversation.important && "fill-amber-400 text-amber-400",
+                  )}
+                />
+              </button>
+            </div>
             <p className="truncate text-[11px] text-neutral-400">
               {formatPhone(conversation.contact_e164)} · via{" "}
               {formatPhone(conversation.our_e164)}
@@ -161,14 +243,22 @@ export function ConversationHeader({
                 <button
                   role="menuitem"
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    const threadId = conversation.thread_id;
+                    if (!threadId) return;
                     toggleThreadMutation.mutate({
-                      threadId: conversation.thread_id,
+                      threadId,
                       nextStatus: conversation.status === "closed" ? "open" : "closed",
-                    })
+                    });
+                  }}
+                  disabled={toggleThreadMutation.isPending || !canSend || !conversation.thread_id}
+                  title={
+                    !conversation.thread_id
+                      ? "This conversation has no messages yet — nothing to close or reopen"
+                      : canSend
+                        ? undefined
+                        : "Read-only inbox — you can view but not close or reopen"
                   }
-                  disabled={toggleThreadMutation.isPending || !canSend}
-                  title={canSend ? undefined : "Read-only inbox — you can view but not close or reopen"}
                   className="block w-full rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
                 >
                   {conversation.status === "closed" ? "Reopen" : "Close"}
@@ -181,6 +271,11 @@ export function ConversationHeader({
       {toggleThreadMutation.isError && (
         <p role="alert" className="px-3 pb-2 text-[11px] text-red-400">
           {(toggleThreadMutation.error as Error).message}
+        </p>
+      )}
+      {importantMutation.isError && (
+        <p role="alert" className="px-3 pb-2 text-[11px] text-red-400">
+          {(importantMutation.error as Error).message}
         </p>
       )}
     </header>

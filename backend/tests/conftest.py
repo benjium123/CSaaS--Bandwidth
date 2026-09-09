@@ -17,6 +17,10 @@ TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"
 IS_SQLITE = TEST_DB_URL.startswith("sqlite")
 
 TEST_JWT_SECRET = "test-jwt-secret-not-a-real-one-padded-to-32+bytes"
+#: Default platform-operator token for tests whose setup needs to advance a brand /
+#: campaign / TFV to "approved" (registration.py's status routes are gated on this
+#: since 1.6). Individual tests that specifically exercise the gate itself override it.
+TEST_PLATFORM_OPS_TOKEN = "test-platform-ops-token"
 
 
 # ----------------------------------------------------------------------------------
@@ -35,6 +39,20 @@ def frozen_compliance_clock(monkeypatch):
 
     monkeypatch.setattr(quiet_hours, "_now", lambda: FROZEN_NOW)
     return FROZEN_NOW
+
+
+@pytest.fixture(autouse=True)
+def _clear_webhook_replay_cache():
+    """C4: providers/webhook_replay._SEEN is a process-wide module-level cache (no
+    Redis dependency, same rationale as app.rate_limit._limiter) - clear it before AND
+    after every test so a signature recorded by one test can never suppress a genuinely
+    new webhook delivery in another, and so a test asserting on the cache's size isn't
+    order-dependent on whatever else shares the process."""
+    from app.providers import webhook_replay
+
+    webhook_replay._SEEN.clear()
+    yield
+    webhook_replay._SEEN.clear()
 
 
 def pytest_collection_modifyitems(config, items):
@@ -56,6 +74,11 @@ def make_settings(**overrides) -> Settings:
         # The sweeper is an interim in-process loop; tests drive its functions directly.
         "sweeper_enabled": False,
         "media_store_backend": "memory",
+        # Individual rate-limit regression tests opt in explicitly.
+        "rate_limit_enabled": False,
+        # Individual platform-ops-token regression tests override this explicitly
+        # (including to "" to exercise the unset -> 503 path).
+        "platform_ops_token": TEST_PLATFORM_OPS_TOKEN,
         # Tests create many users and must keep exercising the REAL registration
         # endpoint. Production refuses this flag outright (config.validate), so it can
         # never be why a live instance is open; invite tests override it to False.

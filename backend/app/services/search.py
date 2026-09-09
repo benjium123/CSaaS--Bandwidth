@@ -22,24 +22,46 @@ def _is_postgres(session: AsyncSession) -> bool:
     return session.get_bind().dialect.name == "postgresql"
 
 
+def _escape_like(s: str) -> str:
+    """Escape LIKE metacharacters so a caller-supplied query cannot smuggle its own
+    wildcards into the pattern (5.9). Backslash first - escaping % and _ before it would
+    double-escape a literal backslash already present in the input."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def _like_matching_call_ids(
-    session: AsyncSession, org_id: uuid.UUID, query: str, limit: int
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    query: str,
+    limit: int,
+    allowed_e164s: frozenset[str] | None,
 ) -> list[uuid.UUID]:
-    like = f"%{query.lower()}%"
+    like = f"%{_escape_like(query.lower())}%"
     stmt = (
         sa.select(CallTranscriptSegment.call_id, sa.func.max(Call.created_at))
         .join(Call, Call.id == CallTranscriptSegment.call_id)
-        .where(Call.org_id == org_id, sa.func.lower(CallTranscriptSegment.text).like(like))
+        .where(
+            Call.org_id == org_id,
+            sa.func.lower(CallTranscriptSegment.text).like(like, escape="\\"),
+        )
         .group_by(CallTranscriptSegment.call_id)
         .order_by(sa.func.max(Call.created_at).desc())
         .limit(limit)
     )
+    if allowed_e164s is not None:
+        # P15 (5.3): a non-admin caller only ever searches transcripts on numbers they
+        # can view - unfiltered, this returned transcript content across every inbox.
+        stmt = stmt.where(Call.our_e164.in_(allowed_e164s))
     rows = (await session.execute(stmt)).all()
     return [r[0] for r in rows]
 
 
 async def _tsvector_matching_call_ids(
-    session: AsyncSession, org_id: uuid.UUID, query: str, limit: int
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    query: str,
+    limit: int,
+    allowed_e164s: frozenset[str] | None,
 ) -> list[uuid.UUID]:
     """Only ever reached on Postgres (see ``search_transcripts``'s dialect switch)."""
     ts_query = sa.func.websearch_to_tsquery("english", query)
@@ -53,24 +75,40 @@ async def _tsvector_matching_call_ids(
         .order_by(rank.desc())
         .limit(limit)
     )
+    if allowed_e164s is not None:
+        stmt = stmt.where(Call.our_e164.in_(allowed_e164s))
     rows = (await session.execute(stmt)).all()
     return [r[0] for r in rows]
 
 
 async def search_transcripts(
-    session: AsyncSession, org_id: uuid.UUID, query: str, *, limit: int = 20
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    query: str,
+    *,
+    limit: int = 20,
+    allowed_e164s: frozenset[str] | None = None,
 ) -> list[dict]:
     """Results grouped by call, newest/best-ranked match first: each item carries the
     call id, contact, and every matching (or - LIKE path - every) segment with role/text/
-    timestamp, so a console can render the whole exchange around the hit."""
+    timestamp, so a console can render the whole exchange around the hit.
+
+    ``allowed_e164s`` is P15 access scoping (5.3): ``None`` means admin/unrestricted,
+    otherwise only calls whose ``our_e164`` is in the set are matched. An empty
+    frozenset is a legitimate "sees nothing" caller, not "unrestricted".
+    """
     query = (query or "").strip()
     if not query:
         return []
+    if allowed_e164s is not None and not allowed_e164s:
+        return []
 
     if _is_postgres(session):
-        call_ids = await _tsvector_matching_call_ids(session, org_id, query, limit)
+        call_ids = await _tsvector_matching_call_ids(
+            session, org_id, query, limit, allowed_e164s
+        )
     else:
-        call_ids = await _like_matching_call_ids(session, org_id, query, limit)
+        call_ids = await _like_matching_call_ids(session, org_id, query, limit, allowed_e164s)
     if not call_ids:
         return []
 

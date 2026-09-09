@@ -9,7 +9,7 @@ phase's allowed-files list does not include ``models/rbac.py``).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -107,19 +107,29 @@ async def upload_list(
         # will refuse anyway must not cost anything.
         raise ValidationFailedError("Only .csv and .xlsx files are supported")
 
-    data = await file.read()
+    # 6.7: byte-counted STREAMING read that aborts the moment the limit is exceeded,
+    # instead of buffering the entire (possibly enormous) upload before ever checking
+    # its size - a multi-GB upload must not be fully read into memory just to reject it.
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1_048_576)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > list_import_svc.MAX_LIST_BYTES:
+            raise ValidationFailedError(
+                f"File is too large; the limit is {list_import_svc.MAX_LIST_BYTES // 1_000_000} MB"
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
     if not data:
         raise ValidationFailedError("The uploaded file is empty")
-    if len(data) > list_import_svc.MAX_LIST_BYTES:
-        raise ValidationFailedError(
-            f"File is too large; the limit is {list_import_svc.MAX_LIST_BYTES // 1_000_000} MB"
-        )
 
+    # 6.7: list_import_svc.preview() now aborts DURING parsing once MAX_LIST_ROWS is
+    # exceeded (see services/list_parsing.py), so row_count can never come back over
+    # that limit here - no separate post-hoc check needed.
     parsed_preview = list_import_svc.preview(filename, data)
-    if parsed_preview["row_count"] > list_import_svc.MAX_LIST_ROWS:
-        raise ValidationFailedError(
-            f"List has too many rows; the limit is {list_import_svc.MAX_LIST_ROWS}"
-        )
 
     list_name = (name or filename.rsplit(".", 1)[0] or filename).strip()[:127] or filename
     row = ContactList(
@@ -168,11 +178,28 @@ async def commit_list(
     if "phone" not in payload.mapping:
         raise ValidationFailedError("mapping must include 'phone'")
 
+    # D5: fetch the uploaded data BEFORE claiming the list - claiming first meant a
+    # store 404 here (an expired upload) left import_started_at permanently set with
+    # nothing ever able to clear it, so every retry after re-uploading hit "already
+    # being imported" (409) forever, regardless of status.
     store = _store(request)
     try:
         data = await store.get(_import_key(ctx.org.id, lst.id))
     except KeyError as exc:
         raise NotFoundError("The uploaded file has expired; upload it again") from exc
+
+    # 6.8: claim the list atomically BEFORE spawning the background import - the read
+    # above is not enough on its own (status stays "importing" for the entire import,
+    # so two concurrent /commit calls would both pass it and both spawn run_import for
+    # the same list). import_started_at IS NULL -> NOT NULL is a one-shot gate.
+    claim = await ctx.session.execute(
+        sa.update(ContactList)
+        .where(ContactList.id == list_id, ContactList.import_started_at.is_(None))
+        .values(import_started_at=datetime.now(timezone.utc))
+    )
+    if claim.rowcount != 1:
+        raise ConflictError("This list is already being imported")
+    await ctx.session.commit()
 
     list_import_svc.spawn_import(
         get_sessionmaker(),

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import sqlalchemy as sa
 import structlog
 
 log = structlog.get_logger("sweeper")
@@ -32,8 +33,57 @@ REPUTATION_TICK_INTERVAL_SECONDS = 3600
 #: above, same discipline (Opus review B4).
 SPEND_TICK_INTERVAL_SECONDS = 3600
 
+#: 8.18/4.15/6.19: arbitrary constant lock key, one per "the whole sweeper pass". Any
+#: int works for pg_try_advisory_lock - it just needs to be the SAME constant every call
+#: so concurrent workers contend on the identical lock.
+_SWEEPER_ADVISORY_LOCK_KEY = 872341995
+
 
 async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
+    """Acquires a Postgres advisory lock for the WHOLE pass before running it, so a
+    second sweeper worker/process cannot double-run the same pass concurrently - every
+    task below assumes it is the only writer claiming its own rows this tick. A worker
+    that loses the race skips this pass entirely (returns {}) rather than blocking -
+    the next scheduled tick tries again. Skipped entirely on SQLite (single-process
+    tests/dev only; pg_try_advisory_lock does not exist there)."""
+    from app.db.session import get_sessionmaker
+
+    lock_session = get_sessionmaker()()
+    is_postgres = False
+    try:
+        is_postgres = lock_session.get_bind().dialect.name == "postgresql"
+        if is_postgres:
+            got_lock = (
+                await lock_session.execute(
+                    sa.select(sa.func.pg_try_advisory_lock(_SWEEPER_ADVISORY_LOCK_KEY))
+                )
+            ).scalar_one()
+            if not got_lock:
+                log.info("sweeper_pass_skipped_locked")
+                return {}
+        return await _run_once_locked(app)
+    finally:
+        if is_postgres:
+            try:
+                await lock_session.execute(
+                    sa.select(sa.func.pg_advisory_unlock(_SWEEPER_ADVISORY_LOCK_KEY))
+                )
+            except Exception:
+                log.exception("sweeper_advisory_unlock_failed")
+                # D8: pg_try_advisory_lock is SESSION-level - if the unlock call itself
+                # failed, a plain close() would return this connection to the pool
+                # STILL HOLDING the lock, and the next borrower would silently inherit
+                # it (every future sweeper pass on that connection blocked/skipped
+                # forever). Invalidate so the underlying connection is discarded
+                # instead of pooled - the lock dies with it.
+                try:
+                    await lock_session.invalidate()
+                except Exception:
+                    log.exception("sweeper_advisory_lock_session_invalidate_failed")
+        await lock_session.close()
+
+
+async def _run_once_locked(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     """One pass. Each task gets its own session so one failure cannot poison the others."""
     from random import Random
 
@@ -68,7 +118,7 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
         try:
             async with get_sessionmaker()() as session:
                 results["media_fetched"] = await media_svc.fetch_pending_media(
-                    session, store, carrier=carrier
+                    session, store, carrier=carrier, registry=registry, settings=app.state.settings
                 )
         except Exception:
             log.exception("sweeper_media_fetch_failed")
@@ -80,7 +130,7 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
             try:
                 async with get_sessionmaker()() as session:
                     results["recordings_fetched"] = await recordings_svc.fetch_pending_recordings(
-                        session, store, registry
+                        session, store, registry, settings=app.state.settings
                     )
             except Exception:
                 log.exception("sweeper_recording_fetch_failed")
@@ -107,22 +157,44 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     if carrier is not None:
         try:
             async with get_sessionmaker()() as session:
+                # 2.3: dispatch each held row via ITS OWN carrier (registry), not
+                # unconditionally through the primary.
                 results["released"] = await messaging_svc.release_held_messages(
-                    session, carrier
+                    session, carrier, registry=registry, settings=app.state.settings
                 )
         except Exception:
             log.exception("sweeper_release_failed")
 
     try:
         async with get_sessionmaker()() as session:
-            results["reprocessed"] = await messaging_svc.reprocess_pending(session)
+            # 2.9: re-parse via the OWNING carrier adapter, selected from the registry.
+            results["reprocessed"] = await messaging_svc.reprocess_pending(
+                session, registry=registry
+            )
     except Exception:
         log.exception("sweeper_reprocess_failed")
+
+    try:
+        async with get_sessionmaker()() as session:
+            # 2.11: re-drive messages stranded in `queued` with no hold_until after a
+            # crash (added by the Area 2 batch; wiring it into the sweeper loop is this
+            # batch's job).
+            results["stale_queued_recovered"] = await messaging_svc.recover_stale_queued(
+                session, registry=registry, settings=app.state.settings
+            )
+    except Exception:
+        log.exception("sweeper_stale_queued_recovery_failed")
 
     # P11: the outbound campaign scheduler and the auto-dialer are ticks inside this same
     # loop (DR-6) - no new process, no Redis. Each gets its own session/try-except so a
     # failure in one can never poison the others, same discipline as every task above.
-    if carrier is not None:
+    # 6.18: gate on EITHER the env carrier OR a carrier registry object being present at
+    # all - outbound_tick resolves the actual per-campaign carrier itself (env, or a
+    # primed DB-backed org account via `registry`), so requiring the single env
+    # `carrier` here used to mean a DB-only deployment (no env carrier configured
+    # anywhere) could never send a single campaign even though every campaign's own org
+    # had a perfectly good provider account.
+    if carrier is not None or registry is not None:
         try:
             async with get_sessionmaker()() as session:
                 outbound_counts = await outbound_svc.outbound_tick(
@@ -142,6 +214,7 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
                     app.state.settings,
                     getattr(app.state, "event_bus", None),
                     Random(),
+                    registry=registry,
                 )
             results["dialer_connected"] = dial_counts.get("connected", 0)
         except Exception:

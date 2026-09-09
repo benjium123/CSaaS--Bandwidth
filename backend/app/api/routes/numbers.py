@@ -83,12 +83,66 @@ async def add_number(
     normalized = to_e164(payload.e164)
     registry = getattr(request.app.state, "carriers", None)
     carrier_name = payload.carrier or (registry.primary_name if registry else "") or "bandwidth"
+
+    # 4.5: a toll-free prefix always gates toll-free verification, regardless of a
+    # manually supplied (possibly wrong) number_type - TFV vs 10DLC is not a matter of
+    # operator say-so.
+    number_type = "tollfree" if normalized[:5] in _TOLLFREE_PREFIXES else payload.number_type
+
+    # 1.1: verify OWNERSHIP through the resolved carrier before accepting a manually
+    # entered number - otherwise any org can claim ANY e164 (including one another
+    # tenant already owns) and hijack its inbound traffic. Only asked when the resolved
+    # carrier can actually verify (a NumberProvider - B6 made lookup_owned_number a
+    # required Protocol member, so isinstance alone is enough now); a carrier that
+    # is not a NumberProvider at all (or none configured) falls back to the pre-1.1
+    # manual-add behaviour UNCHANGED - there is nothing more to check against.
+    carrier_obj = registry.get(carrier_name) if registry else None
+    # B1/4.21/E3: a caller-named carrier that cannot verify ownership - whether because
+    # the registry cannot resolve the name at all, OR because the name resolves to a
+    # real carrier that just isn't NumberProvider-capable (e.g. a voice-only adapter) -
+    # must never silently skip the ownership gate below. Either shape lets ANY org
+    # claim ANY e164 by naming a carrier OTHER than the deployment's real, verifiable
+    # one. Only applies when (a) the carrier was actually named by the caller, and (b)
+    # this deployment has SOME NumberProvider-capable carrier configured at all - a
+    # deployment with none (e.g. a LiveKit-only deploy where `carrier` is only ever a
+    # routing label, never a provisioning adapter) has nothing to verify against
+    # regardless of the name given, so the pre-1.1 manual-add fallback still applies.
+    has_verifiable_carrier = registry is not None and any(
+        isinstance(registry.get(name), numbers_api.NumberProvider) for name in registry.names()
+    )
+    if (
+        payload.carrier is not None
+        and not isinstance(carrier_obj, numbers_api.NumberProvider)
+        and has_verifiable_carrier
+    ):
+        if carrier_obj is None:
+            raise ValidationFailedError(
+                f"carrier {carrier_name!r} is not configured on this deployment"
+            )
+        raise ValidationFailedError(
+            f"carrier {carrier_name!r} does not support number ownership verification "
+            f"on this deployment"
+        )
+    if isinstance(carrier_obj, numbers_api.NumberProvider):
+        settings = request.app.state.settings
+        try:
+            owned = await carrier_obj.lookup_owned_number(normalized)
+        except Exception:
+            owned = None
+        if owned is False:
+            raise ValidationFailedError("number is not owned by this provider account")
+        if owned is None and not getattr(settings, "allow_unverified_number_add", False):
+            raise ValidationFailedError(
+                "cannot verify number ownership with this provider; enable "
+                "allow_unverified_number_add to accept"
+            )
+
     number = OrgNumber(
         id=uuid.uuid4(),
         org_id=ctx.org.id,
         e164=normalized,
         carrier=carrier_name,
-        number_type=payload.number_type,
+        number_type=number_type,
     )
     ctx.session.add(number)
     try:
@@ -279,6 +333,15 @@ async def order(
     provider = numbers_api.as_provider(carrier_obj)
     normalized = to_e164(payload.e164)
 
+    # 4.8: pre-check BEFORE ordering so an already-registered number never reaches the
+    # carrier at all - the common case that used to only surface as an orphaned purchase
+    # after the IntegrityError below.
+    existing = (
+        await ctx.session.execute(sa.select(OrgNumber.id).where(OrgNumber.e164 == normalized))
+    ).first()
+    if existing is not None:
+        raise ConflictError(f"{normalized} is already registered")
+
     result = await provider.order_number(normalized)
 
     # P18: only attribute the purchase to a provider_accounts row when THIS carrier
@@ -337,6 +400,13 @@ async def order(
         await ctx.session.commit()
     except IntegrityError as exc:
         await ctx.session.rollback()
+        # 4.8: the number was purchased at the carrier (a race lost the pre-check above)
+        # but could not be stored - release it there so it is not orphaned and billed
+        # forever. The conflict still wins the response either way.
+        try:
+            await carrier_obj.release_number(result.e164, result.provider_ref)
+        except Exception:
+            pass
         raise ConflictError(f"{result.e164} is already registered") from exc
     return await _out(ctx.session, number)
 

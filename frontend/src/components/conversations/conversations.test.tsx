@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { ConversationList } from "./ConversationList";
 import { Timeline } from "./Timeline";
 import { ContactPanel } from "./ContactPanel";
+import { ConversationHeader } from "./ConversationHeader";
 import { makeStubClient, renderWithProviders, type RouteStub } from "@/test/harness";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import type { Conversation, Inbox } from "@/api/conversations";
@@ -32,7 +33,7 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     last_event_type: "message",
     direction: "inbound",
     last_event_at: new Date().toISOString(),
-    unread: 0,
+    unread: false,
     status: "open",
     ...overrides,
   };
@@ -121,6 +122,173 @@ describe("ConversationList", () => {
       screen.getByText("You have no inbox access yet — ask an admin"),
     ).toBeInTheDocument();
   });
+
+  // Items 11/12/36: call-only conversations have no thread yet - two of them (distinct
+  // contacts, both thread_id: null) must render as two rows, not collide/dedupe on a
+  // shared React key, and a null direction must not blow up the icon.
+  it("renders two null-thread_id rows distinctly and a null direction neutrally", () => {
+    const client = makeStubClient({});
+    const items: Conversation[] = [
+      conversation({
+        thread_id: null,
+        contact_e164: "+19725550200",
+        snippet: "call only, no thread",
+        last_event_type: "call",
+        direction: null,
+      }),
+      conversation({
+        thread_id: null,
+        contact_e164: "+19725550201",
+        snippet: "also call only",
+        last_event_type: "call",
+        direction: null,
+      }),
+    ];
+    renderWithProviders(
+      <ConversationList
+        items={items}
+        selectedContactE164={null}
+        onSelect={() => {}}
+        tab="calls"
+        onTabChange={() => {}}
+        filter="open"
+        onFilterChange={() => {}}
+        q=""
+        onQChange={() => {}}
+        hasNextPage={false}
+        isFetchingNextPage={false}
+        isLoading={false}
+        onLoadMore={() => {}}
+      />,
+      client,
+    );
+
+    expect(screen.getByText("call only, no thread")).toBeInTheDocument();
+    expect(screen.getByText("also call only")).toBeInTheDocument();
+  });
+
+  // Item 2: Important filter chip + starred row indicator.
+  it("shows a star on important rows and toggles the Important filter chip", async () => {
+    const client = makeStubClient({});
+    const onFilterChange = vi.fn();
+    const items: Conversation[] = [
+      conversation({ important: true }),
+      conversation({ contact_e164: "+19725550200", contact: { id: "c2", display_name: "Bob Bond" } }),
+    ];
+    renderWithProviders(
+      <ConversationList
+        items={items}
+        selectedContactE164={null}
+        onSelect={() => {}}
+        tab="chats"
+        onTabChange={() => {}}
+        filter="open"
+        onFilterChange={onFilterChange}
+        q=""
+        onQChange={() => {}}
+        hasNextPage={false}
+        isFetchingNextPage={false}
+        isLoading={false}
+        onLoadMore={() => {}}
+      />,
+      client,
+    );
+
+    expect(screen.getAllByLabelText("Important")).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Important" }));
+    expect(onFilterChange).toHaveBeenCalledWith("important");
+  });
+
+  // Item 1: the "+ New" button and its New text message / New call menu.
+  it("opens the New menu and fires onNew for each option, and is disabled when canCompose is false", async () => {
+    const client = makeStubClient({});
+    const onNew = vi.fn();
+    const { rerender } = renderWithProviders(
+      <ConversationList
+        items={[]}
+        selectedContactE164={null}
+        onSelect={() => {}}
+        tab="chats"
+        onTabChange={() => {}}
+        filter="open"
+        onFilterChange={() => {}}
+        q=""
+        onQChange={() => {}}
+        hasNextPage={false}
+        isFetchingNextPage={false}
+        isLoading={false}
+        onLoadMore={() => {}}
+        onNew={onNew}
+        canCompose
+      />,
+      client,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "New" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "New text message" }));
+    expect(onNew).toHaveBeenCalledWith("message");
+
+    await userEvent.click(screen.getByRole("button", { name: "New" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "New call" }));
+    expect(onNew).toHaveBeenCalledWith("call");
+
+    rerender(
+      <ConversationList
+        items={[]}
+        selectedContactE164={null}
+        onSelect={() => {}}
+        tab="chats"
+        onTabChange={() => {}}
+        filter="open"
+        onFilterChange={() => {}}
+        q=""
+        onQChange={() => {}}
+        hasNextPage={false}
+        isFetchingNextPage={false}
+        isLoading={false}
+        onLoadMore={() => {}}
+        onNew={onNew}
+        canCompose={false}
+      />,
+    );
+    const disabledButton = screen.getByRole("button", { name: "New" });
+    expect(disabledButton).toBeDisabled();
+    expect(disabledButton).toHaveAttribute(
+      "title",
+      "Read-only inbox — you can view but not start new conversations",
+    );
+  });
+
+  // Item 6: the disabled tooltip must not claim "read-only" while we don't yet know
+  // whether the user can compose (inboxes query still in flight).
+  it("shows no tooltip on the disabled New button while canComposeLoading is true", () => {
+    const client = makeStubClient({});
+    renderWithProviders(
+      <ConversationList
+        items={[]}
+        selectedContactE164={null}
+        onSelect={() => {}}
+        tab="chats"
+        onTabChange={() => {}}
+        filter="open"
+        onFilterChange={() => {}}
+        q=""
+        onQChange={() => {}}
+        hasNextPage={false}
+        isFetchingNextPage={false}
+        isLoading={false}
+        onLoadMore={() => {}}
+        onNew={() => {}}
+        canCompose={false}
+        canComposeLoading
+      />,
+      client,
+    );
+    const newButton = screen.getByRole("button", { name: "New" });
+    expect(newButton).toBeDisabled();
+    expect(newButton).not.toHaveAttribute("title");
+  });
 });
 
 describe("Timeline", () => {
@@ -171,7 +339,12 @@ describe("Timeline", () => {
       },
     });
 
-    renderWithProviders(<Timeline contactE164="+19725550199" ourE164="+14694617576" />, client);
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Timeline contactE164="+19725550199" ourE164="+14694617576" />
+      </SoftphoneProvider>,
+      client,
+    );
 
     expect(await screen.findByText("hello")).toBeInTheDocument();
     expect(screen.getByText("Called you")).toBeInTheDocument();
@@ -184,7 +357,12 @@ describe("Timeline", () => {
       "/api/v1/conversations/%2B19725550199/timeline": { items: [], next_cursor: null },
     });
 
-    renderWithProviders(<Timeline contactE164="+19725550199" ourE164="+14694617576" />, client);
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Timeline contactE164="+19725550199" ourE164="+14694617576" />
+      </SoftphoneProvider>,
+      client,
+    );
 
     expect(await screen.findByText("No messages or calls yet")).toBeInTheDocument();
   });
@@ -212,7 +390,12 @@ describe("Timeline", () => {
       },
     });
 
-    renderWithProviders(<Timeline contactE164="+19725550199" ourE164="+14694617576" />, client);
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Timeline contactE164="+19725550199" ourE164="+14694617576" />
+      </SoftphoneProvider>,
+      client,
+    );
 
     expect(
       await screen.findByRole("button", { name: "Play recording" }),
@@ -274,7 +457,12 @@ describe("ContactPanel", () => {
   };
 
   function renderPanel(contactsStub: RouteStub | typeof baseContact) {
-    const client = makeStubClient({ "/api/v1/contacts/c1": contactsStub });
+    const client = makeStubClient({
+      // The more specific "/notes" route must be listed (and therefore matched) before
+      // the general "/api/v1/contacts/c1" one below - the stub matcher is startsWith-based.
+      "/api/v1/contacts/c1/notes": [],
+      "/api/v1/contacts/c1": contactsStub,
+    });
     renderWithProviders(
       <SoftphoneProvider>
         <ContactPanel conversation={conversation()} inbox={null} />
@@ -351,6 +539,130 @@ describe("ContactPanel", () => {
     // Still editing, with the user's typed value intact - the failed save never reverted
     // or silently discarded it.
     expect(screen.getByLabelText("Role")).toHaveValue("Manager");
+  });
+
+  // Item 3
+  it("lists existing notes and adds a new one via POST /contacts/{id}/notes", async () => {
+    const existingNote = {
+      id: "note-1",
+      body: "Called back, left voicemail",
+      author_user_id: "u1",
+      created_at: new Date().toISOString(),
+    };
+    const client = makeStubClient({
+      "/api/v1/contacts/c1/notes": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          const body = init.json as { body: string };
+          return { id: "note-2", body: body.body, author_user_id: "u1", created_at: new Date().toISOString() };
+        }
+        return [existingNote];
+      },
+      "/api/v1/contacts/c1": baseContact,
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <ContactPanel conversation={conversation()} inbox={null} />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    expect(await screen.findByText("Called back, left voicemail")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Add note"), "Sent the contract");
+    await userEvent.click(screen.getByRole("button", { name: "Add note" }));
+
+    await waitFor(() =>
+      expect(
+        client.calls.some(
+          (call) => call.path === "/api/v1/contacts/c1/notes" && call.init.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    const postCall = client.calls.find(
+      (call) => call.path === "/api/v1/contacts/c1/notes" && call.init.method === "POST",
+    );
+    expect(postCall?.init.json).toEqual({ body: "Sent the contract" });
+    // The composer clears once the note is saved.
+    await waitFor(() => expect(screen.getByLabelText("Add note")).toHaveValue(""));
+  });
+});
+
+describe("ConversationHeader", () => {
+  // Item 11/12
+  it("disables Close/Reopen for a call-only conversation with no thread yet", async () => {
+    const client = makeStubClient({});
+    renderWithProviders(
+      <SoftphoneProvider>
+        <ConversationHeader conversation={conversation({ thread_id: null })} />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await userEvent.click(screen.getByRole("button", { expanded: false }));
+    const toggleButton = await screen.findByRole("menuitem");
+    expect(toggleButton).toBeDisabled();
+    expect(toggleButton).toHaveAttribute(
+      "title",
+      "This conversation has no messages yet — nothing to close or reopen",
+    );
+  });
+
+  // Item 3: star toggle -> POST /api/v1/inbox/important-pair.
+  it("marks a conversation as important via the star toggle", async () => {
+    const client = makeStubClient({
+      "/api/v1/inbox/important-pair": () => undefined,
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <ConversationHeader conversation={conversation({ important: false })} />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark as important" }));
+
+    await waitFor(() =>
+      expect(
+        client.calls.some(
+          (call) =>
+            call.path === "/api/v1/inbox/important-pair" && call.init.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    const postCall = client.calls.find((call) => call.path === "/api/v1/inbox/important-pair");
+    expect(postCall?.init.json).toEqual({
+      our_e164: "+14694617576",
+      contact_e164: "+19725550199",
+      important: true,
+    });
+  });
+
+  it("disables the star toggle for a read-only (canSend=false) conversation", () => {
+    const client = makeStubClient({});
+    renderWithProviders(
+      <SoftphoneProvider>
+        <ConversationHeader conversation={conversation()} canSend={false} />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    expect(screen.getByRole("button", { name: "Mark as important" })).toBeDisabled();
+  });
+
+  it("shows an inline error and does not crash when the star toggle fails", async () => {
+    const client = makeStubClient({
+      "/api/v1/inbox/important-pair": () => new Error("not visible"),
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <ConversationHeader conversation={conversation({ important: false })} />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark as important" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("not visible");
   });
 });
 

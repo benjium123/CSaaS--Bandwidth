@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from typing import Any
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -197,14 +198,32 @@ def build_registry_for_org(
     for account in accounts:
         if account.status != "active" or account.provider not in PROVIDER_NAMES:
             continue
-        adapter = _construct_provider(
-            account.provider, settings_like_for(settings, account), settings
-        )
+        try:
+            adapter = _construct_provider(
+                account.provider, settings_like_for(settings, account), settings
+            )
+        except Exception:
+            # 4.3: one undecryptable/broken account (e.g. credentials_master_key
+            # rotated out from under a stored ciphertext) must not 503 EVERY request
+            # for this org - log, skip that account, and degrade to whatever else the
+            # org/env registry still has.
+            structlog.get_logger(__name__).warning(
+                "provider_account_skipped_undecryptable_or_invalid",
+                org_id=str(account.org_id),
+                provider=account.provider,
+                account_id=str(getattr(account, "id", "")),
+            )
+            continue
         if adapter is not None:
             carriers[account.provider] = adapter
             db_owned[account.provider] = adapter
 
-    primary = next((n for n in ("bandwidth", "telnyx", "signalwire") if n in carriers), "")
+    # 4.29: an explicit deployment preference wins over the fixed fallback order, when
+    # this org actually has that carrier available.
+    preferred = getattr(settings, "primary_provider", "")
+    primary = preferred if preferred in carriers else next(
+        (n for n in ("bandwidth", "telnyx", "signalwire") if n in carriers), ""
+    )
     registry = CarrierRegistry(carriers, primary=primary, health=env_registry.health)
     return registry, db_owned
 
@@ -232,16 +251,20 @@ def db_backed_providers(org_id: uuid.UUID) -> frozenset[str]:
     P18: read-only accessor over the same cache ``is_primed`` reads, so a route (e.g.
     ``POST /numbers/order``) can tell "this carrier object came from the org's P17
     provider account" apart from "this carrier object is the env-configured shared
-    one" WITHOUT re-deriving cache/TTL logic itself. Mirrors ``is_primed``'s own
-    freshness rule exactly: not cached, or past the TTL backstop, means "treat it as
-    env" - the same fallback ``CarrierRegistryProxy._resolve()`` takes in that case.
+    one" WITHOUT re-deriving cache/TTL logic itself.
+
+    B4: this must mirror ``CarrierRegistryProxy._resolve()`` exactly, not ``is_primed``
+    - an entry present here IS the same registry ``_resolve()`` (the actual dispatch
+    path) hands back to order/probe, TTL or not (see ``_resolve``'s own 4.18 comment on
+    why staleness is never a reason to fall back to env). Applying a stricter TTL only
+    here previously made this accessor diverge from ``_resolve()`` past the 300s
+    backstop: order/probe kept dispatching through the org's real DB-backed adapter
+    while this told the caller it was "env", silently mislabeling the attribution.
     """
     entry = _ORG_REGISTRY_CACHE.get((org_id, current_version(org_id)))
     if entry is None:
         return frozenset()
-    _registry, db_owned, cached_at = entry
-    if time.monotonic() - cached_at > _ORG_REGISTRY_TTL_SECONDS:
-        return frozenset()
+    _registry, db_owned, _cached_at = entry
     return frozenset(db_owned)
 
 
@@ -280,6 +303,12 @@ async def prime_org_registry(
     *,
     global_registry: CarrierRegistry | None = None,
 ) -> CarrierRegistry:
+    # 4.10: capture the version BEFORE loading accounts, and cache under that SAME
+    # captured version. A version bump (create/patch/probe/disable) racing this prime
+    # would otherwise let a cache entry keyed by a version fetched AFTER the query land
+    # under the NEW version while describing accounts read under the OLD one - a stale
+    # read masquerading as fresh.
+    version = current_version(org_id)
     rows = list(
         (
             await session.execute(
@@ -292,7 +321,7 @@ async def prime_org_registry(
         .all()
     )
     registry, db_owned = build_registry_for_org(settings, rows, global_registry=global_registry)
-    await _cache_org_registry(org_id, current_version(org_id), registry, db_owned)
+    await _cache_org_registry(org_id, version, registry, db_owned)
     return registry
 
 
@@ -328,10 +357,13 @@ class CarrierRegistryProxy:
         entry = _ORG_REGISTRY_CACHE.get((org_id, current_version(org_id)))
         if entry is None:
             return self._global_registry
-        registry, _db_owned, cached_at = entry
-        if time.monotonic() - cached_at > _ORG_REGISTRY_TTL_SECONDS:
-            return self._global_registry
-        return registry
+        # 4.18: an entry present here is still THIS org's registry, even past the TTL
+        # backstop - `is_primed()` (app/auth/deps.py, run before every authenticated
+        # request) is what enforces the TTL and re-primes; falling back to the global
+        # env registry here on mere staleness would send a DB-only org's traffic
+        # through env credentials it may not even have, or worse, another env-configured
+        # carrier entirely.
+        return entry[0]
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._resolve(), name)

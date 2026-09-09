@@ -22,6 +22,24 @@ from app.services import credentials as credential_svc
 
 log = structlog.get_logger("sweeper.number_orders")
 
+#: 4.14: a permanently-stuck order (never COMPLETE, never FAILED at the carrier) must
+#: not be polled forever.
+MAX_POLL_ATTEMPTS = 200
+
+#: 4.14: round-robin cursor across ticks - a single process-lifetime counter is enough
+#: (the sweeper is one process; mirrors the module-level cache pattern
+#: providers/registry_org.py already uses). Without rotation, the SAME org (whichever
+#: sorts first) would consume the whole per-pass `limit` on every single tick, starving
+#: every other org's pending orders out indefinitely.
+_ORG_ROUND_ROBIN_CURSOR = 0
+
+
+def _rotate(org_ids: list, cursor: int) -> list:
+    if not org_ids:
+        return org_ids
+    offset = cursor % len(org_ids)
+    return org_ids[offset:] + org_ids[:offset]
+
 
 def _pollable_carrier_names(carriers: object) -> list[str]:
     """Provider names whose adapter (as resolved by `carriers` RIGHT NOW - which, for a
@@ -55,14 +73,24 @@ async def poll_pending_number_orders(
 
     # List orgs first without tenant context (this query deliberately crosses tenants only
     # to enumerate them; actual row processing below is org-scoped).
-    org_ids = (
-        await session.execute(
-            sa.select(OrgNumber.org_id)
-            .where(OrgNumber.status == "pending", OrgNumber.provider_ref.is_not(None))
-            .distinct()
-            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    org_ids = list(
+        (
+            await session.execute(
+                sa.select(OrgNumber.org_id)
+                .where(OrgNumber.status == "pending", OrgNumber.provider_ref.is_not(None))
+                .distinct()
+                .order_by(OrgNumber.org_id)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
+    # 4.14: rotate the starting org each pass so one org's large backlog cannot starve
+    # every other org out of the shared per-pass `limit` forever.
+    global _ORG_ROUND_ROBIN_CURSOR  # noqa: PLW0603
+    org_ids = _rotate(org_ids, _ORG_ROUND_ROBIN_CURSOR)
+    _ORG_ROUND_ROBIN_CURSOR += 1
 
     polled = 0
     for org_id in org_ids:
@@ -146,6 +174,24 @@ async def poll_pending_number_orders(
                     continue
 
                 polled += 1
+                number.order_poll_attempts = (number.order_poll_attempts or 0) + 1
+                if number.order_poll_attempts > MAX_POLL_ATTEMPTS:
+                    # 4.14: a permanently-stuck order must stop being retried forever.
+                    number.status = "failed"
+                    number.is_active = False
+                    number.order_detail = (
+                        f"Gave up polling after {number.order_poll_attempts} attempts"
+                    )[:512]
+                    try:
+                        await session.commit()
+                    except Exception:
+                        log.exception(
+                            "number_order_commit_failed",
+                            e164=number.e164,
+                            provider_ref=number.provider_ref,
+                        )
+                        await session.rollback()
+                    continue
                 try:
                     result = await provider.order_status(number.provider_ref)
                 except Exception:
@@ -155,7 +201,11 @@ async def poll_pending_number_orders(
                         provider_ref=number.provider_ref,
                     )
                     # Do not raise out of the loop: one bad carrier response must not kill
-                    # the whole sweeper pass.
+                    # the whole sweeper pass. Still persist the attempt count.
+                    try:
+                        await session.commit()
+                    except Exception:
+                        await session.rollback()
                     continue
 
                 status = getattr(result, "status", None)

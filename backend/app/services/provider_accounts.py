@@ -235,7 +235,11 @@ async def create_account(
         existing.last_probe_at = None
         existing.last_probe_detail = None
         existing.created_by = actor_user_id
-        bump_version(org_id)
+        # 4.11: bump_version moved to the ROUTE, AFTER commit - bumping here (before the
+        # caller's commit) lets a concurrent request observe the new version and prime a
+        # registry off a row that is not yet durable, then cache that prime under a
+        # version number the eventual commit (or rollback) never actually produced.
+        _invalidate_webhook_account_cache(provider)
         return existing
 
     account = ProviderAccount(
@@ -248,7 +252,7 @@ async def create_account(
         created_by=actor_user_id,
     )
     session.add(account)
-    bump_version(org_id)
+    _invalidate_webhook_account_cache(provider)
     return account
 
 
@@ -268,17 +272,20 @@ async def update_account(
         stored = credential_svc.decrypt(settings, account.credentials_encrypted)
         merged = {**stored, **cleaned}
         account.credentials_encrypted = credential_svc.encrypt(settings, merged)
+        # 4.12: new credentials are unverified until probed - PATCHing creds must never
+        # silently keep an "active" status the OLD credentials earned.
+        account.status = "unverified"
+        account.last_probe_at = None
+        account.last_probe_detail = None
 
-    if account.org_id is not None:
-        bump_version(account.org_id)
+    # 4.11: bump_version moved to the ROUTE, after commit - see create_account.
     _invalidate_webhook_account_cache(account.provider)
     return account
 
 
 async def disable_account(session: AsyncSession, account: ProviderAccount) -> ProviderAccount:
     account.status = "disabled"
-    if account.org_id is not None:
-        bump_version(account.org_id)
+    # 4.11: bump_version moved to the ROUTE, after commit - see create_account.
     _invalidate_webhook_account_cache(account.provider)
     return account
 
@@ -359,7 +366,8 @@ async def probe_account(
     account.last_probe_detail = (result.detail or "")[:512]
     account.status = "active" if result.ok else "failed"
 
-    if account.org_id is not None:
-        bump_version(account.org_id)
+    # 4.11: bump_version moved to the ROUTE, after commit - see create_account. (Not
+    # part of the original draft for this function, but the same TOCTOU applies here
+    # identically, so it gets the same fix for consistency.)
     _invalidate_webhook_account_cache(account.provider)
     return account

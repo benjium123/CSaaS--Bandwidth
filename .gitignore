@@ -3,6 +3,11 @@
 .env.*
 !.env.example
 
+# D5: rendered from deploy/livekit/*.yaml.tpl by deploy.sh (carries CSAAS_REDIS_PASSWORD)
+# - never commit the rendered file, only the .tpl.
+deploy/livekit/livekit.yaml
+deploy/livekit/sip.yaml
+
 # python
 __pycache__/
 *.py[cod]

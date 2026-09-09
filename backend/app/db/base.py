@@ -120,6 +120,7 @@ def _guard_cross_tenant_writes(session: Session, flush_context: Any, instances: 
 
     pending = [o for o in session.new if isinstance(o, TenantScoped)]
     changed = [o for o in session.dirty if isinstance(o, TenantScoped)]
+    deleted = [o for o in session.deleted if isinstance(o, TenantScoped)]
 
     for obj in pending + changed:
         if ctx is None:
@@ -133,5 +134,17 @@ def _guard_cross_tenant_writes(session: Session, flush_context: Any, instances: 
         elif obj_org != ctx:
             raise MissingTenantContextError(
                 f"Refusing cross-tenant write: {type(obj).__name__}.org_id={obj_org} "
+                f"but the session is scoped to org {ctx}."
+            )
+
+    for obj in deleted:
+        if ctx is None:
+            raise MissingTenantContextError(
+                f"Refusing to delete {type(obj).__name__} with no org context on the session."
+            )
+        obj_org = getattr(obj, "org_id", None)
+        if obj_org is not None and obj_org != ctx:
+            raise MissingTenantContextError(
+                f"Refusing cross-tenant delete: {type(obj).__name__}.org_id={obj_org} "
                 f"but the session is scoped to org {ctx}."
             )

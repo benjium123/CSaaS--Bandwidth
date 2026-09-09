@@ -1,0 +1,83 @@
+# Full dependency lock (8.23). D12: the original freeze came from a Windows .venv, which
+# is wrong for this Dockerfile (python:3.12-slim/Linux) in two ways - uvloop is
+# conditionally excluded by uvicorn[standard]'s Windows marker (sys_platform != 'win32'),
+# so it never showed up in a Windows `pip freeze` despite always installing in the Linux
+# container; and colorama (a Windows-console-only shim pytest/click pull in) has no
+# business in the lock at all. Also strips dev/test-only tooling (pytest, pytest-asyncio,
+# pytest-cov, coverage, mypy, ruff) that the prod image never runs, to keep the image
+# smaller and the lock scoped to what actually ships.
+#
+# Correct regen procedure (needs Docker): build the image, then freeze *inside* it -
+#   docker compose -f deploy/docker-compose.prod.yml build api
+#   docker compose -f deploy/docker-compose.prod.yml run --rm --no-deps api \
+#       pip freeze > backend/requirements.lock
+# then re-add this header comment (pip freeze overwrites it) and re-strip the dev/test
+# packages pulled in by `pip install -e .[dev]` if that's how the image was built.
+#
+# uvloop==0.22.1 below was hand-added (Docker was unavailable when this fix was made) -
+# it is the newest release satisfying uvicorn[standard]'s `uvloop>=0.15.1` marker as of
+# 2026-09-04 (checked via `pip index versions uvloop`). Verify against a real
+# `pip freeze` inside the Linux image next time Docker is available, in case a newer
+# uvloop has shipped since.
+aiosqlite==0.22.1
+alembic==1.19.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+ast_serialize==0.8.0
+async-timeout==5.0.1
+asyncpg==0.31.0
+backports.asyncio.runner==1.2.0
+bcrypt==5.0.0
+certifi==2026.7.22
+cffi==2.1.1
+click==8.4.2
+cryptography==50.0.1
+dnspython==2.8.0
+ecdsa==0.19.2
+email-validator==2.3.0
+et_xmlfile==2.0.0
+exceptiongroup==1.3.1
+fastapi==0.141.1
+greenlet==3.5.5
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.19
+iniconfig==2.3.0
+librt==0.15.0
+Mako==1.4.1
+MarkupSafe==3.0.3
+openpyxl==3.1.5
+packaging==26.3
+pathspec==1.1.1
+phonenumbers==9.0.37
+pluggy==1.6.0
+pyasn1==0.6.4
+pycparser==3.0
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pydantic_core==2.46.4
+Pygments==2.21.0
+PyJWT==2.13.0
+PyOTP==2.10.0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+PyYAML==6.0.3
+redis==8.1.0
+rsa==4.9.1
+six==1.17.0
+SQLAlchemy==2.0.52
+starlette==1.6.0
+structlog==26.1.0
+tomli==2.4.1
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.3
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==16.1.1

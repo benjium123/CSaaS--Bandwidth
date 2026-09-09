@@ -197,6 +197,9 @@ async def test_rollup_math_idempotent_and_summary_equals_daily(client, session):
             status="completed",
             duration_seconds=61,
             created_at=start,
+            # Bugfix ledger 4.16: spend now buckets voice by ended_at (matching
+            # services/usage.py's own bucketing), not created_at.
+            ended_at=start,
         )
     )
     session.add(
@@ -210,6 +213,7 @@ async def test_rollup_math_idempotent_and_summary_equals_daily(client, session):
             status="completed",
             duration_seconds=0,
             created_at=start,
+            ended_at=start,
         )
     )
     await session.commit()
@@ -779,6 +783,8 @@ async def test_rollup_inbound_call_voice_minutes(client, session):
             id=uuid.uuid4(), org_id=org_id, direction="inbound", contact_e164="+19725550101",
             our_e164="+12145550100", carrier="telnyx", status="completed",
             duration_seconds=130, created_at=start,
+            # Bugfix ledger 4.16: spend now buckets voice by ended_at.
+            ended_at=start,
         )
     )
     await session.commit()

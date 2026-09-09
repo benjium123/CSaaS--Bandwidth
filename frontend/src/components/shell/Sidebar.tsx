@@ -61,9 +61,20 @@ const INBOXES_OPEN_KEY = "csaas.sidebar.inboxes.open";
 const MORE_OPEN_KEY = "csaas.sidebar.more.open";
 
 function useSectionCollapse(key: string): [boolean, (open: boolean) => void] {
-  const [open, setOpen] = React.useState<boolean>(() => localStorage.getItem(key) !== "false");
+  const [open, setOpen] = React.useState<boolean>(() => {
+    try {
+      return localStorage.getItem(key) !== "false";
+    } catch {
+      // Private mode / storage disabled - default to open rather than crashing the shell.
+      return true;
+    }
+  });
   React.useEffect(() => {
-    localStorage.setItem(key, String(open));
+    try {
+      localStorage.setItem(key, String(open));
+    } catch {
+      /* private mode - the collapsed state simply won't persist */
+    }
   }, [key, open]);
   return [open, setOpen];
 }

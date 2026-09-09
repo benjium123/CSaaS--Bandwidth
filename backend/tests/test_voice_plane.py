@@ -404,7 +404,10 @@ async def test_create_call_bad_via_value_is_422(app_with_room_calls):
     assert r.status_code == 422
 
 
-async def test_create_call_via_room_livekit_rejection_returns_201_with_failed_status(engine):
+async def test_create_call_via_room_livekit_rejection_returns_502(engine):
+    """Bugfix ledger 3.22: a create_room failure previously still returned 201 with
+    status "failed" - callers had no reliable signal the call never got a room. Now the
+    route returns 502 with the LiveKit error detail instead of reporting success."""
     settings = make_livekit_settings(
         bandwidth_webhook_username=WEBHOOK_USER, bandwidth_webhook_password=WEBHOOK_PASS
     )
@@ -425,8 +428,8 @@ async def test_create_call_via_room_livekit_rejection_returns_201_with_failed_st
         )
         h = auth_headers(token, org["id"])
         r = await client.post("/api/v1/calls", json={"to": THEIRS, "via": "room"}, headers=h)
-        assert r.status_code == 201, r.text
-        assert r.json()["status"] == "failed"
+        assert r.status_code == 502, r.text
+        assert r.json()["error"]["code"] == "livekit_room_create_failed"
     await lk_client.aclose()
 
 
@@ -563,6 +566,21 @@ async def test_answer_call_publishes_handoff_claimed_for_the_org(app_with_room_c
         extra={"via": "livekit", "room": "call-sip-claim"},
     )
     session.add(call)
+    await session.flush()
+    # Bugfix ledger 3.3/3.4: answer_call now advances the active leg (conditional claim)
+    # rather than being a no-op on the leg table - a room call needs one to answer.
+    session.add(
+        CallLeg(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            call_id=call.id,
+            provider_call_id=f"lk-{call.id}",
+            to_e164=OUR,
+            from_e164=THEIRS,
+            status="ringing",
+            reason="original",
+        )
+    )
     await session.commit()
 
     bus = application.state.event_bus

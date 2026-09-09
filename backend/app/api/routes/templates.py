@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.deps import OrgContext, require_permission
-from app.errors import ConflictError, NotFoundError, ValidationFailedError
+from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import Contact, MessageTemplate
 from app.services import templates as tmpl
 
@@ -91,6 +91,11 @@ async def render_template(
     payload: RenderIn,
     ctx: Annotated[OrgContext, Depends(require_permission("templates:read"))],
 ) -> dict:
+    # 5.13: rendering for a contact reads contact PII (name, attributes) into the
+    # response body. templates:read alone let a caller with no contacts access at all
+    # read it back through this route.
+    if not ctx.role.grants("contacts:read"):
+        raise PermissionDeniedError("Rendering for a contact also requires contacts:read")
     row = await ctx.session.get(MessageTemplate, template_id)
     if row is None:
         raise NotFoundError("Template not found")

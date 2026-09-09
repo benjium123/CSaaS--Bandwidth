@@ -137,6 +137,25 @@ def test_telnyx_recording_auth_is_always_none():
 
 
 # ---------------------------------------------------------------------------------
+# B2: twilio/plivo recording hosts must be allowlisted (previously missing entirely,
+# so every Twilio/Plivo recording failed "host not allowlisted").
+# ---------------------------------------------------------------------------------
+def test_twilio_recording_host_is_allowlisted():
+    from app.services.recordings import _recording_host_allowed
+
+    assert _recording_host_allowed("twilio", "https://api.twilio.com/rec/x.mp3") is True
+    assert _recording_host_allowed("twilio", "https://evil.example.com/x.mp3") is False
+
+
+def test_plivo_recording_host_is_allowlisted():
+    from app.services.recordings import _recording_host_allowed
+
+    # Matches providers/plivo/voice.py::recording_auth's own host check.
+    assert _recording_host_allowed("plivo", "https://media.plivo.com/rec/x.mp3") is True
+    assert _recording_host_allowed("plivo", "https://evil.example.com/x.mp3") is False
+
+
+# ---------------------------------------------------------------------------------
 # F6: the webhook path does NO network I/O - it only upserts a pending row
 # ---------------------------------------------------------------------------------
 async def test_webhook_upserts_pending_recording_with_zero_http_calls(
@@ -283,7 +302,11 @@ async def test_recording_fetch_sends_no_credentials_when_carrier_declines(
         event_type="recording_ready",
         provider_call_id=leg.provider_call_id,
         provider_event_id="rec-evt-2",
-        recording_url="https://recordings.telnyx.com/abc.wav",
+        # Bugfix ledger 3.25: the recording host must be allowlisted for the call's
+        # ACTUAL carrier (bandwidth, from the app_with_voice_carrier fixture) - the
+        # telnyx-shaped host this test used to use is unrelated to what's under test
+        # here (recording_auth() declining to hand back credentials).
+        recording_url="https://voice.bandwidth.com/abc.wav",
         provider_recording_id="rec-def",
     )
     await _seed_pending_recording(session, call, leg, event)

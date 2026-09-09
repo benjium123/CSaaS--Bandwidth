@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -54,8 +54,12 @@ def _appointment_out(a: Appointment) -> AppointmentOut:
 async def list_appointments(
     ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
     status: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ) -> list[AppointmentOut]:
-    rows = await agent_svc.list_appointments(ctx.session, ctx.org.id, status=status)
+    rows = await agent_svc.list_appointments(
+        ctx.session, ctx.org.id, status=status, limit=limit, offset=offset
+    )
     return [_appointment_out(a) for a in rows]
 
 
@@ -85,7 +89,9 @@ async def patch_appointment(
 # ==================================================================================
 class KbDocumentIn(BaseModel):
     title: str = Field(min_length=1, max_length=255)
-    text: str = Field(min_length=1)
+    # 6.13: an unbounded document body chunks into an unbounded number of KbChunk rows
+    # and costs an unbounded amount of work in kb.chunk_text/create_document.
+    text: str = Field(min_length=1, max_length=1_000_000)
 
 
 class KbDocumentOut(BaseModel):

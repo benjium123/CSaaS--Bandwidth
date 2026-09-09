@@ -850,6 +850,11 @@ class _FakeNumberCarrier:
     async def release_number(self, e164: str, provider_ref: str | None = None) -> None:
         self.released.append((e164, provider_ref))
 
+    async def lookup_owned_number(self, e164: str) -> bool | None:
+        # B6: required NumberProvider Protocol member now that isinstance() alone
+        # gates the 1.1 ownership check - not exercised by the order route itself.
+        return True
+
 
 @dataclass
 class _FakeNumberCarrierPollable(_FakeNumberCarrier):
@@ -1728,10 +1733,13 @@ async def test_poll_pending_number_orders_primes_and_scopes_db_backed_carriers(
     assert by_ref["order-b-1"].org_id == org_b
 
 
-async def test_db_backed_providers_ttl_expiry_returns_empty(monkeypatch):
-    """P18 review item (g): db_backed_providers must mirror is_primed's own freshness
-    rule - once the cache entry is older than the TTL backstop, it is treated exactly
-    like "never primed" (empty set), not stale-but-trusted."""
+async def test_db_backed_providers_ttl_expiry_still_returns_the_provider(monkeypatch):
+    """B4 (supersedes P18 review item (g)): db_backed_providers must mirror
+    CarrierRegistryProxy._resolve() exactly, not is_primed - an entry present here is
+    still authoritative past the TTL backstop, same as _resolve()'s own 4.18 fix.
+    Applying a stricter TTL only here previously made order/probe (which dispatches via
+    _resolve()) keep using the org's real DB-backed adapter while this told the caller
+    it was "env", a mislabeled attribution divergence."""
     from app.providers import registry_org as registry_org_module
 
     org_id = uuid.uuid4()
@@ -1751,7 +1759,8 @@ async def test_db_backed_providers_ttl_expiry_returns_empty(monkeypatch):
         0.0,  # time.monotonic() started long before this, so this always reads as expired
     )
 
-    assert registry_org_module.db_backed_providers(org_id) == frozenset()
+    # Still authoritative: entry presence, not freshness, is what matters here now.
+    assert registry_org_module.db_backed_providers(org_id) == frozenset({"telnyx"})
 
     # Cleanup: this module-level cache persists across tests in the same process.
     registry_org_module._ORG_REGISTRY_CACHE.pop((org_id, 0), None)

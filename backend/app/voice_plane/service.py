@@ -71,8 +71,8 @@ SIP_IDENTITY_PREFIX = "sip-"
 _DIAL_TASKS: set[asyncio.Task] = set()
 
 
-def _spawn_dial_task(coro) -> asyncio.Task:  # noqa: ANN001
-    task = asyncio.create_task(coro)
+def _spawn_dial_task(coro, name: str = "") -> asyncio.Task:  # noqa: ANN001
+    task = asyncio.create_task(coro, name=name)
     _DIAL_TASKS.add(task)
     task.add_done_callback(_DIAL_TASKS.discard)
     return task
@@ -82,6 +82,16 @@ async def wait_for_pending_dial_tasks() -> None:
     """Test-only hook: await every in-flight background outbound-dial task deterministically
     instead of sleeping. Safe to call with nothing pending."""
     pending = list(_DIAL_TASKS)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def wait_for_pending_dial_task(call_id: uuid.UUID) -> None:
+    """3.9: await only the background dial task for ONE call, by name, instead of the
+    global set - a caller awaiting its own dial must not block on (or race) every other
+    concurrently in-flight dial task."""
+    name = f"dial-{call_id}"
+    pending = [t for t in _DIAL_TASKS if t.get_name() == name]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 
@@ -183,7 +193,8 @@ async def start_room_call(
                 to=to,
                 from_e164=from_e164,
                 sip_identity=sip_identity,
-            )
+            ),
+            name=f"dial-{call.id}",
         )
 
     token = mint_access_token(
@@ -192,6 +203,7 @@ async def start_room_call(
         identity=identity,
         name=name,
         room=room,
+        ttl_seconds=120,
     )
     return call, leg, room, token
 
@@ -206,6 +218,11 @@ _NO_ANSWER_MESSAGE_MARKERS = ("timeout", "no answer", "no-answer", "ring")
 def _dial_error_leg_status(exc: LiveKitApiError) -> tuple[str, str]:
     """(leg terminal status, hangup_cause) for a failed wait_until_answered dial."""
     message = str(exc).lower()
+    # 3.16: status 0 means the exception came from a TRANSPORT failure (httpx.HTTPError
+    # in livekit_api.py's _post), never a real Twirp response from LiveKit - it must
+    # never be classified as a semantic "no answer".
+    if exc.status == 0:
+        return "failed", ""
     if any(marker in message for marker in _NO_ANSWER_MESSAGE_MARKERS):
         return "hungup", "no_answer"
     return "failed", ""
@@ -520,7 +537,24 @@ async def _create_inbound_room_call(
     participant's real SIP call id (``attributes["sip.callID"]``), never derived from the
     room name (B3+7) - callers must have already refused a participant without one."""
     attributes = participant.get("attributes") or {}
-    trunk_number = attributes.get("sip.trunkPhoneNumber") or ""
+    # 3.8: `sip.trunkPhoneNumber` is not always present/normalized - fall back to
+    # `sip.callTo` and normalize whichever we got so an exact-match OrgNumber lookup
+    # below doesn't miss on formatting alone.
+    raw_trunk_number = (
+        attributes.get("sip.trunkPhoneNumber") or attributes.get("sip.callTo") or ""
+    )
+    trunk_number = ""
+    if raw_trunk_number:
+        try:
+            from app.api.routes.numbers import to_e164
+
+            trunk_number = to_e164(raw_trunk_number) or raw_trunk_number
+        except Exception:  # noqa: BLE001 - webhook path: malformed number -> fallback
+            log.warning(
+                "livekit_inbound_trunk_number_normalization_failed",
+                raw_trunk_number=raw_trunk_number,
+            )
+            trunk_number = raw_trunk_number
     contact_number = attributes.get("sip.phoneNumber") or ""
 
     org_number = (

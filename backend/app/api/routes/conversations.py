@@ -100,6 +100,7 @@ class ConversationItem(BaseModel):
     unread: bool
     contact: ConversationContact | None
     status: str
+    important: bool
 
 
 class ConversationListResponse(BaseModel):
@@ -166,6 +167,13 @@ class TimelineResponse(BaseModel):
 # ----------------------------------------------------------------------------------
 # Pure helpers
 # ----------------------------------------------------------------------------------
+def _escape_like(s: str) -> str:
+    """Escape LIKE metacharacters so a caller-supplied `q` cannot smuggle its own
+    wildcards into the pattern (5.9). Backslash first - escaping % and _ before it would
+    double-escape a literal backslash already present in the input."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _latest_message_by_thread(messages: list[Message]) -> dict[uuid.UUID, Message]:
     result: dict[uuid.UUID, Message] = {}
     for msg in messages:
@@ -326,7 +334,9 @@ async def list_conversations(
     tab: str = Query("chats", pattern="^(chats|calls)$"),
     # Named `filter_` internally so it never shadows the `filter` builtin; the wire
     # param name (`?filter=`) is unchanged via `alias` (P16 Opus review point 12).
-    filter_: str = Query("open", alias="filter", pattern="^(open|unread|unresponded|all)$"),
+    filter_: str = Query(
+        "open", alias="filter", pattern="^(open|unread|unresponded|all|important)$"
+    ),
     q: str | None = None,
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     cursor: str | None = None,
@@ -410,18 +420,23 @@ async def list_conversations(
                 MessageThread.last_read_at < MessageThread.last_message_at,
             ),
         )
+    elif filter_ == "important":
+        # SQL-side, like the unread candidate filter above: a call-only pair has no
+        # MessageThread row at all, so it is never important (nothing here can flip it
+        # to important) - excluded by definition once thread_stmt is restricted.
+        thread_stmt = thread_stmt.where(MessageThread.is_important.is_(True))
     if q:
         # Same substring-match semantics as the Python q check below (contacts.py's
         # list_contacts uses this identical lower()/like() pattern), just pushed to SQL.
-        needle = f"%{q.strip().lower()}%"
+        needle = f"%{_escape_like(q.strip().lower())}%"
         matching_contact_e164s = (
             sa.select(ContactPhone.e164)
             .join(Contact, Contact.id == ContactPhone.contact_id)
-            .where(sa.func.lower(Contact.display_name).like(needle))
+            .where(sa.func.lower(Contact.display_name).like(needle, escape="\\"))
         )
         thread_stmt = thread_stmt.where(
             sa.or_(
-                sa.func.lower(MessageThread.contact_e164).like(needle),
+                sa.func.lower(MessageThread.contact_e164).like(needle, escape="\\"),
                 MessageThread.contact_e164.in_(matching_contact_e164s),
             )
         )
@@ -558,6 +573,7 @@ async def list_conversations(
             "snippet": _message_snippet(msg),
             "unread": unread,
             "status": thread.status,
+            "important": thread.is_important,
             "thread": thread,
             "latest_msg": msg,
             "latest_call": None,
@@ -574,15 +590,25 @@ async def list_conversations(
     extra_threads_by_key: dict[tuple[str, str], MessageThread] = {}
     missing_keys = [key for key in latest_call_by_pair if key not in pairs]
     if missing_keys:
-        missing_our = {key[0] for key in missing_keys}
-        missing_contact = {key[1] for key in missing_keys}
-        missing_keys_set = set(missing_keys)
+        # 5.18: an IN(our_e164) x IN(contact_e164) query is a CARTESIAN cross of both
+        # sets - it can match a thread sharing only one half of a key (our_e164 A with
+        # some OTHER contact, or contact_e164 B on some OTHER number), pulled in by the
+        # post-filter below only to be thrown away, and the candidate set it scans grows
+        # quadratically with the number of distinct numbers/contacts involved. Query the
+        # exact (our_e164, contact_e164) pairs instead.
         candidate_threads = list(
             (
                 await ctx.session.execute(
                     sa.select(MessageThread).where(
-                        MessageThread.our_e164.in_(missing_our),
-                        MessageThread.contact_e164.in_(missing_contact),
+                        sa.or_(
+                            *(
+                                sa.and_(
+                                    MessageThread.our_e164 == our_e164,
+                                    MessageThread.contact_e164 == contact_e164,
+                                )
+                                for our_e164, contact_e164 in missing_keys
+                            )
+                        )
                     )
                 )
             )
@@ -590,9 +616,7 @@ async def list_conversations(
             .all()
         )
         extra_threads_by_key = {
-            (t.our_e164, t.contact_e164): t
-            for t in candidate_threads
-            if (t.our_e164, t.contact_e164) in missing_keys_set
+            (t.our_e164, t.contact_e164): t for t in candidate_threads
         }
 
     for (our_e164, contact_e164), call in latest_call_by_pair.items():
@@ -630,6 +654,9 @@ async def list_conversations(
                 "snippet": snippet,
                 "unread": call_unread,
                 "status": base_status,
+                # Call-only pairs (thread_for_pair is None) are never important - there
+                # is no thread row to hold the star.
+                "important": thread_for_pair.is_important if thread_for_pair else False,
                 "thread": thread_for_pair,
                 "latest_msg": None,
                 "latest_call": call,
@@ -673,6 +700,8 @@ async def list_conversations(
             continue
         if filter_ == "unresponded" and not _is_unresponded(pair):
             continue
+        if filter_ == "important" and not pair["important"]:
+            continue
 
         contact_obj = contact_by_e164.get(pair["contact_e164"])
         if q:
@@ -701,6 +730,7 @@ async def list_conversations(
                 if contact_obj
                 else None,
                 status=pair["status"],
+                important=pair["important"],
             )
         )
 

@@ -128,7 +128,11 @@ class TelnyxNumberProviderMixin:
         order_status = str(data.get("status") or "").lower()
         return OrderResult(
             e164=str(entry.get("phone_number") or e164),
-            provider_ref=str(entry.get("id") or data.get("id") or ""),
+            # 4.4: always store the ORDER id here (never the phone-number entry's own
+            # id) - order_status polls this id, and release_number below always
+            # resolves the phone-number id fresh via an e164 lookup instead of trusting
+            # a stored ref that might be either kind of id.
+            provider_ref=str(data.get("id") or ""),
             # Report what the carrier SAID. Assuming "active" on a pending order means
             # inbound is silently dropped until it really provisions.
             status="active" if order_status == "success" else "pending",
@@ -170,24 +174,49 @@ class TelnyxNumberProviderMixin:
             )
         return OrderStatusResult(status="pending", detail=detail or raw_status or "pending")
 
-    async def release_number(self, e164: str, provider_ref: str | None = None) -> None:
+    async def lookup_owned_number(self, e164: str) -> bool | None:
+        """1.1: does THIS Telnyx account currently own e164? None when the API could not
+        be asked at all (transport error / non-200) - the caller treats that as
+        unverifiable, never as a silent "yes"."""
         client = await self._get_client()
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        ref = provider_ref
-        if not ref:
+        try:
+            resp = await client.get(
+                f"{self.base_url}/phone_numbers",
+                params={"filter[phone_number]": e164},
+                headers=headers,
+            )
+        except httpx.TransportError:
+            return None
+        if resp.status_code != 200:
+            return None
+        data = (resp.json() or {}).get("data") or []
+        return bool(data)
+
+    async def release_number(self, e164: str, provider_ref: str | None = None) -> None:
+        # 4.4: provider_ref (when set) is the ORDER id, never the phone-number id the
+        # delete endpoint needs - always resolve the phone-number id fresh via e164.
+        client = await self._get_client()
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        try:
             lookup = await client.get(
                 f"{self.base_url}/phone_numbers",
                 params={"filter[phone_number]": e164},
                 headers=headers,
             )
-            if lookup.status_code == 200:
-                data = (lookup.json() or {}).get("data") or []
-                if data and isinstance(data[0], dict):
-                    ref = str(data[0].get("id") or "")
-        if not ref:
+        except httpx.TransportError as exc:
+            raise FeatureUnavailableError(f"Telnyx unreachable: {exc}") from exc
+        if lookup.status_code != 200:
+            raise FeatureUnavailableError(f"Telnyx lookup failed with {lookup.status_code}")
+        data = (lookup.json() or {}).get("data") or []
+        if not data or not isinstance(data[0], dict):
             raise ValidationFailedError(f"Telnyx does not report owning {e164}")
+        ref = str(data[0].get("id") or "")
 
-        resp = await client.delete(f"{self.base_url}/phone_numbers/{ref}", headers=headers)
+        try:
+            resp = await client.delete(f"{self.base_url}/phone_numbers/{ref}", headers=headers)
+        except httpx.TransportError as exc:
+            raise FeatureUnavailableError(f"Telnyx unreachable: {exc}") from exc
         if resp.status_code not in (200, 202, 204, 404):
             raise ValidationFailedError(
                 f"Telnyx refused to release {e164}: {resp.status_code}"

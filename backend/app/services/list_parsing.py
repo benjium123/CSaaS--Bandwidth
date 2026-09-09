@@ -10,6 +10,19 @@ from dataclasses import dataclass
 import openpyxl
 import phonenumbers
 
+from app.errors import ValidationFailedError
+
+
+def _check_no_duplicate_headers(headers: list[str]) -> None:
+    """6.23: a duplicate header silently drops one of the two columns when a row dict is
+    built from ``zip(headers, row)`` - the LATER value wins with no signal that the
+    earlier one (and everything mapped to it) was thrown away. Refuse it outright."""
+    seen: set[str] = set()
+    for header in headers:
+        if header and header in seen:
+            raise ValidationFailedError(f"Duplicate column header: {header!r}")
+        seen.add(header)
+
 
 @dataclass
 class ParsedFile:
@@ -30,8 +43,13 @@ def _xlsx_value_to_str(value: object) -> str:
     return str(value)
 
 
-def parse_csv_bytes(data: bytes) -> ParsedFile:
-    """Parse CSV bytes into a ParsedFile."""
+def parse_csv_bytes(data: bytes, max_rows: int | None = None) -> ParsedFile:
+    """Parse CSV bytes into a ParsedFile.
+
+    6.7: when ``max_rows`` is given, parsing ABORTS (raises) the moment it is exceeded,
+    rather than building the full in-memory row list first and only checking its length
+    afterward - a hostile/oversized file must not be fully materialized just to reject it.
+    """
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -47,6 +65,7 @@ def parse_csv_bytes(data: bytes) -> ParsedFile:
             if not any(row):
                 continue
             headers = row
+            _check_no_duplicate_headers(headers)
             continue
         if not any(row):
             continue
@@ -55,12 +74,15 @@ def parse_csv_bytes(data: bytes) -> ParsedFile:
         elif len(row) > len(headers):
             row = row[: len(headers)]
         rows.append(dict(zip(headers, row, strict=True)))
+        if max_rows is not None and len(rows) > max_rows:
+            raise ValidationFailedError(f"List has too many rows; the limit is {max_rows}")
 
     return ParsedFile(headers=headers, rows=rows)
 
 
-def parse_xlsx_bytes(data: bytes) -> ParsedFile:
-    """Parse the first XLSX worksheet into a ParsedFile."""
+def parse_xlsx_bytes(data: bytes, max_rows: int | None = None) -> ParsedFile:
+    """Parse the first XLSX worksheet into a ParsedFile. See ``parse_csv_bytes`` for the
+    ``max_rows`` early-abort contract (6.7)."""
     workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
         worksheet = workbook.worksheets[0]
@@ -72,6 +94,7 @@ def parse_xlsx_bytes(data: bytes) -> ParsedFile:
                 if all(cell is None for cell in raw_row):
                     continue
                 headers = [str(cell).strip() if cell is not None else "" for cell in raw_row]
+                _check_no_duplicate_headers(headers)
                 continue
 
             row = [_xlsx_value_to_str(cell) for cell in raw_row]
@@ -82,6 +105,8 @@ def parse_xlsx_bytes(data: bytes) -> ParsedFile:
             elif len(row) > len(headers):
                 row = row[: len(headers)]
             rows.append(dict(zip(headers, row, strict=True)))
+            if max_rows is not None and len(rows) > max_rows:
+                raise ValidationFailedError(f"List has too many rows; the limit is {max_rows}")
 
         return ParsedFile(headers=headers, rows=rows)
     finally:

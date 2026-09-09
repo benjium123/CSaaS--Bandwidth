@@ -41,7 +41,10 @@ from app.models import (
     OrgNumber,
     OutboundCampaign,
 )
+from app.providers import registry_org
+from app.services import credentials as credential_svc
 from app.services import pacing
+from app.services.outbox import record_platform_event
 from app.services.sender import pick_deterministic
 from app.voice_plane import service as voice_plane_svc
 
@@ -49,6 +52,9 @@ log = structlog.get_logger("dialer")
 
 DIALER_TICK_BATCH = 25
 STALE_DIALING_MINUTES = 5
+CAP_WINDOW_HOURS = 26
+#: 6.16: enqueue_dial_rows commits (and frees its identity map) every this many rows.
+ENQUEUE_BATCH = 500
 
 
 def _now() -> datetime:
@@ -78,27 +84,34 @@ async def enqueue_dial_rows(session: AsyncSession, campaign: OutboundCampaign) -
         .scalars()
         .all()
     )
-    stmt = sa.select(ContactListRow).where(
+    # 6.16: same fix as outbound.py's enqueue_campaign_rows - column-projected select,
+    # batched commit + expunge every ENQUEUE_BATCH rows.
+    stmt = sa.select(ContactListRow.id, ContactListRow.contact_id, ContactListRow.e164).where(
         ContactListRow.list_id == campaign.list_id, ContactListRow.status == "accepted"
     )
-    rows = list((await session.execute(stmt)).scalars().all())
     created = 0
-    for row in rows:
-        if row.e164 in existing:
+    since_commit = 0
+    for row_id, contact_id, e164 in (await session.execute(stmt)).all():
+        if e164 in existing:
             continue
         session.add(
             DialAttempt(
                 id=uuid.uuid4(),
                 org_id=campaign.org_id,
                 campaign_id=campaign.id,
-                row_id=row.id,
-                contact_id=row.contact_id,
-                e164=row.e164,
+                row_id=row_id,
+                contact_id=contact_id,
+                e164=e164,
                 status="queued",
             )
         )
-        existing.add(row.e164)
+        existing.add(e164)
         created += 1
+        since_commit += 1
+        if since_commit >= ENQUEUE_BATCH:
+            await session.commit()
+            session.expunge_all()
+            since_commit = 0
     await session.commit()
     return created
 
@@ -116,7 +129,12 @@ async def start_dial_campaign(
     if contact_list is None or contact_list.status != "ready":
         raise ValidationFailedError("The campaign's list is not ready yet")
     await enqueue_dial_rows(session, campaign)
-    campaign.status = "running"
+    # 6.6: mirror services.outbound.start_campaign - a future start_at parks the
+    # campaign as "scheduled" instead of dialing immediately.
+    start_at = campaign.start_at
+    if start_at is not None and start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=timezone.utc)
+    campaign.status = "scheduled" if (start_at is not None and start_at > _now()) else "running"
     await session.commit()
     return campaign
 
@@ -167,7 +185,9 @@ async def _start_call(
         from_e164=from_e164,
         identity=identity,
     )
-    await voice_plane_svc.wait_for_pending_dial_tasks()
+    # 3.9: await only THIS call's own dial task, not the test-only global set - waiting
+    # on every in-flight dial serializes concurrent calls on each other.
+    await voice_plane_svc.wait_for_pending_dial_task(call.id)
     await session.refresh(leg)
     if leg.status == "answered":
         return DialOutcome(status="connected", call_id=call.id, amd_verdict=leg.amd_result)
@@ -179,10 +199,21 @@ async def _start_call(
 # --------------------------------------------------------------------------------------
 # The sweeper tick
 # --------------------------------------------------------------------------------------
-async def _running_voice_campaigns(session: AsyncSession) -> list[OutboundCampaign]:
+async def _running_voice_campaigns(
+    session: AsyncSession, now: datetime
+) -> list[OutboundCampaign]:
     stmt = (
         sa.select(OutboundCampaign)
-        .where(OutboundCampaign.channel == "voice", OutboundCampaign.status == "running")
+        .where(
+            OutboundCampaign.channel == "voice",
+            sa.or_(
+                OutboundCampaign.status == "running",
+                sa.and_(
+                    OutboundCampaign.status == "scheduled",
+                    OutboundCampaign.start_at <= _bind(session, now),
+                ),
+            ),
+        )
         .execution_options(**{ALLOW_UNSCOPED_KEY: True})
     )
     return list((await session.execute(stmt)).scalars().all())
@@ -202,9 +233,52 @@ async def _requeue_stale_dialing(session: AsyncSession, now: datetime) -> int:
     rows = list((await session.execute(stmt)).scalars().all())
     for row in rows:
         set_org_context(session, row.org_id)
-        row.status = "queued"
+        # 6.4: mirror outbound.py's own requeue attempt cap - a row stuck "dialing" with
+        # no call_id (crashed dial task) must not requeue forever. Same semantics as a
+        # normal no_answer/busy/failed retry exhaustion.
+        campaign = await session.get(OutboundCampaign, row.campaign_id)
+        row.attempts += 1
+        if campaign is not None and row.attempts >= campaign.max_attempts:
+            row.status = "failed"
+            # disposition is sa.String(32) - keep it short.
+            row.disposition = "requeue_attempts_exhausted"
+        else:
+            row.status = "queued"
         await session.commit()
     return len(rows)
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    """SQLite round-trips DateTime(timezone=True) as naive; ``pacing.warmup_daily_cap``
+    compares its ``warmup_started_at`` argument against an aware ``now``, so a naive
+    value read back from the ORM must be normalized first (mirrors outbound.py)."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+async def _dial_recent_count(
+    session: AsyncSession, org_id: uuid.UUID, from_e164: str, since: datetime
+) -> int:
+    stmt = sa.select(sa.func.count()).select_from(Call).where(
+        Call.org_id == org_id,
+        Call.our_e164 == from_e164,
+        Call.direction == "outbound",
+        Call.created_at >= _bind(session, since),
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def _last_dial_at(
+    session: AsyncSession, org_id: uuid.UUID, from_e164: str
+) -> datetime | None:
+    stmt = sa.select(sa.func.max(Call.created_at)).where(
+        Call.org_id == org_id, Call.our_e164 == from_e164, Call.direction == "outbound"
+    )
+    value = (await session.execute(stmt)).scalar_one_or_none()
+    if value is not None and value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value
 
 
 async def _has_pending_dial_rows(session: AsyncSession, campaign_id: uuid.UUID) -> bool:
@@ -236,6 +310,7 @@ async def _claim_due_rows(
         )
         .order_by(DialAttempt.created_at.asc())
         .limit(limit)
+        .with_for_update(skip_locked=True)
     )
     return list((await session.execute(stmt)).scalars().all())
 
@@ -404,6 +479,7 @@ async def dialer_tick(
     *,
     now: datetime | None = None,
     batch: int = DIALER_TICK_BATCH,
+    registry=None,  # noqa: ANN001 - CarrierRegistry; DB-backed org registry priming
 ) -> dict[str, int]:
     """One pass over every ``running`` voice campaign."""
     moment = now or _now()
@@ -419,11 +495,38 @@ async def dialer_tick(
         "completed_campaigns": 0,
     }
     remaining = batch
+    # 6.20: keyed on (org_id, from_e164) - see outbound.py's identical pace_cache note.
+    pace_cache: dict[tuple[uuid.UUID, str], dict] = {}
 
-    for campaign in await _running_voice_campaigns(session):
+    for campaign in await _running_voice_campaigns(session, moment):
         if remaining <= 0:
             break
         set_org_context(session, campaign.org_id)
+
+        # 4.2: prime the org's DB-backed carrier registry the same way outbound.py does
+        # for SMS - the sweeper otherwise runs with CURRENT_ORG_ID=None and every voice
+        # dial falls back to env credentials instead of this org's own account.
+        org_token = registry_org.CURRENT_ORG_ID.set(campaign.org_id)
+        try:
+            if (
+                settings is not None
+                and registry is not None
+                and credential_svc.master_key_present(settings)
+                and not registry_org.is_primed(campaign.org_id)
+            ):
+                try:
+                    global_registry = getattr(registry, "global_registry", None)
+                    await registry_org.prime_org_registry(
+                        session, settings, campaign.org_id, global_registry=global_registry
+                    )
+                except Exception:  # noqa: BLE001 - priming must not kill the whole tick
+                    log.exception("org_registry_prime_failed", org_id=str(campaign.org_id))
+        finally:
+            registry_org.CURRENT_ORG_ID.reset(org_token)
+
+        if campaign.status == "scheduled":
+            campaign.status = "running"
+            await session.commit()
 
         if campaign.dialer_mode == "preview":
             # DR-10: preview mode is agent-driven, one explicit launch at a time - the
@@ -442,6 +545,14 @@ async def dialer_tick(
         if not rows:
             if not await _has_pending_dial_rows(session, campaign.id):
                 campaign.status = "completed"
+                # 6.15: voice campaigns never emitted this - the SMS side already does
+                # (services/outbound.py) via the exact same durable-outbox primitive.
+                record_platform_event(
+                    session,
+                    campaign.org_id,
+                    "campaign.completed",
+                    {"campaign_id": str(campaign.id), "name": campaign.name, "channel": "voice"},
+                )
                 await session.commit()
                 counts["completed_campaigns"] += 1
             continue
@@ -451,6 +562,7 @@ async def dialer_tick(
             .scalars()
             .all()
         )
+        warmup_by_number = {n.e164: _aware(n.warmup_started_at) for n in numbers}
 
         eligible: list[DialAttempt] = []
         for row in rows:
@@ -476,6 +588,37 @@ async def dialer_tick(
             from_e164 = _dial_from_number(campaign, numbers, row.e164)
             if from_e164 is None:
                 continue  # nothing to dial from; leave the row queued for a later tick
+
+            # 6.5: apply the SAME pacing gate (daily cap + warmup ramp + rate_per_minute)
+            # the SMS outbound tick applies - dialer_tick previously ignored all three,
+            # so a voice campaign could blow through a brand-new number's warmup ramp or
+            # a configured daily_cap/rate_per_minute entirely.
+            state = pace_cache.get((campaign.org_id, from_e164))
+            if state is None:
+                since = moment - timedelta(hours=CAP_WINDOW_HOURS)
+                state = {
+                    "last_send_at": await _last_dial_at(session, campaign.org_id, from_e164),
+                    "sent_today": await _dial_recent_count(
+                        session, campaign.org_id, from_e164, since
+                    ),
+                }
+                pace_cache[(campaign.org_id, from_e164)] = state
+
+            ramp_cap = pacing.warmup_daily_cap(warmup_by_number.get(from_e164), moment)
+            cap = pacing.effective_daily_cap(campaign.daily_cap, ramp_cap, campaign.respect_warmup)
+            if state["sent_today"] >= cap:
+                continue  # this number is capped for today; leave the row for a later tick
+
+            due = pacing.next_send_due(state["last_send_at"], campaign.rate_per_minute, rng)
+            if due is not None and due > moment:
+                continue  # not this number's turn yet
+
+            # NOTE: state["last_send_at"]/["sent_today"] are deliberately NOT updated
+            # here. Parallel/predictive modes dial several rows from the SAME number
+            # simultaneously in one wave (asyncio.gather below) - mutating the shared
+            # pace_cache entry per-row while still collecting that same wave would gate
+            # sibling rows against each other and serialize what must go out together.
+            # They are updated once per row in the outcome loop below instead.
             row.status = "dialing"
             # Transient, not a mapped column - same discipline as
             # messaging._dispatch_to_carrier's last_carrier_error attribute.
@@ -518,10 +661,27 @@ async def dialer_tick(
                         call = await session.get(Call, outcome.call_id)
                         if call is not None:
                             await voice_plane_svc.end_room_call(api, call)
-                    row.status = "abandoned"
+                    # 6.21: an abandoned parallel-dial leg is a contact who WAS reached
+                    # (a live line, just not the one that won) - it must be retried like
+                    # any other non-terminal outcome, never left dangling with no
+                    # next_attempt_at and thus no path back into a future tick's claim.
+                    if row.attempts < campaign.max_attempts:
+                        row.status = "queued"
+                        row.next_attempt_at = moment + timedelta(
+                            minutes=campaign.retry_backoff_minutes
+                        )
+                    else:
+                        row.status = "abandoned"
                     key = "abandoned"
                 if key != "retry_scheduled":
                     counts[key] = counts.get(key, 0) + 1
+                # 6.5: advance THIS row's own number's pacing state now that its outcome
+                # is known - every dialed row consumes daily volume and advances the
+                # rate clock, regardless of parallel/sequential mode.
+                state = pace_cache.get((campaign.org_id, row._dial_from_e164))
+                if state is not None:
+                    state["last_send_at"] = moment
+                    state["sent_today"] += 1
                 await session.commit()
 
         remaining -= len(rows)

@@ -125,3 +125,85 @@ describe("InboxPage - AI state (plan DR-5)", () => {
     expect(screen.queryByRole("button", { name: "Re-arm AI" })).not.toBeInTheDocument();
   });
 });
+
+describe("InboxPage - inbox-role gating (item 13)", () => {
+  it("disables Composer and Close/Reopen for a viewer-role inbox", async () => {
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/inboxes": [
+          {
+            id: "i1",
+            name: "Sales",
+            color: "#22c55e",
+            e164: "+12145550100",
+            number_id: "n1",
+            my_role: "viewer",
+          },
+        ],
+      }),
+    );
+
+    renderWithProviders(<InboxPage />, client);
+
+    await userEvent.click(await screen.findByText("Ada Lovelace"));
+
+    expect(
+      await screen.findByText("Read-only inbox — you can view but not send"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Message")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+  });
+
+  it("leaves Composer and Close/Reopen enabled for a member-role inbox", async () => {
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/inboxes": [
+          {
+            id: "i1",
+            name: "Sales",
+            color: "#22c55e",
+            e164: "+12145550100",
+            number_id: "n1",
+            my_role: "member",
+          },
+        ],
+      }),
+    );
+
+    renderWithProviders(<InboxPage />, client);
+
+    await userEvent.click(await screen.findByText("Ada Lovelace"));
+
+    expect(await screen.findByLabelText("Message")).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).not.toBeDisabled();
+  });
+});
+
+describe("InboxPage - search debounce (item 37)", () => {
+  it("debounces the search box 300ms before it reaches the inbox query", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<InboxPage />, client);
+
+    await screen.findByText("Ada Lovelace");
+    const callsBefore = client.calls.filter((c) => c.path.startsWith("/api/v1/inbox/threads"))
+      .length;
+
+    await userEvent.type(screen.getByLabelText("Search conversations"), "ada");
+
+    // Nothing new yet - well under the debounce window.
+    expect(
+      client.calls.filter((c) => c.path.startsWith("/api/v1/inbox/threads")).length,
+    ).toBe(callsBefore);
+
+    await waitFor(
+      () => {
+        const call = client.calls.find(
+          (c) => c.path.startsWith("/api/v1/inbox/threads") && c.path.includes("q=ada"),
+        );
+        expect(call).toBeDefined();
+      },
+      { timeout: 2000 },
+    );
+  });
+});

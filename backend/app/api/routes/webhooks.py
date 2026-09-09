@@ -22,6 +22,7 @@ from app.models import CallLeg, OrgNumber
 from app.models.provider_accounts import PROVIDER_NAMES, ProviderAccount
 from app.providers import registry_org
 from app.providers.bandwidth import webhooks as bw_webhooks
+from app.providers.telnyx.voice import TelnyxVoiceCommandError
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
 from app.services import calls as calls_svc
 from app.services import credentials as credential_svc
@@ -41,7 +42,11 @@ CARRIER = "bandwidth"
 #: path for every deployment that still authenticates purely off the environment.
 _WEBHOOK_ACCOUNTS_CACHE: dict[str, tuple[float, list[ProviderAccount]]] = {}
 _WEBHOOK_ACCOUNTS_TTL_SECONDS = 30.0
-_WEBHOOK_ACCOUNTS_MAX_ROWS = 50
+_WEBHOOK_ACCOUNTS_PAGE_SIZE = 50
+#: 4.17: total across all pages, not a single page - a deployment with more than this
+#: many active accounts for one provider needs a real per-account webhook path (P17
+#: scale problem), not an unbounded scan every 30s cache miss.
+_WEBHOOK_ACCOUNTS_TOTAL_CAP = 500
 
 
 async def _active_accounts_for_provider(
@@ -55,31 +60,44 @@ async def _active_accounts_for_provider(
     # JUSTIFIED allow_unscoped: this runs before any org is known - verifying against
     # every org's account for this provider IS how a carrier-signed request that fails
     # env verification gets attributed to an org at all.
-    rows = list(
-        (
-            await session.execute(
-                sa.select(ProviderAccount)
-                .where(
-                    ProviderAccount.provider == provider,
-                    ProviderAccount.status == "active",
-                )
-                .limit(_WEBHOOK_ACCOUNTS_MAX_ROWS)
-                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    #
+    # 4.17: a bare LIMIT with no ORDER BY has no guaranteed, stable row selection across
+    # calls/dialects - it previously could silently and permanently exclude some
+    # account past the first (arbitrary) page from ever being able to verify a webhook.
+    # Paginate through everything (bounded by _WEBHOOK_ACCOUNTS_TOTAL_CAP) ordered by id.
+    rows: list[ProviderAccount] = []
+    last_id = None
+    while len(rows) < _WEBHOOK_ACCOUNTS_TOTAL_CAP:
+        stmt = (
+            sa.select(ProviderAccount)
+            .where(
+                ProviderAccount.provider == provider,
+                ProviderAccount.status == "active",
             )
+            .order_by(ProviderAccount.id)
+            .limit(_WEBHOOK_ACCOUNTS_PAGE_SIZE)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
         )
-        .scalars()
-        .all()
-    )
+        if last_id is not None:
+            stmt = stmt.where(ProviderAccount.id > last_id)
+        page = list((await session.execute(stmt)).scalars().all())
+        if not page:
+            break
+        rows.extend(page)
+        last_id = page[-1].id
+        if len(page) < _WEBHOOK_ACCOUNTS_PAGE_SIZE:
+            break
     _WEBHOOK_ACCOUNTS_CACHE[provider] = (now, rows)
     return rows
 
 
-async def _db_account_carrier_verifying(
+async def _db_account_carrier_verifying_with_account(
     session: AsyncSession, settings, provider: str, headers, raw: bytes
 ):  # noqa: ANN001
-    """First active DB account for ``provider`` whose credentials verify this request, or
-    None. Never raises: a 503 from a missing master key just means no DB fallback exists,
-    not that the webhook itself failed."""
+    """Return (carrier, ProviderAccount) whose credentials verified this request, or None.
+
+    The account is returned so voice ingestion can PIN the webhook to that account's org
+    (item 1.3) instead of letting the payload resolve to a different org."""
     if provider not in PROVIDER_NAMES:  # attacker-controlled path segment: never cache/query
         return None
     if not credential_svc.master_key_present(settings):
@@ -87,8 +105,20 @@ async def _db_account_carrier_verifying(
     for account in await _active_accounts_for_provider(session, provider):
         candidate = await registry_org.carrier_for_account(settings, account)
         if candidate is not None and candidate.verify_webhook(headers, raw):
-            return candidate
+            return candidate, account
     return None
+
+
+async def _db_account_carrier_verifying(
+    session: AsyncSession, settings, provider: str, headers, raw: bytes
+):  # noqa: ANN001
+    """Compatibility wrapper for messaging routes that only need the carrier object.
+    Never raises: a 503 from a missing master key just means no DB fallback exists,
+    not that the webhook itself failed."""
+    result = await _db_account_carrier_verifying_with_account(
+        session, settings, provider, headers, raw
+    )
+    return result[0] if result is not None else None
 
 #: The only automatic inbound-call behaviour this phase has: no configured IVR/routing
 #: exists yet, so an inbound call gets told so and hung up. P6 replaces this ONE constant
@@ -309,10 +339,38 @@ def _outbound_answer_commands(call, *, needs_pause: bool) -> list[VoiceCommand]:
     return commands
 
 
-def _voice_bxml_response(carrier, commands: list) -> Response:  # noqa: ANN001
+async def _voice_bxml_response(
+    carrier,  # noqa: ANN001
+    commands: list,
+    provider_call_id: str | None = None,
+    *,
+    session: AsyncSession | None = None,
+    carrier_name: str = "",
+    body_text: str = "",
+) -> Response:
     rendered = carrier.render_commands(commands)
     if rendered is None:
         # Telnyx: commands go out-of-band via execute_commands, never in the response body.
+        # 3.2: previously this branch never ran the commands at all when render_commands
+        # returned None, so an inbound Telnyx call flow/default was pure silence.
+        if commands and provider_call_id:
+            await carrier.execute_commands(provider_call_id, commands)
+        elif commands:
+            # B5: no provider_call_id was ever captured for this call, so the commands
+            # can never be delivered out-of-band - silently answering 200 here was a
+            # fake success with no audio ever played. Dead-letter and signal failure
+            # (consistent with 3.15's TelnyxVoiceCommandError -> 502 handling) instead.
+            if session is not None:
+                await svc.dead_letter(session, carrier_name, "commands_without_call_id", body_text)
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "error": {
+                        "code": "voice_command_failed",
+                        "message": "commands without a provider call id",
+                    }
+                },
+            )
         return JSONResponse(status_code=200, content={"status": "ok"})
     return Response(content=rendered, media_type="application/xml")
 
@@ -320,6 +378,7 @@ def _voice_bxml_response(carrier, commands: list) -> Response:  # noqa: ANN001
 async def _handle_voice_webhook(
     carrier_name: str, request: Request, session: AsyncSession
 ) -> Response:
+    settings = request.app.state.settings
     registry = getattr(request.app.state, "carriers", None)
     carrier = registry.get(carrier_name) if registry else None
     if carrier is None:
@@ -329,23 +388,36 @@ async def _handle_voice_webhook(
         )
 
     raw = await request.body()
+    db_account = None
     if not carrier.verify_voice_webhook(request.headers, raw):
-        # Bandwidth retrying a 401 for 24h is their problem; accepting an unauthenticated
-        # voice event would be ours.
-        return JSONResponse(
-            status_code=401,
-            content={"error": {"code": "unauthenticated", "message": "Invalid webhook signature"}},
+        # 1.3: fall back to any org's own DB carrier credentials that verify this
+        # request, PINNED to that account's org - the webhook must never be allowed to
+        # ingest under whatever org the payload happens to resolve to.
+        result = await _db_account_carrier_verifying_with_account(
+            session, settings, carrier_name, request.headers, raw
         )
+        if result is None:
+            # Bandwidth retrying a 401 for 24h is their problem; accepting an
+            # unauthenticated voice event would be ours.
+            return JSONResponse(
+                status_code=401,
+                content={"error": {"code": "unauthenticated", "message": "Invalid webhook signature"}},
+            )
+        carrier, db_account = result
 
     body_text = raw.decode("utf-8", errors="replace")
     try:
         events = carrier.parse_voice_webhook(raw)
     except ValueError as exc:
+        # 1.10: malformed voice webhook must be stored/dead-lettered, never answered
+        # with an empty BXML that hangs the caller up silently.
+        await svc.dead_letter(session, carrier_name, "malformed_voice_webhook", body_text)
         log.warning("voice_webhook_malformed", carrier=carrier_name, reason=str(exc))
-        events = []
+        return JSONResponse(status_code=200, content={"status": "dead_lettered"})
 
     store = getattr(request.app.state, "media_store", None)
     commands: list = []
+    commands_provider_call_id: str | None = None
     retry_needed = False
     for event in events:
         try:
@@ -356,6 +428,12 @@ async def _handle_voice_webhook(
                 # as stored; a redelivery landing here again during the carrier's retry
                 # window dead-lettering a second time is accepted, not treated as loss.
                 await svc.dead_letter(session, carrier_name, "unknown_voice_call", body_text)
+                continue
+
+            if db_account is not None and org_id != db_account.org_id:
+                # 1.3: the verifying account is not the payload's org. Do not ingest
+                # under either org - dead-letter and ack so the carrier stops retrying.
+                await svc.dead_letter(session, carrier_name, "webhook_org_mismatch", body_text)
                 continue
 
             set_org_context(session, org_id)
@@ -409,6 +487,7 @@ async def _handle_voice_webhook(
                     commands = await routing_exec_svc.start_carrier_flow(
                         session, getattr(request.app.state, "event_bus", None), call, bound_flow
                     )
+                commands_provider_call_id = event.provider_call_id
             elif (
                 event.event_type == "dtmf_received"
                 and call is not None
@@ -421,6 +500,7 @@ async def _handle_voice_webhook(
                 )
                 if flow_commands is not None:
                     commands = flow_commands
+                    commands_provider_call_id = event.provider_call_id
             elif (
                 event.event_type == "call_answered"
                 and call is not None
@@ -435,12 +515,18 @@ async def _handle_voice_webhook(
                     commands = outbound_commands
                 elif outbound_commands:
                     await carrier.execute_commands(event.provider_call_id, outbound_commands)
+        except TelnyxVoiceCommandError as exc:
+            return JSONResponse(
+                status_code=502,
+                content={"error": {"code": "voice_command_failed", "message": str(exc)}},
+            )
         except _VoiceRetrySignal:
             retry_needed = True
             continue
         except Exception:
             # F4: one bad event must never 500 the whole ack - EXCEPT the deliberate RETRY
             # signal above, which this shield intentionally does not catch.
+            await session.rollback()
             log.exception(
                 "voice_webhook_event_failed",
                 carrier=carrier_name,
@@ -450,7 +536,20 @@ async def _handle_voice_webhook(
 
     if retry_needed:
         return Response(status_code=500, content=b"retry")
-    return _voice_bxml_response(carrier, commands)
+    try:
+        return await _voice_bxml_response(
+            carrier,
+            commands,
+            commands_provider_call_id,
+            session=session,
+            carrier_name=carrier_name,
+            body_text=body_text,
+        )
+    except TelnyxVoiceCommandError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"error": {"code": "voice_command_failed", "message": str(exc)}},
+        )
 
 
 @router.post("/bandwidth/voice/answer")

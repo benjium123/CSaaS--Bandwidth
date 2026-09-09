@@ -99,12 +99,38 @@ class PlivoNumberProviderMixin:
             status="active",
         )
 
+    async def lookup_owned_number(self, e164: str) -> bool | None:
+        """1.1: GET on the SAME `/Number/{national}/` resource release_number DELETEs -
+        Plivo's owned-numbers endpoint, distinct from `/PhoneNumber/` (the
+        available-to-buy catalog search_numbers/order_number use)."""
+        national = e164.lstrip("+")
+        client = await self._get_client()
+        try:
+            resp = await client.get(
+                f"{self.base_url}/Number/{national}/",
+                auth=self._auth,
+            )
+        except httpx.TransportError:
+            return None
+        if resp.status_code == 404:
+            return False
+        if resp.status_code != 200:
+            return None
+        try:
+            payload = resp.json()
+        except ValueError:
+            return None
+        return bool(payload)
+
     async def release_number(self, e164: str, provider_ref: str | None = None) -> None:
         national = e164.lstrip("+")
         client = await self._get_client()
-        resp = await client.delete(
-            f"{self.base_url}/Number/{national}/",
-            auth=self._auth,
-        )
+        try:
+            resp = await client.delete(
+                f"{self.base_url}/Number/{national}/",
+                auth=self._auth,
+            )
+        except httpx.TransportError as exc:
+            raise FeatureUnavailableError(f"Plivo unreachable: {exc}") from exc
         if resp.status_code not in (200, 202, 204, 404):
             raise ValidationFailedError(f"Plivo refused to release {e164}: {resp.status_code}")

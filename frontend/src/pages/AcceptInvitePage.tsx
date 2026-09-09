@@ -3,7 +3,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { Button, Input } from "@/components/ui/primitives";
 
 export function AcceptInvitePage() {
-  const { api, login } = useAuth();
+  const { api, login, verify2fa } = useAuth();
   // Read once from the raw URL rather than through react-router state: this page must
   // work whether or not the surrounding app has established router context yet (it is
   // reachable before login - see App.tsx).
@@ -15,6 +15,8 @@ export function AcceptInvitePage() {
   const [email, setEmail] = React.useState("");
   const [fullName, setFullName] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [code, setCode] = React.useState("");
+  const [pendingToken, setPendingToken] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -23,11 +25,19 @@ export function AcceptInvitePage() {
     setError(null);
     setBusy(true);
     try {
-      await api.request("/api/v1/auth/register", {
-        method: "POST",
-        json: { email, password, full_name: fullName, invite_token: token },
-      });
-      const res = await login(email, password);
+      // The 2FA step, if any, comes back from login() below - registration itself
+      // never asks for a code.
+      if (!pendingToken) {
+        await api.request("/api/v1/auth/register", {
+          method: "POST",
+          json: { email, password, full_name: fullName, invite_token: token },
+        });
+      }
+      const res = pendingToken ? await verify2fa(pendingToken, code) : await login(email, password);
+      if (res.kind === "needs_2fa") {
+        setPendingToken(res.pendingToken);
+        return;
+      }
       if (res.kind === "error") setError(res.message);
     } catch (err) {
       setError((err as Error).message);
@@ -55,38 +65,55 @@ export function AcceptInvitePage() {
         onSubmit={onSubmit}
         className="w-full max-w-sm space-y-4 rounded-lg border border-border p-6"
       >
-        <h1 className="text-lg font-semibold">Accept your invitation</h1>
+        <h1 className="text-lg font-semibold">
+          {pendingToken ? "Two-factor code" : "Accept your invitation"}
+        </h1>
 
-        <label className="block space-y-1">
-          <span className="text-sm text-muted-foreground">Email</span>
-          <Input
-            aria-label="Email"
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </label>
-        <label className="block space-y-1">
-          <span className="text-sm text-muted-foreground">Full name</span>
-          <Input
-            aria-label="Full name"
-            autoComplete="name"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-          />
-        </label>
-        <label className="block space-y-1">
-          <span className="text-sm text-muted-foreground">Password</span>
-          <Input
-            aria-label="Password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <span className="block text-xs text-muted-foreground">At least 10 characters.</span>
-        </label>
+        {pendingToken ? (
+          <label className="block space-y-1">
+            <span className="text-sm text-muted-foreground">Authenticator code</span>
+            <Input
+              aria-label="Authenticator code"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+          </label>
+        ) : (
+          <>
+            <label className="block space-y-1">
+              <span className="text-sm text-muted-foreground">Email</span>
+              <Input
+                aria-label="Email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-sm text-muted-foreground">Full name</span>
+              <Input
+                aria-label="Full name"
+                autoComplete="name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-sm text-muted-foreground">Password</span>
+              <Input
+                aria-label="Password"
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <span className="block text-xs text-muted-foreground">At least 10 characters.</span>
+            </label>
+          </>
+        )}
 
         {error && (
           <p role="alert" className="text-sm text-destructive">
@@ -95,7 +122,7 @@ export function AcceptInvitePage() {
         )}
 
         <Button type="submit" disabled={busy} className="w-full">
-          {busy ? "Working..." : "Create account"}
+          {busy ? "Working..." : pendingToken ? "Verify" : "Create account"}
         </Button>
       </form>
     </div>

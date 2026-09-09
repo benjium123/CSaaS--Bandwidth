@@ -205,20 +205,35 @@ async def list_messages(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> list[MessageOut]:
-    stmt = sa.select(Message).order_by(Message.created_at.asc()).limit(limit).offset(offset)
+    # P15: resolve access UNCONDITIONALLY - without this, a request with no thread_id
+    # filter handed back every Message row in the org regardless of inbox grants.
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    stmt = (
+        sa.select(Message)
+        .order_by(Message.created_at.asc(), Message.id.asc())
+        .limit(limit)
+        .offset(offset)
+    )
     if thread_id is not None:
         # P15: a thread-id-addressed read is gated exactly like the thread's own detail
         # route (app/api/routes/inbox.py::_get_thread) - an inaccessible thread is a 404,
         # not a 403, so existence is not leaked either way.
-        access = await inbox_access_svc.resolve_access(
-            ctx.session, ctx.actor_user_id, ctx.role.permissions or []
-        )
         thread = await ctx.session.get(MessageThread, thread_id)
         if thread is None:
             raise NotFoundError("Thread not found")
         if not access.is_admin and not access.can_view(thread.our_e164):
             raise NotFoundError("Thread not found")
         stmt = stmt.where(Message.thread_id == thread_id)
+    elif not access.is_admin:
+        # P15: no thread_id - scope to threads on numbers this caller may see.
+        visible = access.member_e164s | access.viewer_e164s
+        stmt = stmt.where(
+            Message.thread_id.in_(
+                sa.select(MessageThread.id).where(MessageThread.our_e164.in_(visible))
+            )
+        )
     if after is not None:
         # Keyset for polling: each poll transfers only what is new.
         stmt = stmt.where(Message.created_at > after)

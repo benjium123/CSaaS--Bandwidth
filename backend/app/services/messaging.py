@@ -14,15 +14,17 @@ behaviour (docs/research/bandwidth.md):
 from __future__ import annotations
 
 import enum
+import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 import sqlalchemy as sa
 import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.compliance import gate
+from app.compliance import gate, registration
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ComplianceBlockedError, ValidationFailedError
 from app.models.compliance import MediaAsset
@@ -36,6 +38,7 @@ from app.models.messaging import (
     OrgNumber,
     WebhookDeadLetter,
 )
+from app.providers import registry_org
 from app.providers.domain import (
     CarrierEvent,
     DeliveryReceipt,
@@ -44,6 +47,7 @@ from app.providers.domain import (
     UnknownEvent,
 )
 from app.providers.segments import estimate
+from app.services import credentials as credential_svc
 from app.services.contacts import resolve_or_create_contact
 from app.services.outbox import record_platform_event
 
@@ -61,6 +65,10 @@ AI_SEND_KEY = "ai_originated_send"
 #: send_message call. A bulk campaign send is not a human takeover, so it must not flip
 #: an active AI thread to handed_off — same shape as AI_SEND_KEY, gate still unchanged.
 BULK_SEND_KEY = "bulk_originated_send"
+#: Cap on sweeper/background batch sizes. A broken tenant must not turn one tick into an
+#: unbounded SELECT that drags the whole process down.
+SWEEPER_BATCH_LIMIT = 500
+STALE_QUEUED_MINUTES = 10
 
 
 class Outcome(enum.Enum):
@@ -147,6 +155,8 @@ async def send_message(
     media_urls: list[str] | None = None,
     registry=None,  # noqa: ANN001 - CarrierRegistry; enables failover when given
     plan=None,  # noqa: ANN001 - routing.RoutePlan
+    bulk: bool = False,
+    require_registration: bool = False,
 ) -> Message:
     """Create and dispatch one outbound message.
 
@@ -154,10 +164,36 @@ async def send_message(
     races back in beats nothing — it finds the row, or (if it truly beats the commit) is
     told to retry.
     """
-    # Pass `exemption` ONLY when set. The seam's contract (P1/P2) is that a plain
-    # three-argument stand-in for check_outbound keeps working - test spies and any future
-    # wrapper are written that way - so a normal send must not force a keyword onto them.
-    gate_kwargs = {"exemption": exemption} if exemption else {}
+    # 4.1: campaign/AI-reply/auto-reply sends call send_message directly, bypassing
+    # routing.plan_route entirely - and plan_route is the ONLY place that otherwise
+    # enforces the 10DLC/TFV registration gate (registration.partition_by_eligibility).
+    # `plan is None` is exactly the signal that this call skipped that filtering, so gate
+    # here whenever it did; a caller that supplied a plan already had its number filtered
+    # to registration-eligible ones before the plan was ever built.
+    if plan is None:
+        number = (
+            await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == from_e164))
+        ).scalar_one_or_none()
+        if number is None:
+            raise ValidationFailedError("No active number configured for this org")
+        allowed_reg, reason_reg = await registration.check_number_may_send(
+            session, org_id, number, require_registration=require_registration
+        )
+        if not allowed_reg:
+            raise ComplianceBlockedError(reason_reg)
+
+    # Pass `exemption`/`bulk` ONLY when actually set. The seam's contract (P1/P2) is that
+    # a plain three-argument stand-in for check_outbound keeps working - test spies and
+    # any future wrapper are written that way (see tests/test_compliance_seam.py) - so a
+    # normal send must not force a keyword onto them.
+    # 2.7: bulk (explicit kwarg, or BULK_SEND_KEY the campaign scheduler already sets on
+    # the session) skips the 24h active-conversation quiet-hours carve-out.
+    is_bulk = bool(bulk or session.info.get(BULK_SEND_KEY))
+    gate_kwargs: dict = {}
+    if is_bulk:
+        gate_kwargs["bulk"] = True
+    if exemption:
+        gate_kwargs["exemption"] = exemption
     verdict = await gate.check_outbound(
         session,
         org_id,
@@ -212,7 +248,11 @@ async def send_message(
         from_e164=from_e164,
         to_e164=to_e164,
         body=body,
-        media=[],
+        # 2.2: persist the carrier-facing media URLs on the row NOW - a quiet-hours hold
+        # returns before ever reaching _dispatch_to_carrier, so if these are not saved
+        # here they are lost entirely by the time the sweeper releases the message
+        # (_dispatch_to_carrier's fallback to message.media would just find []).
+        media=list(media_urls or []),
         carrier=getattr(carrier, "name", CARRIER_DEFAULT),
         segment_count_est=est.segments,
     )
@@ -256,6 +296,11 @@ async def dispatch_with_failover(
     """
     routes = plan.all_routes()
     last: Message = message
+    # 2.5: snapshot the ORIGINAL from_e164 as a plain string before the loop - `last` and
+    # `message` alias the SAME ORM object once session.get() re-fetches it (identity map),
+    # so comparing last.from_e164 to message.from_e164 later would compare a mutable
+    # attribute to itself and never detect the change.
+    original_from_e164 = message.from_e164
     for index, route in enumerate(routes):
         carrier = registry.get(route.carrier_name)
         if carrier is None:
@@ -283,6 +328,16 @@ async def dispatch_with_failover(
         last = await _dispatch_to_carrier(session, org_id, carrier, last, media_urls)
         if last.status == "accepted":
             breaker.record_success()
+            # 2.5: a failover win that changed from_e164 must repoint the conversation to
+            # the WINNING number's thread - otherwise the reply the contact sends back
+            # lands in a different (or brand-new) thread than the one this send appears
+            # in, silently splitting the conversation.
+            if last.from_e164 != original_from_e164:
+                set_org_context(session, org_id)
+                thread = await upsert_thread(session, org_id, last.from_e164, last.to_e164)
+                thread.last_message_at = _now()
+                last.thread_id = thread.id
+                await session.commit()
             return last
 
         # The REAL error object, carried out of dispatch rather than reconstructed from
@@ -331,6 +386,9 @@ async def _dispatch_to_carrier(
         message.status = "accepted"
         message.provider_message_id = result.provider_message_id
         message.hold_until = None
+        # A prior attempt's stale error must not linger once a retry actually succeeds.
+        message.error_code = None
+        message.error_detail = None
     else:
         # Carrier rejection is DATA, not an HTTP error (DR-7). The client reads one uniform
         # resource whether the carrier accepted, refused, or was unreachable.
@@ -347,6 +405,8 @@ async def release_held_messages(
     session: AsyncSession,
     carrier,  # noqa: ANN001
     now: datetime | None = None,
+    registry=None,  # noqa: ANN001 - CarrierRegistry; dispatches each row via its OWN carrier
+    settings=None,  # noqa: ANN001 - app.config.Settings; D4 org-context priming
 ) -> int:
     """Release messages whose quiet-hours hold has expired.
 
@@ -362,6 +422,7 @@ async def release_held_messages(
             Message.hold_until.is_not(None),
             Message.hold_until <= bind_moment,
         )
+        .limit(SWEEPER_BATCH_LIMIT)
         .execution_options(**{ALLOW_UNSCOPED_KEY: True})
     )
     held = list((await session.execute(stmt)).scalars().all())
@@ -370,30 +431,60 @@ async def release_held_messages(
     for message in held:
         org_id = message.org_id
         set_org_context(session, org_id)
-        verdict = await gate.check_outbound(
-            session,
-            org_id,
-            gate.OutboundDraft(
-                to_e164=message.to_e164,
-                from_e164=message.from_e164,
-                body=message.body or "",
-            ),
-        )
-        defer_until = getattr(verdict, "defer_until", None)
-        if not verdict.allowed and defer_until is None:
-            message.status = "rejected"
-            message.hold_until = None
-            message.error_code = f"{verdict.reason or 'blocked'}_while_held"[:32]
-            await session.commit()
-            continue
-        if defer_until is not None:
-            # Released on a boundary that is still quiet somewhere. Keep waiting.
-            message.hold_until = defer_until
-            await session.commit()
-            continue
+        # D4: prime this org's DB-backed carrier registry into CURRENT_ORG_ID, exactly
+        # as outbound_tick does - without it, registry.get(message.carrier) below only
+        # ever resolves the env-configured carrier, never a DB-only org's own provider
+        # account, and a held message from such an org could be released through the
+        # wrong (or no) carrier.
+        org_token = registry_org.CURRENT_ORG_ID.set(org_id)
+        try:
+            if (
+                settings is not None
+                and registry is not None
+                and credential_svc.master_key_present(settings)
+                and not registry_org.is_primed(org_id)
+            ):
+                try:
+                    global_registry = getattr(registry, "global_registry", None)
+                    await registry_org.prime_org_registry(
+                        session, settings, org_id, global_registry=global_registry
+                    )
+                except Exception:  # noqa: BLE001 - priming must not kill the whole pass
+                    log.exception("org_registry_prime_failed", org_id=str(org_id))
 
-        await _dispatch_to_carrier(session, org_id, carrier, message)
-        released += 1
+            verdict = await gate.check_outbound(
+                session,
+                org_id,
+                gate.OutboundDraft(
+                    to_e164=message.to_e164,
+                    from_e164=message.from_e164,
+                    body=message.body or "",
+                ),
+            )
+            defer_until = getattr(verdict, "defer_until", None)
+            if not verdict.allowed and defer_until is None:
+                message.status = "rejected"
+                message.hold_until = None
+                message.error_code = f"{verdict.reason or 'blocked'}_while_held"[:32]
+                await session.commit()
+                continue
+            if defer_until is not None:
+                # Released on a boundary that is still quiet somewhere. Keep waiting.
+                message.hold_until = defer_until
+                await session.commit()
+                continue
+
+            # 2.3: dispatch via the ROW's own carrier, never unconditionally through the
+            # primary - a held message from a non-primary carrier would otherwise be
+            # sent (and its from_e164 mismatched) through the wrong provider entirely
+            # on release.
+            row_carrier = registry.get(message.carrier) if registry is not None else carrier
+            if row_carrier is None:
+                row_carrier = carrier
+            await _dispatch_to_carrier(session, org_id, row_carrier, message)
+            released += 1
+        finally:
+            registry_org.CURRENT_ORG_ID.reset(org_token)
     return released
 
 
@@ -538,12 +629,32 @@ async def _ingest_inbound(
             {
                 "message_id": str(message.id),
                 "thread_id": str(thread.id),
+                "our_e164": event.our_number,
+                "contact_e164": event.from_,
                 "from": event.from_,
                 "to": event.our_number,
                 "body": event.text,
             },
         )
         await session.commit()
+        # FRONTEND-SUPPORT: publish on the REAL-TIME org event bus (the same in-process
+        # bus routes/softphone.py's console WS forwards call.status/call.ring/etc from -
+        # NOT the durable outbox above, which is for external webhook subscribers) so an
+        # open console tab sees a new inbound message without polling. session.info's
+        # "event_bus" is the exact handle webhooks.py stashes for this purpose (see the
+        # spawn_from_ingest call just below).
+        bus = session.info.get("event_bus")
+        if bus is not None:
+            bus.publish(
+                org_id,
+                {
+                    "type": "message.received",
+                    "thread_id": str(thread.id),
+                    "message_id": str(message.id),
+                    "our_e164": event.our_number,
+                    "contact_e164": event.from_,
+                },
+            )
     except IntegrityError:
         await session.rollback()
         set_org_context(session, org_id)
@@ -703,15 +814,43 @@ def _apply_dlr_to_message(message: Message, event: DeliveryReceipt) -> None:
         message.segment_count_carrier = event.segment_count
 
 
-async def reprocess_pending(session: AsyncSession) -> int:
+def _payload_to_webhook_bytes(carrier: str, payload: dict) -> bytes:
+    """Reconstruct the original webhook body shape a carrier adapter's own `parse_webhook`
+    expects. `MessageEvent.payload` stores each adapter's own `event.raw` - the SINGLE
+    parsed event's own dict, not the original request body - so this must re-wrap it back
+    into whatever envelope shape that adapter's parser requires:
+
+    - twilio/signalwire/plivo: raw IS the flat form-decoded field dict already, so
+      urlencode() is the exact inverse of the `_form`/`parse_form` these parsers use.
+    - bandwidth: parse() requires a JSON ARRAY of event objects; raw is ONE such object.
+    - telnyx: parse() requires ``{"data": {...}}``; raw is the inner data object alone.
+    """
+    if carrier in {"twilio", "signalwire", "plivo"}:
+        return urlencode(payload or {}).encode()
+    if carrier == "bandwidth":
+        return json.dumps([payload or {}]).encode()
+    if carrier == "telnyx":
+        return json.dumps({"data": payload or {}}).encode()
+    return json.dumps(payload or {}).encode()
+
+
+async def reprocess_pending(
+    session: AsyncSession,
+    registry=None,  # noqa: ANN001 - CarrierRegistry
+) -> int:
     """Re-drive every event whose processing did not complete.
 
     Unscheduled in P1 by design — P3+ runs it behind Redis. Its existence and its test are
     the seam that keeps ingestion a 2xx-fast, DB-only path.
+
+    2.9: re-parsing is delegated to the OWNING carrier adapter (``registry.get(row.carrier)``)
+    rather than assuming Bandwidth's payload shape - a Plivo/Telnyx/Twilio/SignalWire event
+    replayed here used to be misread as Bandwidth JSON.
     """
     stmt = (
         sa.select(MessageEvent)
         .where(MessageEvent.processed_at.is_(None))
+        .limit(SWEEPER_BATCH_LIMIT)
         .execution_options(**{ALLOW_UNSCOPED_KEY: True})
     )
     pending = list((await session.execute(stmt)).scalars().all())
@@ -724,21 +863,110 @@ async def reprocess_pending(session: AsyncSession) -> int:
         )
         message = (await session.execute(msg_stmt)).scalar_one_or_none()
         if message is None:
+            row.processing_error = "message_not_found"
             continue
         set_org_context(session, message.org_id)
-        _apply_dlr_to_message(
-            message,
-            DeliveryReceipt(
-                provider_message_id=row.provider_message_id,
-                event_type=row.event_type,
-                error_code=(row.payload or {}).get("errorCode"),
-                segment_count=((row.payload or {}).get("message") or {}).get("segmentCount"),
-                event_time=row.event_time,
-                raw=row.payload or {},
-            ),
-        )
+
+        row_carrier = registry.get(row.carrier) if registry is not None else None
+        if row_carrier is None or not hasattr(row_carrier, "parse_webhook"):
+            row.processing_error = "missing_carrier_adapter"
+            continue
+
+        try:
+            raw = _payload_to_webhook_bytes(row.carrier, row.payload)
+            parsed = row_carrier.parse_webhook(raw)
+        except Exception as exc:  # noqa: BLE001 - a re-drive path must never die
+            row.processing_error = f"reparse_failed: {exc}"[:255]
+            continue
+
+        delivery = next((e for e in parsed if isinstance(e, DeliveryReceipt)), None)
+        if delivery is None:
+            row.processing_error = "no_dlr_found_after_reparse"
+            continue
+
+        _apply_dlr_to_message(message, delivery)
         row.processed_at = _now()
         row.processing_error = None
         count += 1
     await session.commit()
     return count
+
+
+async def recover_stale_queued(
+    session: AsyncSession,
+    registry=None,  # noqa: ANN001 - CarrierRegistry
+    now: datetime | None = None,
+    settings=None,  # noqa: ANN001 - app.config.Settings; D4 org-context priming
+) -> int:
+    """Re-drive messages left in `queued` with no `hold_until` after a crash (2.11).
+
+    A message can be left stranded here if the process dies between the initial commit
+    (status="queued") and the carrier dispatch call - it never gets a hold_until (that's
+    only set by the quiet-hours gate), so release_held_messages never picks it up either.
+
+    First stale sighting: mark it and try its OWN carrier (`message.carrier`) once. If it
+    is STILL queued with that marker on a later sweep, the crash repeated (or the retry
+    itself failed) - fail the row rather than looping forever.
+    """
+    moment = now or _now()
+    bind_moment = moment.replace(tzinfo=None) if _is_sqlite(session) else moment
+    stale_marker = "stale_recovery_attempted"
+    stmt = (
+        sa.select(Message)
+        .where(
+            Message.status == "queued",
+            Message.hold_until.is_(None),
+            Message.created_at <= bind_moment - timedelta(minutes=STALE_QUEUED_MINUTES),
+        )
+        .limit(SWEEPER_BATCH_LIMIT)
+        .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    )
+    stale = list((await session.execute(stmt)).scalars().all())
+
+    recovered = 0
+    for message in stale:
+        org_id = message.org_id
+        set_org_context(session, org_id)
+        # D4: prime this org's DB-backed carrier registry into CURRENT_ORG_ID, exactly
+        # as outbound_tick does - without it, registry.get(message.carrier) below only
+        # ever resolves the env-configured carrier, never a DB-only org's own provider
+        # account.
+        org_token = registry_org.CURRENT_ORG_ID.set(org_id)
+        try:
+            if (
+                settings is not None
+                and registry is not None
+                and credential_svc.master_key_present(settings)
+                and not registry_org.is_primed(org_id)
+            ):
+                try:
+                    global_registry = getattr(registry, "global_registry", None)
+                    await registry_org.prime_org_registry(
+                        session, settings, org_id, global_registry=global_registry
+                    )
+                except Exception:  # noqa: BLE001 - priming must not kill the whole pass
+                    log.exception("org_registry_prime_failed", org_id=str(org_id))
+
+            if message.error_code == stale_marker:
+                message.status = "failed"
+                message.error_detail = "Stale queued message did not dispatch after recovery"
+                await session.commit()
+                recovered += 1
+                continue
+
+            message.error_code = stale_marker
+            await session.commit()
+
+            row_carrier = registry.get(message.carrier) if registry is not None else None
+            if row_carrier is None:
+                message.status = "failed"
+                message.error_detail = "Stale queued message: no carrier adapter to recover"
+                await session.commit()
+                recovered += 1
+                continue
+
+            await _dispatch_to_carrier(session, org_id, row_carrier, message)
+            recovered += 1
+        finally:
+            registry_org.CURRENT_ORG_ID.reset(org_token)
+    return recovered

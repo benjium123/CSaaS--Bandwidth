@@ -391,9 +391,18 @@ async def book_appointment(
 
 
 async def list_appointments(
-    session: AsyncSession, org_id: uuid.UUID, status: str | None = None
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    status: str | None = None,
+    *,
+    limit: int = 100,
+    offset: int = 0,
 ) -> list[Appointment]:
-    stmt = sa.select(Appointment).order_by(Appointment.created_at.desc())
+    # 6.22: unbounded before this - an org with a long AI-booking history would pull
+    # every appointment ever made into one response.
+    stmt = (
+        sa.select(Appointment).order_by(Appointment.created_at.desc()).limit(limit).offset(offset)
+    )
     if status:
         stmt = stmt.where(Appointment.status == status)
     return list((await session.execute(stmt)).scalars().all())

@@ -232,10 +232,63 @@ async def test_parallel_mode_first_connected_wins_siblings_abandoned(
         ).scalars().all()
     }
     assert rows[B].status == "connected"  # first connected (claim order A,B,C) wins
-    assert rows[C].status == "abandoned"  # sibling hung up
+    # Bugfix ledger 6.21: an abandoned parallel-dial leg is a contact who WAS reached,
+    # not a dead end - it gets retried like any other non-terminal outcome (status
+    # "queued" with next_attempt_at set) as long as attempts < max_attempts.
+    assert rows[C].status == "queued"  # sibling hung up but is still retryable
+    assert rows[C].attempts == 1
+    assert rows[C].next_attempt_at is not None
     assert rows[A].status == "queued"  # no_answer -> retryable
     assert rows[A].attempts == 1
     assert rows[A].next_attempt_at is not None
+
+
+async def test_abandoned_parallel_leg_is_terminal_once_attempts_exhausted(
+    app_with_loopback, session, _monkeypatch_start_call, monkeypatch
+):
+    """6.21 companion: once max_attempts is reached, an abandoned leg finally lands on
+    the terminal "abandoned" status instead of being requeued forever."""
+    client, carrier, _app = app_with_loopback
+    org_id = await _make_org(client)
+    lst = await _ready_list(session, org_id, [B, C])
+    campaign = await _dial_campaign(
+        session, org_id, lst.id, dialer_mode="parallel", parallel_lines=2, max_attempts=1
+    )
+    campaign = await dialer_svc.start_dial_campaign(session, campaign)
+
+    set_org_context(session, org_id)
+    losing_call = Call(
+        id=uuid.uuid4(), org_id=org_id, direction="outbound", contact_e164=C, our_e164=OUR,
+        carrier="telnyx", status="answered",
+    )
+    session.add(losing_call)
+    await session.commit()
+
+    _monkeypatch_start_call(
+        {
+            B: dialer_svc.DialOutcome(status="connected", call_id=None),
+            C: dialer_svc.DialOutcome(status="connected", call_id=losing_call.id),
+        }
+    )
+    async def _fake_end_room_call(api, call):
+        return None
+
+    monkeypatch.setattr(dialer_svc.voice_plane_svc, "end_room_call", _fake_end_room_call)
+
+    counts = await dialer_svc.dialer_tick(
+        session, object(), None, None, Random(1), now=FROZEN
+    )
+    assert counts["abandoned"] == 1
+
+    set_org_context(session, org_id)
+    row_c = (
+        await session.execute(
+            sa.select(DialAttempt).where(
+                DialAttempt.campaign_id == campaign.id, DialAttempt.e164 == C
+            )
+        )
+    ).scalar_one()
+    assert row_c.status == "abandoned"  # max_attempts=1 already spent, no more retries
 
 
 async def test_voicemail_amd_verdict_no_retry(app_with_loopback, session, _monkeypatch_start_call):

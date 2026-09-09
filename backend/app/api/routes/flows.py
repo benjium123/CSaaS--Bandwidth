@@ -443,6 +443,29 @@ async def dial_callback_now(
     if not access.can_use(number.e164):
         raise PermissionDeniedError(f"You do not have call access to {number.e164}")
 
+    # 3.13: claim the entry with a conditional UPDATE BEFORE dialing - two concurrent
+    # "dial now" clicks on the same entry must not both place a call. `offered_at` alone
+    # is not a safe claim signal: an entry that already went through an agent-offer cycle
+    # before overflowing to callback keeps a STALE non-null offered_at from that earlier
+    # cycle, which would wrongly 409 a legitimate first dial-now click. `dial_now_claimed_at`
+    # is a dedicated field for this claim, untouched by the queue-offer flow, so the entry
+    # keeps its existing "stays callback_requested through the dial" design (B8) and the
+    # loser of the race gets 409 instead of double-dialing.
+    claim_result = await ctx.session.execute(
+        sa.update(QueueEntry)
+        .where(
+            QueueEntry.id == entry.id,
+            QueueEntry.state == "callback_requested",
+            QueueEntry.dial_now_claimed_at.is_(None),
+        )
+        .values(dial_now_claimed_at=now)
+    )
+    if claim_result.rowcount != 1:
+        await ctx.session.rollback()
+        raise ConflictError("This callback is already being dialed")
+    await ctx.session.commit()
+    entry.dial_now_claimed_at = now
+
     registry = getattr(request.app.state, "carriers", None)
     await calls_svc.create_outbound_call(
         ctx.session,

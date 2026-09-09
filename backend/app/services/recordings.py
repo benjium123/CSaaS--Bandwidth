@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import httpx
 import sqlalchemy as sa
@@ -32,6 +33,8 @@ from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import FeatureUnavailableError
 from app.models.voice import Call, CallLeg, CallRecording
 from app.models.voice import VoiceEvent as VoiceEventRow
+from app.providers import registry_org
+from app.services import credentials as credential_svc
 from app.providers.voice import VoiceEvent, as_voice_carrier
 
 log = structlog.get_logger("recordings")
@@ -44,6 +47,16 @@ ALLOWED_RECORDING_CONTENT_TYPES = frozenset(
     {"audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"}
 )
 _OCTET_STREAM = "application/octet-stream"
+
+#: Per-carrier host allowlist for recording URLs. A webhook payload is untrusted input;
+#: never fetch a recording from a host the carrier has not explicitly named as safe.
+CARRIER_RECORDING_HOST_ALLOWLIST = {
+    "bandwidth": (".bandwidth.com",),
+    "telnyx": (".telnyx.com",),
+    "twilio": (".twilio.com",),
+    # Matches providers/plivo/voice.py::recording_auth's own host check.
+    "plivo": (".plivo.com",),
+}
 
 #: F6 retry bookkeeping WITHOUT a schema change: CallRecording gets no fetch_attempts /
 #: next_attempt_at columns (unlike MediaAsset) - staleness is read off TimestampMixin's own
@@ -60,6 +73,16 @@ def _now() -> datetime:
 
 def storage_key(org_id: uuid.UUID, recording_id: uuid.UUID) -> str:
     return f"org/{org_id}/recordings/{recording_id}"
+
+
+def _recording_host_allowed(carrier_name: str, url: str) -> bool:
+    hostname = urlparse(url).hostname
+    if not hostname:
+        return False
+    suffixes = CARRIER_RECORDING_HOST_ALLOWLIST.get(carrier_name)
+    if not suffixes:
+        return False
+    return any(hostname == suffix.lstrip(".") or hostname.endswith(suffix) for suffix in suffixes)
 
 
 async def on_recording_ready(
@@ -125,6 +148,7 @@ async def fetch_pending_recordings(
     client: httpx.AsyncClient | None = None,
     limit: int = 25,
     now: datetime | None = None,
+    settings=None,  # noqa: ANN001 - app.config.Settings; D4 org-context priming
 ) -> int:
     """Sweeper-driven: download and store every recording whose CallRecording row is still
     `pending`, or `failed` but past its retry backoff (see RETRY_BACKOFF_SECONDS /
@@ -162,9 +186,53 @@ async def fetch_pending_recordings(
     try:
         for recording in pending:
             set_org_context(session, recording.org_id)
-            ok = await _fetch_one_recording(session, store, registry, client, recording)
+            # D4: prime this org's DB-backed carrier registry into CURRENT_ORG_ID,
+            # exactly as outbound_tick does - without it, _fetch_one_recording's
+            # registry.get(carrier_name) below only ever resolves the env-configured
+            # carrier, never a DB-only org's own provider account.
+            org_token = registry_org.CURRENT_ORG_ID.set(recording.org_id)
+            try:
+                if (
+                    settings is not None
+                    and credential_svc.master_key_present(settings)
+                    and not registry_org.is_primed(recording.org_id)
+                ):
+                    try:
+                        global_registry = getattr(registry, "global_registry", None)
+                        await registry_org.prime_org_registry(
+                            session, settings, recording.org_id, global_registry=global_registry
+                        )
+                    except Exception:  # noqa: BLE001 - priming must not kill the whole pass
+                        log.exception(
+                            "org_registry_prime_failed", org_id=str(recording.org_id)
+                        )
+                try:
+                    ok = await _fetch_one_recording(session, store, registry, client, recording)
+                except Exception:  # noqa: BLE001 - one bad row must not kill the whole pass
+                    log.exception(
+                        "recording_fetch_row_failed",
+                        org_id=str(recording.org_id),
+                        recording_id=str(recording.id),
+                    )
+                    await session.rollback()
+                    continue
+                # 3.14: commit PER ROW, not once across every org in `pending` - a later
+                # row's failure (exception or otherwise) must never roll back an
+                # earlier row's already-successful fetch, especially across DIFFERENT
+                # orgs.
+                try:
+                    await session.commit()
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "recording_fetch_commit_failed",
+                        org_id=str(recording.org_id),
+                        recording_id=str(recording.id),
+                    )
+                    await session.rollback()
+                    continue
+            finally:
+                registry_org.CURRENT_ORG_ID.reset(org_token)
             fetched += 1 if ok else 0
-        await session.commit()
     finally:
         if owns_client:
             await client.aclose()
@@ -226,6 +294,12 @@ async def _fetch_one_recording(
 
     if not event.recording_url:
         return await _fail(recording, "recording_ready event carried no URL")
+
+    call = await session.get(Call, recording.call_id)
+    if call is None:  # pragma: no cover - FK guarantees
+        return await _fail(recording, "call row missing")
+    if not _recording_host_allowed(call.carrier, event.recording_url):
+        return await _fail(recording, "recording URL host is not allowlisted for carrier")
 
     # Prefer a header-based credential when the adapter has one. A Bandwidth account on
     # OAuth2 has no Basic pair to hand back, so recording_auth() correctly returns None

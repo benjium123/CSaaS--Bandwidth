@@ -30,6 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ValidationFailedError
 from app.models import MediaAsset
+from app.providers import registry_org
+from app.services import credentials as credential_svc
 
 log = structlog.get_logger("media")
 
@@ -143,8 +145,10 @@ async def fetch_pending_media(
     *,
     client: httpx.AsyncClient | None = None,
     carrier=None,  # noqa: ANN001 - supplies media_auth for carrier-hosted URLs
+    registry=None,  # noqa: ANN001 - CarrierRegistry; D4 org-context priming
     limit: int = 25,
     now: datetime | None = None,
+    settings=None,  # noqa: ANN001 - app.config.Settings; retention for the stored copy
 ) -> int:
     """Download and re-host inbound media whose carrier URL is about to expire.
 
@@ -178,7 +182,29 @@ async def fetch_pending_media(
     try:
         for asset in pending:
             set_org_context(session, asset.org_id)
-            ok = await _fetch_one(session, store, client, carrier, asset, moment)
+            # D4: prime this org's DB-backed carrier registry into CURRENT_ORG_ID,
+            # exactly as outbound_tick does - without it, anything reached during this
+            # row's processing that consults the registry (e.g. a future media_auth
+            # resolved via the org's own provider account rather than the single env
+            # `carrier` above) would silently fall back to env/None.
+            org_token = registry_org.CURRENT_ORG_ID.set(asset.org_id)
+            try:
+                if (
+                    settings is not None
+                    and registry is not None
+                    and credential_svc.master_key_present(settings)
+                    and not registry_org.is_primed(asset.org_id)
+                ):
+                    try:
+                        global_registry = getattr(registry, "global_registry", None)
+                        await registry_org.prime_org_registry(
+                            session, settings, asset.org_id, global_registry=global_registry
+                        )
+                    except Exception:  # noqa: BLE001 - priming must not kill the pass
+                        log.exception("org_registry_prime_failed", org_id=str(asset.org_id))
+                ok = await _fetch_one(session, store, client, carrier, asset, moment, settings)
+            finally:
+                registry_org.CURRENT_ORG_ID.reset(org_token)
             fetched += 1 if ok else 0
         await session.commit()
     finally:
@@ -194,6 +220,7 @@ async def _fetch_one(
     carrier,  # noqa: ANN001
     asset: MediaAsset,
     moment: datetime,
+    settings=None,  # noqa: ANN001 - app.config.Settings
 ) -> bool:
     url = asset.source_url or ""
     # Carrier-hosted media needs the carrier's own credentials - and those must NEVER be
@@ -250,6 +277,12 @@ async def _fetch_one(
     asset.content_type = asset.content_type or "application/octet-stream"
     asset.size_bytes = len(data)
     asset.sha256 = hashlib.sha256(data).hexdigest()
+    # 2.13: inbound MMS never expired once re-hosted here - same retention convention
+    # store_upload already applies to the OUTBOUND path (0 = never expire, an explicit
+    # deployment choice, not a bug in itself).
+    retention_days = int(getattr(settings, "media_retention_days", 0) or 0)
+    if retention_days > 0:
+        asset.expires_at = moment + timedelta(days=retention_days)
     asset.status = "stored"
     asset.last_error = None
     asset.next_attempt_at = None

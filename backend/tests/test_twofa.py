@@ -28,8 +28,12 @@ async def twofa_client(engine, twofa_settings):
         yield c
 
 
-async def _enroll_and_activate(client, token) -> str:
-    enroll = await client.post("/api/v1/auth/2fa/enroll", headers=auth_headers(token))
+async def _enroll_and_activate(client, token, password: str = "correct-horse-battery") -> str:
+    enroll = await client.post(
+        "/api/v1/auth/2fa/enroll",
+        json={"password": password},
+        headers=auth_headers(token),
+    )
     assert enroll.status_code == 200, enroll.text
     secret = enroll.json()["secret"]
     assert enroll.json()["provisioning_uri"].startswith("otpauth://totp/")
@@ -150,7 +154,11 @@ async def test_secret_is_encrypted_at_rest(twofa_client, session):
 async def test_enroll_without_fernet_key_is_503(client):
     """No plaintext fallback branch: without the key, the feature is simply unavailable."""
     token = await register_and_login(client, "tf6@example.com")
-    r = await client.post("/api/v1/auth/2fa/enroll", headers=auth_headers(token))
+    r = await client.post(
+        "/api/v1/auth/2fa/enroll",
+        json={"password": "correct-horse-battery"},
+        headers=auth_headers(token),
+    )
     assert r.status_code == 503
     assert r.json()["error"]["code"] == "feature_unavailable"
 
@@ -161,14 +169,16 @@ async def test_disable_requires_a_valid_code(twofa_client):
     secret = await _enroll_and_activate(client, token)
 
     bad = await client.post(
-        "/api/v1/auth/2fa/disable", json={"code": "000000"}, headers=auth_headers(token)
+        "/api/v1/auth/2fa/disable",
+        json={"code": "000000", "password": "correct-horse-battery"},
+        headers=auth_headers(token),
     )
     assert bad.status_code == 401
 
     time.sleep(31 - (int(time.time()) % 30))
     good = await client.post(
         "/api/v1/auth/2fa/disable",
-        json={"code": pyotp.TOTP(secret).now()},
+        json={"code": pyotp.TOTP(secret).now(), "password": "correct-horse-battery"},
         headers=auth_headers(token),
     )
     assert good.status_code == 200

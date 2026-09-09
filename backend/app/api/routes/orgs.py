@@ -5,15 +5,16 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import OrgContext, get_current_user, require_permission
 from app.db.session import get_session
-from app.errors import ConflictError, NotFoundError
-from app.models import Invite, OrgMembership, Role, User
+from app.errors import ConflictError, NotFoundError, PermissionDeniedError
+from app.models import WILDCARD, Invite, OrgMembership, Role, User
 from app.repositories import orgs as orgs_repo
+from app.services import audit as audit_svc
 from app.services import invites as invites_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
@@ -94,6 +95,144 @@ async def current_org_members(
         )
         for _m, u, r in rows
     ]
+
+
+class MemberUpdateIn(BaseModel):
+    role_name: str = Field(min_length=1, max_length=64)
+
+
+async def _get_role_for_org(ctx: OrgContext, role_name: str) -> Role:
+    role = (
+        await ctx.session.execute(
+            sa.select(Role).where(Role.org_id == ctx.org.id, Role.name == role_name)
+        )
+    ).scalar_one_or_none()
+    if role is None:
+        raise NotFoundError(f"Role {role_name!r} does not exist in this organisation")
+    return role
+
+
+def _role_assignable_by(actor_role: Role, target_role: Role) -> bool:
+    """C1: an actor may only ever set (update_member) or act on (remove_member) a role
+    whose permission set is a SUBSET of their own - never grant, or remove someone
+    holding, a role with capabilities the actor itself lacks. Without this, an admin
+    (members:update/members:remove but no wildcard) could self-promote to owner, or
+    remove an owner outright. An actor holding the wildcard is exempt - it dominates
+    every other role's permission set by definition."""
+    actor_perms = actor_role.permissions or []
+    if WILDCARD in actor_perms:
+        return True
+    target_perms = set(target_role.permissions or [])
+    return target_perms.issubset(set(actor_perms))
+
+
+@router.delete("/current/members/{user_id}", status_code=204)
+async def remove_member(
+    user_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("members:remove"))],
+) -> Response:
+    row = (
+        await ctx.session.execute(
+            sa.select(OrgMembership, Role)
+            .join(Role, Role.id == OrgMembership.role_id)
+            .where(OrgMembership.org_id == ctx.org.id, OrgMembership.user_id == user_id)
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError("Member not found")
+    membership, current_role = row
+
+    if not _role_assignable_by(ctx.role, current_role):
+        raise PermissionDeniedError("You cannot remove a member with a higher role than your own")
+
+    if current_role.name == "owner":
+        owner_count = (
+            await ctx.session.execute(
+                sa.select(sa.func.count())
+                .select_from(OrgMembership)
+                .join(Role, Role.id == OrgMembership.role_id)
+                .where(OrgMembership.org_id == ctx.org.id, Role.name == "owner")
+            )
+        ).scalar_one()
+        if owner_count <= 1:
+            raise ConflictError("Cannot remove the last owner of an organisation")
+
+    await ctx.session.delete(membership)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        action="member.removed",
+        target_type="org_membership",
+        target_id=str(user_id),
+        detail={"user_id": str(user_id)},
+    )
+    await ctx.session.commit()
+    return Response(status_code=204)
+
+
+@router.patch("/current/members/{user_id}", response_model=MemberOut)
+async def update_member(
+    user_id: uuid.UUID,
+    payload: MemberUpdateIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("members:update"))],
+) -> MemberOut:
+    row = (
+        await ctx.session.execute(
+            sa.select(OrgMembership, User, Role)
+            .join(User, User.id == OrgMembership.user_id)
+            .join(Role, Role.id == OrgMembership.role_id)
+            .where(OrgMembership.org_id == ctx.org.id, OrgMembership.user_id == user_id)
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError("Member not found")
+    membership, user, current_role = row
+
+    # E1: an admin (no wildcard) could otherwise demote a peer OWNER by only ever
+    # having the TARGET role checked below - assigning e.g. "agent" (a subset of
+    # admin's own permissions) passed even though the MEMBER being changed outranks
+    # the actor. Same subset rule remove_member already applies to current_role.
+    if not _role_assignable_by(ctx.role, current_role):
+        raise PermissionDeniedError(
+            "You cannot change the role of a member with a higher role than your own"
+        )
+
+    new_role = await _get_role_for_org(ctx, payload.role_name)
+
+    if not _role_assignable_by(ctx.role, new_role):
+        raise PermissionDeniedError(
+            "You cannot assign a role with more permissions than your own"
+        )
+
+    if current_role.name == "owner" and new_role.name != "owner":
+        owner_count = (
+            await ctx.session.execute(
+                sa.select(sa.func.count())
+                .select_from(OrgMembership)
+                .join(Role, Role.id == OrgMembership.role_id)
+                .where(OrgMembership.org_id == ctx.org.id, Role.name == "owner")
+            )
+        ).scalar_one()
+        if owner_count <= 1:
+            raise ConflictError("Cannot demote the last owner of an organisation")
+
+    membership.role_id = new_role.id
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        action="member.updated",
+        target_type="org_membership",
+        target_id=str(user_id),
+        detail={"user_id": str(user_id), "role_name": new_role.name},
+    )
+    await ctx.session.commit()
+    return MemberOut(
+        user_id=user.id, email=user.email, full_name=user.full_name, role_name=new_role.name
+    )
 
 
 # ----------------------------------------------------------------------------------

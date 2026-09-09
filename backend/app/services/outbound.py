@@ -29,6 +29,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.compliance import registration
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ComplianceBlockedError, ConflictError, ValidationFailedError
 from app.models import (
@@ -41,6 +42,8 @@ from app.models import (
     OutboundCampaign,
     OutboundSend,
 )
+from app.providers import registry_org
+from app.services import credentials as credential_svc
 from app.services import pacing
 from app.services import sender as sender_svc
 from app.services import templates as tmpl
@@ -51,6 +54,13 @@ log = structlog.get_logger("outbound")
 
 OUTBOUND_TICK_BATCH = 25
 STALE_SENDING_MINUTES = 5
+#: D2: when a campaign's entire number pool is registration-ineligible right now, a
+#: queued row is left alone rather than blocked - but bumped this far out so it is not
+#: immediately re-selected (and re-checked) on every subsequent tick until that changes.
+NO_ELIGIBLE_SENDER_RETRY_MINUTES = 5
+#: 6.16: enqueue_campaign_rows commits (and frees its identity map) every this many rows,
+#: instead of holding an entire campaign's worth of new OutboundSend rows in one txn.
+ENQUEUE_BATCH = 500
 
 
 def _now() -> datetime:
@@ -104,27 +114,36 @@ async def enqueue_campaign_rows(session: AsyncSession, campaign: OutboundCampaig
         .scalars()
         .all()
     )
-    stmt = sa.select(ContactListRow).where(
+    # 6.16: select only the three columns actually needed (not full ORM rows) and commit
+    # + expunge every ENQUEUE_BATCH rows - a 100k-row list must not hold every
+    # ContactListRow AND every newly-built OutboundSend in memory for one giant
+    # transaction/identity map.
+    stmt = sa.select(ContactListRow.id, ContactListRow.contact_id, ContactListRow.e164).where(
         ContactListRow.list_id == campaign.list_id, ContactListRow.status == "accepted"
     )
-    rows = list((await session.execute(stmt)).scalars().all())
     created = 0
-    for row in rows:
-        if row.e164 in existing:
+    since_commit = 0
+    for row_id, contact_id, e164 in (await session.execute(stmt)).all():
+        if e164 in existing:
             continue
         session.add(
             OutboundSend(
                 id=uuid.uuid4(),
                 org_id=campaign.org_id,
                 campaign_id=campaign.id,
-                row_id=row.id,
-                contact_id=row.contact_id,
-                e164=row.e164,
+                row_id=row_id,
+                contact_id=contact_id,
+                e164=e164,
                 status="queued",
             )
         )
-        existing.add(row.e164)
+        existing.add(e164)
         created += 1
+        since_commit += 1
+        if since_commit >= ENQUEUE_BATCH:
+            await session.commit()
+            session.expunge_all()
+            since_commit = 0
     await session.commit()
     return created
 
@@ -147,7 +166,13 @@ async def start_campaign(session: AsyncSession, campaign: OutboundCampaign) -> O
             "This campaign has no message body, and its list has no per-row messages"
         )
     await enqueue_campaign_rows(session, campaign)
-    campaign.status = "running"
+    # 6.6: start_at was dead - /start always ran the campaign immediately regardless of
+    # a future start_at. A future start_at now parks the campaign as "scheduled";
+    # outbound_tick releases it into "running" once that moment has passed.
+    start_at = campaign.start_at
+    if start_at is not None and start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=timezone.utc)
+    campaign.status = "scheduled" if (start_at is not None and start_at > _now()) else "running"
     await session.commit()
     return campaign
 
@@ -197,10 +222,21 @@ def _resolve_body(
 # --------------------------------------------------------------------------------------
 # The sweeper tick
 # --------------------------------------------------------------------------------------
-async def _running_sms_campaigns(session: AsyncSession) -> list[OutboundCampaign]:
+async def _running_sms_campaigns(
+    session: AsyncSession, now: datetime
+) -> list[OutboundCampaign]:
     stmt = (
         sa.select(OutboundCampaign)
-        .where(OutboundCampaign.channel == "sms", OutboundCampaign.status == "running")
+        .where(
+            OutboundCampaign.channel == "sms",
+            sa.or_(
+                OutboundCampaign.status == "running",
+                sa.and_(
+                    OutboundCampaign.status == "scheduled",
+                    OutboundCampaign.start_at <= _bind(session, now),
+                ),
+            ),
+        )
         .execution_options(**{ALLOW_UNSCOPED_KEY: True})
     )
     return list((await session.execute(stmt)).scalars().all())
@@ -237,27 +273,82 @@ async def _requeue_stale_sending(session: AsyncSession, now: datetime) -> int:
     for row in rows:
         set_org_context(session, row.org_id)
 
-        search_from = _bind(session, row.updated_at - _ADOPT_SEARCH_SLACK)
-        adopted = (
-            await session.execute(
-                sa.select(Message)
-                .where(
-                    Message.to_e164 == row.e164,
-                    Message.direction == "outbound",
-                    Message.created_at >= search_from,
-                )
-                .order_by(Message.created_at.asc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-
-        if adopted is not None:
-            row.message_id = adopted.id
-            row.status = "deferred" if adopted.hold_until is not None else "sent"
+        # 6.1/2.8: bound the adoption window to THIS row's own org/from/to/body, not just
+        # "any outbound message to this contact around this time" - an unbounded search
+        # could adopt an unrelated message (different campaign, different body, even a
+        # 1:1 reply) that merely happened to land in the same few seconds.
+        campaign = await session.get(OutboundCampaign, row.campaign_id)
+        row_fields = {}
+        if row.row_id is not None:
+            list_row = await session.get(ContactListRow, row.row_id)
+            row_fields = (list_row.fields if list_row is not None else {}) or {}
+        expected_body, _skip = _resolve_body(campaign, row, row_fields, "")
+        if expected_body is None:
+            row.attempts += 1
+            if campaign is not None and row.attempts >= campaign.max_attempts:
+                row.status = "failed"
+                row.last_error = "requeue attempts exhausted after a suspected crash"
+            else:
+                row.status = "queued"
             await session.commit()
             continue
 
-        campaign = await session.get(OutboundCampaign, row.campaign_id)
+        adopt_window = _bind(session, now - timedelta(minutes=15))
+        search_from = _bind(session, row.updated_at - _ADOPT_SEARCH_SLACK)
+        if search_from < adopt_window:
+            search_from = adopt_window
+
+        from_e164 = None
+        if campaign is not None:
+            numbers = list(
+                (
+                    await session.execute(
+                        sa.select(OrgNumber).where(OrgNumber.is_active.is_(True))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            pool = [
+                n.e164
+                for n in numbers
+                if not campaign.from_numbers or n.e164 in campaign.from_numbers
+            ]
+            if pool:
+                from_e164 = sender_svc.pick_deterministic(row.e164, pool)
+
+        adopted_stmt = (
+            sa.select(Message)
+            .where(
+                Message.org_id == row.org_id,
+                Message.to_e164 == row.e164,
+                Message.direction == "outbound",
+                Message.body == expected_body,
+                Message.created_at >= search_from,
+                Message.created_at <= _bind(session, now),
+            )
+            .order_by(Message.created_at.asc())
+            .limit(1)
+        )
+        if from_e164:
+            adopted_stmt = adopted_stmt.where(Message.from_e164 == from_e164)
+
+        adopted = (await session.execute(adopted_stmt)).scalar_one_or_none()
+
+        if adopted is not None:
+            row.message_id = adopted.id
+            if adopted.status in ("rejected", "failed"):
+                # 6.1: an adopted message that the carrier actually REJECTED must never
+                # be reported as "sent" - the recipient never got it.
+                row.status = "failed"
+                row.last_error = (adopted.error_detail or adopted.error_code or "adopted_failed")[
+                    :255
+                ]
+            else:
+                row.status = "deferred" if adopted.hold_until is not None else "sent"
+            await session.commit()
+            continue
+
         row.attempts += 1
         if campaign is not None and row.attempts >= campaign.max_attempts:
             row.status = "failed"
@@ -308,7 +399,7 @@ def _aware(value: datetime | None) -> datetime | None:
 async def outbound_tick(
     session: AsyncSession,
     carrier,  # noqa: ANN001 - MessagingCarrier protocol
-    settings,  # noqa: ANN001 - app.config.Settings; reserved for future use
+    settings,  # noqa: ANN001 - app.config.Settings
     rng: Random,
     *,
     now: datetime | None = None,
@@ -331,12 +422,58 @@ async def outbound_tick(
     remaining = batch
     # Per-number pacing state, seeded lazily and kept ACROSS campaigns within this one
     # tick call - two campaigns sharing a sending number must not out-pace each other.
-    pace_cache: dict[str, dict] = {}
+    # 6.20: keyed on (org_id, from_e164) - two different orgs can each legitimately hold
+    # the SAME literal from_e164 in test/dev data, and even in prod a stale cross-org
+    # collision must never throttle one org off of another org's send history.
+    pace_cache: dict[tuple[uuid.UUID, str], dict] = {}
 
-    for campaign in await _running_sms_campaigns(session):
+    for campaign in await _running_sms_campaigns(session, moment):
         if remaining <= 0:
             break
         set_org_context(session, campaign.org_id)
+
+        # 4.2: DB-backed org carrier registries are keyed by CURRENT_ORG_ID. Prime that
+        # context around this campaign so a carrier provisioned via the org's own P17
+        # account is used instead of silently falling back to the env carrier - the
+        # sweeper runs with CURRENT_ORG_ID=None otherwise. Mirrors number_orders.py.
+        org_token = registry_org.CURRENT_ORG_ID.set(campaign.org_id)
+        try:
+            if (
+                settings is not None
+                and registry is not None
+                and credential_svc.master_key_present(settings)
+                and not registry_org.is_primed(campaign.org_id)
+            ):
+                try:
+                    global_registry = getattr(registry, "global_registry", None)
+                    await registry_org.prime_org_registry(
+                        session, settings, campaign.org_id, global_registry=global_registry
+                    )
+                except Exception:  # noqa: BLE001 - priming must not kill the whole tick
+                    log.exception("org_registry_prime_failed", org_id=str(campaign.org_id))
+
+            # 6.18: resolve the carrier to actually dispatch THROUGH the (now primed,
+            # CURRENT_ORG_ID-scoped) registry rather than always the single env `carrier`
+            # parameter - a DB-only org (no env carrier configured at all, `carrier is
+            # None`) previously could never send a campaign even though outbound_tick
+            # runs for it; this is the other half of that fix (the sweeper-level gate
+            # change is in sweeper.py).
+            campaign_carrier = carrier
+            if registry is not None:
+                resolved = getattr(registry, "primary", lambda: None)()
+                if resolved is not None:
+                    campaign_carrier = resolved
+        finally:
+            registry_org.CURRENT_ORG_ID.reset(org_token)
+
+        if campaign_carrier is None:
+            # Nothing this org can send through at all - leave its rows queued for a
+            # later tick rather than crashing on a None carrier.
+            continue
+
+        if campaign.status == "scheduled":
+            campaign.status = "running"
+            await session.commit()
 
         org = await session.get(
             Org, campaign.org_id, execution_options={ALLOW_UNSCOPED_KEY: True}
@@ -348,10 +485,24 @@ async def outbound_tick(
             .scalars()
             .all()
         )
+        # D2: filter the pool through the SAME registration-eligibility gate
+        # send_message enforces (D1) - selecting an ineligible number here only to have
+        # it rejected by send_message's compliance check a few lines below would mark
+        # the row "blocked" from a single attempt, with max_attempts/backoff never
+        # given a chance to apply.
+        eligible_numbers, _ineligible = await registration.partition_by_eligibility(
+            session,
+            numbers,
+            require_registration=bool(
+                settings is not None and settings.require_number_registration
+            ),
+        )
+        eligible_e164s = {n.e164 for n in eligible_numbers}
         pool = [
             n.e164
             for n in numbers
-            if not campaign.from_numbers or n.e164 in campaign.from_numbers
+            if n.e164 in eligible_e164s
+            and (not campaign.from_numbers or n.e164 in campaign.from_numbers)
         ]
         warmup_by_number = {n.e164: _aware(n.warmup_started_at) for n in numbers}
 
@@ -367,6 +518,10 @@ async def outbound_tick(
             )
             .order_by(OutboundSend.created_at.asc())
             .limit(remaining)
+            # 6.19: SKIP LOCKED so a second concurrent worker claims a DIFFERENT batch of
+            # rows instead of blocking on (or double-claiming) this one's. SQLAlchemy
+            # silently ignores this on SQLite, so tests keep running unaffected.
+            .with_for_update(skip_locked=True)
         )
         rows = list((await session.execute(stmt)).scalars().all())
 
@@ -374,17 +529,45 @@ async def outbound_tick(
             if remaining <= 0:
                 break
             if not pool:
-                break  # nothing to send from this org right now; leave the row queued
+                # D2: every number in campaign.from_numbers is registration-ineligible
+                # right now (or none is active) - nothing here will ever succeed until
+                # that changes. Leave the row QUEUED, never blocked, but bump
+                # next_attempt_at so it is not immediately re-selected on the very next
+                # tick, same as the carrier-rejection backoff below.
+                row.next_attempt_at = moment + timedelta(
+                    minutes=NO_ELIGIBLE_SENDER_RETRY_MINUTES
+                )
+                await session.commit()
+                continue
 
-            from_e164 = sender_svc.pick_deterministic(row.e164, pool)
-            state = pace_cache.get(from_e164)
+            # 6.2: go through the SAME sticky-sender selection a reply does, restricted
+            # to this campaign's own number pool - raw pick_deterministic bypassed
+            # stickiness entirely, forking an existing 1:1 thread onto a different
+            # number and splitting its opt-out state. allow_reassign=True: a bulk
+            # campaign send should pick another in-pool number rather than blocking the
+            # whole row when a contact's prior sticky number fell outside this pool.
+            try:
+                from_e164 = await sender_svc.select_sender(
+                    session, campaign.org_id, row.e164, pool=pool, allow_reassign=True
+                )
+            except ValidationFailedError:
+                # E4: no eligible number for this contact right now (e.g. its sticky
+                # number fell outside the pool and no reassignment was possible) - same
+                # bump as the empty-pool path above, or this row is re-selected on the
+                # very next tick forever (a busy loop), never blocked/failed either.
+                row.next_attempt_at = moment + timedelta(
+                    minutes=NO_ELIGIBLE_SENDER_RETRY_MINUTES
+                )
+                await session.commit()
+                continue
+            state = pace_cache.get((campaign.org_id, from_e164))
             if state is None:
                 since = moment - timedelta(hours=CAP_WINDOW_HOURS)
                 state = {
                     "last_send_at": await _last_send_at(session, from_e164),
                     "sent_today": await _sent_recent_count(session, from_e164, since),
                 }
-                pace_cache[from_e164] = state
+                pace_cache[(campaign.org_id, from_e164)] = state
 
             ramp_cap = pacing.warmup_daily_cap(warmup_by_number.get(from_e164), moment)
             cap = pacing.effective_daily_cap(campaign.daily_cap, ramp_cap, campaign.respect_warmup)
@@ -413,16 +596,24 @@ async def outbound_tick(
                 continue
 
             session.info[BULK_SEND_KEY] = True
+            send_org_token = registry_org.CURRENT_ORG_ID.set(campaign.org_id)
             try:
                 message = await send_message(
                     session,
                     campaign.org_id,
-                    carrier,
+                    campaign_carrier,
                     to_e164=row.e164,
                     from_e164=from_e164,
                     body=body,
                     registry=registry,
                     plan=None,
+                    # D1: this call bypasses routing.plan_route (plan=None), which is
+                    # otherwise the only place the 10DLC/TFV registration gate runs -
+                    # send_message's own require_registration kwarg was never wired to
+                    # the deployment's actual setting, silently defaulting to False.
+                    require_registration=bool(
+                        settings is not None and settings.require_number_registration
+                    ),
                 )
             except ComplianceBlockedError as exc:
                 row.status = "blocked"
@@ -459,6 +650,7 @@ async def outbound_tick(
                 await session.commit()
             finally:
                 session.info.pop(BULK_SEND_KEY, None)
+                registry_org.CURRENT_ORG_ID.reset(send_org_token)
 
         if not await _has_nonterminal_sends(session, campaign.id):
             campaign.status = "completed"

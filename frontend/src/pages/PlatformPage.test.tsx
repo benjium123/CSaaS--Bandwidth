@@ -121,4 +121,47 @@ describe("PlatformPage", () => {
     const table = screen.getByText("apikey.created").closest("table") as HTMLElement;
     expect(within(table).getByText(/api_key/)).toBeInTheDocument();
   });
+
+  it("shows an API keys load error with a retry that recovers", async () => {
+    let apiKeyCalls = 0;
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/api-keys": (((_path, init) => {
+          if (init.method === "POST") return CREATED_KEY;
+          apiKeyCalls += 1;
+          if (apiKeyCalls === 1) return new Error("api keys down");
+          return [];
+        }) as RouteStub),
+      }),
+    );
+    renderWithProviders(<PlatformPage />, client);
+
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("api keys down")).toBeInTheDocument();
+
+    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+
+    await screen.findByText("No API keys yet.");
+  });
+
+  it("shows an audit log error with a retry that recovers", async () => {
+    let auditCalls = 0;
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/audit": (((_path) => {
+          auditCalls += 1;
+          if (auditCalls === 1) return new Error("audit log down");
+          return AUDIT_ROWS;
+        }) as RouteStub),
+      }),
+    );
+    renderWithProviders(<PlatformPage />, client);
+
+    const alert = await screen.findByText("audit log down");
+    expect(alert.closest('[role="alert"]')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await screen.findByText("apikey.created");
+  });
 });

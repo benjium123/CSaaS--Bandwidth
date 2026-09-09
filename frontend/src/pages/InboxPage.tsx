@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import {
   useInbox,
@@ -7,11 +8,25 @@ import {
   useThreadAiState,
   type InboxFilters,
 } from "@/api/hooks";
+import { fetchInboxes } from "@/api/conversations";
 import { ThreadList } from "@/components/inbox/ThreadList";
 import { ThreadView } from "@/components/inbox/ThreadView";
 import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import type { ApiClient } from "@/api/client";
+
+/** Item 37: debounce the search box before it enters a query key, the same as
+ * ConversationsPage's own useDebouncedValue - typing shouldn't refetch on every
+ * keystroke. Duplicated locally (not imported) since ConversationsPage.tsx doesn't
+ * export it. */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = React.useState(value);
+  React.useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 const STATUS_TABS = [
   { key: "open", label: "Open" },
@@ -30,6 +45,7 @@ export function InboxPage() {
   const [status, setStatus] = React.useState("open");
   const [assigned, setAssigned] = React.useState("");
   const [q, setQ] = React.useState("");
+  const debouncedQ = useDebouncedValue(q, 300);
   const [labelId, setLabelId] = React.useState("");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
@@ -37,16 +53,32 @@ export function InboxPage() {
     () => ({
       status: status || undefined,
       assigned: assigned || undefined,
-      q: q.trim() || undefined,
+      q: debouncedQ.trim() || undefined,
       label_id: labelId || undefined,
     }),
-    [status, assigned, q, labelId],
+    [status, assigned, debouncedQ, labelId],
   );
 
   const { data, isLoading, error } = useInbox(api, filters);
   const { data: tags } = useTags(api);
   const items = data?.items ?? [];
   const selected = items.find((i) => i.thread.id === selectedId) ?? null;
+
+  // Item 13: this legacy page never applied the P16 inbox-role gate ConversationsPage
+  // already has - a viewer could send/close/reopen threads from here even though the
+  // "real" inbox UI would have refused. Resolve the inbox that owns the SELECTED
+  // thread's own number (thread.our_e164), same lookup ConversationsPage uses.
+  const inboxesQuery = useQuery({
+    queryKey: ["inboxes"],
+    queryFn: () => fetchInboxes(api),
+    staleTime: 1000,
+  });
+  const inboxes = inboxesQuery.data ?? [];
+  const activeInbox =
+    inboxes.find((inbox) => inbox.e164 === selected?.thread.our_e164) ?? null;
+  const canSend = activeInbox
+    ? activeInbox.my_role !== "viewer"
+    : !inboxesQuery.isLoading && inboxes.length === 0;
 
   return (
     <div className="grid h-full grid-cols-[minmax(280px,360px)_1fr]">
@@ -121,7 +153,7 @@ export function InboxPage() {
       <section className="flex min-h-0 flex-col">
         {selected && <ThreadAiBar api={api} threadId={selected.thread.id} />}
         <div className="min-h-0 flex-1">
-          <ThreadView api={api} item={selected} />
+          <ThreadView api={api} item={selected} canSend={canSend} />
         </div>
       </section>
     </div>

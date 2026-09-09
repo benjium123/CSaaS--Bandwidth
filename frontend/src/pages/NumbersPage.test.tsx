@@ -488,4 +488,72 @@ describe("NumbersPage", () => {
     });
     expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
   });
+
+  it("shows a retry alert and refetches when the numbers list fails to load", async () => {
+    const client = makeStubClient(
+      baseStubs({ "/api/v1/numbers": new Error("numbers list down") }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("numbers list down");
+
+    const callsBefore = client.calls.filter((c) => c.path === "/api/v1/numbers").length;
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => {
+      expect(client.calls.filter((c) => c.path === "/api/v1/numbers").length).toBeGreaterThan(
+        callsBefore,
+      );
+    });
+  });
+
+  it("disables the Order button while the order mutation is pending", async () => {
+    let resolveOrder!: (value: unknown) => void;
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/numbers/available": AVAILABLE,
+        "/api/v1/numbers/order": () =>
+          new Promise((resolve) => {
+            resolveOrder = resolve;
+          }),
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    const orderButton = await screen.findByRole("button", { name: "Order" });
+    await userEvent.click(orderButton);
+
+    await waitFor(() => expect(orderButton).toBeDisabled());
+    resolveOrder(ORDERED_NUMBER);
+    await waitFor(() => expect(orderButton).not.toBeDisabled());
+  });
+
+  it("refetches the available-numbers search results after a successful order", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/numbers/available": AVAILABLE,
+        "/api/v1/numbers/order": ORDERED_NUMBER,
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    const orderButton = await screen.findByRole("button", { name: "Order" });
+
+    const callsBefore = client.calls.filter((c) =>
+      c.path.startsWith("/api/v1/numbers/available"),
+    ).length;
+
+    await userEvent.click(orderButton);
+    await screen.findByText(/Ordered \+12145550111 \(pending\)/);
+
+    await waitFor(() => {
+      const availableCalls = client.calls.filter((c) =>
+        c.path.startsWith("/api/v1/numbers/available"),
+      );
+      expect(availableCalls.length).toBeGreaterThan(callsBefore);
+    });
+  });
 });

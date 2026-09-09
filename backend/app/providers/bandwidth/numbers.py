@@ -254,11 +254,14 @@ class BandwidthNumberProviderMixin:
 
     async def order_status(self, provider_ref: str) -> OrderStatusResult:
         client = await self._get_client()
-        resp = await client.get(
-            f"{self.numbers_base_url}/accounts/{self.account_id}/orders/"
-            f"{quote(provider_ref, safe='')}",
-            auth=self._auth,
-        )
+        try:
+            resp = await client.get(
+                f"{self.numbers_base_url}/accounts/{self.account_id}/orders/"
+                f"{quote(provider_ref, safe='')}",
+                auth=self._auth,
+            )
+        except httpx.TransportError as exc:
+            raise FeatureUnavailableError(f"Bandwidth unreachable: {exc}") from exc
         _raise_if_auth_rejected(resp)
         if resp.status_code != 200:
             raise FeatureUnavailableError(
@@ -280,6 +283,32 @@ class BandwidthNumberProviderMixin:
             return OrderStatusResult(status="pending", detail=description or raw)
         return OrderStatusResult(status="pending", detail=description or raw or "pending")
 
+    async def lookup_owned_number(self, e164: str) -> bool | None:
+        """1.1: does THIS Bandwidth account currently own e164? None when the API could
+        not be asked at all - the caller treats that as unverifiable, never as a
+        silent "yes"."""
+        client = await self._get_client()
+        try:
+            resp = await client.get(
+                f"{self.numbers_base_url}/accounts/{self.account_id}/phoneNumbers",
+                params={"phoneNumber": _national10(e164)},
+                auth=self._auth,
+            )
+        except httpx.TransportError:
+            return None
+        if resp.status_code != 200:
+            return None
+        try:
+            root = _parse_xml(resp.text)
+        except FeatureUnavailableError:
+            return None
+        for el in root.iter():
+            if _local(el.tag) == "TelephoneNumber":
+                raw = (el.text or "").strip()
+                if _national10(e164) == _national10(raw):
+                    return True
+        return False
+
     async def release_number(self, e164: str, provider_ref: str | None = None) -> None:
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>'
@@ -292,12 +321,15 @@ class BandwidthNumberProviderMixin:
         )
 
         client = await self._get_client()
-        resp = await client.post(
-            f"{self.numbers_base_url}/accounts/{self.account_id}/disconnects",
-            content=body,
-            headers={"Content-Type": "application/xml"},
-            auth=self._auth,
-        )
+        try:
+            resp = await client.post(
+                f"{self.numbers_base_url}/accounts/{self.account_id}/disconnects",
+                content=body,
+                headers={"Content-Type": "application/xml"},
+                auth=self._auth,
+            )
+        except httpx.TransportError as exc:
+            raise FeatureUnavailableError(f"Bandwidth unreachable: {exc}") from exc
         _raise_if_auth_rejected(resp)
         if resp.status_code in (200, 201, 202, 204, 404, 409):
             # 404/409 mean the carrier already has no such number - release is

@@ -20,6 +20,7 @@ from app.models import (
     ContactPhone,
     ContactTag,
     CustomFieldDef,
+    MessageThread,
     Tag,
 )
 from app.services import contacts as svc
@@ -102,6 +103,22 @@ class CustomFieldIn(BaseModel):
 # ----------------------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------------------
+def _escape_like(s: str) -> str:
+    """Escape LIKE metacharacters so a caller-supplied `q` cannot smuggle its own
+    wildcards into the pattern (5.9). Backslash first - escaping % and _ before it would
+    double-escape a literal backslash already present in the input."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def _validate_company(ctx: OrgContext, company_id: uuid.UUID | None) -> None:
+    """5.6: company_id was never checked against the org - a stale or cross-org id was
+    accepted silently and only failed later (or not at all) wherever it was read back."""
+    if company_id is None:
+        return
+    if await ctx.session.get(Company, company_id) is None:
+        raise ValidationFailedError(f"Unknown company id: {company_id}")
+
+
 async def _phones_of(ctx: OrgContext, contact_id: uuid.UUID) -> list[PhoneOut]:
     rows = (
         await ctx.session.execute(
@@ -138,6 +155,7 @@ async def _sync_phones(ctx: OrgContext, contact: Contact, phones: list[PhoneIn])
             )
         ).scalars().all()
     )
+    removed_e164s = [row.e164 for row in existing if row.e164 not in seen]
     for row in existing:
         if row.e164 not in seen:
             await ctx.session.delete(row)
@@ -166,6 +184,19 @@ async def _sync_phones(ctx: OrgContext, contact: Contact, phones: list[PhoneIn])
             "One of those phone numbers already belongs to another contact in this org"
         ) from exc
 
+    if removed_e164s:
+        # 5.7: a phone removed from a contact left its threads still stamped with THIS
+        # contact_id forever - a stale link that never resolved to the right contact
+        # (or to none) again, even after the number was reassigned elsewhere.
+        await ctx.session.execute(
+            sa.update(MessageThread)
+            .where(
+                MessageThread.contact_e164.in_(removed_e164s),
+                MessageThread.contact_id == contact.id,
+            )
+            .values(contact_id=None)
+        )
+
     # A contact created AFTER messages already exist is the common real-world order.
     for e164 in seen:
         await svc.link_threads_for_phone(ctx.session, ctx.org.id, e164, contact.id)
@@ -182,18 +213,45 @@ async def list_contacts(
 ) -> list[ContactOut]:
     stmt = sa.select(Contact).order_by(Contact.display_name.asc(), Contact.id.asc())
     if q:
-        needle = f"%{q.strip().lower()}%"
+        needle = f"%{_escape_like(q.strip().lower())}%"
         phone_match = sa.select(ContactPhone.contact_id).where(
-            sa.func.lower(ContactPhone.e164).like(needle)
+            sa.func.lower(ContactPhone.e164).like(needle, escape="\\")
         )
         stmt = stmt.where(
             sa.or_(
-                sa.func.lower(Contact.display_name).like(needle),
+                sa.func.lower(Contact.display_name).like(needle, escape="\\"),
                 Contact.id.in_(phone_match),
             )
         )
     rows = (await ctx.session.execute(stmt.limit(limit))).scalars().all()
-    return [await _out(ctx, c) for c in rows]
+
+    # 5.8: batch-load every contact's phones in ONE query instead of _out's per-contact
+    # query (the classic N+1 - this list route is exactly where it hurt: page size many).
+    ids = [c.id for c in rows]
+    phones_by_contact: dict[uuid.UUID, list[PhoneOut]] = {}
+    if ids:
+        phone_rows = (
+            await ctx.session.execute(
+                sa.select(ContactPhone).where(ContactPhone.contact_id.in_(ids))
+            )
+        ).scalars().all()
+        for p in phone_rows:
+            phones_by_contact.setdefault(p.contact_id, []).append(
+                PhoneOut(id=p.id, e164=p.e164, label=p.label, is_primary=p.is_primary)
+            )
+    return [
+        ContactOut(
+            id=c.id,
+            display_name=c.display_name,
+            first_name=c.first_name,
+            last_name=c.last_name,
+            company_id=c.company_id,
+            attributes=c.attributes or {},
+            phones=phones_by_contact.get(c.id, []),
+            created_at=c.created_at,
+        )
+        for c in rows
+    ]
 
 
 @router.post("/contacts", response_model=ContactOut, status_code=201)
@@ -201,6 +259,7 @@ async def create_contact(
     payload: ContactIn,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> ContactOut:
+    await _validate_company(ctx, payload.company_id)
     attributes = await svc.validate_attributes(ctx.session, payload.attributes)
     contact = Contact(
         id=uuid.uuid4(),
@@ -246,6 +305,7 @@ async def patch_contact(
     if payload.last_name is not None:
         contact.last_name = payload.last_name
     if payload.company_id is not None:
+        await _validate_company(ctx, payload.company_id)
         contact.company_id = payload.company_id
     if payload.attributes is not None:
         contact.attributes = await svc.validate_attributes(ctx.session, payload.attributes)
@@ -324,6 +384,20 @@ async def set_contact_tags(
     if await ctx.session.get(Contact, contact_id) is None:
         raise NotFoundError("Contact not found")
     wanted = set(payload.get("tag_ids", []))
+
+    if wanted:
+        # 5.5: validate tag ids exist in this org first (mirrors inbox.py::set_labels) -
+        # an unknown/cross-org id previously either 500'd on the FK or silently inserted
+        # nothing useful.
+        found = {
+            t.id
+            for t in (
+                await ctx.session.execute(sa.select(Tag).where(Tag.id.in_(wanted)))
+            ).scalars().all()
+        }
+        missing = wanted - found
+        if missing:
+            raise ValidationFailedError(f"Unknown tag ids: {sorted(str(m) for m in missing)}")
 
     existing = list(
         (

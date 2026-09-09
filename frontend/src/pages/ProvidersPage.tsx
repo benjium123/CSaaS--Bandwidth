@@ -131,6 +131,9 @@ function ProviderAccountCard({
     ),
   );
   const [confirmingDisable, setConfirmingDisable] = React.useState(false);
+  // F45: only the most recently triggered mutation's status is shown - otherwise a stale
+  // isSuccess from an earlier action (e.g. probe) stays visible forever alongside a newer one.
+  const [lastAction, setLastAction] = React.useState<"save" | "probe" | "disable" | null>(null);
 
   // A brand-new account has no server-side fallback for a blank field, so every field must
   // be filled in before Save is allowed (F6). An existing account can save partial changes -
@@ -256,7 +259,10 @@ function ProviderAccountCard({
               size="sm"
               aria-label={`Probe ${provider}`}
               disabled={readOnly || probeMutation.isPending}
-              onClick={() => probeMutation.mutate()}
+              onClick={() => {
+                setLastAction("probe");
+                probeMutation.mutate();
+              }}
               className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
             >
               Probe
@@ -269,6 +275,7 @@ function ProviderAccountCard({
               disabled={readOnly || disableMutation.isPending}
               onClick={() => {
                 if (confirmingDisable) {
+                  setLastAction("disable");
                   disableMutation.mutate();
                 } else {
                   setConfirmingDisable(true);
@@ -285,7 +292,14 @@ function ProviderAccountCard({
         )}
       </div>
 
-      <form onSubmit={(e) => { e.preventDefault(); saveMutation.mutate(); }} className="grid gap-3 md:grid-cols-2">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setLastAction("save");
+          saveMutation.mutate();
+        }}
+        className="grid gap-3 md:grid-cols-2"
+      >
         <div className="space-y-1">
           <label htmlFor={`${provider}-label`} className="block text-xs text-neutral-400">
             Label
@@ -337,9 +351,19 @@ function ProviderAccountCard({
           >
             Save
           </Button>
-          <MutationStatus mutation={saveMutation} pendingLabel="Saving…" successLabel="Saved" />
-          <MutationStatus mutation={probeMutation} pendingLabel="Probing…" successLabel="Probed" />
-          <MutationStatus mutation={disableMutation} pendingLabel="Disabling…" successLabel="Disabled" />
+          {lastAction === "save" && (
+            <MutationStatus mutation={saveMutation} pendingLabel="Saving…" successLabel="Saved" />
+          )}
+          {lastAction === "probe" && (
+            <MutationStatus mutation={probeMutation} pendingLabel="Probing…" successLabel="Probed" />
+          )}
+          {lastAction === "disable" && (
+            <MutationStatus
+              mutation={disableMutation}
+              pendingLabel="Disabling…"
+              successLabel="Disabled"
+            />
+          )}
         </div>
       </form>
 
@@ -384,11 +408,13 @@ function CarrierCard({
   onProbe,
   probing,
   result,
+  readOnly,
 }: {
   entry: CarrierCatalogOut;
   onProbe: () => void;
   probing: boolean;
   result: ProbeState | undefined;
+  readOnly: boolean;
 }) {
   const pill = statusPill(entry);
   const breakerLoud = entry.live && Boolean(entry.state) && entry.state !== "closed";
@@ -417,7 +443,7 @@ function CarrierCard({
           size="sm"
           variant="outline"
           onClick={onProbe}
-          disabled={entry.missing.length > 0 || probing}
+          disabled={entry.missing.length > 0 || probing || readOnly}
           className="border-neutral-700 bg-transparent text-neutral-300 hover:bg-neutral-800"
         >
           {probing ? "Testing…" : "Test credentials"}
@@ -470,8 +496,8 @@ function CarrierCard({
   );
 }
 
-function CarrierHealthSection({ api }: { api: ApiClient }) {
-  const { data: catalog, isLoading } = useCarrierCatalog(api);
+function CarrierHealthSection({ api, readOnly }: { api: ApiClient; readOnly: boolean }) {
+  const { data: catalog, isLoading, isError, error, refetch } = useCarrierCatalog(api);
   const probeCarrier = useProbeCarrier(api);
   const [probing, setProbing] = React.useState<string | null>(null);
   const [results, setResults] = React.useState<Record<string, ProbeState>>({});
@@ -500,6 +526,19 @@ function CarrierHealthSection({ api }: { api: ApiClient }) {
       <h2 className="text-base font-semibold text-neutral-50">Carrier health</h2>
       {isLoading ? (
         <Spinner />
+      ) : isError ? (
+        <div role="alert" className="space-y-2 text-sm text-red-400">
+          <p>{(error as Error).message}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+          >
+            Retry
+          </Button>
+        </div>
       ) : sorted.length === 0 ? (
         <p className="text-sm text-neutral-400">No carriers found.</p>
       ) : (
@@ -511,6 +550,7 @@ function CarrierHealthSection({ api }: { api: ApiClient }) {
               onProbe={() => probe(entry.name)}
               probing={probing === entry.name}
               result={results[entry.name]}
+              readOnly={readOnly}
             />
           ))}
         </ul>
@@ -519,8 +559,8 @@ function CarrierHealthSection({ api }: { api: ApiClient }) {
   );
 }
 
-function PolicySection({ api }: { api: ApiClient }) {
-  const { data: policy, isLoading } = useRoutingPolicy(api);
+function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean }) {
+  const { data: policy, isLoading, isError, error: queryError, refetch } = useRoutingPolicy(api);
   const updatePolicy = useUpdateRoutingPolicy(api);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -554,7 +594,20 @@ function PolicySection({ api }: { api: ApiClient }) {
         </p>
       )}
 
-      {isLoading || !policy ? (
+      {isError ? (
+        <div role="alert" className="space-y-2 text-sm text-red-400">
+          <p>{(queryError as Error).message}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+          >
+            Retry
+          </Button>
+        </div>
+      ) : isLoading || !policy ? (
         <Spinner label="Loading routing policy" />
       ) : (
         <>
@@ -579,7 +632,7 @@ function PolicySection({ api }: { api: ApiClient }) {
                       variant="ghost"
                       aria-label={`Move ${name} up`}
                       onClick={() => move(name, -1)}
-                      disabled={i === 0 || updatePolicy.isPending}
+                      disabled={i === 0 || updatePolicy.isPending || readOnly}
                     >
                       ↑
                     </Button>
@@ -589,7 +642,7 @@ function PolicySection({ api }: { api: ApiClient }) {
                       variant="ghost"
                       aria-label={`Move ${name} down`}
                       onClick={() => move(name, 1)}
-                      disabled={i === policy.preference.length - 1 || updatePolicy.isPending}
+                      disabled={i === policy.preference.length - 1 || updatePolicy.isPending || readOnly}
                     >
                       ↓
                     </Button>
@@ -604,7 +657,7 @@ function PolicySection({ api }: { api: ApiClient }) {
               type="checkbox"
               checked={policy.allow_intra_carrier_failover}
               onChange={(e) => patch({ allow_intra_carrier_failover: e.target.checked })}
-              disabled={updatePolicy.isPending}
+              disabled={updatePolicy.isPending || readOnly}
             />
             Allow intra-carrier failover
           </label>
@@ -613,7 +666,7 @@ function PolicySection({ api }: { api: ApiClient }) {
               type="checkbox"
               checked={policy.allow_cross_carrier_failover}
               onChange={(e) => patch({ allow_cross_carrier_failover: e.target.checked })}
-              disabled={updatePolicy.isPending}
+              disabled={updatePolicy.isPending || readOnly}
             />
             Allow cross-carrier failover
           </label>
@@ -694,6 +747,23 @@ export function ProvidersPage() {
           {storageError}
         </div>
       )}
+      {numbersQuery.isError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-800 bg-red-950 p-3 text-sm text-red-300"
+        >
+          <span>{(numbersQuery.error as Error).message}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => numbersQuery.refetch()}
+            className="border-red-800 bg-transparent px-3 py-1.5 text-xs text-red-300 hover:bg-red-900"
+          >
+            Retry
+          </Button>
+        </div>
+      )}
       {readOnly && (
         <p className="text-sm text-amber-400">
           Read-only: your role can view provider status but not edit credentials.
@@ -708,7 +778,18 @@ export function ProvidersPage() {
           // F9: the list call itself failed (usually the 503 above) - every card's account
           // data is unknown, not "not configured", so render nothing that invites an edit
           // that will just fail the same way.
-          <p className="text-sm text-neutral-400">Provider accounts are unavailable.</p>
+          <div role="alert" className="space-y-2 text-sm text-neutral-400">
+            <p>Provider accounts are unavailable.</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => providerAccountsQuery.refetch()}
+              className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+            >
+              Retry
+            </Button>
+          </div>
         ) : (
           PROVIDER_NAMES.map((provider) => {
             const account = accountByProvider.get(provider);
@@ -731,8 +812,8 @@ export function ProvidersPage() {
         )}
       </section>
 
-      <CarrierHealthSection api={api} />
-      <PolicySection api={api} />
+      <CarrierHealthSection api={api} readOnly={readOnly} />
+      <PolicySection api={api} readOnly={readOnly} />
     </div>
   );
 }

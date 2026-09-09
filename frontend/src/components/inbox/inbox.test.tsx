@@ -143,4 +143,40 @@ describe("Composer", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("bad number");
     expect(screen.queryByRole("button", { name: "Send anyway" })).not.toBeInTheDocument();
   });
+
+  // Item 51
+  it("sends on Enter, inserts a newline on Shift+Enter, and shows a live segment count", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const client = makeStubClient({});
+    renderWithProviders(<Composer onSend={onSend} />, client);
+
+    const field = screen.getByLabelText("Message");
+    await userEvent.type(field, "line one");
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+    await userEvent.type(field, "line two");
+
+    expect(field).toHaveValue("line one\nline two");
+    expect(onSend).not.toHaveBeenCalled();
+
+    expect(screen.getByText(/GSM-7/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`^${"line one\nline two".length} chars`))).toBeInTheDocument();
+
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("line one\nline two", false));
+  });
+
+  // Item 52
+  it("moves focus into the reassign prompt once it appears", async () => {
+    const onSend = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(422, "sticky_sender_unavailable", "retired"));
+    const client = makeStubClient({});
+    renderWithProviders(<Composer onSend={onSend} />, client);
+
+    await userEvent.type(screen.getByLabelText("Message"), "hello");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const sendAnywayButton = await screen.findByRole("button", { name: "Send anyway" });
+    await waitFor(() => expect(sendAnywayButton).toHaveFocus());
+  });
 });

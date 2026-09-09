@@ -27,7 +27,7 @@ from urllib.parse import parse_qsl
 
 import structlog
 
-from app.providers.domain import CarrierEvent, DeliveryReceipt, InboundMessage
+from app.providers.domain import CarrierEvent, DeliveryReceipt, InboundMessage, UnknownEvent
 
 log = structlog.get_logger("carrier.plivo.webhooks")
 
@@ -55,7 +55,7 @@ def verify(headers: Mapping[str, str], auth_token: str, url: str) -> bool:
     lower = {k.lower(): v for k, v in headers.items()}
     signature_header = lower.get("x-plivo-signature-v3", "")
     nonce = lower.get("x-plivo-signature-v3-nonce", "")
-    if not signature_header or not nonce or not url:
+    if not signature_header or not nonce or not auth_token or not url:
         return False
 
     expected = _compute_signature(auth_token, url, nonce)
@@ -118,12 +118,16 @@ def parse(raw_body: bytes) -> list[CarrierEvent]:
     if status is not None:
         canonical = _STATUS_TO_EVENT.get(status.strip().lower())
         if canonical is None:
+            # 2.10: an unmapped status must not silently vanish - dead-letter it visibly
+            # instead, same discipline as twilio_unknown_message_status.
             log.warning("plivo_unknown_message_status", status=status)
-            return []
+            return [UnknownEvent(f"status:{status}", fields)]
         return [
             DeliveryReceipt(
                 provider_message_id=message_uuid,
                 event_type=canonical,
+                # 2.10: pass the carrier's error code through - it was silently dropped.
+                error_code=fields.get("ErrorCode") or None,
                 raw=fields,
             )
         ]

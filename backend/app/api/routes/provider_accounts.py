@@ -108,6 +108,10 @@ async def create_provider_account(
         },
     )
     await ctx.session.commit()
+    # 4.11: bump the org's provider-registry version only AFTER the row is durably
+    # committed - bumping before commit let a concurrent request observe the new
+    # version and prime/cache a registry off a row that might still roll back.
+    provider_accounts_svc.bump_version(ctx.org.id)
     await ctx.session.refresh(account)
     return _account_out(account, settings)
 
@@ -147,6 +151,10 @@ async def patch_provider_account(
         detail={"provider": account.provider, "fields": updated_fields},
     )
     await ctx.session.commit()
+    # 4.11: bump the org's provider-registry version only AFTER the row is durably
+    # committed - bumping before commit let a concurrent request observe the new
+    # version and prime/cache a registry off a row that might still roll back.
+    provider_accounts_svc.bump_version(ctx.org.id)
     await ctx.session.refresh(account)
     return _account_out(account, settings)
 
@@ -175,6 +183,10 @@ async def probe_provider_account(
         },
     )
     await ctx.session.commit()
+    # 4.11: bump the org's provider-registry version only AFTER the row is durably
+    # committed - bumping before commit let a concurrent request observe the new
+    # version and prime/cache a registry off a row that might still roll back.
+    provider_accounts_svc.bump_version(ctx.org.id)
     await ctx.session.refresh(account)
     return _account_out(account, settings)
 
@@ -203,4 +215,5 @@ async def disable_provider_account(
         },
     )
     await ctx.session.commit()
+    provider_accounts_svc.bump_version(ctx.org.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

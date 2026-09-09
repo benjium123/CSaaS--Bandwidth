@@ -106,6 +106,14 @@ class NumberProvider(Protocol):
 
     async def release_number(self, e164: str, provider_ref: str | None = None) -> None: ...
 
+    #: B6: unlike order_status above, EVERY real NumberProvider adapter (Bandwidth,
+    #: Telnyx, Twilio, Plivo, SignalWire) already implements this (the 1.1 ownership
+    #: gate in routes/numbers.py needs it), so it is safe to make a required member -
+    #: callers can rely on isinstance(carrier, NumberProvider) alone instead of an
+    #: extra hasattr() check. Returns True (owned), False (not owned), or None when
+    #: this provider account cannot verify ownership one way or the other.
+    async def lookup_owned_number(self, e164: str) -> bool | None: ...
+
 
 def as_provider(carrier: object) -> NumberProvider:
     """Narrow a carrier to a provisioning provider, or fail with a useful message."""

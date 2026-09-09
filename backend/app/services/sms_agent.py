@@ -31,18 +31,19 @@ from datetime import datetime, timezone
 import httpx
 import sqlalchemy as sa
 import structlog
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.compliance import service as compliance_svc
 from app.compliance.keywords import classify_keyword
 from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.errors import ComplianceBlockedError
+from app.errors import ComplianceBlockedError, ValidationFailedError
 from app.models import AgentSmsTurn, Appointment, Message, MessageThread
 from app.services import agent as agent_svc
 from app.services import kb as kb_svc
 from app.services import llm_client
+from app.services import sender as sender_svc
 from app.services.messaging import AI_SEND_KEY, send_message
 from app.services.outbox import record_platform_event
 
@@ -317,11 +318,25 @@ async def _run_tool_call(
     session: AsyncSession, org_id: uuid.UUID, thread: MessageThread, call: llm_client.ToolCall
 ) -> str:
     if call.name == "book_appointment":
-        when = str(call.arguments.get("when") or "").strip() or "unspecified"
-        notes = str(call.arguments.get("notes") or "")
-        appt = await _book_appointment_sms(
-            session, org_id, contact_e164=thread.contact_e164, raw_when=when, notes=notes
-        )
+        # 6.9: bound tool-supplied args to the column limits BEFORE they ever reach the
+        # DB - Appointment.raw_when is String(255); an unbounded LLM-supplied value
+        # raised a DataError deep inside the turn which (via the idempotency claim on
+        # AgentSmsTurn above) meant this inbound message was claimed but never actually
+        # answered, with no retry possible.
+        when = (str(call.arguments.get("when") or "").strip() or "unspecified")[:255]
+        notes = str(call.arguments.get("notes") or "")[:4000]
+        try:
+            appt = await _book_appointment_sms(
+                session, org_id, contact_e164=thread.contact_e164, raw_when=when, notes=notes
+            )
+        except SQLAlchemyError:
+            # 6.9: a DB error while booking must not crash (and thereby poison the
+            # idempotency claim on) the whole turn - recover the session and report a
+            # normal tool-level failure back to the model, same as "no results found".
+            log.exception("book_appointment_db_error", org_id=str(org_id))
+            await session.rollback()
+            set_org_context(session, org_id)
+            return "Could not book the appointment right now - please try again shortly."
         return f"Booked for {appt.raw_when}."
     if call.name == "kb_search":
         query = str(call.arguments.get("query") or "")
@@ -385,7 +400,23 @@ async def _run_llm_turn(
                     role="tool", tool_call_id=call.id, tool_name=call.name, content=tool_text
                 )
             )
-    return last_text, None
+    # 6.10: MAX_TOOL_ROUNDS was exhausted with the model STILL calling tools each round -
+    # `last_text` here is whatever preamble accompanied the last round's tool calls
+    # (typically empty), never a real answer. Run one more round with tools DISABLED so
+    # the model is forced to synthesize an actual reply from the tool results already in
+    # `turns`, instead of falling through to an empty reply that dead-ends into handoff.
+    final = await llm_client.chat(
+        client,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        system=system,
+        turns=turns,
+        tools=[],
+    )
+    if usage_sink is not None:
+        usage_sink.append((final.tokens_in, final.tokens_out))
+    return final.text, None
 
 
 # ----------------------------------------------------------------------------------
@@ -537,6 +568,7 @@ async def _maybe_reply_inner(
             on_success_status="handoff",
             on_success_detail="turn_ceiling",
             handoff_on_error=False,
+            require_registration=settings.require_number_registration,
         )
         _publish_handoff(bus, org_id, thread, reason="turn_ceiling")
         return
@@ -549,6 +581,16 @@ async def _maybe_reply_inner(
         if provider == "anthropic"
         else settings.openai_api_key.get_secret_value()
     )
+    if not api_key:
+        # 6.11: a missing LLM key used to fall through to _run_llm_turn, raise
+        # LLMError("Missing API key..."), and hit the generic except below - which
+        # unconditionally hands the thread off. Since the key stays missing, EVERY
+        # subsequent message permanently hands off too, with no automatic recovery once
+        # someone finally configures it. Not-configured is not an error state: skip this
+        # turn and leave ai_state exactly as it is (never touch it here) so the very
+        # next inbound message just retries the same check.
+        await _finish("skipped", "llm_not_configured")
+        return
     system = (profile.system_prompt or "") + SYSTEM_PREAMBLE_TEMPLATE.format(
         limit=profile.sms_max_reply_chars
     )
@@ -600,7 +642,16 @@ async def _maybe_reply_inner(
         _publish_handoff(bus, org_id, thread, reason="error")
         return
 
-    await _try_send(session, org_id, carrier, bus, thread=thread, body=reply_text, turn=turn)
+    await _try_send(
+        session,
+        org_id,
+        carrier,
+        bus,
+        thread=thread,
+        body=reply_text,
+        turn=turn,
+        require_registration=settings.require_number_registration,
+    )
 
 
 async def _count_replies_since_armed(
@@ -634,6 +685,7 @@ async def _try_send(
     on_success_status: str = "replied",
     on_success_detail: str = "",
     handoff_on_error: bool = True,
+    require_registration: bool = False,
 ) -> uuid.UUID | None:
     """Send one AI-originated reply through the normal, ungated-by-nothing send path
     (plan DR-4: no exemption, ever).
@@ -669,13 +721,40 @@ async def _try_send(
 
     session.info[AI_SEND_KEY] = True
     try:
+        # 6.3: thread.our_e164 with no active-number check meant an AI reply from a
+        # thread whose number had since gone inactive/released would be handed straight
+        # to send_message and fail outright. select_sender(allow_reassign=True) keeps
+        # this thread's own number when it is still active (the common case - a no-op
+        # lookup) and only substitutes another active number when it genuinely is not.
+        #
+        # D7: without `requested=thread.our_e164`, select_sender's own stickiness
+        # lookup resolves from the CONTACT's most-recently-active thread across every
+        # number, not THIS thread - a contact with two threads on two numbers could
+        # have this reply (in thread A) silently sent from thread B's number instead,
+        # if B happened to be more recently active. Request THIS thread's own number
+        # explicitly first; only fall back to the unrestricted (contact-wide sticky)
+        # lookup when it has genuinely gone inactive.
+        try:
+            from_e164 = await sender_svc.select_sender(
+                session, org_id, thread.contact_e164, requested=thread.our_e164,
+                allow_reassign=True,
+            )
+        except ValidationFailedError:
+            from_e164 = await sender_svc.select_sender(
+                session, org_id, thread.contact_e164, allow_reassign=True
+            )
         sent = await send_message(
             session,
             org_id,
             carrier,
             to_e164=thread.contact_e164,
-            from_e164=thread.our_e164,
+            from_e164=from_e164,
             body=body,
+            # D1: an AI reply's from_e164 comes from select_sender above, not from a
+            # routing.plan_route call - the registration gate must be threaded through
+            # explicitly the same way outbound_tick does, or an unregistered number
+            # sends here unchecked.
+            require_registration=require_registration,
         )
     except ComplianceBlockedError as exc:
         turn.status = "blocked"

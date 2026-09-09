@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import generate_api_key
 from app.errors import ValidationFailedError
-from app.models import PERMISSIONS, WILDCARD, ApiKey
+from app.models import PERMISSIONS, WILDCARD, ApiKey, OrgMembership, Role
 from app.services import audit as audit_svc
 
 
@@ -41,10 +41,58 @@ async def create(
     created_by: uuid.UUID | None = None,
     actor_user_id: uuid.UUID | None = None,
     actor_api_key_id: uuid.UUID | None = None,
+    #: C2: the SCOPES of the API key that authenticated this call, when the caller was
+    #: an API key rather than a human user. A caller with no actor_user_id/created_by
+    #: MUST pass this so the subset check below still runs against something.
+    actor_key_scopes: list[str] | None = None,
 ) -> tuple[ApiKey, str]:
     """Returns ``(row, full_key)``. ``full_key`` is shown ONCE - it is never
     recoverable again; only the prefix + hash are persisted."""
     _validate_scopes(scopes)
+
+    effective_user_id = actor_user_id or created_by
+    if effective_user_id is not None:
+        found = (
+            await session.execute(
+                sa.select(OrgMembership, Role)
+                .join(Role, Role.id == OrgMembership.role_id)
+                .where(
+                    OrgMembership.org_id == org_id,
+                    OrgMembership.user_id == effective_user_id,
+                )
+            )
+        ).first()
+        if found is None:
+            raise ValidationFailedError(
+                "API-key creator is not a member of this organisation"
+            )
+        _, actor_role = found
+        if WILDCARD not in (actor_role.permissions or []):
+            effective = set(actor_role.permissions or [])
+            exceeding = sorted(set(scopes) - effective)
+            if exceeding:
+                raise ValidationFailedError(
+                    "Scopes exceed the creator's permissions: " + ", ".join(exceeding)
+                )
+    elif actor_api_key_id is not None:
+        # C2: an API-key-authenticated caller has no actor_user_id/created_by at all,
+        # so the subset check above was silently SKIPPED entirely - a key could mint a
+        # new key with scopes exceeding its own. Gate on the authenticating key's own
+        # scopes instead.
+        if actor_key_scopes is None:
+            raise ValidationFailedError(
+                "Cannot resolve the authenticating API key's scopes"
+            )
+        exceeding = sorted(set(scopes) - set(actor_key_scopes))
+        if exceeding:
+            raise ValidationFailedError(
+                "Scopes exceed the authenticating key's scopes: " + ", ".join(exceeding)
+            )
+    else:
+        # C2: no actor could be resolved at all (neither a user nor an API key) -
+        # refuse rather than silently create the key with no scope validation.
+        raise ValidationFailedError("Cannot resolve an actor to validate scopes against")
+
     full_key, prefix, key_hash = generate_api_key()
     row = ApiKey(
         id=uuid.uuid4(),

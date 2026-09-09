@@ -1231,6 +1231,139 @@
         "title": "CallOut",
         "type": "object"
       },
+      "CallRecordingOut": {
+        "properties": {
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "duration_seconds"
+        ],
+        "title": "CallRecordingOut",
+        "type": "object"
+      },
+      "CallTimelineEvent": {
+        "properties": {
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "failure_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Detail"
+          },
+          "has_voicemail": {
+            "title": "Has Voicemail",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "call",
+            "default": "call",
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "recording": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CallRecordingOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "direction",
+          "status",
+          "duration_seconds",
+          "occurred_at",
+          "answered_at",
+          "ended_at",
+          "failure_detail",
+          "recording",
+          "has_voicemail"
+        ],
+        "title": "CallTimelineEvent",
+        "type": "object"
+      },
       "CallsSeriesPointOut": {
         "properties": {
           "avg_duration_seconds": {
@@ -1721,6 +1854,158 @@
         "title": "ContextOut",
         "type": "object"
       },
+      "ConversationContact": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "ConversationContact",
+        "type": "object"
+      },
+      "ConversationItem": {
+        "properties": {
+          "contact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationContact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contact_e164": {
+            "title": "Contact E164",
+            "type": "string"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "inbox_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inbox Id"
+          },
+          "last_event_at": {
+            "format": "date-time",
+            "title": "Last Event At",
+            "type": "string"
+          },
+          "last_event_type": {
+            "enum": [
+              "message",
+              "call",
+              "voicemail"
+            ],
+            "title": "Last Event Type",
+            "type": "string"
+          },
+          "our_e164": {
+            "title": "Our E164",
+            "type": "string"
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
+          "unread": {
+            "title": "Unread",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "contact_e164",
+          "our_e164",
+          "inbox_id",
+          "thread_id",
+          "last_event_at",
+          "last_event_type",
+          "direction",
+          "snippet",
+          "unread",
+          "contact",
+          "status"
+        ],
+        "title": "ConversationItem",
+        "type": "object"
+      },
+      "ConversationListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ConversationListResponse",
+        "type": "object"
+      },
       "CustomFieldIn": {
         "properties": {
           "key": {
@@ -1754,6 +2039,84 @@
           "label"
         ],
         "title": "CustomFieldIn",
+        "type": "object"
+      },
+      "DepartmentIn": {
+        "properties": {
+          "name": {
+            "maxLength": 127,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "DepartmentIn",
+        "type": "object"
+      },
+      "DepartmentOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "member_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Member User Ids",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_active",
+          "member_user_ids"
+        ],
+        "title": "DepartmentOut",
+        "type": "object"
+      },
+      "DepartmentPatchIn": {
+        "properties": {
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 127,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "DepartmentPatchIn",
         "type": "object"
       },
       "DialAttemptOut": {
@@ -1940,6 +2303,74 @@
         "title": "GatherIn",
         "type": "object"
       },
+      "GrantIn": {
+        "properties": {
+          "grantee_id": {
+            "format": "uuid",
+            "title": "Grantee Id",
+            "type": "string"
+          },
+          "grantee_type": {
+            "title": "Grantee Type",
+            "type": "string"
+          },
+          "role": {
+            "default": "member",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grantee_type",
+          "grantee_id"
+        ],
+        "title": "GrantIn",
+        "type": "object"
+      },
+      "GrantOut": {
+        "properties": {
+          "grantee_id": {
+            "format": "uuid",
+            "title": "Grantee Id",
+            "type": "string"
+          },
+          "grantee_type": {
+            "title": "Grantee Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "grantee_type",
+          "grantee_id",
+          "role"
+        ],
+        "title": "GrantOut",
+        "type": "object"
+      },
+      "GrantsIn": {
+        "properties": {
+          "grants": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GrantIn"
+            },
+            "title": "Grants",
+            "type": "array"
+          }
+        },
+        "title": "GrantsIn",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1990,6 +2421,84 @@
           "published"
         ],
         "title": "HandoffOut",
+        "type": "object"
+      },
+      "InboxOut": {
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "e164": {
+            "title": "E164",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "my_role": {
+            "title": "My Role",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "number_id": {
+            "format": "uuid",
+            "title": "Number Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "color",
+          "e164",
+          "number_id",
+          "my_role"
+        ],
+        "title": "InboxOut",
+        "type": "object"
+      },
+      "InboxPatchIn": {
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 127,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "InboxPatchIn",
         "type": "object"
       },
       "InviteCreatedOut": {
@@ -2606,6 +3115,21 @@
         "title": "MemberOut",
         "type": "object"
       },
+      "MembersIn": {
+        "properties": {
+          "user_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "User Ids",
+            "type": "array"
+          }
+        },
+        "title": "MembersIn",
+        "type": "object"
+      },
       "MembershipOut": {
         "properties": {
           "org_id": {
@@ -2742,6 +3266,72 @@
         "title": "MessageOut",
         "type": "object"
       },
+      "MessageTimelineEvent": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "message",
+            "default": "message",
+            "title": "Kind",
+            "type": "string"
+          },
+          "media": {
+            "items": {},
+            "title": "Media",
+            "type": "array"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "direction",
+          "body",
+          "media",
+          "status",
+          "occurred_at",
+          "error_code"
+        ],
+        "title": "MessageTimelineEvent",
+        "type": "object"
+      },
       "MessagesSeriesPointOut": {
         "properties": {
           "date": {
@@ -2860,10 +3450,78 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "monthly_cost_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Cost Cents"
+          },
           "number_type": {
             "default": "local",
             "title": "Number Type",
             "type": "string"
+          },
+          "order_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Detail"
+          },
+          "provider_account_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Account Id"
+          },
+          "provider_account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Account Label"
+          },
+          "purchase_cost_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purchase Cost Cents"
+          },
+          "purchased_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purchased At"
           },
           "registration": {
             "default": "unknown",
@@ -3000,6 +3658,32 @@
             "minLength": 3,
             "title": "E164",
             "type": "string"
+          },
+          "monthly_cost_cents": {
+            "anyOf": [
+              {
+                "maximum": 100000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Cost Cents"
+          },
+          "setup_cost_cents": {
+            "anyOf": [
+              {
+                "maximum": 100000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Setup Cost Cents"
           }
         },
         "required": [
@@ -3079,6 +3763,10 @@
           },
           "range": {
             "$ref": "#/components/schemas/OverviewRangeOut"
+          },
+          "spend_usd_month_to_date": {
+            "title": "Spend Usd Month To Date",
+            "type": "number"
           }
         },
         "required": [
@@ -3086,7 +3774,8 @@
           "messages",
           "calls",
           "campaigns",
-          "ai"
+          "ai",
+          "spend_usd_month_to_date"
         ],
         "title": "OverviewOut",
         "type": "object"
@@ -3632,6 +4321,167 @@
         "title": "ProgressOut",
         "type": "object"
       },
+      "ProviderAccountCreateIn": {
+        "properties": {
+          "credentials": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Credentials",
+            "type": "object"
+          },
+          "label": {
+            "default": "",
+            "maxLength": 127,
+            "title": "Label",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "credentials"
+        ],
+        "title": "ProviderAccountCreateIn",
+        "type": "object"
+      },
+      "ProviderAccountOut": {
+        "properties": {
+          "credentials": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Credentials",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_probe_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Probe At"
+          },
+          "last_probe_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Probe Detail"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "label",
+          "status",
+          "last_probe_at",
+          "last_probe_detail",
+          "credentials"
+        ],
+        "title": "ProviderAccountOut",
+        "type": "object"
+      },
+      "ProviderAccountPatchIn": {
+        "properties": {
+          "credentials": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 127,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "title": "ProviderAccountPatchIn",
+        "type": "object"
+      },
+      "ProviderRateIn": {
+        "properties": {
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "unit_cost_micros": {
+            "title": "Unit Cost Micros",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "provider",
+          "metric",
+          "unit_cost_micros"
+        ],
+        "title": "ProviderRateIn",
+        "type": "object"
+      },
+      "ProviderRatesPut": {
+        "properties": {
+          "rates": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderRateIn"
+            },
+            "title": "Rates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rates"
+        ],
+        "title": "ProviderRatesPut",
+        "type": "object"
+      },
       "QueueEntryOut": {
         "properties": {
           "call_id": {
@@ -3821,6 +4671,28 @@
           "ring_group_id"
         ],
         "title": "QueueOut",
+        "type": "object"
+      },
+      "ReadPairIn": {
+        "properties": {
+          "contact_e164": {
+            "maxLength": 32,
+            "minLength": 3,
+            "title": "Contact E164",
+            "type": "string"
+          },
+          "our_e164": {
+            "maxLength": 32,
+            "minLength": 3,
+            "title": "Our E164",
+            "type": "string"
+          }
+        },
+        "required": [
+          "our_e164",
+          "contact_e164"
+        ],
+        "title": "ReadPairIn",
         "type": "object"
       },
       "ReconciliationItemOut": {
@@ -4155,6 +5027,17 @@
             "title": "Monthly Cost",
             "type": "string"
           },
+          "monthly_cost_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Cost Cents"
+          },
           "number_type": {
             "title": "Number Type",
             "type": "string"
@@ -4162,6 +5045,22 @@
           "region": {
             "title": "Region",
             "type": "string"
+          },
+          "setup_cost": {
+            "default": "",
+            "title": "Setup Cost",
+            "type": "string"
+          },
+          "setup_cost_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Setup Cost Cents"
           }
         },
         "required": [
@@ -4749,6 +5648,52 @@
         "title": "ThreadPatchIn",
         "type": "object"
       },
+      "TimelineResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "call": "#/components/schemas/CallTimelineEvent",
+                  "message": "#/components/schemas/MessageTimelineEvent",
+                  "voicemail": "#/components/schemas/VoicemailTimelineEvent"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/MessageTimelineEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/CallTimelineEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/VoicemailTimelineEvent"
+                }
+              ]
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "TimelineResponse",
+        "type": "object"
+      },
       "TokenOut": {
         "properties": {
           "access_token": {
@@ -5064,6 +6009,78 @@
           "created_at"
         ],
         "title": "VoicemailOut",
+        "type": "object"
+      },
+      "VoicemailTimelineEvent": {
+        "properties": {
+          "call_id": {
+            "format": "uuid",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "voicemail",
+            "default": "voicemail",
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "recording": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CallRecordingOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript"
+          },
+          "transcript_status": {
+            "title": "Transcript Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "call_id",
+          "occurred_at",
+          "transcript",
+          "duration_seconds",
+          "transcript_status",
+          "recording"
+        ],
+        "title": "VoicemailTimelineEvent",
         "type": "object"
       },
       "WebhookDeliveryOut": {
@@ -9655,6 +10672,243 @@
         ]
       }
     },
+    "/api/v1/conversations": {
+      "get": {
+        "operationId": "list_conversations_api_v1_conversations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "inbox_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Inbox Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tab",
+            "required": false,
+            "schema": {
+              "default": "chats",
+              "pattern": "^(chats|calls)$",
+              "title": "Tab",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "default": "open",
+              "pattern": "^(open|unread|unresponded|all)$",
+              "title": "Filter",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Conversations",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/conversations/{contact_e164}/timeline": {
+      "get": {
+        "operationId": "conversation_timeline_api_v1_conversations__contact_e164__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contact_e164",
+            "required": true,
+            "schema": {
+              "title": "Contact E164",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "our_e164",
+            "required": true,
+            "schema": {
+              "title": "Our E164",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Conversation Timeline",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
     "/api/v1/custom-fields": {
       "get": {
         "operationId": "list_custom_fields_api_v1_custom_fields_get",
@@ -9775,6 +11029,329 @@
         "summary": "Create Custom Field",
         "tags": [
           "contacts"
+        ]
+      }
+    },
+    "/api/v1/departments": {
+      "get": {
+        "operationId": "list_departments_api_v1_departments_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DepartmentOut"
+                  },
+                  "title": "Response List Departments Api V1 Departments Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Departments",
+        "tags": [
+          "departments"
+        ]
+      },
+      "post": {
+        "operationId": "create_department_api_v1_departments_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepartmentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepartmentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Department",
+        "tags": [
+          "departments"
+        ]
+      }
+    },
+    "/api/v1/departments/{department_id}": {
+      "delete": {
+        "operationId": "delete_department_api_v1_departments__department_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "department_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Department Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Department",
+        "tags": [
+          "departments"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_department_api_v1_departments__department_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "department_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Department Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepartmentPatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepartmentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Department",
+        "tags": [
+          "departments"
+        ]
+      }
+    },
+    "/api/v1/departments/{department_id}/members": {
+      "put": {
+        "operationId": "set_members_api_v1_departments__department_id__members_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "department_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Department Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembersIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepartmentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Members",
+        "tags": [
+          "departments"
         ]
       }
     },
@@ -10231,6 +11808,64 @@
         ]
       }
     },
+    "/api/v1/inbox/read-pair": {
+      "post": {
+        "description": "5.11: a call-only conversation (no inbound/outbound SMS yet, so no MessageThread\nrow exists) could never be marked read - there was no thread to PATCH. This upserts\nthe (our_e164, contact_e164) thread first (same helper the send/inbound paths use),\nthen marks it read - after which conversations.py::_call_unread respects the new\nlast_read_at exactly like it already does for a message-backed pair.",
+        "operationId": "mark_read_pair_api_v1_inbox_read_pair_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadPairIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark Read Pair",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
     "/api/v1/inbox/threads": {
       "get": {
         "operationId": "inbox_threads_api_v1_inbox_threads_get",
@@ -10377,6 +12012,282 @@
         "summary": "Inbox Threads",
         "tags": [
           "inbox"
+        ]
+      }
+    },
+    "/api/v1/inboxes": {
+      "get": {
+        "operationId": "list_inboxes_api_v1_inboxes_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InboxOut"
+                  },
+                  "title": "Response List Inboxes Api V1 Inboxes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Inboxes",
+        "tags": [
+          "inboxes"
+        ]
+      }
+    },
+    "/api/v1/inboxes/{inbox_id}": {
+      "patch": {
+        "operationId": "patch_inbox_api_v1_inboxes__inbox_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inbox_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Inbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InboxPatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Inbox",
+        "tags": [
+          "inboxes"
+        ]
+      }
+    },
+    "/api/v1/inboxes/{inbox_id}/grants": {
+      "get": {
+        "operationId": "get_grants_api_v1_inboxes__inbox_id__grants_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inbox_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Inbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrantOut"
+                  },
+                  "title": "Response Get Grants Api V1 Inboxes  Inbox Id  Grants Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Grants",
+        "tags": [
+          "inboxes"
+        ]
+      },
+      "put": {
+        "operationId": "set_grants_api_v1_inboxes__inbox_id__grants_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inbox_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Inbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrantOut"
+                  },
+                  "title": "Response Set Grants Api V1 Inboxes  Inbox Id  Grants Put",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Grants",
+        "tags": [
+          "inboxes"
         ]
       }
     },
@@ -12877,6 +14788,445 @@
         ]
       }
     },
+    "/api/v1/provider-accounts": {
+      "get": {
+        "operationId": "list_provider_accounts_api_v1_provider_accounts_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderAccountOut"
+                  },
+                  "title": "Response List Provider Accounts Api V1 Provider Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Provider Accounts",
+        "tags": [
+          "provider-accounts"
+        ]
+      },
+      "post": {
+        "operationId": "create_provider_account_api_v1_provider_accounts_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderAccountCreateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAccountOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Provider Account",
+        "tags": [
+          "provider-accounts"
+        ]
+      }
+    },
+    "/api/v1/provider-accounts/{account_id}": {
+      "delete": {
+        "operationId": "disable_provider_account_api_v1_provider_accounts__account_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Disable Provider Account",
+        "tags": [
+          "provider-accounts"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_provider_account_api_v1_provider_accounts__account_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderAccountPatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAccountOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Provider Account",
+        "tags": [
+          "provider-accounts"
+        ]
+      }
+    },
+    "/api/v1/provider-accounts/{account_id}/probe": {
+      "post": {
+        "operationId": "probe_provider_account_api_v1_provider_accounts__account_id__probe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAccountOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Probe Provider Account",
+        "tags": [
+          "provider-accounts"
+        ]
+      }
+    },
+    "/api/v1/provider-rates": {
+      "get": {
+        "operationId": "get_provider_rates_api_v1_provider_rates_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Provider Rates Api V1 Provider Rates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Provider Rates",
+        "tags": [
+          "spend"
+        ]
+      },
+      "put": {
+        "operationId": "put_provider_rates_api_v1_provider_rates_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderRatesPut"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Put Provider Rates Api V1 Provider Rates Put",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Provider Rates",
+        "tags": [
+          "spend"
+        ]
+      }
+    },
     "/api/v1/queue-entries/{entry_id}/claim": {
       "post": {
         "operationId": "claim_entry_api_v1_queue_entries__entry_id__claim_post",
@@ -14608,6 +16958,273 @@
         "summary": "Softphone Token",
         "tags": [
           "softphone"
+        ]
+      }
+    },
+    "/api/v1/spend/daily": {
+      "get": {
+        "operationId": "get_spend_daily_api_v1_spend_daily_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Spend Daily Api V1 Spend Daily Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Spend Daily",
+        "tags": [
+          "spend"
+        ]
+      }
+    },
+    "/api/v1/spend/rollup": {
+      "post": {
+        "operationId": "post_spend_rollup_api_v1_spend_rollup_post",
+        "parameters": [
+          {
+            "description": "UTC day to recompute",
+            "in": "query",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "description": "UTC day to recompute",
+              "format": "date",
+              "title": "Day",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Spend Rollup Api V1 Spend Rollup Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Spend Rollup",
+        "tags": [
+          "spend"
+        ]
+      }
+    },
+    "/api/v1/spend/summary": {
+      "get": {
+        "operationId": "get_spend_summary_api_v1_spend_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Spend Summary Api V1 Spend Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Spend Summary",
+        "tags": [
+          "spend"
         ]
       }
     },

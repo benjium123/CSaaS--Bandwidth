@@ -126,9 +126,16 @@ async def opt_in(
 @router.get("/dnc")
 async def list_dnc(
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:read"))],
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ) -> list[dict]:
     rows = (
-        await ctx.session.execute(sa.select(DncEntry).order_by(DncEntry.created_at.desc()))
+        await ctx.session.execute(
+            sa.select(DncEntry)
+            .order_by(DncEntry.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
     ).scalars().all()
     return [
         {"id": r.id, "e164": r.e164, "source": r.source, "reason": r.reason} for r in rows
@@ -215,6 +222,10 @@ async def patch_settings(
         s.window_start = _clamp_window(payload.window_start, FEDERAL_WINDOW_START, True)
     if payload.window_end is not None:
         s.window_end = _clamp_window(payload.window_end, FEDERAL_WINDOW_END, False)
+    # 2.4: an inverted window (start >= end) has no valid "open" send interval - it
+    # would hold every outbound message forever instead of ever releasing it.
+    if s.window_start >= s.window_end:
+        raise ValidationFailedError("window_start must be earlier than window_end")
     for field in ("help_contact", "optout_text", "optin_text", "help_text"):
         value = getattr(payload, field)
         if value is not None:

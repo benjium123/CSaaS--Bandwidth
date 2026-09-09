@@ -144,7 +144,8 @@ function MutationStatus({
 export function NumbersPage() {
   const { api } = useAuth();
   const qc = useQueryClient();
-  const { data: numbers, isLoading } = useNumbers(api);
+  const { data: numbers, isLoading, isError, error: numbersError, refetch: refetchNumbers } =
+    useNumbers(api);
   const { data: campaigns } = useCampaigns(api);
   const campaignName = React.useCallback(
     (id: string | null | undefined) => campaigns?.find((c) => c.id === id)?.name ?? null,
@@ -224,6 +225,13 @@ export function NumbersPage() {
 
         {isLoading ? (
           <Spinner />
+        ) : isError ? (
+          <div role="alert" className="flex items-center gap-3 text-sm text-red-400">
+            <span>{(numbersError as Error).message}</span>
+            <Button type="button" size="sm" variant="outline" onClick={() => refetchNumbers()}>
+              Retry
+            </Button>
+          </div>
         ) : (numbers ?? []).length === 0 ? (
           <p className="text-sm text-neutral-400">No numbers yet.</p>
         ) : (

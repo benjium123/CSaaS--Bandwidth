@@ -65,7 +65,15 @@ class Settings(BaseSettings):
     #: separate secret from credential_encryption_key on purpose - rotating one must
     #: never silently rotate the other.
     credentials_master_key: SecretStr = SecretStr("")
+    #: Shared secret for platform-operator registration status callbacks. Unset means
+    #: the status-changing routes answer 503 - tenants can submit, not self-attest.
+    platform_ops_token: SecretStr = SecretStr("")
     jwt_expire_hours: int = 24
+
+    # ---------------- rate limiting ----------------
+    rate_limit_enabled: bool = True
+    rate_limit_max_requests: int = 20
+    rate_limit_window_seconds: int = 60
 
     # ---------------- datastores ----------------
     database_url: str = "sqlite+aiosqlite:///./dev.db"
@@ -147,6 +155,19 @@ class Settings(BaseSettings):
     plivo_webhook_url: str = ""
     plivo_default_number: str = ""
 
+    #: 1.1: `POST /numbers` (manual add) verifies ownership through the resolved
+    #: carrier's `lookup_owned_number` before accepting an e164 - otherwise any org could
+    #: claim a number another tenant already owns and hijack its inbound traffic. A
+    #: carrier that CANNOT verify (returns None - e.g. its API is unreachable, or it does
+    #: not support a lookup) is refused by default; this flag is the explicit, off-by-
+    #: default opt-in to accept an unverifiable number anyway.
+    allow_unverified_number_add: bool = False
+
+    #: 4.29/1.1: preferred carrier name when an org has more than one DB-backed provider
+    #: account active and none is explicitly named - empty means "no preference" (the
+    #: existing bandwidth/telnyx/signalwire fallback order applies).
+    primary_provider: str = ""
+
     #: Refuse to send from a number we hold no registration for. Off by default because a
     #: number registered directly at the carrier (Bandwidth's trial number, for one) is
     #: perfectly legitimate and we should not block it on an assumption. Note the
@@ -227,6 +248,19 @@ class Settings(BaseSettings):
                 problems.append("PUBLIC_BASE_URL must be https:// in production")
             if "example.com" in self.public_base_url:
                 problems.append("PUBLIC_BASE_URL still points at the example placeholder")
+            if not self.public_web_url.startswith("https://"):
+                problems.append("PUBLIC_WEB_URL must be https:// in production")
+
+            if _empty(self.credentials_master_key):
+                problems.append("CREDENTIALS_MASTER_KEY is required when APP_ENV=production")
+            else:
+                if len(self.credentials_master_key.get_secret_value().encode()) < 32:
+                    problems.append(
+                        "CREDENTIALS_MASTER_KEY is too weak - use at least 32 bytes"
+                    )
+
+            if "*" in self.cors_origin_list:
+                problems.append("CORS cannot use '*' with credentials in production")
             if "csaas:csaas@" in self.database_url:
                 problems.append("DATABASE_URL still uses the default development credentials")
             if self.allow_open_registration:

@@ -124,7 +124,16 @@ async def compute_number_stats(
     window_start = moment - timedelta(days=WINDOW_DAYS)
 
     numbers = list(
-        (await session.execute(sa.select(OrgNumber).where(OrgNumber.org_id == org_id)))
+        (
+            await session.execute(
+                sa.select(OrgNumber).where(
+                    # 4.26: a released number no longer sends - it must never appear in a
+                    # reputation report as if it were a live, currently-monitored line.
+                    OrgNumber.org_id == org_id,
+                    OrgNumber.status != "released",
+                )
+            )
+        )
         .scalars()
         .all()
     )
@@ -324,6 +333,11 @@ async def reputation_tick(session: AsyncSession, now: datetime | None = None) ->
     )
     counts = {"orgs": 0, "alerts": 0}
     for org_id in org_ids:
-        counts["alerts"] += await check_reputation(session, org_id, moment)
+        try:
+            counts["alerts"] += await check_reputation(session, org_id, moment)
+        except Exception:  # noqa: BLE001 - 4.7: one org's collision must not abort the pass
+            log.exception("reputation_tick_org_failed", org_id=str(org_id))
+            await session.rollback()
+            continue
         counts["orgs"] += 1
     return counts

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { createClient, type ApiClient } from "@/api/client";
 
 export type Membership = {
@@ -6,13 +7,32 @@ export type Membership = {
   org_name: string;
   org_slug: string;
   role_name: string;
+  /** P20 RBAC: effective permission strings for this membership. Optional - rolls out
+   * server-side independently of this file, so every reader must feature-detect
+   * (undefined = backend hasn't shipped it yet for this membership = don't restrict). */
+  permissions?: string[];
 };
+
+/** Feature-detected permission gate (P20): `undefined` permissions means the backend
+ * hasn't started sending them for this membership yet - fail OPEN (don't restrict)
+ * rather than lock users out of actions they've always had. Once `permissions` is
+ * present, it is authoritative. */
+export function hasPermission(me: Me | null, orgId: string | null, permission: string): boolean {
+  if (!me || !orgId) return true;
+  const membership = me.memberships.find((m) => m.org_id === orgId);
+  if (!membership || !membership.permissions) return true;
+  return membership.permissions.includes(permission);
+}
 
 export type Me = {
   id: string;
   email: string;
   full_name: string;
   memberships: Membership[];
+  /** Item 8: rolling out server-side in a parallel batch - optional so this client keeps
+   * working against a backend that doesn't send it yet. Treat undefined as false (2FA
+   * not enabled) rather than guessing either way. */
+  totp_enabled?: boolean;
 };
 
 type LoginResult =
@@ -47,22 +67,29 @@ export function AuthProvider({
   client?: ApiClient;
 }) {
   const api = React.useMemo(() => client ?? createClient(), [client]);
+  const queryClient = useQueryClient();
   const [me, setMe] = React.useState<Me | null>(null);
   const [orgId, setOrgId] = React.useState<string | null>(api.auth.orgId);
   const [ready, setReady] = React.useState(false);
 
+  // P20: every identity/tenant boundary crossing (logout, forced-logout, org switch)
+  // must drop every cached query - otherwise the next screen can render with another
+  // user's or another org's stale cached data for a beat (or permanently, for a query
+  // whose key doesn't vary by org).
   const logout = React.useCallback(() => {
     api.setAuth({ token: null, orgId: null });
     setMe(null);
     setOrgId(null);
-  }, [api]);
+    queryClient.clear();
+  }, [api, queryClient]);
 
+  // Item 1: onUnauthorized (fired on both a REST 401 and a WS 4401 close) must fully log
+  // out - identical to a manual logout() - so it also drops the stored API token/orgId,
+  // not just the in-memory me/orgId/query-cache. Reusing `logout` keeps both paths from
+  // ever drifting apart again.
   React.useEffect(() => {
-    api.onUnauthorized = () => {
-      setMe(null);
-      setOrgId(null);
-    };
-  }, [api]);
+    api.onUnauthorized = logout;
+  }, [api, logout]);
 
   const loadMe = React.useCallback(async () => {
     try {
@@ -131,8 +158,9 @@ export function AuthProvider({
     (next: string) => {
       api.setAuth({ orgId: next });
       setOrgId(next);
+      queryClient.clear();
     },
-    [api],
+    [api, queryClient],
   );
 
   const value: AuthValue = { api, me, orgId, ready, login, verify2fa, selectOrg, logout };

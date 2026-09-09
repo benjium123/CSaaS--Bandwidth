@@ -38,9 +38,13 @@ def _parse_datetime(raw_value: object) -> datetime | None:
         return None
 
 
-def _bandwidth_event_id(event_type: str, call_id: str, raw_time: object) -> str:
+def _bandwidth_event_id(
+    event_type: str, call_id: str, raw_time: object, discriminator: str = ""
+) -> str:
     raw_time_str = raw_time if isinstance(raw_time, str) else ""
-    digest = hashlib.sha256(f"{event_type}:{call_id}:{raw_time_str}".encode()).hexdigest()
+    digest = hashlib.sha256(
+        f"{event_type}:{call_id}:{raw_time_str}:{discriminator}".encode()
+    ).hexdigest()
     return f"bw-voice-{digest}"
 
 
@@ -164,7 +168,7 @@ class BandwidthVoiceMixin:
     def verify_voice_webhook(self, headers: Mapping[str, str], raw_body: bytes) -> bool:
         user = getattr(self, "voice_webhook_username", "")
         password = getattr(self, "voice_webhook_password", "")
-        if not user and not password:
+        if not user or not password:
             # FAIL CLOSED. A deployment that forgot to configure webhook credentials must
             # reject every voice webhook loudly, not accept forged ones silently - an
             # unauthenticated voice webhook can create calls and drive the recording
@@ -181,14 +185,14 @@ class BandwidthVoiceMixin:
     def parse_voice_webhook(self, raw_body: bytes) -> list[VoiceEvent]:
         try:
             obj = json.loads(raw_body)
-        except (json.JSONDecodeError, ValueError):
-            return []
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError("invalid JSON body") from exc
         if not isinstance(obj, dict):
-            return []
+            raise ValueError("voice webhook must be a JSON object")
 
         event_type_carrier = obj.get("eventType", "")
-        if not isinstance(event_type_carrier, str):
-            return []
+        if not isinstance(event_type_carrier, str) or not event_type_carrier:
+            raise ValueError("missing eventType")
 
         if event_type_carrier == "machineDetectionComplete":
             machine_result = obj.get("machineDetectionResult", {})
@@ -222,23 +226,29 @@ class BandwidthVoiceMixin:
 
         call_id = str(obj.get("callId") or "")
         raw_time = obj.get("eventTime") or obj.get("startTime")
-        provider_event_id = _bandwidth_event_id(event_type_carrier, call_id, raw_time)
 
         digits = ""
         hangup_cause = ""
         recording_url = ""
         provider_recording_id = ""
         duration_seconds = None
+        payload_discriminator = ""
 
         if canonical == "call_hungup":
             hangup_cause = obj.get("cause", "")
             duration_seconds = parse_iso_duration_seconds(str(obj.get("duration", "") or ""))
         elif canonical == "dtmf_received":
             digits = obj.get("digits", "")
+            payload_discriminator = f"digit:{digits}"
         elif canonical == "recording_ready":
             recording_url = obj.get("mediaUrl", "")
             provider_recording_id = obj.get("recordingId", "")
             duration_seconds = parse_iso_duration_seconds(str(obj.get("duration", "") or ""))
+            payload_discriminator = f"recording:{provider_recording_id}"
+
+        provider_event_id = _bandwidth_event_id(
+            event_type_carrier, call_id, raw_time, payload_discriminator
+        )
 
         return [
             VoiceEvent(

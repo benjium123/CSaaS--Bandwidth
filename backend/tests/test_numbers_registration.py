@@ -16,7 +16,9 @@ from app.db.base import ALLOW_UNSCOPED_KEY
 from app.models import OrgNumber
 from app.models.numbers import Campaign
 from app.services import registration as reg
-from tests.conftest import auth_headers, make_org_with_number
+from tests.conftest import TEST_PLATFORM_OPS_TOKEN, auth_headers, make_org_with_number
+
+OPS_HEADERS = {"X-Platform-Ops-Token": TEST_PLATFORM_OPS_TOKEN}
 
 LOCAL = "+12145550100"
 LOCAL2 = "+12145550101"
@@ -48,7 +50,9 @@ async def _approved_campaign(client, h, name="Camp A") -> dict:
     bid = brand.json()["id"]
     await client.post(f"/api/v1/registration/brands/{bid}/submit", headers=h)
     await client.post(
-        f"/api/v1/registration/brands/{bid}/status", json={"status": "approved"}, headers=h
+        f"/api/v1/registration/brands/{bid}/status",
+        json={"status": "approved"},
+        headers={**h, **OPS_HEADERS},
     )
 
     camp = await client.post(
@@ -68,7 +72,9 @@ async def _approved_campaign(client, h, name="Camp A") -> dict:
     cid = camp.json()["id"]
     await client.post(f"/api/v1/registration/campaigns/{cid}/submit", headers=h)
     approved = await client.post(
-        f"/api/v1/registration/campaigns/{cid}/status", json={"status": "approved"}, headers=h
+        f"/api/v1/registration/campaigns/{cid}/status",
+        json={"status": "approved"},
+        headers={**h, **OPS_HEADERS},
     )
     assert approved.json()["status"] == "approved"
     return approved.json()
@@ -131,7 +137,9 @@ async def test_pending_campaign_blocks_the_send_before_the_carrier(app_with_carr
     bid = brand.json()["id"]
     await client.post(f"/api/v1/registration/brands/{bid}/submit", headers=h)
     await client.post(
-        f"/api/v1/registration/brands/{bid}/status", json={"status": "approved"}, headers=h
+        f"/api/v1/registration/brands/{bid}/status",
+        json={"status": "approved"},
+        headers={**h, **OPS_HEADERS},
     )
     camp = await client.post(
         "/api/v1/registration/campaigns",
@@ -255,7 +263,9 @@ async def test_tollfree_gates_on_verification_not_on_a_campaign(app_with_carrier
     assert fake.sent == []
 
     await client.post(
-        f"/api/v1/registration/tollfree/{tfv_id}/status", json={"status": "approved"}, headers=h
+        f"/api/v1/registration/tollfree/{tfv_id}/status",
+        json={"status": "approved"},
+        headers={**h, **OPS_HEADERS},
     )
     ok = await client.post(
         "/api/v1/messages", json={"to": CONTACT, "from": TOLLFREE, "body": "hi"}, headers=h
@@ -495,7 +505,11 @@ async def test_telnyx_search_and_order_parse_the_real_shapes():
 
         order = await carrier.order_number("+12145550123")
         assert order.status == "active"
-        assert order.provider_ref == "num-1"
+        # Bugfix ledger 4.4: provider_ref now always stores the ORDER id ("order-1"),
+        # never the phone-number entry's own id ("num-1") - release_number resolves the
+        # phone-number id fresh via an e164 lookup instead of trusting a stored ref that
+        # could be either kind of id.
+        assert order.provider_ref == "order-1"
 
 
 async def test_a_pending_order_is_not_reported_as_active():

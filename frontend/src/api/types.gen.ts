@@ -867,6 +867,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Conversations */
+        get: operations["list_conversations_api_v1_conversations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conversations/{contact_e164}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Conversation Timeline */
+        get: operations["conversation_timeline_api_v1_conversations__contact_e164__timeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/custom-fields": {
         parameters: {
             query?: never;
@@ -879,6 +913,59 @@ export interface paths {
         put?: never;
         /** Create Custom Field */
         post: operations["create_custom_field_api_v1_custom_fields_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/departments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Departments */
+        get: operations["list_departments_api_v1_departments_get"];
+        put?: never;
+        /** Create Department */
+        post: operations["create_department_api_v1_departments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/departments/{department_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Department */
+        delete: operations["delete_department_api_v1_departments__department_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Department */
+        patch: operations["patch_department_api_v1_departments__department_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/departments/{department_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Members */
+        put: operations["set_members_api_v1_departments__department_id__members_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -988,6 +1075,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inbox/read-pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Read Pair
+         * @description 5.11: a call-only conversation (no inbound/outbound SMS yet, so no MessageThread
+         *     row exists) could never be marked read - there was no thread to PATCH. This upserts
+         *     the (our_e164, contact_e164) thread first (same helper the send/inbound paths use),
+         *     then marks it read - after which conversations.py::_call_unread respects the new
+         *     last_read_at exactly like it already does for a message-backed pair.
+         */
+        post: operations["mark_read_pair_api_v1_inbox_read_pair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inbox/threads": {
         parameters: {
             query?: never;
@@ -998,6 +1109,58 @@ export interface paths {
         /** Inbox Threads */
         get: operations["inbox_threads_api_v1_inbox_threads_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inboxes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Inboxes */
+        get: operations["list_inboxes_api_v1_inboxes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inboxes/{inbox_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Inbox */
+        patch: operations["patch_inbox_api_v1_inboxes__inbox_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/inboxes/{inbox_id}/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Grants */
+        get: operations["get_grants_api_v1_inboxes__inbox_id__grants_get"];
+        /** Set Grants */
+        put: operations["set_grants_api_v1_inboxes__inbox_id__grants_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1561,6 +1724,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/provider-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Provider Accounts */
+        get: operations["list_provider_accounts_api_v1_provider_accounts_get"];
+        put?: never;
+        /** Create Provider Account */
+        post: operations["create_provider_account_api_v1_provider_accounts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/provider-accounts/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Disable Provider Account */
+        delete: operations["disable_provider_account_api_v1_provider_accounts__account_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Provider Account */
+        patch: operations["patch_provider_account_api_v1_provider_accounts__account_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/provider-accounts/{account_id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Probe Provider Account */
+        post: operations["probe_provider_account_api_v1_provider_accounts__account_id__probe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/provider-rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Provider Rates */
+        get: operations["get_provider_rates_api_v1_provider_rates_get"];
+        /** Put Provider Rates */
+        put: operations["put_provider_rates_api_v1_provider_rates_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/queue-entries/{entry_id}/claim": {
         parameters: {
             query?: never;
@@ -1961,6 +2195,57 @@ export interface paths {
         put?: never;
         /** Softphone Token */
         post: operations["softphone_token_api_v1_softphone_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spend/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Spend Daily */
+        get: operations["get_spend_daily_api_v1_spend_daily_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spend/rollup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Spend Rollup */
+        post: operations["post_spend_rollup_api_v1_spend_rollup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spend/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Spend Summary */
+        get: operations["get_spend_summary_api_v1_spend_summary_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2862,6 +3147,51 @@ export interface components {
             /** Tag */
             tag: string | null;
         };
+        /** CallRecordingOut */
+        CallRecordingOut: {
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Status */
+            status: string;
+        };
+        /** CallTimelineEvent */
+        CallTimelineEvent: {
+            /** Answered At */
+            answered_at: string | null;
+            /** Direction */
+            direction: string;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Ended At */
+            ended_at: string | null;
+            /** Failure Detail */
+            failure_detail: string | null;
+            /** Has Voicemail */
+            has_voicemail: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "call";
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            recording: components["schemas"]["CallRecordingOut"] | null;
+            /** Status */
+            status: string;
+        };
         /** CallsSeriesPointOut */
         CallsSeriesPointOut: {
             /** Avg Duration Seconds */
@@ -3056,6 +3386,53 @@ export interface components {
             /** Voicemail Message */
             voicemail_message: string;
         };
+        /** ConversationContact */
+        ConversationContact: {
+            /** Display Name */
+            display_name: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /** ConversationItem */
+        ConversationItem: {
+            contact: components["schemas"]["ConversationContact"] | null;
+            /** Contact E164 */
+            contact_e164: string;
+            /** Direction */
+            direction: string | null;
+            /** Inbox Id */
+            inbox_id: string | null;
+            /**
+             * Last Event At
+             * Format: date-time
+             */
+            last_event_at: string;
+            /**
+             * Last Event Type
+             * @enum {string}
+             */
+            last_event_type: "message" | "call" | "voicemail";
+            /** Our E164 */
+            our_e164: string;
+            /** Snippet */
+            snippet: string | null;
+            /** Status */
+            status: string;
+            /** Thread Id */
+            thread_id: string | null;
+            /** Unread */
+            unread: boolean;
+        };
+        /** ConversationListResponse */
+        ConversationListResponse: {
+            /** Items */
+            items: components["schemas"]["ConversationItem"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** CustomFieldIn */
         CustomFieldIn: {
             /** Key */
@@ -3072,6 +3449,32 @@ export interface components {
              * @default []
              */
             options: string[];
+        };
+        /** DepartmentIn */
+        DepartmentIn: {
+            /** Name */
+            name: string;
+        };
+        /** DepartmentOut */
+        DepartmentOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Member User Ids */
+            member_user_ids: string[];
+            /** Name */
+            name: string;
+        };
+        /** DepartmentPatchIn */
+        DepartmentPatchIn: {
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Name */
+            name?: string | null;
         };
         /** DialAttemptOut */
         DialAttemptOut: {
@@ -3160,6 +3563,46 @@ export interface components {
              */
             timeout_seconds: number;
         };
+        /** GrantIn */
+        GrantIn: {
+            /**
+             * Grantee Id
+             * Format: uuid
+             */
+            grantee_id: string;
+            /** Grantee Type */
+            grantee_type: string;
+            /**
+             * Role
+             * @default member
+             */
+            role: string;
+        };
+        /** GrantOut */
+        GrantOut: {
+            /**
+             * Grantee Id
+             * Format: uuid
+             */
+            grantee_id: string;
+            /** Grantee Type */
+            grantee_type: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Role */
+            role: string;
+        };
+        /** GrantsIn */
+        GrantsIn: {
+            /**
+             * Grants
+             * @default []
+             */
+            grants: components["schemas"]["GrantIn"][];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3184,6 +3627,34 @@ export interface components {
         HandoffOut: {
             /** Published */
             published: boolean;
+        };
+        /** InboxOut */
+        InboxOut: {
+            /** Color */
+            color: string | null;
+            /** E164 */
+            e164: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** My Role */
+            my_role: string;
+            /** Name */
+            name: string;
+            /**
+             * Number Id
+             * Format: uuid
+             */
+            number_id: string;
+        };
+        /** InboxPatchIn */
+        InboxPatchIn: {
+            /** Color */
+            color?: string | null;
+            /** Name */
+            name?: string | null;
         };
         /** InviteCreatedOut */
         InviteCreatedOut: {
@@ -3435,6 +3906,14 @@ export interface components {
              */
             user_id: string;
         };
+        /** MembersIn */
+        MembersIn: {
+            /**
+             * User Ids
+             * @default []
+             */
+            user_ids: string[];
+        };
         /** MembershipOut */
         MembershipOut: {
             /**
@@ -3484,6 +3963,34 @@ export interface components {
             thread_id: string;
             /** To E164 */
             to_e164: string;
+        };
+        /** MessageTimelineEvent */
+        MessageTimelineEvent: {
+            /** Body */
+            body: string | null;
+            /** Direction */
+            direction: string;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "message";
+            /** Media */
+            media: unknown[];
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Status */
+            status: string;
         };
         /** MessagesSeriesPointOut */
         MessagesSeriesPointOut: {
@@ -3535,11 +4042,23 @@ export interface components {
             id: string;
             /** Is Active */
             is_active: boolean;
+            /** Monthly Cost Cents */
+            monthly_cost_cents?: number | null;
             /**
              * Number Type
              * @default local
              */
             number_type: string;
+            /** Order Detail */
+            order_detail?: string | null;
+            /** Provider Account Id */
+            provider_account_id?: string | null;
+            /** Provider Account Label */
+            provider_account_label?: string | null;
+            /** Purchase Cost Cents */
+            purchase_cost_cents?: number | null;
+            /** Purchased At */
+            purchased_at?: string | null;
             /**
              * Registration
              * @default unknown
@@ -3599,6 +4118,10 @@ export interface components {
             carrier?: string | null;
             /** E164 */
             e164: string;
+            /** Monthly Cost Cents */
+            monthly_cost_cents?: number | null;
+            /** Setup Cost Cents */
+            setup_cost_cents?: number | null;
         };
         /** OrgCreateIn */
         OrgCreateIn: {
@@ -3628,6 +4151,8 @@ export interface components {
             /** Messages */
             messages: components["schemas"]["MessagesSeriesPointOut"][];
             range: components["schemas"]["OverviewRangeOut"];
+            /** Spend Usd Month To Date */
+            spend_usd_month_to_date: number;
         };
         /** OverviewRangeOut */
         OverviewRangeOut: {
@@ -3837,6 +4362,65 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ProviderAccountCreateIn */
+        ProviderAccountCreateIn: {
+            /** Credentials */
+            credentials: {
+                [key: string]: string;
+            };
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Provider */
+            provider: string;
+        };
+        /** ProviderAccountOut */
+        ProviderAccountOut: {
+            /** Credentials */
+            credentials: {
+                [key: string]: string;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Last Probe At */
+            last_probe_at: string | null;
+            /** Last Probe Detail */
+            last_probe_detail: string | null;
+            /** Provider */
+            provider: string;
+            /** Status */
+            status: string;
+        };
+        /** ProviderAccountPatchIn */
+        ProviderAccountPatchIn: {
+            /** Credentials */
+            credentials?: {
+                [key: string]: string;
+            } | null;
+            /** Label */
+            label?: string | null;
+        };
+        /** ProviderRateIn */
+        ProviderRateIn: {
+            /** Metric */
+            metric: string;
+            /** Provider */
+            provider: string;
+            /** Unit Cost Micros */
+            unit_cost_micros: number;
+        };
+        /** ProviderRatesPut */
+        ProviderRatesPut: {
+            /** Rates */
+            rates: components["schemas"]["ProviderRateIn"][];
+        };
         /** QueueEntryOut */
         QueueEntryOut: {
             /**
@@ -3906,6 +4490,13 @@ export interface components {
             overflow: string;
             /** Ring Group Id */
             ring_group_id: string | null;
+        };
+        /** ReadPairIn */
+        ReadPairIn: {
+            /** Contact E164 */
+            contact_e164: string;
+            /** Our E164 */
+            our_e164: string;
         };
         /** ReconciliationItemOut */
         ReconciliationItemOut: {
@@ -4047,10 +4638,19 @@ export interface components {
             locality: string;
             /** Monthly Cost */
             monthly_cost: string;
+            /** Monthly Cost Cents */
+            monthly_cost_cents?: number | null;
             /** Number Type */
             number_type: string;
             /** Region */
             region: string;
+            /**
+             * Setup Cost
+             * @default
+             */
+            setup_cost: string;
+            /** Setup Cost Cents */
+            setup_cost_cents?: number | null;
         };
         /** SendIn */
         SendIn: {
@@ -4254,6 +4854,13 @@ export interface components {
             /** Status */
             status?: string | null;
         };
+        /** TimelineResponse */
+        TimelineResponse: {
+            /** Items */
+            items: (components["schemas"]["MessageTimelineEvent"] | components["schemas"]["CallTimelineEvent"] | components["schemas"]["VoicemailTimelineEvent"])[];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** TokenOut */
         TokenOut: {
             /** Access Token */
@@ -4370,6 +4977,36 @@ export interface components {
             recording_id: string | null;
             /** Status */
             status: string;
+            /** Transcript */
+            transcript: string | null;
+            /** Transcript Status */
+            transcript_status: string;
+        };
+        /** VoicemailTimelineEvent */
+        VoicemailTimelineEvent: {
+            /**
+             * Call Id
+             * Format: uuid
+             */
+            call_id: string;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "voicemail";
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            recording: components["schemas"]["CallRecordingOut"] | null;
             /** Transcript */
             transcript: string | null;
             /** Transcript Status */
@@ -6753,6 +7390,81 @@ export interface operations {
             };
         };
     };
+    list_conversations_api_v1_conversations_get: {
+        parameters: {
+            query?: {
+                inbox_id?: string | null;
+                tab?: string;
+                filter?: string;
+                q?: string | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    conversation_timeline_api_v1_conversations__contact_e164__timeline_get: {
+        parameters: {
+            query: {
+                our_e164: string;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                contact_e164: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_custom_fields_api_v1_custom_fields_get: {
         parameters: {
             query?: never;
@@ -6810,6 +7522,177 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_departments_api_v1_departments_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepartmentOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_department_api_v1_departments_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DepartmentIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepartmentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_department_api_v1_departments__department_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                department_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_department_api_v1_departments__department_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                department_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DepartmentPatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepartmentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_members_api_v1_departments__department_id__members_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                department_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembersIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepartmentOut"];
                 };
             };
             /** @description Validation Error */
@@ -7060,6 +7943,39 @@ export interface operations {
             };
         };
     };
+    mark_read_pair_api_v1_inbox_read_pair_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadPairIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     inbox_threads_api_v1_inbox_threads_get: {
         parameters: {
             query?: {
@@ -7087,6 +8003,144 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_inboxes_api_v1_inboxes_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_inbox_api_v1_inboxes__inbox_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                inbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InboxPatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_grants_api_v1_inboxes__inbox_id__grants_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                inbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_grants_api_v1_inboxes__inbox_id__grants_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                inbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrantsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantOut"][];
                 };
             };
             /** @description Validation Error */
@@ -8314,6 +9368,243 @@ export interface operations {
             };
         };
     };
+    list_provider_accounts_api_v1_provider_accounts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderAccountOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_provider_account_api_v1_provider_accounts_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderAccountCreateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderAccountOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disable_provider_account_api_v1_provider_accounts__account_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_provider_account_api_v1_provider_accounts__account_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderAccountPatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderAccountOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    probe_provider_account_api_v1_provider_accounts__account_id__probe_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderAccountOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_provider_rates_api_v1_provider_rates_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_provider_rates_api_v1_provider_rates_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderRatesPut"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     claim_entry_api_v1_queue_entries__entry_id__claim_post: {
         parameters: {
             query?: never;
@@ -9205,6 +10496,115 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SoftphoneTokenOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_spend_daily_api_v1_spend_daily_get: {
+        parameters: {
+            query?: {
+                from?: string | null;
+                to?: string | null;
+                provider?: string | null;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_spend_rollup_api_v1_spend_rollup_post: {
+        parameters: {
+            query: {
+                /** @description UTC day to recompute */
+                day: string;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_spend_summary_api_v1_spend_summary_get: {
+        parameters: {
+            query?: {
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

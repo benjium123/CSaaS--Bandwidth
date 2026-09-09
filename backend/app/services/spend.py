@@ -6,6 +6,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
@@ -22,6 +23,8 @@ from app.models import (
     ProviderSpendDaily,
 )
 from app.services.usage import NON_BILLABLE_OUTBOUND_STATUSES
+
+log = structlog.get_logger("spend")
 
 #: Upper bound on an org's own rate override (Opus review item 9) - a fat-fingered
 #: unit_cost_micros (e.g. dollars typed into a micros field) must fail loudly, not
@@ -263,8 +266,11 @@ async def rollup_day(session: AsyncSession, org_id: uuid.UUID, day: date) -> int
         )
         .where(
             Call.org_id == org_id,
-            Call.created_at >= start,
-            Call.created_at < end,
+            # 4.16: bucket by ended_at, matching services/usage.py's voice_minutes bucket
+            # exactly - created_at (queued) and ended_at (when duration is even known)
+            # can land on different UTC days for a call that spans midnight.
+            Call.ended_at >= start,
+            Call.ended_at < end,
             Call.duration_seconds.isnot(None),
             Call.duration_seconds > 0,
         )
@@ -303,7 +309,10 @@ async def rollup_day(session: AsyncSession, org_id: uuid.UUID, day: date) -> int
         OrgNumber.monthly_cost_cents,
     ).where(
         OrgNumber.org_id == org_id,
-        OrgNumber.status != "pending",
+        # 4.6: a failed order never became a real number - only active/released ever
+        # actually held a carrier's line and can accrue MRC. `!= "pending"` previously
+        # let "failed" through as well, billing an order that was never fulfilled.
+        OrgNumber.status.in_(("active", "released")),
         sa.or_(OrgNumber.purchased_at.is_(None), OrgNumber.purchased_at < end),
         sa.or_(OrgNumber.released_at.is_(None), OrgNumber.released_at >= start),
     )
@@ -333,6 +342,9 @@ async def rollup_day(session: AsyncSession, org_id: uuid.UUID, day: date) -> int
         OrgNumber.purchase_cost_cents,
     ).where(
         OrgNumber.org_id == org_id,
+        # 4.6: same reasoning as the MRC query above - a failed order never fulfilled,
+        # so it never actually incurred a one-time setup cost either.
+        OrgNumber.status.in_(("active", "released")),
         OrgNumber.purchased_at >= start,
         OrgNumber.purchased_at < end,
     )
@@ -378,11 +390,18 @@ async def rollup_recent(session: AsyncSession, *, days: int = 2) -> int:
     )
 
     today = datetime.now(timezone.utc).date()
+    rolled = 0
     for oid in org_ids:
-        for offset in range(days):
-            await rollup_day(session, oid, today - timedelta(days=offset))
+        try:
+            for offset in range(days):
+                await rollup_day(session, oid, today - timedelta(days=offset))
+        except Exception:  # noqa: BLE001 - 4.7: one org's collision must not abort the pass
+            log.exception("spend_rollup_org_failed", org_id=str(oid))
+            await session.rollback()
+            continue
+        rolled += 1
 
-    return len(org_ids)
+    return rolled
 
 
 async def summary(session: AsyncSession, org_id: uuid.UUID, start: date, end: date) -> dict:

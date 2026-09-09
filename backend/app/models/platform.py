@@ -143,6 +143,12 @@ class CallScore(Base, TenantScoped, TimestampMixin):
     score: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     summary: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="pending")
+    #: Bugfix ledger 6.14: this LLM call's own usage was computed (llm_client.ChatResult)
+    #: but never persisted anywhere - metered nowhere, same P13 DR-9 shape as
+    #: AgentSmsTurn.tokens_in/tokens_out. NULL when no round ever completed (e.g. a
+    #: transport failure before any response).
+    tokens_in: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
 
 
 class UsageRecord(Base, TenantScoped, TimestampMixin):

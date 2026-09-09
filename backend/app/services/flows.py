@@ -309,6 +309,24 @@ async def create_business_hours(
         ZoneInfo(timezone_name)
     except (ZoneInfoNotFoundError, ValueError, KeyError) as exc:
         raise ValidationFailedError(f"Unknown IANA timezone {timezone_name!r}") from exc
+
+    # 3.23: validate weekday keys/window shapes at write time - garbage here would
+    # otherwise silently evaluate to "closed" forever inside evaluate_hours.
+    if not isinstance(schedule, dict):
+        raise ValidationFailedError("schedule must be a dict")
+    for day, windows in schedule.items():
+        if day not in _WEEKDAY_KEYS:
+            raise ValidationFailedError(f"Unknown weekday key {day!r}")
+        if not isinstance(windows, list):
+            raise ValidationFailedError(f"windows for {day} must be a list")
+        for window in windows:
+            if not isinstance(window, (list, tuple)) or len(window) != 2:
+                raise ValidationFailedError(f"Invalid window in {day}")
+            start = _parse_hhmm(window[0])
+            end = _parse_hhmm(window[1])
+            if start is None or end is None:
+                raise ValidationFailedError(f"Invalid window time in {day}")
+
     row = BusinessHours(
         id=uuid.uuid4(),
         org_id=org_id,
@@ -353,9 +371,26 @@ def evaluate_hours(business_hours: BusinessHours, moment: datetime) -> str:
     if local.date().isoformat() in (business_hours.holidays or []):
         return "holiday"
 
+    schedule = business_hours.schedule or {}
     weekday_key = _WEEKDAY_KEYS[local.weekday()]
-    windows = (business_hours.schedule or {}).get(weekday_key) or []
+    prev_key = _WEEKDAY_KEYS[(local.weekday() - 1) % 7]
     local_time = local.time()
+
+    # 3.23: a window like 22:00-02:00 on Monday is still open at 01:00 Tuesday, so
+    # yesterday's overnight windows must be checked before today's.
+    prev_windows = schedule.get(prev_key)
+    if isinstance(prev_windows, list):
+        for window in prev_windows:
+            if not isinstance(window, (list, tuple)) or len(window) != 2:
+                continue
+            start = _parse_hhmm(window[0])
+            end = _parse_hhmm(window[1])
+            if start is None or end is None:
+                continue
+            if start > end and local_time < end:
+                return "open"
+
+    windows = schedule.get(weekday_key) or []
     for window in windows:
         if not isinstance(window, (list, tuple)) or len(window) != 2:
             continue
@@ -363,6 +398,9 @@ def evaluate_hours(business_hours: BusinessHours, moment: datetime) -> str:
         end = _parse_hhmm(window[1])
         if start is None or end is None:
             continue
-        if start <= local_time < end:
+        if start <= end:
+            if start <= local_time < end:
+                return "open"
+        elif local_time >= start:
             return "open"
     return "closed"

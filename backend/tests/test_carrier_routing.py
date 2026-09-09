@@ -374,12 +374,21 @@ def test_signalwire_signature_roundtrip_and_tamper():
     expected = sw.expected_signature(url, dict(sw._form(body)), token)
 
     assert sw.verify({"X-SignalWire-Signature": expected}, token, url, body)
-    assert sw.verify({"X-Twilio-Signature": expected}, token, url, body), "accept both names"
-    assert not sw.verify({"X-Twilio-Signature": expected}, token, url, body + b"&x=1")
-    assert not sw.verify({"X-Twilio-Signature": expected}, token, url + "/other", body), (
+
+    # A distinct body -> distinct signature, so this checks the OTHER header name is
+    # accepted without colliding with the replay-protection TTL cache above (1.15) -
+    # a real replay of the SAME signature is exercised separately in test_1_15_*.
+    body2 = body + b"2"
+    expected2 = sw.expected_signature(url, dict(sw._form(body2)), token)
+    assert sw.verify({"X-Twilio-Signature": expected2}, token, url, body2), "accept both names"
+
+    body3 = body + b"3"
+    expected3 = sw.expected_signature(url, dict(sw._form(body3)), token)
+    assert not sw.verify({"X-Twilio-Signature": expected3}, token, url, body3 + b"&x=1")
+    assert not sw.verify({"X-Twilio-Signature": expected3}, token, url + "/other", body3), (
         "the signature covers the URL, so a different URL must not verify"
     )
-    assert not sw.verify({"X-Twilio-Signature": "nope"}, token, url, body)
+    assert not sw.verify({"X-Twilio-Signature": "nope"}, token, url, body3)
 
 
 def test_signalwire_signature_matches_the_twilio_algorithm():

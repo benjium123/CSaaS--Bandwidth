@@ -52,7 +52,7 @@ export function QueuesPage() {
  * IANA timezone.
  * ------------------------------------------------------------------------------------- */
 function BusinessHoursSection({ api }: { api: ApiClient }) {
-  const { data: hours, isLoading } = useBusinessHours(api);
+  const { data: hours, isLoading, error: hoursError, refetch: refetchHours } = useBusinessHours(api);
   const createHours = useCreateBusinessHours(api);
 
   const [name, setName] = React.useState("default");
@@ -95,6 +95,11 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
     setError(null);
     try {
       await createHours.mutateAsync({ name: name.trim() || "default", timezone, schedule, holidays });
+      setName("default");
+      setTimezone("America/Chicago");
+      setSchedule({});
+      setHolidayInput("");
+      setHolidays([]);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -106,6 +111,15 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
 
       {isLoading ? (
         <Spinner label="Loading business hours" />
+      ) : hoursError ? (
+        <div className="space-y-2">
+          <p role="alert" className="text-sm text-destructive">
+            {(hoursError as Error).message}
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetchHours()}>
+            Retry
+          </Button>
+        </div>
       ) : (hours ?? []).length === 0 ? (
         <p className="text-sm text-muted-foreground">No business hours configured yet.</p>
       ) : (
@@ -161,7 +175,13 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
                     value={w[1]}
                     onChange={(e) => updateWindow(day.key, i, 1, e.target.value)}
                   />
-                  <Button type="button" size="sm" variant="ghost" onClick={() => removeWindow(day.key, i)}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`Remove ${day.label} window ${i + 1}`}
+                    onClick={() => removeWindow(day.key, i)}
+                  >
                     ×
                   </Button>
                 </div>
@@ -222,7 +242,7 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
  * Ring groups (DR-5)
  * ------------------------------------------------------------------------------------- */
 function RingGroupsSection({ api }: { api: ApiClient }) {
-  const { data: groups, isLoading } = useRingGroups(api);
+  const { data: groups, isLoading, error: groupsError, refetch: refetchGroups } = useRingGroups(api);
   const { data: members } = useOrgMembers(api);
   const createGroup = useCreateRingGroup(api);
 
@@ -259,6 +279,15 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
 
       {isLoading ? (
         <Spinner label="Loading ring groups" />
+      ) : groupsError ? (
+        <div className="space-y-2">
+          <p role="alert" className="text-sm text-destructive">
+            {(groupsError as Error).message}
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetchGroups()}>
+            Retry
+          </Button>
+        </div>
       ) : (groups ?? []).length === 0 ? (
         <p className="text-sm text-muted-foreground">No ring groups yet.</p>
       ) : (
@@ -354,7 +383,7 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
  * Queues (DR-6): CRUD + a live-ish entries list for whichever queue is expanded.
  * ------------------------------------------------------------------------------------- */
 function QueuesSection({ api }: { api: ApiClient }) {
-  const { data: queues, isLoading } = useQueues(api);
+  const { data: queues, isLoading, error: queuesError, refetch: refetchQueues } = useQueues(api);
   const { data: ringGroups } = useRingGroups(api);
   const createQueue = useCreateQueue(api);
 
@@ -390,6 +419,15 @@ function QueuesSection({ api }: { api: ApiClient }) {
 
       {isLoading ? (
         <Spinner label="Loading queues" />
+      ) : queuesError ? (
+        <div className="space-y-2">
+          <p role="alert" className="text-sm text-destructive">
+            {(queuesError as Error).message}
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetchQueues()}>
+            Retry
+          </Button>
+        </div>
       ) : (queues ?? []).length === 0 ? (
         <p className="text-sm text-muted-foreground">No queues yet.</p>
       ) : (
@@ -524,12 +562,26 @@ function queueEntryBadgeClass(state: string): string {
 /** Polls only while this queue's card is expanded (visible) - the hook itself also pauses
  * while the tab is hidden. */
 function QueueEntriesList({ api, queue }: { api: ApiClient; queue: QueueOut }) {
-  const { data: entries, isLoading } = useQueueEntries(api, queue.id, { enabled: true });
+  const {
+    data: entries,
+    isLoading,
+    error: entriesError,
+    refetch: refetchEntries,
+  } = useQueueEntries(api, queue.id, { enabled: true });
 
   return (
     <div className="mt-2 border-t border-border pt-2">
       {isLoading ? (
         <Spinner label="Loading entries" />
+      ) : entriesError ? (
+        <div className="space-y-2">
+          <p role="alert" className="text-sm text-destructive">
+            {(entriesError as Error).message}
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetchEntries()}>
+            Retry
+          </Button>
+        </div>
       ) : (entries ?? []).length === 0 ? (
         <p className="text-xs text-muted-foreground">No entries.</p>
       ) : (
@@ -554,7 +606,12 @@ function QueueEntriesList({ api, queue }: { api: ApiClient; queue: QueueOut }) {
  * ------------------------------------------------------------------------------------- */
 function VoicemailsSection({ api }: { api: ApiClient }) {
   const [statusFilter, setStatusFilter] = React.useState<string | undefined>("new");
-  const { data: voicemails, isLoading } = useVoicemails(api, statusFilter);
+  const {
+    data: voicemails,
+    isLoading,
+    error: voicemailsError,
+    refetch: refetchVoicemails,
+  } = useVoicemails(api, statusFilter);
   const markRead = useMarkVoicemailRead(api);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -591,6 +648,15 @@ function VoicemailsSection({ api }: { api: ApiClient }) {
 
       {isLoading ? (
         <Spinner label="Loading voicemails" />
+      ) : voicemailsError ? (
+        <div className="space-y-2">
+          <p role="alert" className="text-sm text-destructive">
+            {(voicemailsError as Error).message}
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetchVoicemails()}>
+            Retry
+          </Button>
+        </div>
       ) : (voicemails ?? []).length === 0 ? (
         <p className="text-sm text-muted-foreground">No voicemails.</p>
       ) : (
@@ -598,7 +664,7 @@ function VoicemailsSection({ api }: { api: ApiClient }) {
           {(voicemails ?? []).map((v) => (
             <li key={v.id} className="space-y-1 p-3 text-sm">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">{relativeTime(v.created_at)} ago</span>
+                <span className="text-xs text-muted-foreground">{relativeTime(v.created_at)}</span>
                 <div className="flex items-center gap-2">
                   <Badge className="bg-gray-100 text-gray-600">{v.transcript_status}</Badge>
                   <Badge className={v.status === "new" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600"}>

@@ -255,6 +255,66 @@ async def test_delivery_backoff_schedule_then_dead(client, session, settings):
         assert delivery.attempts == len(DELIVERY_BACKOFF_SECONDS) + 1
 
 
+# ----------------------------------------------------------------------------------
+# D3: an exception raised OUTSIDE _attempt_delivery's own try/except (a bug in
+# _endpoint_should_disable, the audit write, or commit itself) must never leave the
+# row "pending" forever - it must be marked exactly like a normal failed attempt would
+# be, so it eventually reaches "dead" instead of being re-selected every tick forever.
+# ----------------------------------------------------------------------------------
+async def test_d3_raising_delivery_is_marked_failed_not_stuck_pending_forever(
+    client, session, settings, monkeypatch
+):
+    token, org = await _org(client)
+    org_id = uuid.UUID(org["id"])
+    h = auth_headers(token, org["id"])
+    await _make_endpoint(client, h, ["message.received"])
+    event = await _seed_event(session, org_id, "message.received", {"message_id": "m1"})
+    event_id = event.id  # snapshot before any commit below expires `event`
+    await webhooks_out.fan_out_pending_events(session, now=FROZEN)
+
+    set_org_context(session, org_id)
+    delivery = await _delivery_for(session, event_id)
+    assert delivery.status == "pending"
+    assert delivery.attempts == 0
+
+    async def _raise(*_args, **_kwargs):
+        # Deliberately NOT one of the exception types _attempt_delivery's own inner
+        # try/except catches (httpx.HTTPError / ValidationFailedError /
+        # FeatureUnavailableError / ValueError) - this simulates a bug elsewhere in the
+        # per-row block (e.g. _endpoint_should_disable, the audit write, the commit).
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(webhooks_out, "_attempt_delivery", _raise)
+
+    mock_client, _captured = _mock_client(lambda _req: httpx.Response(200))
+    async with mock_client:
+        counts = await webhooks_out.delivery_tick(
+            session, settings, client=mock_client, now=FROZEN
+        )
+    assert counts == {"delivered": 0, "failed": 1, "dead": 0, "disabled": 0}
+
+    set_org_context(session, org_id)
+    delivery = await _delivery_for(session, event_id)
+    assert delivery.status == "pending"
+    assert delivery.attempts == 1
+    assert delivery.last_error is not None
+    assert delivery.next_attempt_at is not None
+    assert delivery.next_attempt_at > FROZEN
+
+    # It keeps advancing through the SAME backoff schedule a normal failure would,
+    # eventually reaching "dead" rather than being re-selected forever.
+    now = delivery.next_attempt_at + timedelta(seconds=1)
+    mock_client2, _captured2 = _mock_client(lambda _req: httpx.Response(200))
+    async with mock_client2:
+        for _ in range(len(DELIVERY_BACKOFF_SECONDS)):
+            await webhooks_out.delivery_tick(session, settings, client=mock_client2, now=now)
+            delivery = await _delivery_for(session, event_id)
+            if delivery.status == "dead":
+                break
+            now = delivery.next_attempt_at + timedelta(seconds=1)
+    assert delivery.status == "dead"
+
+
 async def test_endpoint_auto_disables_after_20_consecutive_failures_and_audits(
     client, session, settings
 ):
@@ -419,7 +479,9 @@ async def test_http_to_localhost_is_rejected_in_production():
         jwt_secret="x" * 32,
         session_secret="x" * 32,
         credential_encryption_key=FERNET_KEY,
+        credentials_master_key="m" * 32,
         public_base_url="https://app.csaas-prod.io",
+        public_web_url="https://console.csaas-prod.io",
         database_url="postgresql+asyncpg://csaas_real:pw@db/csaas",
         bandwidth_enabled=False,
     )
@@ -433,7 +495,9 @@ async def test_private_ip_target_rejected_in_production(monkeypatch):
         jwt_secret="x" * 32,
         session_secret="x" * 32,
         credential_encryption_key=FERNET_KEY,
+        credentials_master_key="m" * 32,
         public_base_url="https://app.csaas-prod.io",
+        public_web_url="https://console.csaas-prod.io",
         database_url="postgresql+asyncpg://csaas_real:pw@db/csaas",
         bandwidth_enabled=False,
     )
@@ -452,7 +516,9 @@ async def test_public_ip_target_allowed_in_production(monkeypatch):
         jwt_secret="x" * 32,
         session_secret="x" * 32,
         credential_encryption_key=FERNET_KEY,
+        credentials_master_key="m" * 32,
         public_base_url="https://app.csaas-prod.io",
+        public_web_url="https://console.csaas-prod.io",
         database_url="postgresql+asyncpg://csaas_real:pw@db/csaas",
         bandwidth_enabled=False,
     )

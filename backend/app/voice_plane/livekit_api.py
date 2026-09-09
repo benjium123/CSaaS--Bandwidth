@@ -109,7 +109,10 @@ class LiveKitApi:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient()
+            # 3.1: outbound SIP participant creation can ring up to 45s; httpx's default
+            # 5s read timeout was killing the request mid-ring and leaving the room
+            # deleted out from under the operator.
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=90.0))
         return self._client
 
     async def aclose(self) -> None:

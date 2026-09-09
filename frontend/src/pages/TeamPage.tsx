@@ -41,8 +41,18 @@ function statusBadgeClass(status: InviteStatus): string {
 
 export function TeamPage() {
   const { api } = useAuth();
-  const { data: members, isLoading: membersLoading } = useOrgMembers(api);
-  const { data: invites, isLoading: invitesLoading } = useInvites(api);
+  const {
+    data: members,
+    isLoading: membersLoading,
+    error: membersError,
+    refetch: refetchMembers,
+  } = useOrgMembers(api);
+  const {
+    data: invites,
+    isLoading: invitesLoading,
+    error: invitesError,
+    refetch: refetchInvites,
+  } = useInvites(api);
   const createInvite = useCreateInvite(api);
   const revokeInvite = useRevokeInvite(api);
 
@@ -79,6 +89,15 @@ export function TeamPage() {
 
         {membersLoading ? (
           <Spinner />
+        ) : membersError ? (
+          <div className="space-y-2">
+            <p role="alert" className="text-sm text-destructive">
+              {(membersError as Error).message}
+            </p>
+            <Button type="button" size="sm" variant="outline" onClick={() => refetchMembers()}>
+              Retry
+            </Button>
+          </div>
         ) : (
           <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full text-sm">
@@ -108,6 +127,15 @@ export function TeamPage() {
 
         {invitesLoading ? (
           <Spinner />
+        ) : invitesError ? (
+          <div className="space-y-2">
+            <p role="alert" className="text-sm text-destructive">
+              {(invitesError as Error).message}
+            </p>
+            <Button type="button" size="sm" variant="outline" onClick={() => refetchInvites()}>
+              Retry
+            </Button>
+          </div>
         ) : (invites ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground">No invitations yet.</p>
         ) : (

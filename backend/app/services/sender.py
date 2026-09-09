@@ -41,8 +41,14 @@ def pick_deterministic(contact_e164: str, numbers: Sequence[str]) -> str:
 
 
 async def _active_numbers(session: AsyncSession) -> list[str]:
+    # 2.6: is_active alone is not enough - a released number can still carry
+    # is_active=True in stale data, and "active" is the authoritative lifecycle status.
     rows = (
-        await session.execute(sa.select(OrgNumber).where(OrgNumber.is_active.is_(True)))
+        await session.execute(
+            sa.select(OrgNumber).where(
+                OrgNumber.is_active.is_(True), OrgNumber.status == "active"
+            )
+        )
     ).scalars().all()
     return [n.e164 for n in rows]
 
@@ -54,24 +60,44 @@ async def select_sender(
     *,
     requested: str | None = None,
     allow_reassign: bool = False,
+    pool: Sequence[str] | None = None,
 ) -> str:
-    """Choose which of the org's numbers sends to ``contact_e164``."""
+    """Choose which of the org's numbers sends to ``contact_e164``.
+
+    ``pool`` (6.2) restricts the candidate numbers to a caller-supplied subset (a
+    campaign's configured ``from_numbers``) - used so a bulk campaign send still goes
+    through the SAME sticky-sender logic a reply does (no forked threads / split
+    opt-out state) while never picking a number outside the campaign's own pool.
+    """
     # 1. Explicit request: must be an active number OF THIS ORG. The session guard makes a
     #    number owned by another org indistinguishable from one that does not exist.
     if requested:
         row = (
             await session.execute(
                 sa.select(OrgNumber).where(
-                    OrgNumber.e164 == requested, OrgNumber.is_active.is_(True)
+                    OrgNumber.e164 == requested,
+                    OrgNumber.is_active.is_(True),
+                    OrgNumber.status == "active",
                 )
             )
         ).scalar_one_or_none()
         if row is None:
             raise ValidationFailedError(f"{requested} is not an active number for this org")
+        if pool is not None and row.e164 not in pool:
+            raise ValidationFailedError(
+                f"{requested} is not in the requested number pool for this org"
+            )
         return row.e164
 
     active = await _active_numbers(session)
-    if not active:
+    if pool is not None:
+        allowed = set(pool)
+        active = [e164 for e164 in active if e164 in allowed]
+        if not active:
+            raise ValidationFailedError(
+                "The requested number pool has no active numbers for this org"
+            )
+    elif not active:
         raise ValidationFailedError("This org has no active numbers; add one first")
 
     # 2. Sticky: the most recently used thread for this contact wins.

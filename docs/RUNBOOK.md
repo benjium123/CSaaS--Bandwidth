@@ -20,15 +20,68 @@ names are `csaas-api-1`, `csaas-db-1`, `csaas-redis-1`, and the built api image 
 
 ## Deploy
 
+### Before the very first deploy to a box
+
+```bash
+ssh root@144.126.152.175 "ls -la /opt/csaas"
+```
+D11: `deploy.sh` ships files via `rsync -a --delete` into `/opt/csaas` (see "What
+deploy.sh ships" below) - `--delete` removes anything under `/opt/csaas` that isn't part
+of this deploy's payload. On a fresh box that's harmless; on a box that already has
+*anything* in `/opt/csaas` from another source, inventory it with the command above
+first, so an unexpected deletion doesn't come as a surprise the first time you run this.
+
+Also required before the first deploy, both one-time, both operator-run (not done by
+`deploy.sh`):
+- **nginx rate-limit zone**: `deploy/nginx-csaas-limits.conf` (a single `limit_req_zone`
+  directive) must be installed to `/etc/nginx/conf.d/csaas-limits.conf` **before**
+  `deploy/nginx-csaas.conf` is enabled - the site file's `limit_req zone=csaas_auth ...`
+  lines (login/2FA/register) fail `nginx -t` if the zone isn't already defined in an
+  http-context file. `conf.d/*.conf` is included from nginx.conf's top-level `http{}`
+  block on stock installs; verify with `nginx -t` before `systemctl reload nginx`, same
+  as any other nginx change on this shared box.
+- **LiveKit redis password**: `deploy/livekit/livekit.yaml` and `.../sip.yaml` are
+  git-ignored, generated files - `deploy.sh` renders them from their `.tpl` counterparts
+  after every rsync, reading `CSAAS_REDIS_PASSWORD` from `/opt/csaas/.env`. See
+  `deploy/livekit/README.md` section 1b for the full explanation and the local-dev
+  rendering command. Nothing to do here if `CSAAS_REDIS_PASSWORD` is already set in
+  `.env` - it's automatic - but know that this render step exists before debugging a
+  livekit config that "reverted itself."
+
+### If you deployed before this fix (D2): fix `csaas_media` ownership once
+
+`deploy/Dockerfile` now creates `/app/var/media` (owned by `csaas`) before the image's
+final `chown -R`, so a brand-new `csaas_media` named volume inherits the right
+ownership on first use. If the box already deployed with the old Dockerfile, the
+existing `csaas_media` volume was seeded root-owned instead - the `api` container
+(running as `csaas`) can't write media/recordings/transcripts into it. Only relevant if
+the volume is already empty (nothing has been written to it yet - check with
+`docker run --rm -v csaas_media:/m alpine ls -la /m`); if it already holds real data,
+fix ownership in place instead (`docker run --rm -v csaas_media:/m alpine chown -R
+10001:10001 /m`) rather than deleting it.
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml down          # stop the container using it
+docker volume rm csaas_media                                   # ONLY if empty - see above
+./deploy/deploy.sh                                              # recreates it correctly on next `up`
+```
+
+### Running it
+
 ```bash
 ./deploy/deploy.sh [user@host]     # defaults to root@144.126.152.175
 ```
 
 Pre-flight checked, idempotent, safe to re-run. It builds the console locally (node never
-runs on the box), ships tracked files via `git archive`, brings the stack up with
-`docker compose ... up -d --build`, runs `alembic upgrade head` inside the api container,
-and checks `/healthz`. It NEVER writes `.env` - if `/opt/csaas/.env` is missing, it aborts
-and tells you to create it by hand from `.env.example`.
+runs on the box), ships tracked files via `git archive HEAD` (D11: this - not the local
+working tree - is what actually gets deployed, so **uncommitted changes never reach the
+box**; commit or `ALLOW_DIRTY_FRONTEND=1` for the frontend, see the script's own comments),
+brings the stack up with `docker compose ... up -d --build`, runs `alembic upgrade head`
+inside the api container, and checks `/healthz`. It NEVER writes `.env` - if
+`/opt/csaas/.env` is missing, it aborts and tells you to create it by hand from
+`.env.example`. Pre-flight also refuses to proceed if `CSAAS_DB_PASSWORD` or
+`LIVEKIT_API_SECRET` is missing/empty in that `.env` - checked before anything (including
+migrations) runs, not after.
 
 ## Rollback
 
@@ -60,8 +113,17 @@ outside `/opt/csaas`, and a cron line lives in root's crontab. Install it once, 
 
 ```bash
 ssh root@144.126.152.175
+mkdir -p /opt/csaas/backups && chmod 700 /opt/csaas/backups   # D15: backup.sh assumes this exists
 crontab -e
-# add (03:30 America/Chicago - adjust for the box's actual TZ/DST if it is not already CT):
+# CRON_TZ makes the schedule explicit regardless of the box's system TZ - containers (and
+# most VPS base images) default to UTC, so "30 3" without this fires at 03:30 UTC, i.e.
+# 22:30 or 21:30 America/Chicago the PREVIOUS day, not 03:30 CT. Needs a cron that supports
+# per-line CRON_TZ (vixie-cron/cronie do); if yours does not, set TZ=America/Chicago instead.
+# D14: unlike TZ (which shifts the WHOLE crontab), CRON_TZ is NOT scoped to just this one
+# line - it applies to every subsequent line in the crontab until a later CRON_TZ/TZ
+# assignment resets it. If you add more cron lines below this one and want them on the
+# box's default TZ again, assign CRON_TZ (or TZ) back explicitly before them.
+CRON_TZ=America/Chicago
 30 3 * * * /opt/csaas/backend/scripts/backup.sh >> /opt/csaas/backups/backup.log 2>&1
 ```
 
@@ -236,6 +298,15 @@ ufw allow 7881/tcp comment 'csaas livekit ice-tcp'
 ufw allow 50700:51199/udp comment 'csaas livekit rtp'
 ufw allow 5060/udp comment 'csaas sip signaling'
 ufw allow 10000:10499/udp comment 'csaas sip rtp'
+# D11: `livekit` runs network_mode: host (deploy/livekit/docker-compose.livekit.yml), so
+# there is no docker-proxy port-publish to restrict 7880 to loopback the way other
+# services get it - `bind_addresses: [""]` in livekit.yaml means 7880 listens on every
+# host interface, public IP included, unless ufw blocks it. Apply this deny rule BEFORE
+# bringing `livekit` up. If the softphone needs LiveKit reachable publicly, do that via
+# the nginx wss proxy in "Operator step: expose /status and the LiveKit WS through
+# nginx" below FIRST, and repoint LIVEKIT_PUBLIC_URL to that wss:// URL - see the caveat
+# there - because this deny rule cuts off the direct ws://<ip>:7880 form entirely.
+ufw deny in on <public-iface> to any port 7880 proto tcp
 cd /opt/csaas && docker compose --env-file .env \
   -f deploy/docker-compose.prod.yml \
   -f deploy/livekit/docker-compose.livekit.yml up -d livekit livekit-sip
@@ -244,6 +315,15 @@ cd /opt/csaas && docker compose --env-file .env \
 Verify the target ports are free (nothing listening on 7880/7881/5060) BEFORE running this
 - the RTP ranges above are deliberately narrow because the VPS hosts other tenants' services
 alongside csaas.
+
+Verify the deny rule actually took (D11):
+```bash
+ss -ltnp | grep 7880          # on-box: confirm livekit IS listening (sanity check)
+curl -s 127.0.0.1:7880        # on-box, over loopback: MUST succeed (nginx/local tools still work)
+# from a DIFFERENT machine (never the VPS itself):
+nc -z 144.126.152.175 7880 && echo "REACHABLE - deny rule did not take, fix before continuing" \
+  || echo "not reachable - deny rule confirmed"
+```
 
 `deploy/livekit/README.md` documents the trunk setup as **Telnyx**; with the Bandwidth/
 Telnyx split (B1), voice is on **Bandwidth**, so the inbound trunk step takes Bandwidth's
@@ -319,6 +399,15 @@ The public `/status` route and the softphone's LiveKit signal WebSocket (OPEN_IS
 I1) both need one addition to the **csaas server block** in
 `/etc/nginx/sites-enabled/csaas`. Editing nginx on this shared box was deliberately
 left to the operator (the automation's permission layer blocks it, correctly). Steps:
+
+**D11 caveat - do this BEFORE the `ufw deny ... port 7880` rule in "Media plane
+bring-up" above, if you haven't applied that rule yet:** if `LIVEKIT_PUBLIC_URL` in
+`.env` is currently the direct form (`ws://144.126.152.175:7880` / `ws://<ip>:7880`),
+that URL stops working the moment the deny rule is in place - 7880 becomes unreachable
+from anywhere but loopback. Add the `location /livekit/` block below and repoint
+`LIVEKIT_PUBLIC_URL` to the `wss://<host>/livekit` form FIRST, confirm the softphone
+still connects, and only then apply the deny rule. Doing it in the other order takes the
+softphone down until this section is completed.
 
 ```bash
 cp /etc/nginx/sites-enabled/csaas /root/csaas.nginx.bak.$(date +%s)

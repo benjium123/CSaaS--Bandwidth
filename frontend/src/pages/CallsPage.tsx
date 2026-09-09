@@ -1,6 +1,7 @@
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
-import type { ApiClient } from "@/api/client";
+import { fetchAuthedBlob, type ApiClient } from "@/api/client";
 import {
   useCall,
   useCalls,
@@ -14,6 +15,7 @@ import {
   type CallFilters,
   type RecordingOut,
 } from "@/api/hooks";
+import { fetchInboxes } from "@/api/conversations";
 import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -91,7 +93,11 @@ export function CallsPage() {
     e.preventDefault();
     setDialError(null);
     try {
-      const call = await placeCall.mutateAsync({ to, from: from || undefined });
+      // Item 20: match SoftphoneProvider.dial() (softphone/SoftphoneProvider.tsx) - it
+      // always places outbound calls via="room" (a LiveKit room + SIP participant). A
+      // call placed here without that never gets "via":"livekit" stamped in extra{},
+      // and "Send AI agent" below always fails with "Agents can only join room calls".
+      const call = await placeCall.mutateAsync({ to, from: from || undefined, via: "room" });
       setPlacedCall(call);
       setSelectedId(call.id);
       setTo("");
@@ -237,6 +243,25 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
   const [agentNotice, setAgentNotice] = React.useState<string | null>(null);
   const terminal = isTerminalCallStatus(call.status);
 
+  // Item 42: viewer-role inboxes can see a call's detail but not act on it (transfer,
+  // hang up, or dispatch an AI agent) - the same "viewer" gate ConversationsPage
+  // already applies to the composer/call button, resolved here off the INBOX THAT
+  // OWNS THIS CALL'S OWN NUMBER (call.our_e164), not whatever inbox happens to be
+  // selected in some other part of the UI (this page has no inbox selector at all).
+  const inboxesQuery = useQuery({
+    queryKey: ["inboxes"],
+    queryFn: () => fetchInboxes(api),
+    staleTime: 1000,
+  });
+  const inboxes = inboxesQuery.data ?? [];
+  const owningInbox = inboxes.find((inbox) => inbox.e164 === call.our_e164) ?? null;
+  // Fails open exactly like ConversationsPage's canSend: unknown until inboxes have
+  // loaded, then true only if this number's inbox says viewer, or there's no inbox
+  // system at all (a legacy/no-inbox org).
+  const canUse = owningInbox
+    ? owningInbox.my_role !== "viewer"
+    : !inboxesQuery.isLoading && inboxes.length === 0;
+
   async function doTransfer(e: React.FormEvent) {
     e.preventDefault();
     setActionError(null);
@@ -305,6 +330,12 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
       )}
       {agentNotice && <p className="text-sm text-muted-foreground">{agentNotice}</p>}
 
+      {!canUse && (
+        <p className="text-xs text-muted-foreground">
+          Read-only inbox — you can view but not act on this call
+        </p>
+      )}
+
       <div className="flex flex-wrap items-end gap-2">
         <form className="flex items-end gap-2" onSubmit={doTransfer}>
           <Input
@@ -312,12 +343,12 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
             placeholder="+19725550199"
             value={transferTo}
             onChange={(e) => setTransferTo(e.target.value)}
-            disabled={terminal}
+            disabled={terminal || !canUse}
           />
           <Button
             type="submit"
             variant="outline"
-            disabled={terminal || !transferTo.trim() || transferCall.isPending}
+            disabled={terminal || !canUse || !transferTo.trim() || transferCall.isPending}
           >
             Transfer
           </Button>
@@ -326,7 +357,7 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
           type="button"
           variant="outline"
           onClick={doSendAgent}
-          disabled={terminal || dispatchAgent.isPending}
+          disabled={terminal || !canUse || dispatchAgent.isPending}
         >
           Send AI agent
         </Button>
@@ -334,7 +365,7 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
           type="button"
           variant="destructive"
           onClick={doHangup}
-          disabled={terminal || hangupCall.isPending}
+          disabled={terminal || !canUse || hangupCall.isPending}
         >
           Hang up
         </Button>
@@ -442,12 +473,7 @@ function RecordingRow({
     setLoading(true);
     try {
       const path = recording.url ?? `/api/v1/calls/${callId}/recordings/${recording.id}`;
-      const headers = new Headers();
-      if (api.auth.token) headers.set("Authorization", `Bearer ${api.auth.token}`);
-      if (api.auth.orgId) headers.set("X-Org-Id", api.auth.orgId);
-      const res = await fetch(path, { headers });
-      if (!res.ok) throw new Error(`Failed to load recording (${res.status})`);
-      const blob = await res.blob();
+      const blob = await fetchAuthedBlob(api, path);
       const url = URL.createObjectURL(blob);
       setAudioUrl(url);
     } catch (err) {

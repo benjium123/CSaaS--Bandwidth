@@ -661,4 +661,114 @@ describe("ProvidersPage", () => {
       rates: [{ provider: "telnyx", metric: "sms_out", unit_cost_micros: 5000 }],
     });
   });
+
+  // Item 8: numbers list has no error/retry affordance of its own.
+  it("shows a retry affordance when the numbers list fails to load, and refetches on retry", async () => {
+    let calls = 0;
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/numbers": () => {
+          calls += 1;
+          if (calls === 1) throw new ApiError(500, "server_error", "numbers unavailable");
+          return NUMBERS;
+        },
+      }),
+    );
+    renderWithProviders(<ProvidersPage />, client);
+
+    const errorText = await screen.findByText("numbers unavailable");
+    const alertBox = errorText.closest('[role="alert"]') as HTMLElement;
+    await userEvent.click(within(alertBox).getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.queryByText("numbers unavailable")).not.toBeInTheDocument());
+  });
+
+  // Item 8: carrier catalog query has no error/retry affordance of its own.
+  it("shows a retry affordance when the carrier catalog fails to load, and refetches on retry", async () => {
+    let calls = 0;
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/routing/catalog": () => {
+          calls += 1;
+          if (calls === 1) throw new ApiError(500, "server_error", "catalog unavailable");
+          return [BANDWIDTH_LIVE, TELNYX_LIVE, TWILIO_MISSING];
+        },
+      }),
+    );
+    renderWithProviders(<ProvidersPage />, client);
+
+    const errorText = await screen.findByText("catalog unavailable");
+    const alertBox = errorText.closest('[role="alert"]') as HTMLElement;
+    await userEvent.click(within(alertBox).getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByRole("list", { name: "Carriers" })).toBeInTheDocument();
+  });
+
+  // Item 8: routing policy query has no error/retry affordance of its own.
+  it("shows a retry affordance when the routing policy fails to load, and refetches on retry", async () => {
+    let calls = 0;
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/routing/policy": () => {
+          calls += 1;
+          if (calls === 1) throw new ApiError(500, "server_error", "policy unavailable");
+          return POLICY;
+        },
+      }),
+    );
+    renderWithProviders(<ProvidersPage />, client);
+
+    const errorText = await screen.findByText("policy unavailable");
+    const alertBox = errorText.closest('[role="alert"]') as HTMLElement;
+    await userEvent.click(within(alertBox).getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByRole("list", { name: "Carrier preference order" })).toBeInTheDocument();
+  });
+
+  // Item 14: CarrierHealthSection and PolicySection must respect the same readOnly signal
+  // the rest of the page already uses (non owner/admin role).
+  it("disables carrier probe and routing-policy controls for a non owner/admin role", async () => {
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/auth/me": {
+          id: "u2",
+          email: "agent@example.com",
+          full_name: "Agent Example",
+          memberships: [
+            { org_id: "org-1", org_name: "Test Org", org_slug: "test-org", role_name: "agent" },
+          ],
+        },
+      }),
+    );
+    renderWithProviders(<ProvidersPage />, client);
+
+    const carriersList = await screen.findByRole("list", { name: "Carriers" });
+    const bandwidthCard = within(carriersList).getByText("bandwidth").closest("li")!;
+    expect(
+      within(bandwidthCard).getByRole("button", { name: "Test credentials" }),
+    ).toBeDisabled();
+
+    // bandwidth is first in POLICY.preference, so "down" is normally enabled - only readOnly
+    // should disable it here.
+    expect(screen.getByRole("button", { name: "Move bandwidth down" })).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", { name: /Allow intra-carrier failover/i }),
+    ).toBeDisabled();
+  });
+
+  // Item 45: only the most recently triggered mutation's status should be visible - a stale
+  // success from an earlier action must not linger alongside a newer one.
+  it("shows only the most recently triggered mutation's status, not a stale one from an earlier action", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<ProvidersPage />, client);
+
+    const twilioCard = await screen.findByRole("region", { name: "twilio account" });
+
+    await userEvent.click(within(twilioCard).getByRole("button", { name: "Probe twilio" }));
+    expect(await within(twilioCard).findByText("Probed")).toBeInTheDocument();
+
+    await userEvent.click(within(twilioCard).getByRole("button", { name: "Save twilio" }));
+    await waitFor(() => expect(within(twilioCard).queryByText("Probed")).not.toBeInTheDocument());
+    expect(within(twilioCard).getByText("Saved")).toBeInTheDocument();
+  });
 });

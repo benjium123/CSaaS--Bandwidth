@@ -152,9 +152,20 @@ async def _validate_grantee(ctx: OrgContext, grantee_type: str, grantee_id: uuid
         if exists is None:
             raise ValidationFailedError(f"{grantee_id} is not a member of this organization")
     else:
-        exists = await ctx.session.get(Department, grantee_id)
-        if exists is None:
-            raise NotFoundError("Department not found")
+        dept = await ctx.session.get(Department, grantee_id)
+        if dept is None:
+            # 5.17: both grantee-not-found paths now raise the SAME error type - a
+            # caller submitting a bad grantee id got a 422 for "user" and a 404 for
+            # "department", an inconsistency with no reason behind it.
+            raise ValidationFailedError(f"{grantee_id} is not a department in this organization")
+        if not dept.is_active:
+            # 5.17: a grant to a deactivated department was previously accepted outright
+            # - resolve_access already treats a deactivated department's grants as void
+            # (module docstring), so this grant would sit in the table doing nothing,
+            # silently misleading whoever set it up.
+            raise ValidationFailedError(
+                f"Department {grantee_id} is deactivated and cannot receive new grants"
+            )
 
 
 @router.put("/{inbox_id}/grants", response_model=list[GrantOut])

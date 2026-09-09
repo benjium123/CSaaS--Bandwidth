@@ -4,7 +4,9 @@ import { Check, Loader2, MessageSquare, Phone, X } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { useSoftphone } from "@/softphone/SoftphoneProvider";
 import {
+  addContactNote,
   fetchContact,
+  fetchContactNotes,
   fetchDepartments,
   fetchInboxGrants,
   fetchOrgMembers,
@@ -14,7 +16,7 @@ import {
   type Conversation,
   type Inbox,
 } from "@/api/conversations";
-import { formatPhone } from "@/lib/format";
+import { formatPhone, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 function initialsFor(value: string): string {
@@ -177,7 +179,7 @@ export function ContactPanel({
   const [role, setRole] = React.useState(attrText(attributes.role));
   const [email, setEmail] = React.useState(attrText(attributes.email));
   const [address, setAddress] = React.useState(attrText(attributes.address));
-  const [notes, setNotes] = React.useState(contactQuery.data?.notes ?? "");
+  const [newNote, setNewNote] = React.useState("");
 
   React.useEffect(() => {
     const attrs = contactQuery.data?.attributes ?? {};
@@ -186,7 +188,6 @@ export function ContactPanel({
     setRole(attrText(attrs.role));
     setEmail(attrText(attrs.email));
     setAddress(attrText(attrs.address));
-    setNotes(contactQuery.data?.notes ?? "");
   }, [contactQuery.data, conversation]);
 
   const grantsQuery = useQuery({
@@ -205,16 +206,25 @@ export function ContactPanel({
     enabled: Boolean(inbox) && inbox?.my_role === "admin",
   });
 
-  // F14: visible pending/error state instead of a bare fire-and-forget onBlur save.
+  // Item 3: notes are a proper list via GET/POST /api/v1/contacts/{id}/notes - not a
+  // single free-text field on the contact (the old PATCH silently no-op'd; the backend
+  // schema never accepted a `notes` key).
+  const notesQuery = useQuery({
+    queryKey: ["contact-notes", contactId],
+    queryFn: () => fetchContactNotes(api, contactId as string),
+    enabled: Boolean(contactId),
+  });
+
   // Declared before the early return below - conditionally skipping a hook call would
   // violate the Rules of Hooks the moment `conversation` toggles between null and set.
-  const notesMutation = useMutation({
-    mutationFn: (nextNotes: string) => {
+  const addNoteMutation = useMutation({
+    mutationFn: (body: string) => {
       if (!contactId) throw new Error("No contact to save notes for");
-      return updateContact(api, contactId, { notes: nextNotes });
+      return addContactNote(api, contactId, body);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["contact", contactId] });
+      void queryClient.invalidateQueries({ queryKey: ["contact-notes", contactId] });
+      setNewNote("");
     },
   });
 
@@ -363,35 +373,72 @@ export function ContactPanel({
             }}
           />
 
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-                Notes
-              </p>
-              {notesMutation.isPending && (
-                <span className="flex items-center gap-1 text-[10px] text-neutral-500">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Saving…
-                </span>
-              )}
-              {notesMutation.isSuccess && !notesMutation.isPending && (
-                <span className="text-[10px] text-emerald-400">Saved</span>
-              )}
-            </div>
-            <textarea
-              aria-label="Notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              onBlur={() => {
-                if (contactId) notesMutation.mutate(notes);
-              }}
-              rows={4}
-              className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
-            />
-            {notesMutation.isError && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+              Notes
+            </p>
+
+            {notesQuery.isLoading ? (
+              <p className="text-xs text-neutral-400">Loading notes…</p>
+            ) : notesQuery.isError ? (
               <p role="alert" className="text-[11px] text-red-400">
-                {(notesMutation.error as Error).message}
+                {(notesQuery.error as Error).message}
               </p>
+            ) : (notesQuery.data ?? []).length === 0 ? (
+              <p className="text-xs text-neutral-400">No notes yet.</p>
+            ) : (
+              <ul aria-label="Notes" className="space-y-2">
+                {(notesQuery.data ?? []).map((note) => (
+                  <li
+                    key={note.id}
+                    className="rounded-md border border-neutral-800 bg-neutral-950 p-2 text-xs text-neutral-200"
+                  >
+                    <p className="whitespace-pre-wrap break-words">{note.body}</p>
+                    <p className="mt-1 text-[10px] text-neutral-500">
+                      {relativeTime(note.created_at)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
             )}
+
+            <form
+              className="space-y-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const body = newNote.trim();
+                if (body && contactId) addNoteMutation.mutate(body);
+              }}
+            >
+              <textarea
+                aria-label="Add note"
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                placeholder="Add a note…"
+                rows={3}
+                disabled={addNoteMutation.isPending}
+                className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={!newNote.trim() || addNoteMutation.isPending}
+                  className="rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-800 disabled:pointer-events-none disabled:opacity-50"
+                >
+                  Add note
+                </button>
+                {addNoteMutation.isPending && (
+                  <span className="flex items-center gap-1 text-[10px] text-neutral-500">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+                  </span>
+                )}
+              </div>
+              {addNoteMutation.isError && (
+                <p role="alert" className="text-[11px] text-red-400">
+                  {(addNoteMutation.error as Error).message}
+                </p>
+              )}
+            </form>
           </div>
         </div>
       )}

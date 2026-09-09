@@ -44,6 +44,7 @@ from urllib.parse import urlsplit
 import anyio.to_thread
 import httpx
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import decrypt_credential, encrypt_credential
@@ -58,6 +59,8 @@ from app.models import (
     WebhookEndpoint,
 )
 from app.services import audit as audit_svc
+
+log = structlog.get_logger("webhooks_out")
 
 #: Consecutive failed delivery ATTEMPTS across an endpoint's rows before it auto-disables
 #: (DR-5), audit-logged.
@@ -456,10 +459,23 @@ async def delivery_tick(
     if not pending:
         return counts
 
+    # Snapshot just the PK before any row's rollback: a rollback expires every ORM
+    # attribute on every object in the session (not just the failed row's), so reusing
+    # an earlier-loaded object from `pending` later in the loop can trigger a lazy DB
+    # load outside an awaited context (MissingGreenlet). Re-fetching by id each
+    # iteration side-steps that entirely.
+    pending_ids = [d.id for d in pending]
+
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=DELIVERY_TIMEOUT_SECONDS)
     try:
-        for delivery in pending:
+        for delivery_pk in pending_ids:
+            delivery = await session.get(WebhookDelivery, delivery_pk)
+            if delivery is None or delivery.status != "pending":
+                # Another row's rollback in this same pass can't reach this row, but a
+                # prior iteration may have already resolved it (e.g. "dead" via a
+                # deleted endpoint/event) - never re-process it.
+                continue
             set_org_context(session, delivery.org_id)
             endpoint = await session.get(WebhookEndpoint, delivery.endpoint_id)
             event = await session.get(PlatformEvent, delivery.event_id)
@@ -476,20 +492,59 @@ async def delivery_tick(
                 # re-offer it while disabled, so this never crowds out other rows.
                 continue
 
-            outcome = await _attempt_delivery(settings, client, endpoint, event, delivery, moment)
-            counts[outcome] += 1
-            if _endpoint_should_disable(endpoint):
-                endpoint.status = "disabled"
-                audit_svc.record(
-                    session,
-                    endpoint.org_id,
-                    action="webhook_endpoint.auto_disabled",
-                    target_type="webhook_endpoint",
-                    target_id=str(endpoint.id),
-                    detail={"failure_streak": endpoint.failure_streak},
+            # 1.11: one row's unexpected exception must not abort the rest of THIS
+            # batch (the per-row commit discipline above only protects EARLIER rows
+            # once committed - an uncaught raise here still skips every row still to
+            # come in `pending`, not just the current one, until the next tick).
+            # Snapshot the identifiers we need BEFORE any rollback: a rollback expires
+            # every ORM attribute, and re-reading `delivery.org_id` afterwards would
+            # trigger a lazy DB load outside an awaited context (MissingGreenlet).
+            delivery_org_id = delivery.org_id
+            delivery_id = delivery.id
+            try:
+                outcome = await _attempt_delivery(
+                    settings, client, endpoint, event, delivery, moment
                 )
-                counts["disabled"] += 1
-            await session.commit()
+                counts[outcome] += 1
+                if _endpoint_should_disable(endpoint):
+                    endpoint.status = "disabled"
+                    audit_svc.record(
+                        session,
+                        endpoint.org_id,
+                        action="webhook_endpoint.auto_disabled",
+                        target_type="webhook_endpoint",
+                        target_id=str(endpoint.id),
+                        detail={"failure_streak": endpoint.failure_streak},
+                    )
+                    counts["disabled"] += 1
+                await session.commit()
+            except Exception as exc:  # noqa: BLE001 - a bad row must not kill the whole pass
+                log.exception(
+                    "webhook_delivery_row_failed",
+                    org_id=str(delivery_org_id),
+                    delivery_id=str(delivery_id),
+                )
+                await session.rollback()
+                set_org_context(session, delivery_org_id)
+                # D3: without this, a row whose exception came from OUTSIDE
+                # _attempt_delivery's own try/except (a bug in _endpoint_should_disable,
+                # the audit write, or the commit itself) stays "pending" forever and is
+                # re-selected on every subsequent tick - a poison row that never dies.
+                # Mark it exactly the way a normal failed HTTP attempt would.
+                poison_row = await session.get(WebhookDelivery, delivery_id)
+                if poison_row is not None and poison_row.status == "pending":
+                    poison_row.attempts += 1
+                    poison_row.last_error = str(exc)[:255]
+                    if poison_row.attempts > len(DELIVERY_BACKOFF_SECONDS):
+                        poison_row.status = "dead"
+                        poison_row.next_attempt_at = None
+                        counts["dead"] += 1
+                    else:
+                        backoff = DELIVERY_BACKOFF_SECONDS[poison_row.attempts - 1]
+                        poison_row.next_attempt_at = moment + timedelta(seconds=backoff)
+                        counts["failed"] += 1
+                    await session.commit()
+                continue
     finally:
         if owns_client:
             await client.aclose()

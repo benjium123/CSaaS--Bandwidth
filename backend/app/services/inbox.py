@@ -50,6 +50,13 @@ def _bind_dt(session: AsyncSession, dt: datetime) -> datetime:
     return dt.replace(tzinfo=None) if _is_sqlite(session) else dt
 
 
+def _escape_like(s: str) -> str:
+    """Escape LIKE metacharacters so a caller-supplied query cannot smuggle its own
+    wildcards into the pattern (5.9). Backslash first - escaping % and _ before it would
+    double-escape a literal backslash already present in the input."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @dataclass
 class InboxFilters:
     status: str | None = None
@@ -99,6 +106,11 @@ async def list_inbox(
         stmt = stmt.where(MessageThread.status == filters.status)
 
     if filters.assigned == "me":
+        if user_id is None:
+            # 5.12: an API-key caller has no human user_id - `assigned_user_id == None`
+            # silently compiles to IS NULL in SQLAlchemy, which returned UNASSIGNED
+            # threads instead of erroring on a filter that makes no sense for this caller.
+            raise ValidationFailedError("assigned=me requires an authenticated user, not an API key")
         stmt = stmt.where(MessageThread.assigned_user_id == user_id)
     elif filters.assigned == "unassigned":
         stmt = stmt.where(MessageThread.assigned_user_id.is_(None))
@@ -116,33 +128,40 @@ async def list_inbox(
         )
 
     if filters.q:
-        needle = f"%{filters.q.strip().lower()}%"
+        needle = f"%{_escape_like(filters.q.strip().lower())}%"
         # lower()+LIKE rather than ILIKE: ILIKE is Postgres-only and the local suite runs
         # on SQLite (see the dialect-import ban, ARCHITECTURE/P0 DR-1).
         name_match = sa.select(Contact.id).where(
-            sa.func.lower(Contact.display_name).like(needle)
+            sa.func.lower(Contact.display_name).like(needle, escape="\\")
         )
         stmt = stmt.where(
             sa.or_(
-                sa.func.lower(MessageThread.contact_e164).like(needle),
+                sa.func.lower(MessageThread.contact_e164).like(needle, escape="\\"),
                 MessageThread.contact_id.in_(name_match),
             )
         )
 
+    # 5.10: order and paginate on coalesce(last_message_at, created_at), not
+    # last_message_at alone. A thread with a NULL last_message_at (never sent a message
+    # yet, e.g. call-only) sorts last under `nullslast()`, but the OLD cursor filter
+    # (`last_message_at < c_ts`) can never be true for a NULL column value in SQL - so
+    # once a page's cursor was built from a thread with a real timestamp, every
+    # NULL-last_message_at thread became permanently unreachable. Coalescing to
+    # created_at (never NULL) gives every thread a real, comparable sort key.
+    order_expr = sa.func.coalesce(MessageThread.last_message_at, MessageThread.created_at)
+
     if cursor:
         c_ts, c_id = decode_cursor(cursor)
         c_ts = _bind_dt(session, c_ts)
-        # Strict keyset: (last_message_at, id) DESC. Ties broken by id so the walk is total.
+        # Strict keyset: (order_expr, id) DESC. Ties broken by id so the walk is total.
         stmt = stmt.where(
             sa.or_(
-                MessageThread.last_message_at < c_ts,
-                sa.and_(MessageThread.last_message_at == c_ts, MessageThread.id < c_id),
+                order_expr < c_ts,
+                sa.and_(order_expr == c_ts, MessageThread.id < c_id),
             )
         )
 
-    stmt = stmt.order_by(
-        MessageThread.last_message_at.desc().nullslast(), MessageThread.id.desc()
-    ).limit(limit + 1)
+    stmt = stmt.order_by(order_expr.desc(), MessageThread.id.desc()).limit(limit + 1)
 
     threads = list((await session.execute(stmt)).scalars().all())
     has_more = len(threads) > limit
@@ -251,6 +270,7 @@ async def list_inbox(
                 "status": t.status,
                 "assigned_user_id": t.assigned_user_id,
                 "last_message_at": t.last_message_at,
+                "important": t.is_important,
             },
             "last_message": previews.get(t.id),
             "unread": unread.get(t.id, 0),
@@ -262,6 +282,15 @@ async def list_inbox(
     ]
 
     next_cursor = (
-        encode_cursor(threads[-1].last_message_at, threads[-1].id) if has_more else None
+        # 5.10: the cursor is built from the SAME coalesced value the query above
+        # ordered and filtered by - never the raw (possibly-NULL) last_message_at,
+        # which forced a NULL-safe EPOCH fallback (encode_cursor's `or EPOCH`) that made
+        # the next page's `<` bound trivially unsatisfiable and dropped every remaining
+        # NULL-last_message_at thread instead of paging into them.
+        encode_cursor(
+            threads[-1].last_message_at or threads[-1].created_at, threads[-1].id
+        )
+        if has_more
+        else None
     )
     return {"items": items, "next_cursor": next_cursor}

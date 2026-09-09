@@ -100,6 +100,16 @@ async def softphone_token(
     call = await _call_for_room(ctx.session, payload.room)
     if call is None:
         raise NotFoundError("No call found for this room")
+    # P15 (5.2): a caller with no inbox access to this call's number must not be able to
+    # mint a token and join its room, no matter what they know the room name to be. Gated
+    # the same way calls.py::_access_or_404 gates every by-id call route - viewer-only
+    # access is not enough to JOIN a live call, and either way an inaccessible call is a
+    # 404, never a 403, so existence is not leaked.
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    if not access.is_admin and not access.can_use(call.our_e164):
+        raise NotFoundError("No call found for this room")
     if call.status in TERMINAL_CALL_STATUSES:
         raise ConflictError("This call has already ended")
 
@@ -172,7 +182,13 @@ async def _watch_disconnect(websocket: WebSocket) -> None:
 _CALL_ID_EVENTS = frozenset(
     {"call.status", "call.handoff", "call.handoff.claimed", "queue.callback_requested"}
 )
-_THREAD_ID_EVENTS = frozenset({"sms.handoff"})
+_THREAD_ID_EVENTS = frozenset({"sms.handoff", "message.received"})
+#: 3.12/unknown-type hardening: event types with no per-recipient meaning that are safe
+#: to broadcast to every non-admin unfiltered - the ONLY types allowed to fall through
+#: the catch-all below. Anything not explicitly handled by this gate is fail-closed
+#: (hidden from non-admins) rather than defaulting to visible-to-everyone, so a future
+#: event type added without updating this gate does not leak by default.
+_BROADCAST_EVENT_TYPES = frozenset({"ping", "appointment.booked"})
 
 
 async def _resolve_ws_access(
@@ -211,21 +227,28 @@ async def _resolve_event_e164(org_id: uuid.UUID, event: dict) -> str | None:
     return None
 
 
-async def _event_visible(event: dict, access: InboxAccess, org_id: uuid.UUID) -> bool:
+async def _event_visible(
+    event: dict, access: InboxAccess, org_id: uuid.UUID, user_id: uuid.UUID
+) -> bool:
     """P15 fan-out gate, admin-first: an admin receives every event unfiltered.
 
     ``call.ring`` needs MEMBER access - a viewer cannot answer a call, so offering them
     the ring card would be misleading - resolved straight off the event's own ``to``
     field (voice_plane/service.py and routing_exec.py both stamp it). FAIL-CLOSED: a
     ``call.ring`` with no resolvable ``to`` is dropped for every non-admin rather than
-    shown by default.
+    shown by default. 3.12: a SEQUENTIAL ring group additionally stamps ``ring_user_ids``
+    naming the ONE agent actually being offered the call (routing_exec._offer_to_ring_group)
+    - when present, only those user ids may see the ring at all, never every member with
+    access to the number.
 
     ``call.status`` / ``call.handoff`` / ``call.handoff.claimed`` (by call_id) and
-    ``sms.handoff`` (by thread_id) need only VIEW access, resolved via one DB lookup
-    each - also fail-closed when the target row cannot be resolved.
+    ``sms.handoff`` / ``message.received`` (by thread_id) need only VIEW access, resolved
+    via one DB lookup each - also fail-closed when the target row cannot be resolved.
 
-    Every other event type (``ping``, and any future shape this gate doesn't know about)
-    passes through unfiltered, exactly as before P15.
+    Every other event type is FAIL-CLOSED (hidden from non-admins) unless it is in the
+    explicit ``_BROADCAST_EVENT_TYPES`` allowlist (``ping`` and similar org-wide,
+    no-per-recipient-meaning notifications) - a future event type this gate doesn't know
+    about must never default to visible-to-everyone.
     """
     if access.is_admin:
         return True
@@ -236,7 +259,12 @@ async def _event_visible(event: dict, access: InboxAccess, org_id: uuid.UUID) ->
         to = event.get("to")
         if not to:
             return False
-        return to in access.member_e164s
+        if to not in access.member_e164s:
+            return False
+        ring_user_ids = event.get("ring_user_ids")
+        if ring_user_ids:
+            return str(user_id) in {str(u) for u in ring_user_ids}
+        return True
 
     if event_type in _CALL_ID_EVENTS or event_type in _THREAD_ID_EVENTS:
         e164 = await _resolve_event_e164(org_id, event)
@@ -244,7 +272,7 @@ async def _event_visible(event: dict, access: InboxAccess, org_id: uuid.UUID) ->
             return False
         return access.can_view(e164)
 
-    return True
+    return event_type in _BROADCAST_EVENT_TYPES
 
 
 async def _forward_events(
@@ -274,7 +302,7 @@ async def _forward_events(
 
         if event is None:
             continue
-        if not await _event_visible(event, access, org_id):
+        if not await _event_visible(event, access, org_id, user_id):
             continue
         await websocket.send_json(event)
 

@@ -116,7 +116,7 @@ function apiKeyStatusBadgeClass(status: string): string {
 
 function ApiKeysSection() {
   const { api } = useAuth();
-  const { data: keys, isLoading } = useApiKeys(api);
+  const { data: keys, isLoading, error: keysError, refetch: refetchKeys } = useApiKeys(api);
   const createKey = useCreateApiKey(api);
   const revokeKey = useRevokeApiKey(api);
   const rotateKey = useRotateApiKey(api);
@@ -173,6 +173,13 @@ function ApiKeysSection() {
 
       {isLoading ? (
         <Spinner />
+      ) : keysError ? (
+        <div role="alert" className="space-y-2 text-sm text-destructive">
+          <p>{(keysError as Error).message}</p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetchKeys()}>
+            Retry
+          </Button>
+        </div>
       ) : (keys ?? []).length === 0 ? (
         <p className="text-sm text-muted-foreground">No API keys yet.</p>
       ) : (
@@ -300,11 +307,12 @@ function deliveryStatusBadgeClass(status: string): string {
 function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
   const { api } = useAuth();
   const [status, setStatus] = React.useState("");
-  const { data: deliveries, isLoading } = useWebhookDeliveries(
-    api,
-    endpoint.id,
-    status || undefined,
-  );
+  const {
+    data: deliveries,
+    isLoading,
+    error: deliveriesError,
+    refetch: refetchDeliveries,
+  } = useWebhookDeliveries(api, endpoint.id, status || undefined);
   const redeliver = useRedeliverWebhook(api);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -343,6 +351,13 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
 
       {isLoading ? (
         <Spinner label="Loading deliveries" />
+      ) : deliveriesError ? (
+        <div role="alert" className="space-y-2 text-xs text-destructive">
+          <p>{(deliveriesError as Error).message}</p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetchDeliveries()}>
+            Retry
+          </Button>
+        </div>
       ) : (deliveries ?? []).length === 0 ? (
         <p className="text-xs text-muted-foreground">No deliveries yet.</p>
       ) : (
@@ -391,7 +406,12 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
 
 function WebhooksSection() {
   const { api } = useAuth();
-  const { data: endpoints, isLoading } = useWebhookEndpoints(api);
+  const {
+    data: endpoints,
+    isLoading,
+    error: endpointsError,
+    refetch: refetchEndpoints,
+  } = useWebhookEndpoints(api);
   const createEndpoint = useCreateWebhookEndpoint(api);
   const updateEndpoint = useUpdateWebhookEndpoint(api);
   const deleteEndpoint = useDeleteWebhookEndpoint(api);
@@ -455,6 +475,13 @@ function WebhooksSection() {
 
       {isLoading ? (
         <Spinner />
+      ) : endpointsError ? (
+        <div role="alert" className="space-y-2 text-sm text-destructive">
+          <p>{(endpointsError as Error).message}</p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetchEndpoints()}>
+            Retry
+          </Button>
+        </div>
       ) : (endpoints ?? []).length === 0 ? (
         <p className="text-sm text-muted-foreground">No webhook endpoints yet.</p>
       ) : (
@@ -554,7 +581,7 @@ function AuditSection() {
   const [actionInput, setActionInput] = React.useState("");
   const [targetTypeInput, setTargetTypeInput] = React.useState("");
   const [cursor, setCursor] = React.useState<string | null>(null);
-  const { data, isLoading, error } = useAuditLog(api, filters, cursor);
+  const { data, isLoading, error, refetch } = useAuditLog(api, filters, cursor);
   const [rows, setRows] = React.useState<AuditEntryOut[]>([]);
 
   React.useEffect(() => {
@@ -610,9 +637,12 @@ function AuditSection() {
       {isLoading && rows.length === 0 ? (
         <Spinner />
       ) : error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {(error as Error).message}
-        </p>
+        <div role="alert" className="space-y-2 text-sm text-destructive">
+          <p>{(error as Error).message}</p>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </div>
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No audit entries yet.</p>
       ) : (
@@ -683,8 +713,19 @@ function verdictBadgeClass(verdict: string): string {
 function UsageSection() {
   const { api } = useAuth();
   const [date, setDate] = React.useState(todayUtc());
-  const { data: usage, isLoading: usageLoading } = useUsage(api, date, date);
-  const { data: reconciliation, isLoading: reconLoading } = useReconciliation(api, date);
+  const {
+    data: usage,
+    isLoading: usageLoading,
+    error: usageError,
+    refetch: refetchUsage,
+  } = useUsage(api, date, date);
+  const {
+    data: reconciliation,
+    isLoading: reconLoading,
+    error: reconError,
+    refetch: refetchRecon,
+  } = useReconciliation(api, date);
+  const usageOrReconError = usageError ?? reconError;
 
   return (
     <section className="space-y-4">
@@ -706,6 +747,21 @@ function UsageSection() {
 
       {usageLoading || reconLoading ? (
         <Spinner />
+      ) : usageOrReconError ? (
+        <div role="alert" className="space-y-2 text-sm text-destructive">
+          <p>{(usageOrReconError as Error).message}</p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              refetchUsage();
+              refetchRecon();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border">
           <table className="w-full text-sm">

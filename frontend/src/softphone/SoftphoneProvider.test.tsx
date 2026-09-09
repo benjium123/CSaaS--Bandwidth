@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient } from "@tanstack/react-query";
 import { SoftphoneProvider, useSoftphone } from "./SoftphoneProvider";
+import { useAuth } from "@/auth/AuthContext";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
 
 /**
@@ -9,8 +11,14 @@ import { makeStubClient, renderWithProviders } from "@/test/harness";
  * setMicrophoneEnabled calls, matching this file's own event-name strings so the
  * provider's `room.on(RoomEvent.X, ...)` wiring is exercised for real.
  */
-const { FakeRoom, FakeLocalParticipant, RoomEventMock, ConnectionStateMock, TrackMock } = vi.hoisted(
-  () => {
+const {
+  FakeRoom,
+  FakeLocalParticipant,
+  FakeRemoteTrack,
+  RoomEventMock,
+  ConnectionStateMock,
+  TrackMock,
+} = vi.hoisted(() => {
     class FakeLocalParticipant {
       micEnabled = true;
       dtmfLog: Array<[number, string]> = [];
@@ -19,6 +27,32 @@ const { FakeRoom, FakeLocalParticipant, RoomEventMock, ConnectionStateMock, Trac
       }
       async publishDtmf(code: number, digit: string) {
         this.dtmfLog.push([code, digit]);
+      }
+    }
+
+    /** Item 3.11: a bare-bones stand-in for livekit-client's RemoteTrack, just enough to
+     * exercise attach()/detach() the way the provider actually calls them. */
+    class FakeRemoteTrack {
+      kind: string;
+      sid: string;
+      private attached: HTMLMediaElement[] = [];
+      constructor(kind: string, sid: string) {
+        this.kind = kind;
+        this.sid = sid;
+      }
+      attach(el?: HTMLMediaElement): HTMLMediaElement {
+        const element = el ?? document.createElement("audio");
+        this.attached.push(element);
+        return element;
+      }
+      detach(el?: HTMLMediaElement): HTMLMediaElement | HTMLMediaElement[] {
+        if (el) {
+          this.attached = this.attached.filter((e) => e !== el);
+          return el;
+        }
+        const all = this.attached;
+        this.attached = [];
+        return all;
       }
     }
 
@@ -60,6 +94,8 @@ const { FakeRoom, FakeLocalParticipant, RoomEventMock, ConnectionStateMock, Trac
 
     const RoomEventMock = {
       TrackSubscribed: "trackSubscribed",
+      TrackUnsubscribed: "trackUnsubscribed",
+      ParticipantDisconnected: "participantDisconnected",
       ConnectionStateChanged: "connectionStateChanged",
       Disconnected: "disconnected",
       MediaDevicesError: "mediaDevicesError",
@@ -73,9 +109,15 @@ const { FakeRoom, FakeLocalParticipant, RoomEventMock, ConnectionStateMock, Trac
     };
     const TrackMock = { Kind: { Audio: "audio", Video: "video" } };
 
-    return { FakeRoom, FakeLocalParticipant, RoomEventMock, ConnectionStateMock, TrackMock };
-  },
-);
+    return {
+      FakeRoom,
+      FakeLocalParticipant,
+      FakeRemoteTrack,
+      RoomEventMock,
+      ConnectionStateMock,
+      TrackMock,
+    };
+  });
 
 vi.mock("livekit-client", () => ({
   Room: FakeRoom,
@@ -90,7 +132,7 @@ class FakeWebSocket {
   url: string;
   readyState = 0;
   onopen: (() => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((ev?: { code?: number }) => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
 
@@ -101,10 +143,10 @@ class FakeWebSocket {
   send(_data: string) {
     /* no-op */
   }
-  close() {
+  close(code?: number) {
     if (this.readyState === 3) return;
     this.readyState = 3;
-    this.onclose?.();
+    this.onclose?.(code === undefined ? undefined : { code });
   }
 }
 
@@ -136,12 +178,17 @@ const CALL_DETAIL_BASE = {
 
 function Harness() {
   const sp = useSoftphone();
+  const { selectOrg, me } = useAuth();
   return (
     <div>
       <div data-testid="status">{sp.status}</div>
       <div data-testid="active-call">
         {sp.activeCall ? `${sp.activeCall.id}:${sp.activeCall.room}:${sp.activeCall.contact}` : ""}
       </div>
+      <div data-testid="muted">{String(sp.muted)}</div>
+      <div data-testid="device-error">{sp.deviceError ?? ""}</div>
+      <div data-testid="has-me">{String(Boolean(me))}</div>
+      <button onClick={() => selectOrg("org-2")}>SwitchOrg</button>
       <ul>
         {sp.incoming.map((r) => (
           <li key={r.callId} data-testid={`ring-${r.callId}`}>
@@ -150,10 +197,38 @@ function Harness() {
         ))}
       </ul>
       <button onClick={() => sp.dial("+19725550199", "+12145550100")}>Dial</button>
-      <button onClick={() => sp.hangUp()}>HangUp</button>
+      <button
+        onClick={() =>
+          sp.hangUp().catch(() => {
+            /* asserted via active-call/status staying put */
+          })
+        }
+      >
+        HangUp
+      </button>
+      <button onClick={() => sp.setMuted(!sp.muted).catch(() => {})}>ToggleMute</button>
       {sp.incoming.map((r) => (
-        <button key={r.callId} onClick={() => sp.answer(r.callId)}>
+        <button
+          key={r.callId}
+          onClick={() =>
+            sp.answer(r.callId).catch(() => {
+              /* asserted via the ring staying/leaving the incoming list */
+            })
+          }
+        >
           Answer-{r.callId}
+        </button>
+      ))}
+      {sp.incoming.map((r) => (
+        <button
+          key={r.callId}
+          onClick={() =>
+            sp.decline(r.callId).catch(() => {
+              /* asserted via the ring staying/leaving the incoming list */
+            })
+          }
+        >
+          Decline-{r.callId}
         </button>
       ))}
     </div>
@@ -389,5 +464,546 @@ describe("SoftphoneProvider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // Item 5
+  it("keeps the incoming ring on a failed answer, and removes it only once a retry succeeds", async () => {
+    let attempt = 0;
+    const client = makeStubClient({
+      "/api/v1/calls/call-9/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method !== "POST") throw new Error("unexpected request");
+        attempt += 1;
+        if (attempt === 1) return new Error("network blip");
+        return { url: "wss://lk.example.com", token: "tok-inbound", room: "call-9" };
+      },
+      "/api/v1/auth/me": ME,
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: "call-9",
+          room: "call-9",
+          from: "+19725550111",
+          to: "+12145550100",
+        }),
+      });
+    });
+
+    await screen.findByText("Answer-call-9");
+    await userEvent.click(screen.getByText("Answer-call-9"));
+
+    // First attempt failed - the card must still be there, not silently vanished.
+    await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("idle"));
+    expect(screen.getByTestId("ring-call-9")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Answer-call-9"));
+    await waitFor(() =>
+      expect(screen.getByTestId("active-call").textContent).toBe("call-9:call-9:+19725550111"),
+    );
+    expect(screen.queryByTestId("ring-call-9")).toBeNull();
+  });
+
+  // Item 16
+  it("does not flip the mute state when toggling the mic fails, and surfaces the error", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/calls": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return {
+            id: "call-1",
+            contact_e164: "+19725550199",
+            status: "queued",
+            room: "call-call-1",
+            token: "tok-abc",
+            url: "wss://lk.example.com",
+            ...CALL_DETAIL_BASE,
+          };
+        }
+        throw new Error("unexpected request");
+      },
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+
+    const room = FakeRoom.instances.at(-1)!;
+    room.localParticipant.setMicrophoneEnabled = async () => {
+      throw new Error("mic permission revoked");
+    };
+
+    expect(screen.getByTestId("muted").textContent).toBe("false");
+    await userEvent.click(screen.getByText("ToggleMute"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("device-error").textContent).toBe("mic permission revoked"),
+    );
+    expect(screen.getByTestId("muted").textContent).toBe("false");
+  });
+
+  // Item 17
+  it("keeps the active call up when hangup fails entirely, and clears it once retried successfully", async () => {
+    let hangupAttempt = 0;
+    const client = makeStubClient({
+      "/api/v1/calls/call-1/hangup": () => {
+        hangupAttempt += 1;
+        if (hangupAttempt === 1) throw new Error("hangup failed");
+        return {};
+      },
+      "/api/v1/calls": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return {
+            id: "call-1",
+            contact_e164: "+19725550199",
+            status: "queued",
+            room: "call-call-1",
+            token: "tok-abc",
+            url: "wss://lk.example.com",
+            ...CALL_DETAIL_BASE,
+          };
+        }
+        throw new Error("unexpected request");
+      },
+      "/api/v1/auth/me": ME,
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() =>
+      expect(screen.getByTestId("active-call").textContent).toBe("call-1:call-call-1:+19725550199"),
+    );
+
+    const room = FakeRoom.instances.at(-1)!;
+    let roomShouldFail = true;
+    room.disconnect = async () => {
+      if (roomShouldFail) throw new Error("room disconnect failed");
+      room.disconnectCalls += 1;
+      room.emit("disconnected");
+    };
+
+    await userEvent.click(screen.getByText("HangUp"));
+    await waitFor(() => expect(hangupAttempt).toBe(1));
+    // Both the API hangup and the room disconnect failed - the call must still show.
+    expect(screen.getByTestId("active-call").textContent).toBe("call-1:call-call-1:+19725550199");
+    expect(screen.getByTestId("status").textContent).not.toBe("idle");
+
+    roomShouldFail = false;
+    await userEvent.click(screen.getByText("HangUp"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).toBe(""));
+    expect(screen.getByTestId("status").textContent).toBe("idle");
+  });
+
+  // Item 18
+  it("resets activeCall/incoming/room when the org changes", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/calls": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return {
+            id: "call-1",
+            contact_e164: "+19725550199",
+            status: "queued",
+            room: "call-call-1",
+            token: "tok-abc",
+            url: "wss://lk.example.com",
+            ...CALL_DETAIL_BASE,
+          };
+        }
+        throw new Error("unexpected request");
+      },
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+
+    await userEvent.click(screen.getByText("SwitchOrg"));
+
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).toBe(""));
+    expect(screen.getByTestId("status").textContent).toBe("idle");
+  });
+
+  // Item 21
+  it("shows a toast with a link into the thread on sms.handoff", async () => {
+    const client = makeStubClient({ "/api/v1/auth/me": ME });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "sms.handoff",
+          thread_id: "t1",
+          reason: "keyword",
+          contact: "+19725550111",
+        }),
+      });
+    });
+
+    expect(
+      await screen.findByText("AI handed off an SMS conversation with +19725550111 (keyword)"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open thread" })).toHaveAttribute(
+      "href",
+      "/inbox?contact=%2B19725550111",
+    );
+  });
+
+  // Item 21
+  it("shows a toast on queue.callback_requested", async () => {
+    const client = makeStubClient({ "/api/v1/auth/me": ME });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({ type: "queue.callback_requested", call_id: "c1", queue_id: "q1" }),
+      });
+    });
+
+    expect(
+      await screen.findByText("A caller requested a callback from a queue"),
+    ).toBeInTheDocument();
+  });
+
+  // Item 26
+  it("does not reconnect on a 4401 close, and logs the user out via onUnauthorized", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = makeStubClient({ "/api/v1/auth/me": ME });
+      renderWithProviders(
+        <SoftphoneProvider>
+          <Harness />
+        </SoftphoneProvider>,
+        client,
+      );
+
+      await vi.waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+      await vi.waitFor(() => expect(screen.getByTestId("has-me").textContent).toBe("true"));
+
+      act(() => {
+        FakeWebSocket.instances[0].close(4401);
+      });
+
+      expect(screen.getByTestId("has-me").textContent).toBe("false");
+
+      // Well past max backoff (30s) - a 4401 must never schedule a reconnect at all.
+      await act(() => vi.advanceTimersByTimeAsync(45_000));
+      expect(FakeWebSocket.instances.length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Item 27
+  it("drops incoming rings older than 60s once the socket reconnects, and refetches calls", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = makeStubClient({ "/api/v1/auth/me": ME });
+      renderWithProviders(
+        <SoftphoneProvider>
+          <Harness />
+        </SoftphoneProvider>,
+        client,
+      );
+
+      await vi.waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+      const ws1 = FakeWebSocket.instances[0];
+      act(() => {
+        ws1.onopen?.();
+      });
+
+      act(() => {
+        ws1.onmessage?.({
+          data: JSON.stringify({
+            type: "call.ring",
+            call_id: "call-stale",
+            room: "r",
+            from: "+19725550111",
+            to: "+12145550100",
+          }),
+        });
+      });
+      expect(screen.getByTestId("ring-call-stale")).toBeInTheDocument();
+
+      // Age the ring well past the 60s staleness window.
+      await act(() => vi.advanceTimersByTimeAsync(61_000));
+
+      act(() => {
+        ws1.close();
+      });
+      // Reconnect fires after the (reset) 1s backoff.
+      await act(() => vi.advanceTimersByTimeAsync(1_001));
+      expect(FakeWebSocket.instances.length).toBe(2);
+
+      act(() => {
+        FakeWebSocket.instances[1].onopen?.();
+      });
+
+      expect(screen.queryByTestId("ring-call-stale")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Item 5: a reconnect resync must not stop at ["calls"] - conversations, inbox, and
+  // any open timeline can all have moved on while the socket was down too.
+  it("invalidates conversations/inbox/timeline (not just calls) once the socket reconnects", async () => {
+    vi.useFakeTimers();
+    const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    try {
+      const client = makeStubClient({ "/api/v1/auth/me": ME });
+      renderWithProviders(
+        <SoftphoneProvider>
+          <Harness />
+        </SoftphoneProvider>,
+        client,
+      );
+
+      await vi.waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+      act(() => {
+        FakeWebSocket.instances[0].onopen?.();
+      });
+      invalidateSpy.mockClear();
+
+      act(() => {
+        FakeWebSocket.instances[0].close();
+      });
+      await act(() => vi.advanceTimersByTimeAsync(1_001));
+      expect(FakeWebSocket.instances.length).toBe(2);
+
+      act(() => {
+        FakeWebSocket.instances[1].onopen?.();
+      });
+
+      const invalidatedKeys = invalidateSpy.mock.calls.map(
+        (call) => (call[0] as { queryKey: unknown[] }).queryKey[0],
+      );
+      expect(invalidatedKeys).toEqual(
+        expect.arrayContaining(["calls", "conversations", "inbox", "timeline"]),
+      );
+    } finally {
+      invalidateSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  // Item 3.11
+  it("gives each remote participant's audio track its own <audio> element, and cleans up on unsubscribe/disconnect", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/calls": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return {
+            id: "call-1",
+            contact_e164: "+19725550199",
+            status: "queued",
+            room: "call-call-1",
+            token: "tok-abc",
+            url: "wss://lk.example.com",
+            ...CALL_DETAIL_BASE,
+          };
+        }
+        throw new Error("unexpected request");
+      },
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+
+    const room = FakeRoom.instances.at(-1)!;
+    const trackA = new FakeRemoteTrack("audio", "track-a");
+    const trackB = new FakeRemoteTrack("audio", "track-b");
+
+    room.emit("trackSubscribed", trackA);
+    room.emit("trackSubscribed", trackB);
+    // A 3-party room means two OTHER remote parties - both must be audible, so both need
+    // their own element rather than the second silently stealing the first's srcObject.
+    expect(document.querySelectorAll("audio")).toHaveLength(2);
+
+    room.emit("trackUnsubscribed", trackA);
+    expect(document.querySelectorAll("audio")).toHaveLength(1);
+
+    const participantB = {
+      audioTrackPublications: new Map([["pub-b", { track: trackB }]]),
+    };
+    room.emit("participantDisconnected", participantB);
+    expect(document.querySelectorAll("audio")).toHaveLength(0);
+  });
+
+  // Item 3.12
+  it("does not ring when ring_user_ids names other users but not this one, and does when it does", async () => {
+    const client = makeStubClient({ "/api/v1/auth/me": ME });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: "call-not-for-me",
+          room: "r1",
+          from: "+19725550111",
+          to: "+12145550100",
+          ring_user_ids: ["some-other-user"],
+        }),
+      });
+    });
+    // ME.id is "u1" - not in the list, so no card at all.
+    expect(screen.queryByTestId("ring-call-not-for-me")).toBeNull();
+
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: "call-for-me",
+          room: "r2",
+          from: "+19725550111",
+          to: "+12145550100",
+          ring_user_ids: ["some-other-user", "u1"],
+        }),
+      });
+    });
+    expect(await screen.findByTestId("ring-call-for-me")).toBeInTheDocument();
+  });
+
+  // Item 3.10: an EXPLICIT ring group (more than one id in ring_user_ids) must never
+  // reach the whole-room hangup endpoint - decline only dismisses the card locally.
+  it("does not call the hangup endpoint declining a ring-group ring - it only dismisses the card locally", async () => {
+    let hangupCalled = false;
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/calls/call-group/hangup": () => {
+        hangupCalled = true;
+        // Even if this route were called and it failed, the group-ring path must never
+        // reach it in the first place.
+        throw new Error("would have ended the call for the whole group");
+      },
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: "call-group",
+          room: "r1",
+          from: "+19725550111",
+          to: "+12145550100",
+          ring_user_ids: ["u1", "some-other-user"],
+        }),
+      });
+    });
+    expect(await screen.findByTestId("ring-call-group")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Decline-call-group"));
+
+    await waitFor(() => expect(screen.queryByTestId("ring-call-group")).toBeNull());
+    expect(hangupCalled).toBe(false);
+  });
+
+  // Item 3.10 (companion, corrected): an ABSENT ring_user_ids is broadcast to every org
+  // member with access to the number - it is a ring group too, just an implicit one, so
+  // it must ALSO only dismiss the card locally rather than hang up the whole room. Only
+  // ring_user_ids being exactly [me.id] is a positively-solo ring safe to hang up.
+  it("does not call the hangup endpoint declining a plain ring with no ring_user_ids (broadcast to everyone)", async () => {
+    let hangupCalled = false;
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/calls/call-broadcast/hangup": () => {
+        hangupCalled = true;
+        throw new Error("would have ended the call for everyone who could see it");
+      },
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: "call-broadcast",
+          room: "r1",
+          from: "+19725550111",
+          to: "+12145550100",
+          // ring_user_ids intentionally omitted - the broadcast-to-everyone case.
+        }),
+      });
+    });
+    expect(await screen.findByTestId("ring-call-broadcast")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Decline-call-broadcast"));
+
+    await waitFor(() => expect(screen.queryByTestId("ring-call-broadcast")).toBeNull());
+    expect(hangupCalled).toBe(false);
   });
 });

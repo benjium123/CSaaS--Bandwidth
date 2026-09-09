@@ -94,6 +94,7 @@ async def test_shape_contract(app_with_carrier, session):
         "status",
         "assigned_user_id",
         "last_message_at",
+        "important",
     }
     assert set(item["last_message"].keys()) == {
         "id",

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { ApiError } from "@/api/client";
-import { Button, Input } from "@/components/ui/primitives";
+import { estimateSmsSegments } from "@/lib/format";
+import { Button } from "@/components/ui/primitives";
 
 /**
  * Compose + send.
@@ -22,6 +23,16 @@ export function Composer({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [needsReassign, setNeedsReassign] = React.useState(false);
+  const reassignButtonRef = React.useRef<HTMLButtonElement>(null);
+
+  // Item 52: move focus into the reassign prompt the moment it appears - a sighted
+  // mouse user sees it pop up right above the composer, but a keyboard/screen-reader
+  // user's focus is still sitting in the message field with no cue anything changed.
+  React.useEffect(() => {
+    if (needsReassign) reassignButtonRef.current?.focus();
+  }, [needsReassign]);
+
+  const segments = React.useMemo(() => estimateSmsSegments(body), [body]);
 
   async function submit(allowReassign: boolean) {
     if (!body.trim()) return;
@@ -54,7 +65,7 @@ export function Composer({
             <Button size="sm" variant="ghost" onClick={() => setNeedsReassign(false)}>
               Cancel
             </Button>
-            <Button size="sm" onClick={() => submit(true)}>
+            <Button ref={reassignButtonRef} size="sm" onClick={() => submit(true)}>
               Send anyway
             </Button>
           </div>
@@ -68,19 +79,36 @@ export function Composer({
       )}
 
       <form
-        className="flex gap-2"
+        className="flex items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           void submit(false);
         }}
       >
-        <Input
-          aria-label="Message"
-          placeholder="Type a message"
-          value={body}
-          disabled={disabled || busy}
-          onChange={(e) => setBody(e.target.value)}
-        />
+        <div className="flex-1 space-y-1">
+          <textarea
+            aria-label="Message"
+            placeholder="Type a message"
+            value={body}
+            disabled={disabled || busy}
+            rows={1}
+            onChange={(e) => setBody(e.target.value)}
+            onKeyDown={(e) => {
+              // Item 51: Enter sends, Shift+Enter inserts a newline - the usual chat
+              // convention. IME composition (e.g. typing accented/CJK text) must not
+              // trigger a send on the Enter that merely confirms the composition.
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void submit(false);
+              }
+            }}
+            className="flex max-h-40 min-h-9 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            {segments.units} char{segments.units === 1 ? "" : "s"} · {segments.encoding} ·{" "}
+            {segments.segments} segment{segments.segments === 1 ? "" : "s"}
+          </p>
+        </div>
         <Button type="submit" disabled={disabled || busy || !body.trim()}>
           Send
         </Button>

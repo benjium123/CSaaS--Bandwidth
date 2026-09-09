@@ -3,7 +3,12 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   ChevronDown,
+  Minus,
+  Phone,
+  Plus,
   PhoneMissed,
+  MessageSquare,
+  Star,
   Voicemail,
 } from "lucide-react";
 import type {
@@ -11,6 +16,7 @@ import type {
   ConversationFilter,
   ConversationTab,
 } from "@/api/conversations";
+import type { NewConversationKind } from "@/components/conversations/NewConversationPanel";
 import { formatPhone, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +37,15 @@ export interface ConversationListProps {
   error?: string | null;
   hasNoInboxAccess?: boolean;
   className?: string;
+  /** New-conversation entry point (the "+ New" button). Omitted callers (e.g. the
+   * standalone unit tests below) simply get no button rendered. */
+  onNew?: (kind: NewConversationKind) => void;
+  /** Gates the "+ New" button the same way the Composer/Call button are gated - true
+   * once we positively know the user can send from at least one number. */
+  canCompose?: boolean;
+  /** True while canCompose is still unknown (inboxes query in flight) - keeps the "+
+   * New" button's disabled tooltip neutral instead of claiming read-only too early. */
+  canComposeLoading?: boolean;
 }
 
 function initialsFor(title: string): string {
@@ -39,26 +54,24 @@ function initialsFor(title: string): string {
   return match.slice(0, 2).join("").toUpperCase();
 }
 
-function EventIcon({ conversation }: { conversation: Conversation }) {
+/** Item 36: `direction` is nullable (backend: no clear direction for this pair's latest
+ * event) - render a neutral glyph instead of guessing/defaulting to an arrow either
+ * direction wouldn't actually mean. */
+function DirectionIcon({ direction }: { direction: "inbound" | "outbound" | null }) {
   const className = "h-3.5 w-3.5 shrink-0 text-neutral-400";
+  if (direction === "inbound") return <ArrowDownLeft className={className} />;
+  if (direction === "outbound") return <ArrowUpRight className={className} />;
+  return <Minus className={className} aria-label="Direction unknown" />;
+}
+
+function EventIcon({ conversation }: { conversation: Conversation }) {
   if (conversation.last_event_type === "voicemail") {
-    return <Voicemail className={className} />;
+    return <Voicemail className="h-3.5 w-3.5 shrink-0 text-neutral-400" />;
   }
-  if (conversation.last_event_type === "call") {
-    if (/missed/i.test(conversation.snippet ?? "")) {
-      return <PhoneMissed className="h-3.5 w-3.5 shrink-0 text-red-400" />;
-    }
-    return conversation.direction === "inbound" ? (
-      <ArrowDownLeft className={className} />
-    ) : (
-      <ArrowUpRight className={className} />
-    );
+  if (conversation.last_event_type === "call" && /missed/i.test(conversation.snippet ?? "")) {
+    return <PhoneMissed className="h-3.5 w-3.5 shrink-0 text-red-400" />;
   }
-  return conversation.direction === "inbound" ? (
-    <ArrowDownLeft className={className} />
-  ) : (
-    <ArrowUpRight className={className} />
-  );
+  return <DirectionIcon direction={conversation.direction} />;
 }
 
 function FilterMenu({
@@ -70,7 +83,16 @@ function FilterMenu({
 }) {
   const [open, setOpen] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const label = filter === "all" ? "All" : filter === "open" ? "Open" : filter === "unread" ? "Unread" : "Unresponded";
+  const label =
+    filter === "all"
+      ? "All"
+      : filter === "open"
+        ? "Open"
+        : filter === "unread"
+          ? "Unread"
+          : filter === "important"
+            ? "Important"
+            : "Unresponded";
 
   // F19: close on outside click and Escape.
   React.useEffect(() => {
@@ -137,6 +159,94 @@ function FilterMenu({
   );
 }
 
+function NewConversationMenu({
+  disabled,
+  isLoading,
+  onNew,
+}: {
+  disabled?: boolean;
+  /** True while we don't yet know whether the user can compose (inboxes still loading) -
+   * `disabled` is true in that window too, but the tooltip must stay neutral rather than
+   * claiming "read-only" before that's actually known. */
+  isLoading?: boolean;
+  onNew: (kind: NewConversationKind) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  // Same outside-click/Escape pattern as FilterMenu/ConversationHeader's "more" menu.
+  React.useEffect(() => {
+    if (!open) return undefined;
+    function onPointerDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={disabled}
+        title={
+          disabled && !isLoading
+            ? "Read-only inbox — you can view but not start new conversations"
+            : undefined
+        }
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-700 disabled:pointer-events-none disabled:opacity-40"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        New
+      </button>
+      {open && (
+        <div
+          role="menu"
+          aria-label="New conversation"
+          className="absolute right-0 top-9 z-20 w-44 rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg"
+        >
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onNew("message");
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-700"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            New text message
+          </button>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onNew("call");
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-700"
+          >
+            <Phone className="h-3.5 w-3.5" />
+            New call
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ConversationList({
   items,
   selectedContactE164,
@@ -154,6 +264,9 @@ export function ConversationList({
   error,
   hasNoInboxAccess,
   className,
+  onNew,
+  canCompose,
+  canComposeLoading,
 }: ConversationListProps) {
   return (
     <aside
@@ -164,7 +277,8 @@ export function ConversationList({
       aria-label="Conversation list"
     >
       <div className="border-b border-neutral-800 p-3">
-        <div className="flex gap-1" role="tablist" aria-label="Channel">
+        <div className="flex items-center gap-1">
+          <div className="flex flex-1 gap-1" role="tablist" aria-label="Channel">
           <button
             role="tab"
             type="button"
@@ -193,6 +307,14 @@ export function ConversationList({
           >
             Calls
           </button>
+          </div>
+          {onNew && (
+            <NewConversationMenu
+              disabled={!canCompose}
+              isLoading={canComposeLoading}
+              onNew={onNew}
+            />
+          )}
         </div>
 
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -211,6 +333,22 @@ export function ConversationList({
             )}
           >
             Unread
+          </button>
+          <button
+            type="button"
+            aria-pressed={filter === "important"}
+            onClick={() =>
+              onFilterChange(filter === "important" ? "open" : "important")
+            }
+            className={cn(
+              "flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
+              filter === "important"
+                ? "bg-neutral-100 text-neutral-900"
+                : "bg-neutral-800 text-neutral-200 hover:bg-neutral-700",
+            )}
+          >
+            <Star className="h-3 w-3" />
+            Important
           </button>
           <button
             type="button"
@@ -259,9 +397,12 @@ export function ConversationList({
                 conversation.contact?.display_name ??
                 formatPhone(conversation.contact_e164);
               const selected = conversation.contact_e164 === selectedContactE164;
-              const unread = conversation.unread > 0;
+              const unread = conversation.unread;
               return (
-                <li key={conversation.thread_id}>
+                // Item 11/12: thread_id is null for a call-only pair with no message
+                // thread yet, so it can't key the list (two such pairs would collide) -
+                // the (our_e164, contact_e164) pair is always unique per row instead.
+                <li key={`${conversation.our_e164}|${conversation.contact_e164}`}>
                   <button
                     type="button"
                     onClick={() => onSelect(conversation.contact_e164)}
@@ -276,15 +417,23 @@ export function ConversationList({
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
-                        <span
-                          className={cn(
-                            "truncate text-sm",
-                            unread
-                              ? "font-bold text-neutral-50"
-                              : "font-medium text-neutral-200",
+                        <span className="flex min-w-0 items-center gap-1">
+                          {conversation.important && (
+                            <Star
+                              aria-label="Important"
+                              className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400"
+                            />
                           )}
-                        >
-                          {title}
+                          <span
+                            className={cn(
+                              "truncate text-sm",
+                              unread
+                                ? "font-bold text-neutral-50"
+                                : "font-medium text-neutral-200",
+                            )}
+                          >
+                            {title}
+                          </span>
                         </span>
                         <span className="shrink-0 text-[11px] text-neutral-500">
                           {relativeTime(conversation.last_event_at)}

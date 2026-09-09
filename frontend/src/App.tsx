@@ -24,17 +24,26 @@ import { TeamPage } from "@/pages/TeamPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
 import { Spinner } from "@/components/ui/primitives";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { ErrorBoundary } from "@/components/shell/ErrorBoundary";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 
 /** Replaces the old top nav (plan phase-16-plan.md): the Sidebar is now the one
- * persistent nav frame for every authed route, with the inbox as the app's home. */
+ * persistent nav frame for every authed route, with the inbox as the app's home.
+ *
+ * Item 12: a SECOND ErrorBoundary, scoped to just the routed page content, sits inside
+ * the root one (main.tsx) - a crash in a single page falls back to the recovery screen
+ * there while the Sidebar (and the softphone dock) stay mounted and usable, instead of
+ * the whole app blanking out.
+ */
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <SoftphoneProvider>
       <div className="flex h-full">
         <Sidebar />
-        <main className="min-h-0 flex-1">{children}</main>
+        <main className="min-h-0 flex-1">
+          <ErrorBoundary>{children}</ErrorBoundary>
+        </main>
       </div>
       <SoftphonePanel />
     </SoftphoneProvider>
@@ -78,6 +87,10 @@ export function App() {
         <Route path="/security" element={<SettingsSecurityPage />} />
         <Route path="/team" element={<TeamPage />} />
         <Route path="/platform" element={<PlatformPage />} />
+        {/* D1.5: an already-authenticated user can still land here to accept an invite
+         * to a SECOND org (POST /invites/accept while authed) - not just brand-new
+         * accounts, which is the only path the logged-out branch above covers. */}
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
         <Route path="*" element={<Navigate to="/inbox" replace />} />
       </Routes>
     </Shell>

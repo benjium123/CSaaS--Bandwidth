@@ -3,7 +3,8 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+import sqlalchemy as sa
+from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,9 +17,16 @@ from app.auth.security import (
     verify_password,
 )
 from app.config import Settings
+from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_session
-from app.errors import UnauthenticatedError, ValidationFailedError
-from app.models import User
+from app.errors import (
+    ConflictError,
+    PermissionDeniedError,
+    UnauthenticatedError,
+    ValidationFailedError,
+)
+from app.models import OrgMembership, PERMISSIONS, User
+from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import invites as invites_svc
@@ -58,6 +66,8 @@ class MeOut(BaseModel):
     id: uuid.UUID
     email: str
     full_name: str
+    totp_enabled: bool = False
+    permissions: list[str]
     memberships: list[MembershipOut]
 
 
@@ -76,6 +86,7 @@ async def register(
     itself the moment the first account exists and can never drift back.
     """
     settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"register:{payload.email}")
     bootstrap = settings.allow_open_registration or not await invites_svc.instance_has_users(
         session
     )
@@ -97,7 +108,14 @@ async def register(
         await session.flush()
         await invites_svc.redeem(session, invite, user.id)
     await session.commit()
-    return MeOut(id=user.id, email=user.email, full_name=user.full_name, memberships=[])
+    return MeOut(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        totp_enabled=user.totp_enabled,
+        permissions=[],
+        memberships=[],
+    )
 
 
 @router.post("/login", response_model=TokenOut)
@@ -107,6 +125,7 @@ async def login(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TokenOut:
     settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"login:{payload.email}")
     user = await users_repo.get_by_email(session, payload.email)
 
     # Same failure shape for unknown-email and bad-password. Verifying against a throwaway
@@ -144,12 +163,39 @@ async def login(
 async def me(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    x_org_id: Annotated[str | None, Header(alias="X-Org-Id")] = None,
 ) -> MeOut:
     rows = await orgs_repo.list_memberships_for_user(session, user.id)
+    permissions: list[str] = []
+    if x_org_id:
+        try:
+            org_id = uuid.UUID(x_org_id)
+        except (ValueError, AttributeError) as exc:
+            raise ValidationFailedError("X-Org-Id is not a valid UUID") from exc
+        set_org_context(session, org_id)
+        found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
+        if found is None:
+            raise PermissionDeniedError("You are not a member of that organization")
+        role = found[2]
+        if "*" in (role.permissions or []):
+            permissions = sorted(PERMISSIONS)
+        else:
+            permissions = sorted(set(role.permissions or []))
+    elif len(rows) == 1:
+        # C8: no explicit org context, but there is only one org this user could mean -
+        # return ITS permissions rather than an uninformative [] a single-org caller
+        # (the common case) would otherwise always see.
+        _org, role = rows[0]
+        if "*" in (role.permissions or []):
+            permissions = sorted(PERMISSIONS)
+        else:
+            permissions = sorted(set(role.permissions or []))
     return MeOut(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
+        totp_enabled=user.totp_enabled,
+        permissions=permissions,
         memberships=[
             MembershipOut(
                 org_id=org.id, org_name=org.name, org_slug=org.slug, role_name=role.name
@@ -157,3 +203,33 @@ async def me(
             for org, role in rows
         ],
     )
+
+
+class InviteAcceptIn(BaseModel):
+    token: str
+
+
+@router.post("/invites/accept")
+async def accept_invite(
+    payload: InviteAcceptIn,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    invite = await invites_svc.find_redeemable(session, payload.token, user.email)
+
+    existing = (
+        await session.execute(
+            sa.select(OrgMembership)
+            .where(
+                OrgMembership.org_id == invite.org_id,
+                OrgMembership.user_id == user.id,
+            )
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise ConflictError("You are already a member of that organisation")
+
+    await invites_svc.redeem(session, invite, user.id)
+    await session.commit()
+    return {"org_id": str(invite.org_id), "role_name": invite.role_name}

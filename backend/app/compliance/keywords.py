@@ -21,7 +21,16 @@ from typing import Literal
 
 # Carrier/CTIA standard keyword families.
 OPT_OUT_WORDS = frozenset({"stop", "stopall", "unsubscribe", "cancel", "end", "quit"})
-OPT_IN_WORDS = frozenset({"start", "yes", "unstop"})
+# 2.14: "yes" is deliberately NOT a bare opt-in - a customer texting a bare "Yes" to
+# some unrelated question must not be silently re-subscribed. "yes" is only ever an
+# opt-in CONFIRMATION when a standing opt-out already exists for the (our_e164,
+# contact) pair - the compliance service checks that context and applies
+# OPT_IN_CONFIRMATION_WORDS there; this module stays pure (no DB) so it cannot make
+# that call itself.
+OPT_IN_WORDS = frozenset({"start", "unstop"})
+#: Words that confirm a PRIOR opt-out, valid ONLY with that standing-opt-out context.
+#: classify_keyword intentionally does not return "opt_in" for "yes" on its own.
+OPT_IN_CONFIRMATION_WORDS = frozenset({"start", "yes"})
 HELP_WORDS = frozenset({"help", "info"})
 
 # Only TRAILING punctuation is forgiven. "Stop." and "STOP!" are the same intent; but

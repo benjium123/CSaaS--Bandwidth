@@ -26,6 +26,10 @@ from app.providers.voice import (
 logger = structlog.get_logger(__name__)
 
 
+class TelnyxVoiceCommandError(RuntimeError):
+    """Raised when a mid-stream voice command cannot be delivered to Telnyx."""
+
+
 def _parse_telnyx_datetime(raw: object) -> datetime | None:
     if not isinstance(raw, str) or not raw:
         return None
@@ -163,7 +167,7 @@ class TelnyxVoiceMixin:
                     action=action,
                     error=str(exc),
                 )
-                continue
+                raise TelnyxVoiceCommandError(f"{action} failed: {exc}") from exc
 
             if response.status_code < 200 or response.status_code >= 300:
                 logger.warning(
@@ -172,6 +176,9 @@ class TelnyxVoiceMixin:
                     status_code=response.status_code,
                     detail=response.text[:255],
                 )
+                raise TelnyxVoiceCommandError(
+                    f"{action} rejected: HTTP {response.status_code} {response.text[:255]}"
+                )
 
     def verify_voice_webhook(self, headers: Mapping[str, str], raw_body: bytes) -> bool:
         return msg_webhooks.verify(headers, self._public_key, raw_body)
@@ -179,21 +186,21 @@ class TelnyxVoiceMixin:
     def parse_voice_webhook(self, raw_body: bytes) -> list[VoiceEvent]:
         try:
             obj = json.loads(raw_body)
-        except (json.JSONDecodeError, ValueError):
-            return []
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError("invalid JSON body") from exc
         if not isinstance(obj, dict):
-            return []
+            raise ValueError("voice webhook must be a JSON object")
 
         data = obj.get("data", {})
         if not isinstance(data, dict):
-            return []
+            raise ValueError("missing data object")
         payload = data.get("payload", {})
         if not isinstance(payload, dict):
             payload = {}
 
         event_type_raw = data.get("event_type", "")
-        if not isinstance(event_type_raw, str):
-            return []
+        if not isinstance(event_type_raw, str) or not event_type_raw:
+            raise ValueError("missing event_type")
 
         canonical_mapping = {
             "call.initiated": "call_initiated",

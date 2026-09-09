@@ -324,6 +324,7 @@ async def test_deactivating_department_revokes_member_access(client, session):
 # ----------------------------------------------------------------------------------
 async def test_event_visible_call_ring_with_to_gates_by_member_only():
     org_id = uuid.uuid4()
+    user_id = uuid.uuid4()
     event = {"type": "call.ring", "call_id": "c1", "to": E164_A}
 
     member_access = InboxAccess(
@@ -334,15 +335,16 @@ async def test_event_visible_call_ring_with_to_gates_by_member_only():
     )
     admin_access = InboxAccess(is_admin=True, member_e164s=frozenset(), viewer_e164s=frozenset())
 
-    assert await _event_visible(event, member_access, org_id) is True
+    assert await _event_visible(event, member_access, org_id, user_id) is True
     # A viewer can_view the number but cannot answer a call from it - a ring is a
     # MEMBER-only event, not merely a view-only one.
-    assert await _event_visible(event, viewer_access, org_id) is False
-    assert await _event_visible(event, admin_access, org_id) is True
+    assert await _event_visible(event, viewer_access, org_id, user_id) is False
+    assert await _event_visible(event, admin_access, org_id, user_id) is True
 
 
 async def test_event_visible_call_ring_without_to_is_fail_closed_for_non_admins():
     org_id = uuid.uuid4()
+    user_id = uuid.uuid4()
     event = {"type": "call.ring", "call_id": "c1"}  # no "to" at all
 
     member_access = InboxAccess(
@@ -352,5 +354,42 @@ async def test_event_visible_call_ring_without_to_is_fail_closed_for_non_admins(
 
     # A ring with no resolvable "to" is dropped for every non-admin - shown by default is
     # exactly the wrong failure mode for "who can answer this call".
-    assert await _event_visible(event, member_access, org_id) is False
-    assert await _event_visible(event, admin_access, org_id) is True
+    assert await _event_visible(event, member_access, org_id, user_id) is False
+    assert await _event_visible(event, admin_access, org_id, user_id) is True
+
+
+async def test_event_visible_call_ring_with_ring_user_ids_gates_to_named_agent_only():
+    """3.12: a sequential ring group names ONE agent via ring_user_ids - a different
+    member with access to the number must not see the ring, even though `to` gates them
+    in without it."""
+    org_id = uuid.uuid4()
+    named_user = uuid.uuid4()
+    other_user = uuid.uuid4()
+    event = {
+        "type": "call.ring", "call_id": "c1", "to": E164_A,
+        "ring_user_ids": [str(named_user)],
+    }
+    member_access = InboxAccess(
+        is_admin=False, member_e164s=frozenset({E164_A}), viewer_e164s=frozenset()
+    )
+
+    assert await _event_visible(event, member_access, org_id, named_user) is True
+    assert await _event_visible(event, member_access, org_id, other_user) is False
+
+
+async def test_event_visible_unknown_event_type_is_fail_closed_for_non_admins():
+    """An event type this gate does not explicitly know about must never default to
+    visible-to-everyone - only the explicit broadcast allowlist (e.g. ping) does."""
+    org_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    member_access = InboxAccess(
+        is_admin=False, member_e164s=frozenset({E164_A}), viewer_e164s=frozenset()
+    )
+    admin_access = InboxAccess(is_admin=True, member_e164s=frozenset(), viewer_e164s=frozenset())
+
+    unknown_event = {"type": "some.new.event.type", "payload": "whatever"}
+    assert await _event_visible(unknown_event, member_access, org_id, user_id) is False
+    assert await _event_visible(unknown_event, admin_access, org_id, user_id) is True
+
+    ping_event = {"type": "ping"}
+    assert await _event_visible(ping_event, member_access, org_id, user_id) is True

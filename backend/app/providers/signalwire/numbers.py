@@ -114,17 +114,35 @@ class SignalWireNumberProviderMixin:
             setup_cost_cents=None,
         )
 
+    async def lookup_owned_number(self, e164: str) -> bool | None:
+        client = await self._get_client()
+        try:
+            resp = await client.get(
+                f"{self.base_url}/IncomingPhoneNumbers.json",
+                params={"PhoneNumber": e164},
+                auth=(self.project_id, self._api_token),
+            )
+        except httpx.TransportError:
+            return None
+        if resp.status_code != 200:
+            return None
+        entries = (resp.json() or {}).get("incoming_phone_numbers") or []
+        return bool(entries)
+
     async def release_number(self, e164: str, provider_ref: str | None = None) -> None:
         client = await self._get_client()
         auth = (self.project_id, self._api_token)
 
         ref = provider_ref
         if not ref:
-            lookup = await client.get(
-                f"{self.base_url}/IncomingPhoneNumbers.json",
-                params={"PhoneNumber": e164},
-                auth=auth,
-            )
+            try:
+                lookup = await client.get(
+                    f"{self.base_url}/IncomingPhoneNumbers.json",
+                    params={"PhoneNumber": e164},
+                    auth=auth,
+                )
+            except httpx.TransportError as exc:
+                raise FeatureUnavailableError(f"SignalWire unreachable: {exc}") from exc
             if lookup.status_code == 200:
                 entries = (lookup.json() or {}).get("incoming_phone_numbers") or []
                 if entries and isinstance(entries[0], dict):
@@ -132,10 +150,13 @@ class SignalWireNumberProviderMixin:
         if not ref:
             raise ValidationFailedError(f"SignalWire does not report owning {e164}")
 
-        resp = await client.delete(
-            f"{self.base_url}/IncomingPhoneNumbers/{quote(ref, safe='')}.json",
-            auth=auth,
-        )
+        try:
+            resp = await client.delete(
+                f"{self.base_url}/IncomingPhoneNumbers/{quote(ref, safe='')}.json",
+                auth=auth,
+            )
+        except httpx.TransportError as exc:
+            raise FeatureUnavailableError(f"SignalWire unreachable: {exc}") from exc
         if resp.status_code not in (200, 202, 204, 404):
             raise ValidationFailedError(
                 f"SignalWire refused to release {e164}: {resp.status_code}"

@@ -181,3 +181,20 @@ P20: 4 full RBAC nav (backend `permissions` on /auth/me ships now) · 23 org swi
 | 4.17 | MED | Webhook fallback limit 50 without ORDER BY | FIX order + paginate |
 | 4.18 | MED | TTL lapse sends DB-only org via env carrier | FIX empty registry when org has DB accounts |
 | 4.19–4.29 | LOW | quoting, TransportError, carrier validation on add, write amplification, healthz/status leakage, cache expiry, rate map, released numbers in reputation, audit field lists, LRU, primary preference | FIX all (cheap) |
+
+## Outcome (2026-09-09)
+Every FIX item above is implemented and Opus-verified (mutation-tested where practical).
+- Flow: DeepSeek V4 Pro drafted per-area edit blocks -> one Sonnet integrator applied them ->
+  Opus re-verified each area -> Sonnet fixed the verifier findings (frontend 12 + 6, infra 16,
+  backend 5 + 6 + 8 + 4) -> Fable sign-off.
+- Migrations: 0021 (coalesced thread index), 0022 (dial_now_claimed_at, order_poll_attempts,
+  import_started_at, call_scores.tokens_in/out), 0023 (message_threads.is_important).
+- New Settings: PLATFORM_OPS_TOKEN, RATE_LIMIT_*, ALLOW_UNVERIFIED_NUMBER_ADD, PRIMARY_PROVIDER.
+- Not in this repo: 6.25 / 6.26 (external AI-voice worker).
+- Accepted: B1 carve-out — a deployment with NO number-capable provider skips ownership
+  verification (nothing can deliver inbound there anyway); production always has one.
+- Also shipped (user request): inbox "+ New" (text / call), Important filter, star toggle
+  (POST /inbox/important-pair, GET /conversations?filter=important).
+- Operator steps for the deploy are in docs/RUNBOOK.md ("Before the very first deploy") —
+  ufw 7880 deny, nginx limits.conf + site file, redis password via .tpl rendering, SIP 5060
+  restricted to Telnyx signaling IPs, media volume ownership.

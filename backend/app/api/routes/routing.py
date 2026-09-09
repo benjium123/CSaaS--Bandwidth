@@ -136,8 +136,28 @@ async def probe_carrier(
     """Ask the carrier whether these credentials work. Operator-triggered ONLY - see
     providers/probes.py for why this never runs on boot."""
     from app.providers import probes
+    from app.providers import registry_org
+    from app.services import provider_accounts as provider_accounts_svc
 
-    result = await probes.probe(name, request.app.state.settings)
+    settings = request.app.state.settings
+
+    # 4.9: when this org's selected carrier comes from a DB-backed provider account,
+    # probe THAT account's credentials, never the shared env credential set - probing
+    # env creds would report the wrong account's health.
+    if name in registry_org.db_backed_providers(ctx.org.id):
+        account = await provider_accounts_svc.active_account_for(ctx.session, name)
+        if account is not None:
+            await provider_accounts_svc.probe_account(ctx.session, settings, account)
+            await ctx.session.commit()
+            provider_accounts_svc.bump_version(ctx.org.id)
+            return ProbeOut(
+                name=name,
+                ok=account.status == "active",
+                detail=account.last_probe_detail or "",
+                checked=account.last_probe_at.isoformat() if account.last_probe_at else "",
+            )
+
+    result = await probes.probe(name, settings)
     return ProbeOut(
         name=result.name, ok=result.ok, detail=result.detail, checked=result.checked
     )

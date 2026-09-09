@@ -143,3 +143,9 @@ class LoopbackCarrier:
 
     def parse_webhook(self, raw_body: bytes) -> list[CarrierEvent]:
         return []
+
+    # -- 1.1: never a real NumberProvider (no search/order/release), but if it ever
+    # grows into one, ownership of a simulated number is trivially "yes" - there is no
+    # real carrier to hijack from.
+    async def lookup_owned_number(self, e164: str) -> bool | None:
+        return True

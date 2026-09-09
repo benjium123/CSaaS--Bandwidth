@@ -404,8 +404,11 @@ async def test_handoff_keyword_hands_off_with_no_ai_reply_and_publishes(
     assert turns[-1].detail.startswith("keyword:")
     assert thread.ai_state == "handed_off"
     assert len(fake.sent) == before_sent  # no farewell for a keyword handoff
-    assert len(bus.events) == 1
-    published_org, event = bus.events[0]
+    # Bugfix ledger FRONTEND-SUPPORT: every inbound message now also publishes
+    # message.received on the same bus, ahead of the handoff event.
+    assert len(bus.events) == 2
+    assert bus.events[0][1]["type"] == "message.received"
+    published_org, event = bus.events[1]
     assert published_org == org_id
     assert event == {
         "type": "sms.handoff",
@@ -437,7 +440,10 @@ async def test_handoff_to_human_tool_call_behaves_like_the_keyword_path(
     assert turns[-1].detail == "tool:wants a human"
     assert thread.ai_state == "handed_off"
     assert len(fake.sent) == before_sent
-    assert bus.events[0][1]["reason"] == "tool"
+    # message.received now precedes the sms.handoff event on the same bus.
+    handoff_events = [e for _org, e in bus.events if e["type"] == "sms.handoff"]
+    assert len(handoff_events) == 1
+    assert handoff_events[0]["reason"] == "tool"
 
 
 async def test_turn_ceiling_hands_off_with_a_final_message(
@@ -707,7 +713,10 @@ async def test_auto_trigger_handoff_reaches_the_real_event_bus(
     async with application.state.event_bus.subscribe(org_id) as queue:
         await _inbound(client, "I need a real person", "sms18-1")
         await sms_agent.wait_for_pending_sms_tasks()
+        # message.received now precedes sms.handoff on the same bus - skip past it.
         event = await asyncio.wait_for(queue.get(), timeout=5)
+        if event.get("type") == "message.received":
+            event = await asyncio.wait_for(queue.get(), timeout=5)
 
     thread = await _thread(session, org_id)
     assert event == {
@@ -832,3 +841,66 @@ async def test_try_send_records_deferred_detail_when_the_send_is_held(
     assert turn.status == "replied"
     assert turn.detail == "deferred"
     assert turn.outbound_message_id == sent_id
+
+
+# ----------------------------------------------------------------------------------
+# D7: _try_send must resolve stickiness from THIS thread, not from the contact's
+# most-recently-active thread across every number - a contact with two threads on two
+# numbers must have a reply IN one of them sent from THAT thread's own number, even
+# when the OTHER thread is more recently active.
+# ----------------------------------------------------------------------------------
+async def test_try_send_uses_this_threads_own_number_not_the_contacts_other_thread(
+    app_with_carrier, session, monkeypatch
+):
+    OUR_B = "+12145550111"
+    client, fake, _ = app_with_carrier
+    token, org, _ = await make_org_with_number(client, "sms-sticky@example.com", "Org Sticky", OUR)
+    org_id = uuid.UUID(org["id"])
+    r = await client.post(
+        "/api/v1/numbers", json={"e164": OUR_B}, headers=auth_headers(token, org_id)
+    )
+    assert r.status_code == 201, r.text
+
+    set_org_context(session, org_id)
+    thread_a = await messaging_svc.upsert_thread(session, org_id, OUR, CONTACT)
+    thread_b = await messaging_svc.upsert_thread(session, org_id, OUR_B, CONTACT)
+    now = datetime.now(timezone.utc)
+    # thread_b is the MORE recently active of the two - an unrestricted, contact-wide
+    # sticky lookup (no thread awareness) would pick OUR_B, not OUR.
+    thread_a.last_message_at = now - timedelta(hours=1)
+    thread_b.last_message_at = now
+    await session.commit()
+
+    inbound = Message(
+        id=uuid.uuid4(), org_id=org_id, thread_id=thread_a.id, direction="inbound",
+        status="received", from_e164=CONTACT, to_e164=OUR, body="hi",
+    )
+    session.add(inbound)
+    await session.commit()
+
+    turn = AgentSmsTurn(
+        id=uuid.uuid4(), org_id=org_id, thread_id=thread_a.id,
+        inbound_message_id=inbound.id, status="skipped", detail="",
+    )
+    session.add(turn)
+    await session.commit()
+
+    captured: dict = {}
+
+    async def fake_send_message(*args, **kwargs):
+        captured["from_e164"] = kwargs.get("from_e164")
+        outbound = Message(
+            id=uuid.uuid4(), org_id=org_id, thread_id=thread_a.id, direction="outbound",
+            status="accepted", from_e164=kwargs.get("from_e164"), to_e164=CONTACT, body="reply",
+        )
+        session.add(outbound)
+        await session.flush()
+        return outbound
+
+    monkeypatch.setattr(sms_agent, "send_message", fake_send_message)
+
+    await sms_agent._try_send(
+        session, org_id, fake, FakeBus(), thread=thread_a, body="reply", turn=turn
+    )
+
+    assert captured["from_e164"] == OUR

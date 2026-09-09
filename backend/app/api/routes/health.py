@@ -13,7 +13,6 @@ router = APIRouter(tags=["health"])
 @router.get("/healthz")
 async def healthz(request: Request, response: Response) -> dict:
     """Liveness + DB reachability. No auth: monitors must be able to call it."""
-    settings = request.app.state.settings
     db_state = "ok"
     try:
         async with get_sessionmaker()() as session:
@@ -24,9 +23,9 @@ async def healthz(request: Request, response: Response) -> dict:
     if db_state != "ok":
         response.status_code = 503
 
+    # 4.23: no env/version here - an unauthenticated liveness probe must not leak
+    # deployment fingerprinting detail (same principle GET /status already documents).
     return {
         "status": "ok" if db_state == "ok" else "degraded",
-        "env": settings.app_env,
-        "version": request.app.version,
         "db": db_state,
     }
