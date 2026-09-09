@@ -43,3 +43,8 @@ class RoutingPolicy(Base, TenantScoped, TimestampMixin):
     #: Pin every send to one carrier regardless of preference/health. The "at will"
     #: override at org scope; an operator can still override per request.
     pinned_carrier: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
+    # P21: the ONE customer switch. True = rank routes automatically (health, reputation,
+    # cost, preference); False = "Prefer a provider" (pinned_carrier/preference drive it).
+    smart_routing: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=True, server_default=sa.true()
+    )

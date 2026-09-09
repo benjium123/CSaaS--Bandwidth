@@ -63,6 +63,8 @@ class Call(Base, TenantScoped, TimestampMixin):
     contact_e164: Mapped[str] = mapped_column(sa.String(20), nullable=False, index=True)
     our_e164: Mapped[str] = mapped_column(sa.String(20), nullable=False, index=True)
     carrier: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    # P21 smart routing: why this provider/trunk was chosen (plain sentence).
+    route_reason: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="queued")
     #: Populated on the first terminal transition; a terminal status never changes, so
     #: neither does this.

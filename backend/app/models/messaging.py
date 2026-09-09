@@ -182,6 +182,9 @@ class Message(Base, TenantScoped, TimestampMixin):
     segment_count_carrier: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    # P21 smart routing: one plain sentence saying why this route was chosen
+    # ("Sent via Telnyx - cheapest healthy route"). Set by services/smart_routing.py.
+    route_reason: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     # Set when quiet hours DEFER a send. The message row exists and is queued; the
     # sweeper releases it and RE-RUNS THE FULL GATE, so an opt-out landing during the
     # hold still kills the send. Gate at dispatch, never only at enqueue.
