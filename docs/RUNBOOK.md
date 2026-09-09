@@ -306,7 +306,12 @@ ufw allow 10000:10499/udp comment 'csaas sip rtp'
 # the nginx wss proxy in "Operator step: expose /status and the LiveKit WS through
 # nginx" below FIRST, and repoint LIVEKIT_PUBLIC_URL to that wss:// URL - see the caveat
 # there - because this deny rule cuts off the direct ws://<ip>:7880 form entirely.
-ufw deny in on <public-iface> to any port 7880 proto tcp
+# The api container reaches livekit at 7880 through the docker host-gateway, which is
+# INPUT traffic on the host as far as ufw is concerned - with a default-DROP policy the
+# deny alone leaves /status reporting media_plane: down (seen live 2026-09-09). Allow the
+# compose network's subnet first (`docker network inspect csaas_default` prints it):
+ufw allow in from 172.24.0.0/16 to any port 7880 proto tcp comment 'csaas api -> livekit signal'
+ufw deny in on <public-iface> to any port 7880 proto tcp comment 'csaas livekit signal loopback-only'
 cd /opt/csaas && docker compose --env-file .env \
   -f deploy/docker-compose.prod.yml \
   -f deploy/livekit/docker-compose.livekit.yml up -d livekit livekit-sip
