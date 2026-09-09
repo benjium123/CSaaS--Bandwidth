@@ -48,6 +48,9 @@ async def resolve_or_create_contact(
         return found[0]
 
     contact = Contact(id=uuid.uuid4(), org_id=org_id, display_name=e164, attributes={})
+    # P22: lets the inbound path tell "just created here" from "already existed" without
+    # changing this function's signature (list_import calls it too). Transient attribute.
+    contact._just_created = True  # type: ignore[attr-defined]
     session.add(contact)
     try:
         await session.flush()

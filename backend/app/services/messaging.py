@@ -47,6 +47,7 @@ from app.providers.domain import (
     UnknownEvent,
 )
 from app.providers.segments import estimate
+from app.services import contact_visibility
 from app.services import credentials as credential_svc
 from app.services.contacts import resolve_or_create_contact
 from app.services.outbox import record_platform_event
@@ -564,9 +565,12 @@ async def _ingest_inbound(
     # rolls this back too.
     thread.status = "open"
     if thread.contact_id is None:
-        thread.contact_id = (
-            await resolve_or_create_contact(session, org_id, event.from_)
-        ).id
+        contact = await resolve_or_create_contact(session, org_id, event.from_)
+        # P22 spec: stamp owner/team on AUTO-CREATED contacts only. A contact a human
+        # deliberately left unowned must not be adopted by the next inbound (Opus N1).
+        if getattr(contact, "_just_created", False):
+            await contact_visibility.stamp_inbound_ownership(session, contact, thread=thread)
+        thread.contact_id = contact.id
 
     message = Message(
         id=uuid.uuid4(),

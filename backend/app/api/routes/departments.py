@@ -25,8 +25,19 @@ class DepartmentPatchIn(BaseModel):
     is_active: bool | None = None
 
 
+class MemberItemIn(BaseModel):
+    user_id: uuid.UUID
+    is_lead: bool = False
+
+
 class MembersIn(BaseModel):
     user_ids: list[uuid.UUID] = []
+    members: list[MemberItemIn] = []
+
+
+class DepartmentMemberOut(BaseModel):
+    user_id: uuid.UUID
+    is_lead: bool
 
 
 class DepartmentOut(BaseModel):
@@ -34,25 +45,39 @@ class DepartmentOut(BaseModel):
     name: str
     is_active: bool
     member_user_ids: list[uuid.UUID]
+    members: list[DepartmentMemberOut]
+    lead_user_ids: list[uuid.UUID]
 
 
-async def _members_of(session, department_id: uuid.UUID) -> list[uuid.UUID]:
+def _normalize_members(payload: MembersIn) -> dict[uuid.UUID, bool]:
+    if payload.members:
+        desired: dict[uuid.UUID, bool] = {}
+        for member in payload.members:
+            desired[member.user_id] = member.is_lead
+        return desired
+    return dict.fromkeys(payload.user_ids, False)
+
+
+async def _member_rows(session, department_id: uuid.UUID) -> list[DepartmentMember]:
     rows = (
         await session.execute(
-            sa.select(DepartmentMember.user_id).where(
-                DepartmentMember.department_id == department_id
-            )
+            sa.select(DepartmentMember)
+            .where(DepartmentMember.department_id == department_id)
+            .order_by(DepartmentMember.created_at.asc())
         )
     ).scalars().all()
     return list(rows)
 
 
 async def _out(session, d: Department) -> DepartmentOut:
+    rows = await _member_rows(session, d.id)
     return DepartmentOut(
         id=d.id,
         name=d.name,
         is_active=d.is_active,
-        member_user_ids=await _members_of(session, d.id),
+        member_user_ids=[m.user_id for m in rows],
+        members=[DepartmentMemberOut(user_id=m.user_id, is_lead=m.is_lead) for m in rows],
+        lead_user_ids=[m.user_id for m in rows if m.is_lead],
     )
 
 
@@ -168,7 +193,8 @@ async def set_members(
     ctx: Annotated[OrgContext, Depends(require_permission("departments:manage"))],
 ) -> DepartmentOut:
     d = await _get_department(ctx, department_id)
-    wanted = set(payload.user_ids)
+    desired = _normalize_members(payload)
+    wanted = set(desired.keys())
     if wanted:
         found = {
             m.user_id
@@ -195,16 +221,24 @@ async def set_members(
         .scalars()
         .all()
     )
-    have = {row.user_id for row in existing}
+    have = {row.user_id: row for row in existing}
     for row in existing:
         if row.user_id not in wanted:
             await ctx.session.delete(row)
-    for user_id in wanted - have:
+        else:
+            row.is_lead = desired[row.user_id]
+    for user_id in wanted - set(have.keys()):
         ctx.session.add(
             DepartmentMember(
-                id=uuid.uuid4(), org_id=ctx.org.id, department_id=d.id, user_id=user_id
+                id=uuid.uuid4(),
+                org_id=ctx.org.id,
+                department_id=d.id,
+                user_id=user_id,
+                is_lead=desired[user_id],
             )
         )
+
+    lead_ids = sorted(str(uid) for uid, is_lead in desired.items() if is_lead)
     audit_svc.record(
         ctx.session,
         ctx.org.id,
@@ -213,7 +247,10 @@ async def set_members(
         target_id=str(d.id),
         actor_user_id=ctx.actor_user_id,
         actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
-        detail={"user_ids": sorted(str(u) for u in wanted)},
+        detail={
+            "user_ids": sorted(str(u) for u in wanted),
+            "lead_user_ids": lead_ids,
+        },
     )
     await ctx.session.commit()
     return await _out(ctx.session, d)

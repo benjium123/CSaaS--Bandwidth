@@ -9,7 +9,7 @@ least as much UI as it adds.
 
 | # | Phase | Plan | Migration | Status |
 |---|---|---|---|---|
-| 1 | P22 Contact ownership, visibility, custom roles | docs/PLAN_P22_P25.md | 0024 (done) | in progress |
+| 1 | P22 Contact ownership, visibility, custom roles | docs/PLAN_P22_P25.md | 0024 | code complete, deploying |
 | 2 | P20 Simplicity: two-surface product | docs/phase-20-plan.md | – | queued |
 | 3 | P21 Smart routing | to be written by Fable | – | queued |
 | 4 | P23a AI assistant: providers + builder + simulate | docs/PLAN_P22_P25.md | 0025 | queued |

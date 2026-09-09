@@ -83,3 +83,11 @@
 |---|---|---|---|
 | D37 | Bandwidth Numbers API (dashboard.bandwidth.com) is called with Basic auth (api_username/api_password) while messaging/voice use OAuth2 client credentials — NOT verified against the live account (trial). 401/403 now maps to a clear ValidationFailedError. | P18 Opus review | Verify one real search once the account is upgraded; if the dashboard API user differs, add a separate credential pair. |
 | D38 | Bandwidth XML size cap runs on `resp.text` (after httpx buffered the body) — bounds parse cost, not memory. | P18 Opus review | Stream + cap `Content-Length`/bytes read if it ever matters. |
+
+## Discovered during P22 (Opus verify, 2026-09-10 — approved non-blocking)
+
+| ID | Issue | Found | Recipe |
+|---|---|---|---|
+| D39 | List import's owner summary (`unknown_owner_emails`, `assigned`) is computed but never persisted or shown; only logged. | P22 Opus verify N2 | P27 (Contacts pro) adds an `import_summary` JSON column on `contact_lists` (migration 0029) and shows it on the Lists tab. |
+| D40 | `/agent/contact/{e164}` returns a blank profile (200, name "") for a contact outside the inbox's department, but `last_messages` still come back in full. Decided: intended — thread data is the worker's own; profile fields follow the policy. | P22 Opus verify N3 | none |
+| D41 | An owner demoting themselves as the last owner gets 409 "last owner" before the 403 "own role" check. | P22 Opus verify N5 | cosmetic; leave |

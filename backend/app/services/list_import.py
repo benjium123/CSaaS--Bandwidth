@@ -25,13 +25,14 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.compliance import service as compliance_svc
 from app.db.base import set_org_context
 from app.errors import ValidationFailedError
-from app.models import ContactList, ContactListRow
+from app.models import ContactList, ContactListRow, Department, OrgMembership, User
 from app.services.contacts import resolve_or_create_contact
 from app.services.list_parsing import (
     ParsedFile,
@@ -116,6 +117,8 @@ def spawn_import(
     filename: str,
     data: bytes,
     mapping: dict[str, str],
+    assign_all_to: uuid.UUID | None = None,
+    assign_department: uuid.UUID | None = None,
 ) -> asyncio.Task:
     """Fire-and-forget: this function itself never raises. Mirrors
     ``sms_agent.spawn_from_ingest`` - a background failure is caught, logged, and recorded
@@ -130,6 +133,8 @@ def spawn_import(
                 filename=filename,
                 data=data,
                 mapping=mapping,
+                assign_all_to=assign_all_to,
+                assign_department=assign_department,
             )
         except Exception:  # noqa: BLE001 - background task: must never crash the loop
             log.exception("list_import_task_crashed", list_id=str(list_id))
@@ -160,7 +165,9 @@ async def run_import(
     filename: str,
     data: bytes,
     mapping: dict[str, str],
-) -> None:
+    assign_all_to: uuid.UUID | None = None,
+    assign_department: uuid.UUID | None = None,
+) -> dict:
     """The import itself, as a free function so tests can await it directly instead of
     only through the fire-and-forget :func:`spawn_import` wrapper."""
     if "phone" not in mapping:
@@ -172,10 +179,34 @@ async def run_import(
         set_org_context(session, org_id)
         lst = await session.get(ContactList, list_id)
         if lst is None:
-            return
+            return {"unknown_owner_emails": [], "assigned": 0}
+
+        # B2 (Opus P22 verify): the route validates these, but the service is also called
+        # directly - never write an owner/department that is not in this org.
+        if assign_all_to is not None:
+            _m = (await session.execute(
+                sa.select(OrgMembership.id).where(OrgMembership.user_id == assign_all_to)
+            )).scalar_one_or_none()
+            if _m is None:
+                assign_all_to = None
+        if assign_department is not None:
+            if await session.get(Department, assign_department) is None:
+                assign_department = None
+        email_map: dict[str, uuid.UUID] = {}
+        member_rows = (
+            await session.execute(
+                sa.select(User.id, User.email)
+                .join(OrgMembership, OrgMembership.user_id == User.id)
+                .where(OrgMembership.org_id == org_id)
+            )
+        ).all()
+        for user_id, email in member_rows:
+            email_map[email.lower()] = user_id
 
         seen_e164: set[str] = set()
         counts = {"accepted": 0, "invalid": 0, "duplicate": 0, "dnc": 0}
+        unknown_owner_emails: set[str] = set()
+        assigned = 0
 
         for row_number, raw_row in enumerate(parsed.rows, start=1):
             fields = extract_row(raw_row, mapping)
@@ -204,6 +235,25 @@ async def run_import(
                     contact.first_name = fields["first_name"][:127]
                 if fields.get("last_name") and not contact.last_name:
                     contact.last_name = fields["last_name"][:127]
+
+                raw_owner = fields.get("owner", "").strip().lower()
+                new_owner_id: uuid.UUID | None = None
+                if raw_owner:
+                    known_owner_id = email_map.get(raw_owner)
+                    if known_owner_id is None:
+                        unknown_owner_emails.add(raw_owner)
+                    else:
+                        new_owner_id = known_owner_id
+                else:
+                    new_owner_id = assign_all_to
+
+                if new_owner_id is not None and contact.owner_user_id is None:
+                    contact.owner_user_id = new_owner_id
+                    assigned += 1
+
+                if assign_department is not None and contact.department_id is None:
+                    contact.department_id = assign_department
+
                 contact_id = contact.id
 
             counts[status] += 1
@@ -240,3 +290,10 @@ async def run_import(
         lst.dnc_count = counts["dnc"]
         lst.status = "ready"
         await session.commit()
+
+        summary = {
+            "unknown_owner_emails": sorted(unknown_owner_emails),
+            "assigned": assigned,
+        }
+        log.info("list_import_owner_summary", **summary)
+        return summary

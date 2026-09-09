@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
-from app.errors import ConflictError, NotFoundError, ValidationFailedError
+from app.errors import ConflictError, ValidationFailedError
 from app.models import (
     CUSTOM_FIELD_KINDS,
     Company,
@@ -20,9 +20,13 @@ from app.models import (
     ContactPhone,
     ContactTag,
     CustomFieldDef,
+    Department,
     MessageThread,
+    OrgMembership,
     Tag,
 )
+from app.services import audit as audit_svc
+from app.services import contact_visibility
 from app.services import contacts as svc
 
 router = APIRouter(prefix="/api/v1", tags=["contacts"])
@@ -68,6 +72,8 @@ class ContactOut(BaseModel):
     first_name: str | None
     last_name: str | None
     company_id: uuid.UUID | None
+    owner_user_id: uuid.UUID | None
+    department_id: uuid.UUID | None
     attributes: dict
     phones: list[PhoneOut]
     created_at: datetime
@@ -98,6 +104,17 @@ class CustomFieldIn(BaseModel):
     label: str = Field(min_length=1, max_length=127)
     kind: str = "text"
     options: list[str] = []
+
+
+class ContactOwnerAssignIn(BaseModel):
+    owner_user_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
+
+
+class ContactBulkAssignIn(BaseModel):
+    contact_ids: list[uuid.UUID]
+    owner_user_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
 
 
 # ----------------------------------------------------------------------------------
@@ -137,6 +154,8 @@ async def _out(ctx: OrgContext, c: Contact) -> ContactOut:
         first_name=c.first_name,
         last_name=c.last_name,
         company_id=c.company_id,
+        owner_user_id=c.owner_user_id,
+        department_id=c.department_id,
         attributes=c.attributes or {},
         phones=await _phones_of(ctx, c.id),
         created_at=c.created_at,
@@ -210,8 +229,35 @@ async def list_contacts(
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
     q: str | None = None,
     limit: int = Query(50, ge=1, le=100),
+    scope: str | None = Query(None),
 ) -> list[ContactOut]:
+    vis_scope = await contact_visibility.resolve_scope(
+        ctx.session,
+        ctx.org,
+        user_id=ctx.actor_user_id,
+        permissions=ctx.role.permissions or [],
+    )
     stmt = sa.select(Contact).order_by(Contact.display_name.asc(), Contact.id.asc())
+    predicate = contact_visibility.visible_contacts_filter(vis_scope)
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+
+    if scope is not None:
+        if scope == "mine":
+            if ctx.actor_user_id is None:
+                return []
+            stmt = stmt.where(Contact.owner_user_id == ctx.actor_user_id)
+        elif scope == "team":
+            if not vis_scope.department_ids:
+                return []
+            stmt = stmt.where(Contact.department_id.in_(vis_scope.department_ids))
+        elif scope == "unowned":
+            stmt = stmt.where(
+                Contact.owner_user_id.is_(None), Contact.department_id.is_(None)
+            )
+        else:
+            raise ValidationFailedError("scope must be mine, team or unowned")
+
     if q:
         needle = f"%{_escape_like(q.strip().lower())}%"
         phone_match = sa.select(ContactPhone.contact_id).where(
@@ -246,6 +292,8 @@ async def list_contacts(
             first_name=c.first_name,
             last_name=c.last_name,
             company_id=c.company_id,
+            owner_user_id=c.owner_user_id,
+            department_id=c.department_id,
             attributes=c.attributes or {},
             phones=phones_by_contact.get(c.id, []),
             created_at=c.created_at,
@@ -261,6 +309,7 @@ async def create_contact(
 ) -> ContactOut:
     await _validate_company(ctx, payload.company_id)
     attributes = await svc.validate_attributes(ctx.session, payload.attributes)
+    owner_user_id, department_id = await contact_visibility.default_ownership_for_creator(ctx)
     contact = Contact(
         id=uuid.uuid4(),
         org_id=ctx.org.id,
@@ -268,6 +317,8 @@ async def create_contact(
         first_name=payload.first_name,
         last_name=payload.last_name,
         company_id=payload.company_id,
+        owner_user_id=owner_user_id,
+        department_id=department_id,
         attributes=attributes,
     )
     ctx.session.add(contact)
@@ -277,14 +328,121 @@ async def create_contact(
     return await _out(ctx, contact)
 
 
+@router.post("/contacts/bulk/assign", response_model=dict[str, int])
+async def bulk_assign_contacts(
+    payload: ContactBulkAssignIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:assign"))],
+) -> dict[str, int]:
+    if len(payload.contact_ids) > 500:
+        raise ValidationFailedError("You can assign at most 500 contacts at a time")
+    if not payload.contact_ids:
+        raise ValidationFailedError("Select at least one contact to assign")
+
+    requested = list(dict.fromkeys(payload.contact_ids))
+    if len(requested) > 500:
+        raise ValidationFailedError("You can assign at most 500 contacts at a time")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "owner_user_id" in updates and updates["owner_user_id"] is not None:
+        owner_row = (
+            await ctx.session.execute(
+                sa.select(OrgMembership).where(OrgMembership.user_id == updates["owner_user_id"])
+            )
+        ).scalar_one_or_none()
+        if owner_row is None:
+            raise ValidationFailedError("That person is not a member of this workspace")
+
+    if "department_id" in updates and updates["department_id"] is not None:
+        if await ctx.session.get(Department, updates["department_id"]) is None:
+            raise ValidationFailedError("That team does not exist")
+
+    vis_scope = await contact_visibility.resolve_scope(
+        ctx.session,
+        ctx.org,
+        user_id=ctx.actor_user_id,
+        permissions=ctx.role.permissions or [],
+    )
+    predicate = contact_visibility.visible_contacts_filter(vis_scope)
+    stmt = sa.select(Contact).where(Contact.id.in_(requested))
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    contacts = (await ctx.session.execute(stmt)).scalars().all()
+
+    updated = 0
+    for contact in contacts:
+        if "owner_user_id" in updates:
+            contact.owner_user_id = updates["owner_user_id"]
+        if "department_id" in updates:
+            contact.department_id = updates["department_id"]
+        updated += 1
+
+    skipped = len(requested) - updated
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="contact.assign",
+        target_type="contact",
+        target_id=None,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={"updated": updated, "skipped": skipped},
+    )
+    await ctx.session.commit()
+    return {"updated": updated, "skipped": skipped}
+
+
+@router.patch("/contacts/{contact_id}/owner", response_model=ContactOut)
+async def assign_contact_owner(
+    contact_id: uuid.UUID,
+    payload: ContactOwnerAssignIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:assign"))],
+) -> ContactOut:
+    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
+    updates = payload.model_dump(exclude_unset=True)
+
+    if "owner_user_id" in updates and updates["owner_user_id"] is not None:
+        owner_row = (
+            await ctx.session.execute(
+                sa.select(OrgMembership).where(OrgMembership.user_id == updates["owner_user_id"])
+            )
+        ).scalar_one_or_none()
+        if owner_row is None:
+            raise ValidationFailedError("That person is not a member of this workspace")
+
+    if "department_id" in updates and updates["department_id"] is not None:
+        if await ctx.session.get(Department, updates["department_id"]) is None:
+            raise ValidationFailedError("That team does not exist")
+
+    new_owner_id = updates.get("owner_user_id", contact.owner_user_id)
+    new_department_id = updates.get("department_id", contact.department_id)
+    if "owner_user_id" in updates:
+        contact.owner_user_id = updates["owner_user_id"]
+    if "department_id" in updates:
+        contact.department_id = updates["department_id"]
+
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="contact.assign",
+        target_type="contact",
+        target_id=str(contact.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={
+            "owner_user_id": str(new_owner_id) if new_owner_id is not None else None,
+            "department_id": str(new_department_id) if new_department_id is not None else None,
+        },
+    )
+    await ctx.session.commit()
+    return await _out(ctx, contact)
+
+
 @router.get("/contacts/{contact_id}", response_model=ContactOut)
 async def get_contact(
     contact_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
 ) -> ContactOut:
-    contact = await ctx.session.get(Contact, contact_id)
-    if contact is None:
-        raise NotFoundError("Contact not found")
+    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
     return await _out(ctx, contact)
 
 
@@ -294,9 +452,7 @@ async def patch_contact(
     payload: ContactPatch,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> ContactOut:
-    contact = await ctx.session.get(Contact, contact_id)
-    if contact is None:
-        raise NotFoundError("Contact not found")
+    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
 
     if payload.display_name is not None:
         contact.display_name = payload.display_name.strip()
@@ -321,9 +477,7 @@ async def delete_contact(
     contact_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> None:
-    contact = await ctx.session.get(Contact, contact_id)
-    if contact is None:
-        raise NotFoundError("Contact not found")
+    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
     # Threads keep their history: message_threads.contact_id is ON DELETE SET NULL.
     await ctx.session.delete(contact)
     await ctx.session.commit()
@@ -337,6 +491,7 @@ async def list_notes(
     contact_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
 ) -> list[dict]:
+    await contact_visibility.get_visible_contact(ctx, contact_id)
     rows = (
         await ctx.session.execute(
             sa.select(ContactNote)
@@ -361,8 +516,7 @@ async def add_note(
     payload: NoteIn,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> dict:
-    if await ctx.session.get(Contact, contact_id) is None:
-        raise NotFoundError("Contact not found")
+    await contact_visibility.get_visible_contact(ctx, contact_id)
     note = ContactNote(
         id=uuid.uuid4(),
         org_id=ctx.org.id,
@@ -381,8 +535,7 @@ async def set_contact_tags(
     payload: dict[str, list[uuid.UUID]],
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> dict:
-    if await ctx.session.get(Contact, contact_id) is None:
-        raise NotFoundError("Contact not found")
+    await contact_visibility.get_visible_contact(ctx, contact_id)
     wanted = set(payload.get("tag_ids", []))
 
     if wanted:

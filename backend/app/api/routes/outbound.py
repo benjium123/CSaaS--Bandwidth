@@ -18,13 +18,15 @@ from pydantic import BaseModel, Field
 
 from app.auth.deps import OrgContext, get_current_user, require_permission
 from app.db.session import get_sessionmaker
-from app.errors import ConflictError, NotFoundError, ValidationFailedError
+from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import (
     CAMPAIGN_CHANNELS,
     DIALER_MODES,
     ContactList,
     ContactListRow,
+    Department,
     DialAttempt,
+    OrgMembership,
     OutboundCampaign,
     OutboundSend,
     User,
@@ -160,6 +162,8 @@ async def upload_list(
 
 class CommitIn(BaseModel):
     mapping: dict[str, str]
+    assign_all_to: uuid.UUID | None = None
+    assign_department: uuid.UUID | None = None
 
 
 @router.post("/lists/{list_id}/commit", response_model=ListOut, status_code=202)
@@ -177,6 +181,25 @@ async def commit_list(
         raise ConflictError(f"List is already {lst.status!r}")
     if "phone" not in payload.mapping:
         raise ValidationFailedError("mapping must include 'phone'")
+
+    # B2 (Opus P22 verify): "Assign all to" is an ownership change, so it needs the same
+    # permission and the same validation as /contacts/bulk/assign - campaigns:manage
+    # alone must not be able to re-own every imported contact or write a foreign id.
+    if payload.assign_all_to is not None or payload.assign_department is not None:
+        if not ctx.role.grants("contacts:assign"):
+            raise PermissionDeniedError("You cannot assign contacts to people or teams")
+    if payload.assign_all_to is not None:
+        member = (
+            await ctx.session.execute(
+                sa.select(OrgMembership.id).where(OrgMembership.user_id == payload.assign_all_to)
+            )
+        ).scalar_one_or_none()
+        if member is None:
+            raise ValidationFailedError("That person is not a member of this workspace")
+    if payload.assign_department is not None:
+        dept = await ctx.session.get(Department, payload.assign_department)
+        if dept is None:
+            raise ValidationFailedError("That team does not exist")
 
     # D5: fetch the uploaded data BEFORE claiming the list - claiming first meant a
     # store 404 here (an expired upload) left import_started_at permanently set with
@@ -208,6 +231,8 @@ async def commit_list(
         filename=lst.source_filename,
         data=data,
         mapping=payload.mapping,
+        assign_all_to=payload.assign_all_to,
+        assign_department=payload.assign_department,
     )
     return _list_out(lst)
 

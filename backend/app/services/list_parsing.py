@@ -133,6 +133,8 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
     # P11 auto-texter: a per-row message column - the uploaded sheet can carry the text
     # to send to that specific contact (user directive 2026-08-29).
     "message": ["message", "text", "sms", "body", "text message", "custom message", "sms text"],
+    # P22: optional per-row owner (email), resolved to a member id in list_import.py.
+    "owner": ["owner", "owner email", "assigned to", "owner_email"],
 }
 
 

@@ -11,10 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import OrgContext, get_current_user, require_permission
 from app.db.session import get_session
-from app.errors import ConflictError, NotFoundError, PermissionDeniedError
+from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import WILDCARD, Invite, OrgMembership, Role, User
 from app.repositories import orgs as orgs_repo
 from app.services import audit as audit_svc
+from app.services import contact_visibility
 from app.services import invites as invites_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
@@ -44,6 +45,10 @@ class MemberOut(BaseModel):
     role_name: str
 
 
+class OrgSettingsIn(BaseModel):
+    contact_visibility: str = Field(min_length=1, max_length=16)
+
+
 @router.post("", response_model=OrgOut, status_code=201)
 async def create_org(
     payload: OrgCreateIn,
@@ -60,6 +65,37 @@ async def current_org(
     ctx: Annotated[OrgContext, Depends(require_permission("org:read"))],
 ) -> OrgOut:
     return OrgOut(id=ctx.org.id, name=ctx.org.name, slug=ctx.org.slug)
+
+
+@router.get("/current/settings")
+async def current_org_settings(
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+) -> dict:
+    return {"contact_visibility": ctx.org.contact_visibility}
+
+
+@router.patch("/current/settings")
+async def update_org_settings(
+    payload: OrgSettingsIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+) -> dict:
+    if payload.contact_visibility not in contact_visibility.POLICIES:
+        raise ValidationFailedError(
+            "Contact visibility must be everyone, department or owner"
+        )
+    ctx.org.contact_visibility = payload.contact_visibility
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="org.settings_update",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={"contact_visibility": payload.contact_visibility},
+    )
+    await ctx.session.commit()
+    return {"contact_visibility": ctx.org.contact_visibility}
 
 
 @router.get("/current/roles", response_model=list[RoleOut])
@@ -217,6 +253,9 @@ async def update_member(
         ).scalar_one()
         if owner_count <= 1:
             raise ConflictError("Cannot demote the last owner of an organisation")
+
+    if user_id == ctx.actor_user_id:
+        raise PermissionDeniedError("You cannot change your own role")
 
     membership.role_id = new_role.id
     audit_svc.record(

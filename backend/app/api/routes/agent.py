@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
@@ -19,9 +20,10 @@ from app.auth.deps import OrgContext, require_permission
 from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, UnauthenticatedError
-from app.models import AgentProfile
+from app.models import AgentProfile, Contact, ContactPhone, Org
 from app.models.agent import DEFAULT_SMS_HANDOFF_KEYWORDS
 from app.services import agent as agent_svc
+from app.services import contact_visibility
 from app.services import kb as kb_svc
 
 router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
@@ -119,8 +121,33 @@ async def get_agent_contact(
     if call is None:
         raise NotFoundError("Call not found")
     set_org_context(session, call.org_id)
-    ctx = await agent_svc.get_contact_context(session, to_e164(e164))
-    return ContactOut(**ctx)
+
+    org = await session.get(Org, call.org_id)
+    policy = org.contact_visibility if org is not None else "everyone"
+    dept_id = await contact_visibility.department_for_inbox_number(session, call.our_e164)
+    scope = contact_visibility.machine_scope(policy, dept_id)
+    predicate = contact_visibility.visible_contacts_filter(scope)
+
+    contact_ctx = await agent_svc.get_contact_context(session, to_e164(e164))
+
+    visible = True
+    if predicate is not None:
+        found = (
+            await session.execute(
+                sa.select(Contact.id)
+                .join(ContactPhone, ContactPhone.contact_id == Contact.id)
+                .where(ContactPhone.e164 == to_e164(e164))
+                .where(predicate)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        visible = found is not None
+
+    if not visible:
+        contact_ctx["name"] = ""
+        contact_ctx["tags"] = []
+
+    return ContactOut(**contact_ctx)
 
 
 class AppointmentBookIn(BaseModel):
