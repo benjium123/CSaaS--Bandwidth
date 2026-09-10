@@ -37,6 +37,7 @@ from app.errors import (
 from app.models import AgentProfile, Contact, ContactPhone, KbDocument, Org, OrgNumber
 from app.models.agent import DEFAULT_SMS_HANDOFF_KEYWORDS
 from app.services import agent as agent_svc
+from app.services import ai_usage
 from app.services import assistant_dispatch, contact_visibility, kb_ingest, voice_preview
 from app.services import audit as audit_svc
 from app.services import kb as kb_svc
@@ -847,7 +848,7 @@ async def get_agent_config(
     call_id: uuid.UUID,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> dict:
+) -> dict | JSONResponse:
     settings = request.app.state.settings
     # Cheap global-shape check first, then resolve the call, then bind the token to THIS
     # call so a token leaked from another call cannot read this call's configuration.
@@ -868,14 +869,47 @@ async def get_agent_config(
     if profile is None:
         profile = AgentProfile(id=uuid.uuid4(), org_id=call.org_id, name="")
 
+    reserve = await ai_usage.reserve_for_call(
+        session,
+        org,
+        profile,
+        call,
+        settings=settings,
+    )
+
+    if not reserve["ok"]:
+        return JSONResponse(
+            status_code=402,
+            content={
+                "error": {
+                    "code": "insufficient_credits",
+                    "message": reserve["message"],
+                    "request_id": request.headers.get("X-Request-Id", ""),
+                    "details": {
+                        "refused": True,
+                        "fallback": reserve["fallback"],
+                    },
+                }
+            },
+        )
+
     include_keys = getattr(settings, "ai_per_org_keys", False)
-    return await agent_svc.resolve_worker_config(
+    config = await agent_svc.resolve_worker_config(
         session,
         request.app.state.settings,
         call=call,
         profile=profile,
         include_keys=include_keys,
     )
+    config["credits"] = {
+        "reserved_micros": reserve["reserved_micros"],
+        "reference": reserve["reference"],
+    }
+
+    # The hold must be durable BEFORE the worker is told it may run the call:
+    # an uncommitted hold is not a hold.
+    await session.commit()
+    return config
 
 
 class ToolCallIn(BaseModel):
@@ -1046,3 +1080,61 @@ async def delete_kb_document(
         detail={"title": doc.title},
     )
     await ctx.session.commit()
+
+
+class BatchUsageEventIn(BaseModel):
+    call_id: uuid.UUID | None = None
+    thread_id: uuid.UUID | None = None
+    profile_id: uuid.UUID | None = None
+    provider: str = Field(max_length=16)
+    kind: str = Field(max_length=8)
+    metric: str = Field(max_length=32)
+    quantity: int = Field(ge=0)
+    source: str = Field(max_length=16)
+    idempotency_key: str = Field(max_length=128)
+    occurred_at: datetime | None = None
+
+
+class BatchUsageIn(BaseModel):
+    events: list[BatchUsageEventIn] = Field(min_length=1, max_length=200)
+
+
+@router.post("/usage", status_code=202)
+async def post_agent_usage(
+    payload: BatchUsageIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    _require_worker(request)
+
+    for event in payload.events:
+        if event.call_id is None:
+            raise ValidationFailedError(
+                "Each usage event must include the call id."
+            )
+
+    call_ids = {event.call_id for event in payload.events}
+    calls = {}
+    for call_id in call_ids:
+        call = await agent_svc.get_call_unscoped(session, call_id)
+        if call is None:
+            raise NotFoundError("Call not found")
+        calls[call_id] = call
+
+    org_ids = {call.org_id for call in calls.values()}
+    if len(org_ids) != 1:
+        raise ValidationFailedError(
+            "All usage events must belong to the same call workspace."
+        )
+    org_id = org_ids.pop()
+
+    set_org_context(session, org_id)
+    items = [event.model_dump() for event in payload.events]
+    accepted, duplicates = await ai_usage.record_batch(
+        session,
+        org_id,
+        items,
+        settings=request.app.state.settings,
+    )
+    await session.commit()
+    return {"accepted": accepted, "duplicates": duplicates}

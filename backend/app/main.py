@@ -15,6 +15,7 @@ from app.api.routes import agent as agent_routes
 from app.api.routes import ai_providers as ai_provider_routes
 from app.api.routes import analytics as analytics_routes
 from app.api.routes import auth as auth_routes
+from app.api.routes import billing as billing_routes
 from app.api.routes import calls as call_routes
 from app.api.routes import compliance as compliance_routes
 from app.api.routes import contacts as contact_routes
@@ -210,6 +211,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_routes.router)
     app.include_router(status_routes.router)
     app.include_router(auth_routes.router)
+    app.include_router(billing_routes.router)
     app.include_router(org_routes.router)
     app.include_router(me_routes.router)
     app.include_router(roles_routes.router)

@@ -46,6 +46,7 @@ from app.models import (
     Tag,
 )
 from app.models.voice import TERMINAL_CALL_STATUSES
+from app.services import ai_usage
 from app.services import ai_providers as ai_providers_svc
 from app.services import calls as calls_svc
 from app.services import contacts as contacts_svc
@@ -489,6 +490,12 @@ async def simulate_turn(session, settings, *, org, profile, messages, client=Non
         session, settings, org=org, profile=profile, include_keys=True
     )
     provider = cfg["llm"]["provider"]
+    if provider not in ("openai", "anthropic"):
+        raise ValidationFailedError(
+            "We cannot test this assistant's language model here yet - choose OpenAI "
+            "or Anthropic for the test."
+        )
+
     api_key = (cfg.get("keys") or {}).get("llm")
     if not api_key:
         raise ValidationFailedError(
@@ -538,6 +545,37 @@ async def simulate_turn(session, settings, *, org, profile, messages, client=Non
     await usage_svc.record_ai_tokens(
         session, org.id, tokens_in=result.tokens_in, tokens_out=result.tokens_out
     )
+    # P24: write the fine-grained billable AI events beside the legacy daily rollup.
+    # The old ai_tokens row stays for back-compat this phase; these two events are
+    # what Phase 24 prices and reserves against. A simulator turn is never retried,
+    # so a fresh uuid4 hex is a safe unique idempotency key here. Zero-quantity
+    # events are skipped so they do not become no-op billable rows.
+    if result.tokens_in > 0:
+        await ai_usage.record(
+            session,
+            org.id,
+            provider=provider,
+            kind="llm",
+            metric="llm_tokens_in",
+            quantity=result.tokens_in,
+            source="simulate",
+            idempotency_key=uuid.uuid4().hex,
+            profile_id=profile.id,
+            settings=settings,
+        )
+    if result.tokens_out > 0:
+        await ai_usage.record(
+            session,
+            org.id,
+            provider=provider,
+            kind="llm",
+            metric="llm_tokens_out",
+            quantity=result.tokens_out,
+            source="simulate",
+            idempotency_key=uuid.uuid4().hex,
+            profile_id=profile.id,
+            settings=settings,
+        )
 
     return {
         "reply": result.text,

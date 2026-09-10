@@ -1,3 +1,4 @@
+
 """P19: provider rate cards and derived daily spend.
 
 Spend is an ESTIMATE computed from our own message/call/number records × a rate card,
@@ -32,6 +33,12 @@ SPEND_METRICS: tuple[str, ...] = (
 
 #: Estimated public list prices (USD micros per unit) used when an org has no override.
 #: Clearly an estimate; operators edit per-org rates in the Providers page.
+#:
+#: P24 AI defaults below are ESTIMATES for scope 'ai'. Ops may override them per org.
+#: LLM tokens are priced per token. At these list prices the honest per-token cost is
+#: usually below 1 micro, which would round to 0 in an integer column and make every
+#: token event look free. Therefore the token defaults use a floor of 1 micro per token;
+#: the estimate remains deliberately conservative and is replaced by any org override.
 DEFAULT_RATES_MICROS: dict[str, dict[str, int]] = {
     "bandwidth": {"sms_out": 4_000, "sms_in": 4_000, "mms_out": 15_000, "mms_in": 15_000,
                   "voice_min_out": 10_000, "voice_min_in": 5_500, "number_mrc": 350_000,
@@ -48,6 +55,14 @@ DEFAULT_RATES_MICROS: dict[str, dict[str, int]] = {
     "signalwire": {"sms_out": 4_000, "sms_in": 4_000, "mms_out": 12_000, "mms_in": 12_000,
                    "voice_min_out": 8_500, "voice_min_in": 5_000, "number_mrc": 1_000_000,
                    "number_setup": 0},
+    # AI provider list-price estimates (USD micros per unit). They assume 2026
+    # public pricing and are deliberately round-numbered; per-org overrides win.
+    "openai": {"llm_tokens_in": 3, "llm_tokens_out": 10},    # ~$3 / $10 per 1M tokens
+    "anthropic": {"llm_tokens_in": 3, "llm_tokens_out": 15},    # ~$3 / $15 per 1M tokens
+    "deepgram": {"stt_seconds": 100},                          # ~$0.006 per minute
+    "elevenlabs": {"tts_characters": 250},                       # ~$0.25 per 1k characters
+    "cartesia": {"tts_characters": 25},                        # ~$0.025 per 1k characters
+    "livekit": {"ai_voice_seconds": 1_000},                   # ~$0.06 per minute
 }
 
 

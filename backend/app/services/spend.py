@@ -87,6 +87,13 @@ async def effective_rates(session: AsyncSession) -> list[dict]:
 
     out: list[dict] = []
     for provider in DEFAULT_RATES_MICROS:
+        # AI providers are now present in DEFAULT_RATES_MICROS, but their rates are
+        # scope 'ai' (AI_USAGE_METRICS) and are served by the billing rate sheet.
+        # This is the carrier-spend sheet, so only include providers whose default
+        # map contains one of SPEND_METRICS.
+        if not any(metric in SPEND_METRICS for metric in DEFAULT_RATES_MICROS[provider]):
+            continue
+
         for metric in SPEND_METRICS:
             default_cost = int(DEFAULT_RATES_MICROS[provider].get(metric, 0))
             if (provider, metric) in overrides:

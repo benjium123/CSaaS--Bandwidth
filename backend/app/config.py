@@ -70,6 +70,24 @@ class Settings(BaseSettings):
     platform_ops_token: SecretStr = SecretStr("")
     jwt_expire_hours: int = 24
 
+    # P24: when true, AI usage events debit prepaid credits. While false (default),
+    # metering still runs and rows are written as shadow events without a charge.
+    ai_billing_enforce: bool = False
+    # P24: Stripe secret key for prepaid credit top-ups. Empty means Stripe is not
+    # configured, and billing endpoints answer 503 until it is set.
+    stripe_secret_key: SecretStr = SecretStr("")
+    # P24: Stripe webhook signing secret used to verify that billing events came
+    # from Stripe.
+    stripe_webhook_secret: SecretStr = SecretStr("")
+    # P24: ISO currency code used when creating Stripe price objects.
+    stripe_price_currency: str = "usd"
+    # P24: where a customer lands after completing a top-up. Empty derives from
+    # public_web_url.
+    stripe_success_url: str = ""
+    # P24: where a customer lands after cancelling a top-up. Empty derives from
+    # public_web_url.
+    stripe_cancel_url: str = ""
+
     # ---------------- rate limiting ----------------
     rate_limit_enabled: bool = True
     rate_limit_max_requests: int = 20

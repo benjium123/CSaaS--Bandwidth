@@ -31,6 +31,7 @@ PLATFORM_EVENT_TYPES = (
     "voicemail.created",
     "campaign.completed",
     "appointment.booked",
+    "billing.low_balance",  # P24 prepaid-credit warning, emitted once per org/top-up cycle/level
 )
 USAGE_METRICS = (
     "sms_segments",

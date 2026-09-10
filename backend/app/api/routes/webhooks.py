@@ -8,17 +8,19 @@ far inside Bandwidth's timeout without needing a queue.
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Annotated
 
 import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_session
-from app.models import CallLeg, OrgNumber
+from app.errors import UnauthenticatedError
+from app.models import CallLeg, Org, OrgNumber
 from app.models.provider_accounts import PROVIDER_NAMES, ProviderAccount
 from app.providers import registry_org
 from app.providers.bandwidth import webhooks as bw_webhooks
@@ -26,9 +28,11 @@ from app.providers.telnyx.voice import TelnyxVoiceCommandError
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
 from app.services import assistant_dispatch
 from app.services import calls as calls_svc
+from app.services import credits
 from app.services import credentials as credential_svc
 from app.services import messaging as svc
 from app.services import routing_exec as routing_exec_svc
+from app.services import stripe_client
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
 
@@ -629,3 +633,78 @@ async def livekit_webhook(
         log.exception("assistant_dispatch_hook_failed", event_type=event.get("event"))
 
     return JSONResponse(status_code=200, content={"status": "ok"})
+
+
+@router.post("/stripe")
+async def stripe_webhook(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    stripe_signature: Annotated[str | None, Header(alias="Stripe-Signature")] = None,
+):
+    if not stripe_signature:
+        raise UnauthenticatedError(
+            "We could not verify that this came from our payment provider."
+        )
+
+    payload = await request.body()
+    event = stripe_client.verify_webhook(
+        request.app.state.settings,
+        payload,
+        stripe_signature,
+    )
+
+    if event.get("type") != "payment_intent.succeeded":
+        return Response(status_code=204)
+
+    intent = event.get("data", {}).get("object", {})
+    metadata = intent.get("metadata") or {}
+    if metadata.get("kind") != "credit_topup":
+        log.warning(
+            "stripe_webhook_unexpected_intent",
+            event_type=event.get("type"),
+            metadata=list(metadata.keys()),
+        )
+        return Response(status_code=204)
+
+    org_id_str = metadata.get("org_id")
+    try:
+        org_id = uuid.UUID(org_id_str)
+    except (TypeError, ValueError):
+        log.warning("stripe_webhook_invalid_org", metadata=metadata)
+        return Response(status_code=204)
+
+    org = await session.get(Org, org_id)
+    if org is None:
+        log.warning("stripe_webhook_unknown_org", org_id=str(org_id))
+        return Response(status_code=204)
+
+    intent_id = intent.get("id")
+    try:
+        amount_received = int(intent.get("amount_received", 0))
+    except (TypeError, ValueError):
+        amount_received = 0
+
+    if not intent_id or amount_received <= 0:
+        log.warning(
+            "stripe_webhook_unattributable_intent",
+            org_id=str(org_id),
+            metadata=metadata,
+        )
+        return Response(status_code=204)
+
+    set_org_context(session, org_id)
+
+    # credits.topup is idempotent on (org, entry_type='topup', reference=intent id),
+    # so a replayed event is a no-op rather than a double credit.
+    await credits.topup(
+        session,
+        org_id,
+        amount_micros=amount_received * 10_000,
+        reference=intent_id,
+        note="Card payment",
+    )
+    await session.commit()
+
+    # The sweeper owns low-balance warnings. Calling check_balance_warnings here
+    # would email on every replayed/retried webhook inside the request path.
+    return {"ok": True}

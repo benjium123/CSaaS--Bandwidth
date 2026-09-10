@@ -643,8 +643,24 @@ async def _apply_event_to_leg_and_call(
     legs = await load_legs(session, call.id)
     if derive_call_status(call, legs):
         changed = True
-    return changed
 
+    if call.status in TERMINAL_CALL_STATUSES:
+        try:
+            # Imported lazily: services.ai_usage imports services.credits and
+            # services.spend, and services.spend imports services.usage, so a
+            # module-level import would cycle. A failed release is picked up by
+            # the sweeper's stale-reserve pass, so a webhook is never 500'd
+            # over billing.
+            from app.services import ai_usage
+
+            await ai_usage.release_for_call(session, call.org_id, call.id)
+        except Exception:
+            log.exception(
+                "ai_usage.call_release_failed",
+                call_id=str(call.id),
+            )
+
+    return changed
 
 # --------------------------------------------------------------------------------------
 # Transfer / hangup

@@ -40,6 +40,7 @@ from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ComplianceBlockedError, ValidationFailedError
 from app.models import AgentSmsTurn, Appointment, Message, MessageThread
+from app.services import ai_usage
 from app.services import agent as agent_svc
 from app.services import kb as kb_svc
 from app.services import llm_client
@@ -250,12 +251,53 @@ async def _book_appointment_sms(
     return appt
 
 
-def _apply_turn_usage(turn: AgentSmsTurn, usage: list[tuple[int, int]]) -> None:
-    """P13 DR-9: token totals across the turn's LLM rounds; untouched (NULL) when no
-    round completed."""
+async def _apply_turn_usage(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    turn: AgentSmsTurn,
+    usage: list[tuple[int, int]],
+    *,
+    provider: str,
+    settings=None,
+) -> None:
+    """P13 DR-9 + P24: update the legacy turn token totals and write the two
+    fine-grained billable AI usage events.
+
+    Callers must ``await`` this. Both call sites (the except branch and the
+    normal path) already have ``provider`` and ``settings`` in scope.
+    """
     if usage:
         turn.tokens_in = sum(t for t, _ in usage)
         turn.tokens_out = sum(t for _, t in usage)
+        # turn.id is a DB default applied at INSERT, so it can still be None here.
+        # turn.inbound_message_id is set at construction and is UNIQUE, so it is
+        # safe as an idempotency key component.
+        if turn.tokens_in > 0:
+            await ai_usage.record(
+                session,
+                org_id,
+                provider=provider,
+                kind="llm",
+                metric="llm_tokens_in",
+                quantity=turn.tokens_in,
+                source="sms_agent",
+                thread_id=turn.thread_id,
+                idempotency_key=f"sms_turn:{turn.inbound_message_id}:in",
+                settings=settings,
+            )
+        if turn.tokens_out > 0:
+            await ai_usage.record(
+                session,
+                org_id,
+                provider=provider,
+                kind="llm",
+                metric="llm_tokens_out",
+                quantity=turn.tokens_out,
+                source="sms_agent",
+                thread_id=turn.thread_id,
+                idempotency_key=f"sms_turn:{turn.inbound_message_id}:out",
+                settings=settings,
+            )
 
 
 def _publish_handoff(bus, org_id: uuid.UUID, thread: MessageThread, *, reason: str) -> None:  # noqa: ANN001
@@ -613,7 +655,9 @@ async def _maybe_reply_inner(
             usage_sink=usage,
         )
     except Exception as exc:  # noqa: BLE001 - LLMError and anything else: error + handoff
-        _apply_turn_usage(turn, usage)
+        await _apply_turn_usage(
+            session, org_id, turn, usage, provider=provider, settings=settings
+        )
         thread.ai_state = "handed_off"
         turn.status = "error"
         turn.detail = str(exc)[:255]
@@ -623,7 +667,9 @@ async def _maybe_reply_inner(
     finally:
         if owns_client:
             await client.aclose()
-    _apply_turn_usage(turn, usage)
+    await _apply_turn_usage(
+        session, org_id, turn, usage, provider=provider, settings=settings
+    )
 
     if handoff_reason is not None:
         thread.ai_state = "handed_off"

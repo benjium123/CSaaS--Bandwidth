@@ -12,19 +12,33 @@ transaction as its own commit (DR-6).
 
 from __future__ import annotations
 
+import hmac
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, Field
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.auth.deps import OrgContext, require_permission
-from app.errors import NotFoundError, ValidationFailedError
-from app.models import ApiKey, UsageRecord, WebhookDelivery, WebhookEndpoint
+from app.db.base import set_org_context
+from app.db.session import get_session
+from app.errors import (
+    FeatureUnavailableError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationFailedError,
+)
+from app.models import ApiKey, Org, UsageRecord, WebhookDelivery, WebhookEndpoint
+from app.models.billing import DEFAULT_AI_MARKUP_BPS
 from app.services import apikeys as apikeys_svc
+from app.services import ai_usage
 from app.services import audit as audit_svc
+from app.services import credits
+from app.services import spend as spend_svc
 from app.services import usage as usage_svc
 from app.services import webhooks_out as webhooks_out_svc
 
@@ -421,3 +435,264 @@ async def get_reconciliation(
 ) -> ReconciliationOut:
     items = await usage_svc.reconciliation(ctx.session, ctx.org.id, date_)
     return ReconciliationOut(date=date_, items=[ReconciliationItemOut(**i) for i in items])
+
+
+async def require_platform_operator(
+    request: Request,
+    x_platform_ops_token: Annotated[str | None, Header(alias="X-Platform-Ops-Token")] = None,
+) -> None:
+    configured = request.app.state.settings.platform_ops_token.get_secret_value().strip()
+    if not configured:
+        raise FeatureUnavailableError(
+            "Platform operator token is not configured; status callbacks are disabled"
+        )
+    # C6: constant-time compare - a naive != leaks timing information an attacker can
+    # use to recover the token byte-by-byte.
+    if not x_platform_ops_token or not hmac.compare_digest(x_platform_ops_token, configured):
+        raise PermissionDeniedError("Invalid platform operator token")
+
+
+class PlatformBillingPatch(BaseModel):
+    ai_markup_bps: int | None = None
+    ai_platform_fee_per_minute_micros: int | None = None
+
+
+class PlatformAdjustmentIn(BaseModel):
+    amount_micros: int
+    note: str
+    entry_type: str
+
+
+class PlatformRateIn(BaseModel):
+    provider: str
+    metric: str
+    unit_cost_micros: int
+
+
+class PlatformRatesPut(BaseModel):
+    rates: list[PlatformRateIn]
+
+
+def _platform_billing_shape(org, *, balance_micros: int, reserved_micros: int) -> dict:
+    return {
+        "balance_micros": balance_micros,
+        "reserved_micros": reserved_micros,
+        "ai_markup_bps": (
+            org.ai_markup_bps
+            if org.ai_markup_bps is not None
+            else DEFAULT_AI_MARKUP_BPS
+        ),
+        "ai_platform_fee_per_minute_micros": org.ai_platform_fee_per_minute_micros,
+        "ai_key_mode": org.ai_key_mode,
+    }
+
+
+@router.get("/platform/billing/orgs/{org_id}")
+async def get_platform_billing_org(
+    org_id: uuid.UUID,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    org = await session.get(Org, org_id)
+    if org is None:
+        raise NotFoundError("Org not found")
+
+    set_org_context(session, org_id)
+
+    balance = await credits.balance(session, org_id)
+    reserved = await credits.outstanding_reserves(session, org_id)
+    return _platform_billing_shape(
+        org,
+        balance_micros=balance,
+        reserved_micros=reserved,
+    )
+
+
+@router.patch("/platform/billing/orgs/{org_id}")
+async def patch_platform_billing_org(
+    org_id: uuid.UUID,
+    payload: PlatformBillingPatch,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    org = await session.get(Org, org_id)
+    if org is None:
+        raise NotFoundError("Org not found")
+
+    set_org_context(session, org_id)
+
+    if payload.ai_markup_bps is not None:
+        if payload.ai_markup_bps < 0 or payload.ai_markup_bps > 100_000:
+            raise ValidationFailedError("Markup must be between 0 and 1000 percent.")
+        org.ai_markup_bps = payload.ai_markup_bps
+
+    if payload.ai_platform_fee_per_minute_micros is not None:
+        if payload.ai_platform_fee_per_minute_micros < 0:
+            raise ValidationFailedError("Fee must not be negative.")
+        org.ai_platform_fee_per_minute_micros = payload.ai_platform_fee_per_minute_micros
+
+    audit_svc.record(
+        session,
+        org_id,
+        action="platform.billing_updated",
+        target_type="org",
+        target_id=str(org_id),
+        detail={
+            "ai_markup_bps": payload.ai_markup_bps,
+            "ai_platform_fee_per_minute_micros": payload.ai_platform_fee_per_minute_micros,
+        },
+    )
+    await session.commit()
+
+    balance = await credits.balance(session, org_id)
+    reserved = await credits.outstanding_reserves(session, org_id)
+    return _platform_billing_shape(
+        org,
+        balance_micros=balance,
+        reserved_micros=reserved,
+    )
+
+
+@router.post("/platform/billing/orgs/{org_id}/adjustments", status_code=201)
+async def post_platform_billing_adjustment(
+    org_id: uuid.UUID,
+    payload: PlatformAdjustmentIn,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    org = await session.get(Org, org_id)
+    if org is None:
+        raise NotFoundError("Org not found")
+
+    set_org_context(session, org_id)
+
+    note = payload.note.strip()
+    if not note:
+        raise ValidationFailedError("Say why this adjustment is being made.")
+    if payload.entry_type not in ("adjustment", "refund"):
+        raise ValidationFailedError("Entry type must be adjustment or refund.")
+
+    entry = await credits.adjust(
+        session,
+        org_id,
+        payload.amount_micros,
+        reference=f"ops:{uuid.uuid4()}",
+        note=note,
+        created_by=None,
+        entry_type=payload.entry_type,
+    )
+
+    entry_id = str(entry.id)
+    amount_micros = int(entry.amount_micros)
+    balance_after_micros = int(entry.balance_after_micros)
+
+    audit_svc.record(
+        session,
+        org_id,
+        action="platform.billing_adjustment_created",
+        target_type="credit_ledger",
+        target_id=entry_id,
+        detail={
+            "amount_micros": amount_micros,
+            "entry_type": payload.entry_type,
+            "note": note,
+        },
+    )
+    await session.commit()
+
+    return {
+        "id": entry_id,
+        "amount_micros": amount_micros,
+        "balance_after_micros": balance_after_micros,
+    }
+
+
+@router.put("/platform/billing/rates")
+async def put_platform_billing_rates(
+    payload: PlatformRatesPut,
+    org_id: Annotated[uuid.UUID, Query(description="Target org for these rate rows")],
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    set_org_context(session, org_id)
+
+    # A true platform-wide default row is Fable's schema call. Today operators write
+    # per-org overrides, so this route requires an org_id query parameter.
+    updated = await spend_svc.upsert_rates(
+        session,
+        [r.model_dump() for r in payload.rates],
+        org_id=org_id,
+    )
+
+    result = [
+        {
+            "provider": r.provider,
+            "metric": r.metric,
+            "unit_cost_micros": int(r.unit_cost_micros),
+            "currency": getattr(r, "currency", "USD"),
+        }
+        for r in updated
+    ]
+
+    audit_svc.record(
+        session,
+        org_id,
+        action="platform.billing_rates_updated",
+        target_type="org",
+        target_id=str(org_id),
+        detail={
+            "rates": [
+                {
+                    "provider": r.provider,
+                    "metric": r.metric,
+                    "unit_cost_micros": r.unit_cost_micros,
+                }
+                for r in payload.rates
+            ]
+        },
+    )
+    await session.commit()
+
+    return result
+
+
+@router.get("/platform/billing/margin")
+async def get_platform_billing_margin(
+    org_id: Annotated[uuid.UUID | None, Query()] = None,
+    start_date: Annotated[date, Query(alias="from")] = None,
+    end_date: Annotated[date, Query(alias="to")] = None,
+    _ops: Annotated[None, Depends(require_platform_operator)] = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    if start_date is None or end_date is None:
+        raise ValidationFailedError("from and to are required")
+    if start_date > end_date:
+        raise ValidationFailedError("from must be on or before to")
+
+    if org_id is not None:
+        set_org_context(session, org_id)
+
+    start_dt = datetime(
+        start_date.year,
+        start_date.month,
+        start_date.day,
+        tzinfo=timezone.utc,
+    )
+    end_dt = datetime(
+        end_date.year,
+        end_date.month,
+        end_date.day,
+        23,
+        59,
+        59,
+        999999,
+        tzinfo=timezone.utc,
+    )
+
+    # Operator-only surface: cost may appear here.
+    return await ai_usage.margin_report(
+        session,
+        org_id=org_id,
+        start=start_dt,
+        end=end_dt,
+    )
