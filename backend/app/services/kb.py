@@ -143,7 +143,7 @@ async def search(session: AsyncSession, org_id: uuid.UUID, query: str) -> list[d
     ).all()
 
     scored: list[dict] = []
-    for chunk, title in rows:
+    for chunk, title in rows:  # noqa: B007 - chunk is used below
         text_lower = chunk.text.lower()
         title_lower = title.lower()
         score = 0
@@ -152,7 +152,19 @@ async def search(session: AsyncSession, org_id: uuid.UUID, query: str) -> list[d
             if term in title_lower:
                 score += TITLE_BONUS
         if score > 0:
-            scored.append({"title": title, "text": chunk.text, "score": score})
+            # P23a: document_id lets a caller link a hit back to the document it came from
+            # (the assistant simulator shows the source next to each hit). Consumers pick
+            # the keys they want, so adding one is additive - but any consumer that splats
+            # this dict into a pydantic model needs the field declared there too (see
+            # KbSearchChunkOut in api/routes/agent.py).
+            scored.append(
+                {
+                    "document_id": str(chunk.document_id),
+                    "title": title,
+                    "text": chunk.text,
+                    "score": score,
+                }
+            )
 
     scored.sort(key=lambda c: c["score"], reverse=True)
     return scored[:SEARCH_LIMIT]

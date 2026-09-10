@@ -5,6 +5,8 @@ import { useAuth } from "@/auth/AuthContext";
 import { useGate } from "@/api/capabilities";
 import { fetchProviderAccounts } from "@/api/providers";
 import { SpendCard } from "@/components/spend/SpendCard";
+import { AiProvidersTab } from "@/components/assistants/AiProvidersTab";
+import { KnowledgeTab } from "@/components/assistants/KnowledgeTab";
 import {
   Button,
   Card,
@@ -142,11 +144,22 @@ function CallingSettingsSection() {
 }
 
 function AiSettingsSection() {
+  const gate = useGate();
+  // The section itself is already gated on settings:read (see SETTINGS_SECTIONS); a
+  // member who can only read must still see every control here, just unable to use it.
+  // fail-closed: useGate's `can` returns false while loading, same as everywhere else.
+  const canWrite = gate.can("settings:write");
+
   const tabs = [
-    { id: "agent", label: "Agent" },
+    { id: "assistants", label: "Assistants" },
+    { id: "providers", label: "Providers" },
+    { id: "knowledge", label: "Knowledge" },
     { id: "appointments", label: "Appointments" },
   ];
-  const { value, onChange } = useSettingsTab(tabs, "agent");
+  // P23a: the old default was "agent", which no longer exists as a tab id. An old
+  // bookmark carrying ?tab=agent falls through useSettingsTab's membership check and
+  // lands on Assistants - the same page it used to open, under its plain name.
+  const { value, onChange } = useSettingsTab(tabs, "assistants");
 
   return (
     <SettingsTabs
@@ -156,7 +169,25 @@ function AiSettingsSection() {
       onChange={onChange}
       ariaLabel="AI settings"
     >
-      {value === "agent" ? <AgentPage /> : <AppointmentsPage />}
+      {/* A native <fieldset disabled> cascades to every descendant form control (button,
+          input, select) regardless of nesting depth, so read-only access here does not
+          require threading a prop through each of the four tabs individually. */}
+      <fieldset disabled={!canWrite} className="m-0 min-w-0 border-0 p-0">
+        {!canWrite && (
+          <p className="mb-3 text-xs text-muted-foreground">
+            You can view this, but only an admin can make changes here.
+          </p>
+        )}
+        {value === "assistants" ? (
+          <AgentPage />
+        ) : value === "providers" ? (
+          <AiProvidersTab />
+        ) : value === "knowledge" ? (
+          <KnowledgeTab />
+        ) : (
+          <AppointmentsPage />
+        )}
+      </fieldset>
     </SettingsTabs>
   );
 }

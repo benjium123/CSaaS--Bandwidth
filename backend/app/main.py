@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import agent as agent_routes
+from app.api.routes import ai_providers as ai_provider_routes
 from app.api.routes import analytics as analytics_routes
 from app.api.routes import auth as auth_routes
 from app.api.routes import calls as call_routes
@@ -235,6 +236,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(platform_routes.router)
     app.include_router(analytics_routes.router)
     app.include_router(provider_accounts_routes.router)
+    app.include_router(ai_provider_routes.router)
     app.include_router(spend_routes.router)
     return app
 

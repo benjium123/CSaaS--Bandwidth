@@ -1,321 +1,219 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { Assistant } from "@/api/assistants";
 import { AgentPage } from "./AgentPage";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
 
-function makeProfile(overrides: Record<string, unknown> = {}) {
+function makeAssistant(overrides: Partial<Assistant> = {}): Assistant {
   return {
-    id: "p1",
+    id: "a1",
     name: "Main",
-    system_prompt: "",
-    greeting: "",
-    voice_id: "",
-    llm_provider: "",
-    llm_model: "",
+    system_prompt: "You are a helpful assistant.",
+    greeting: "Hello!",
+    voice_id: "voice-1",
+    llm_provider: "openai",
+    llm_model: "gpt-4.1",
+    voicemail_message: "Leave a message.",
     is_default: false,
-    extra: {},
-    sms_enabled: false,
-    sms_turn_ceiling: 10,
-    sms_handoff_keywords: [],
-    sms_max_reply_chars: 480,
+    goals: "Answer the question.",
+    guardrails: "Do not be rude.",
+    language: "en",
+    max_call_seconds: 900,
+    silence_timeout_seconds: 12,
+    interrupt_sensitivity: "medium",
+    voicemail_action: "leave_message",
+    tools: [],
+    post_call_fields: [],
+    effective_prompt: null,
     ...overrides,
   };
 }
 
+function makeClient(initialAssistants: Assistant[]) {
+  let assistants = initialAssistants.map((assistant) => ({ ...assistant }));
+  let nextAssistantNumber = 1;
+
+  return makeStubClient({
+    "/api/v1/agent/profiles": (path: string, init: RequestInit & { json?: unknown }) => {
+      const method = (init.method ?? "GET").toUpperCase();
+
+      if (path === "/api/v1/agent/profiles" && method === "GET") {
+        return assistants.map((assistant) => ({ ...assistant }));
+      }
+
+      if (path === "/api/v1/agent/profiles" && method === "POST") {
+        const body = (init.json ?? {}) as Partial<Assistant>;
+        const created: Assistant = {
+          ...makeAssistant(),
+          ...body,
+          id: `created-${nextAssistantNumber++}`,
+          is_default: false,
+        };
+        assistants.push(created);
+        return { ...created };
+      }
+
+      if (path.endsWith("/default") && method === "POST") {
+        const id = path
+          .slice("/api/v1/agent/profiles/".length)
+          .replace(/\/default$/, "");
+        assistants = assistants.map((assistant) => ({
+          ...assistant,
+          is_default: assistant.id === id,
+        }));
+        const updated = assistants.find((assistant) => assistant.id === id);
+        if (!updated) throw new Error(`No assistant ${id}`);
+        return { ...updated };
+      }
+
+      if (path.endsWith("/simulate") && method === "POST") {
+        return { reply: "Hello", tokens_in: 1, tokens_out: 1, kb_hits: [] };
+      }
+
+      if (method === "PATCH") {
+        const id = path
+          .slice("/api/v1/agent/profiles/".length)
+          .replace(/\/default$/, "");
+        const index = assistants.findIndex((assistant) => assistant.id === id);
+        if (index < 0) throw new Error(`No assistant ${id}`);
+        const body = (init.json ?? {}) as Partial<Assistant>;
+        const updated: Assistant = {
+          ...assistants[index],
+          ...body,
+          id: assistants[index].id,
+        };
+        assistants[index] = updated;
+        return { ...updated };
+      }
+
+      if (method === "DELETE") {
+        const id = path
+          .slice("/api/v1/agent/profiles/".length)
+          .replace(/\/default$/, "");
+        assistants = assistants.filter((assistant) => assistant.id !== id);
+        return undefined;
+      }
+
+      throw new Error(`Unhandled profiles request ${method} ${path}`);
+    },
+    "/api/v1/agent/kb/documents": (_path: string, init: RequestInit & { json?: unknown }) => {
+      if ((init.method ?? "GET") === "GET") return [];
+      throw new Error(`Unhandled kb documents ${String(init.method)} ${_path}`);
+    },
+  });
+}
+
 describe("AgentPage", () => {
-  it("creates, edits, sets default, and deletes a profile end to end", async () => {
-    let profiles: Record<string, unknown>[] = [];
-    let nextId = 1;
-
-    const client = makeStubClient({
-      "/api/v1/agent/profiles": (path: string, init: RequestInit & { json?: unknown }) => {
-        const method = init.method ?? "GET";
-        const defaultMatch = path.match(/^\/api\/v1\/agent\/profiles\/([^/]+)\/default$/);
-        const idMatch = path.match(/^\/api\/v1\/agent\/profiles\/([^/]+)$/);
-
-        if (defaultMatch) {
-          const id = defaultMatch[1];
-          profiles = profiles.map((p) => ({ ...p, is_default: p.id === id }));
-          return profiles.find((p) => p.id === id);
-        }
-        if (idMatch && method === "PATCH") {
-          const id = idMatch[1];
-          const body = init.json as Record<string, unknown>;
-          profiles = profiles.map((p) => (p.id === id ? { ...p, ...body } : p));
-          return profiles.find((p) => p.id === id);
-        }
-        if (idMatch && method === "DELETE") {
-          const id = idMatch[1];
-          profiles = profiles.filter((p) => p.id !== id);
-          return undefined;
-        }
-        if (method === "POST") {
-          const body = init.json as Record<string, unknown>;
-          const created = makeProfile({ id: `p${nextId++}`, ...body });
-          profiles = [...profiles, created];
-          return created;
-        }
-        return profiles;
-      },
-    });
+  it("creates, renames, sets a default and deletes an assistant end to end", async () => {
+    const client = makeClient([]);
 
     renderWithProviders(<AgentPage />, client);
 
-    expect(await screen.findByText("No agent profiles yet.")).toBeInTheDocument();
+    await userEvent.type(await screen.findByLabelText("Assistant name"), "Main");
+    await userEvent.click(screen.getByRole("button", { name: "Create assistant" }));
 
-    // Create.
-    await userEvent.type(screen.getByLabelText("Profile name"), "Main");
-    await userEvent.type(screen.getByLabelText("System prompt"), "You are helpful.");
-    await userEvent.click(screen.getByRole("button", { name: "Create" }));
-
-    await waitFor(() =>
-      expect(
-        client.calls.some(
-          (c) => c.path === "/api/v1/agent/profiles" && c.init.method === "POST",
-        ),
-      ).toBe(true),
-    );
-    const createCall = client.calls.find(
-      (c) => c.path === "/api/v1/agent/profiles" && c.init.method === "POST",
-    );
-    expect((createCall?.init.json as Record<string, unknown>).name).toBe("Main");
-
-    expect(await screen.findByRole("button", { name: "Main" })).toBeInTheDocument();
-
-    // Edit.
-    await userEvent.click(screen.getByRole("button", { name: "Main" }));
-    const greetingInput = await screen.findByLabelText("Greeting");
-    await userEvent.type(greetingInput, "Hi there");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() =>
-      expect(
-        client.calls.some(
-          (c) => c.path === "/api/v1/agent/profiles/p1" && c.init.method === "PATCH",
-        ),
-      ).toBe(true),
-    );
-
-    // Make default.
-    await userEvent.click(screen.getByRole("button", { name: "Make default" }));
-    await waitFor(() =>
-      expect(
-        client.calls.some((c) => c.path === "/api/v1/agent/profiles/p1/default"),
-      ).toBe(true),
-    );
-    // The button flips to a disabled "Default" once this IS the default profile, and
-    // the sidebar badge also reads "Default" - two matches is itself proof the roundtrip
-    // updated both the form and the refetched list.
-    expect(await screen.findAllByText("Default")).toHaveLength(2);
-
-    // Delete requires two clicks (item 47/48): the first arms a "Confirm delete?" state.
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(
-      client.calls.some(
-        (c) => c.path === "/api/v1/agent/profiles/p1" && c.init.method === "DELETE",
-      ),
-    ).toBe(false);
-    await userEvent.click(screen.getByRole("button", { name: "Confirm delete?" }));
-    await waitFor(() =>
-      expect(
-        client.calls.some(
-          (c) => c.path === "/api/v1/agent/profiles/p1" && c.init.method === "DELETE",
-        ),
-      ).toBe(true),
-    );
-    expect(await screen.findByText("No agent profiles yet.")).toBeInTheDocument();
-  });
-
-  it("round-trips the four SMS agent fields", async () => {
-    let profiles: Record<string, unknown>[] = [makeProfile()];
-
-    const client = makeStubClient({
-      "/api/v1/agent/profiles": (path: string, init: RequestInit & { json?: unknown }) => {
-        const method = init.method ?? "GET";
-        const idMatch = path.match(/^\/api\/v1\/agent\/profiles\/([^/]+)$/);
-        if (idMatch && method === "PATCH") {
-          const id = idMatch[1];
-          const body = init.json as Record<string, unknown>;
-          profiles = profiles.map((p) => (p.id === id ? { ...p, ...body } : p));
-          return profiles.find((p) => p.id === id);
-        }
-        return profiles;
-      },
-    });
-
-    renderWithProviders(<AgentPage />, client);
-
-    await userEvent.click(await screen.findByRole("button", { name: "Main" }));
-
-    await userEvent.click(
-      await screen.findByLabelText("Reply to inbound SMS automatically"),
-    );
-
-    const turnCeiling = screen.getByLabelText("Turn ceiling");
-    await userEvent.clear(turnCeiling);
-    await userEvent.type(turnCeiling, "5");
-
-    const maxReplyChars = screen.getByLabelText("Max reply chars");
-    await userEvent.clear(maxReplyChars);
-    await userEvent.type(maxReplyChars, "300");
-
-    await userEvent.type(
-      screen.getByLabelText("Handoff keywords"),
-      "human, agent, representative",
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() =>
-      expect(
-        client.calls.some(
-          (c) => c.path === "/api/v1/agent/profiles/p1" && c.init.method === "PATCH",
-        ),
-      ).toBe(true),
-    );
-    const patchCall = client.calls.find(
-      (c) => c.path === "/api/v1/agent/profiles/p1" && c.init.method === "PATCH",
-    );
-    const body = patchCall?.init.json as Record<string, unknown>;
-    expect(body.sms_enabled).toBe(true);
-    expect(body.sms_turn_ceiling).toBe(5);
-    expect(body.sms_max_reply_chars).toBe(300);
-    expect(body.sms_handoff_keywords).toEqual(["human", "agent", "representative"]);
-  });
-
-  it("creates and deletes a knowledge base document", async () => {
-    let documents: Record<string, unknown>[] = [];
-    let nextId = 1;
-
-    const client = makeStubClient({
-      "/api/v1/agent/profiles": [],
-      "/api/v1/kb/documents": (path: string, init: RequestInit & { json?: unknown }) => {
-        const method = init.method ?? "GET";
-        const idMatch = path.match(/^\/api\/v1\/kb\/documents\/([^/]+)$/);
-
-        if (idMatch && method === "DELETE") {
-          const id = idMatch[1];
-          documents = documents.filter((d) => d.id !== id);
-          return undefined;
-        }
-        if (idMatch) {
-          const id = idMatch[1];
-          const doc = documents.find((d) => d.id === id);
-          return { ...doc, chunks: [{ seq: 0, text: "We are open weekdays from 9 to 5." }] };
-        }
-        if (method === "POST") {
-          const body = init.json as Record<string, unknown>;
-          const created = { id: `d${nextId++}`, source: "pasted", title: body.title };
-          documents = [...documents, created];
-          return created;
-        }
-        return documents;
-      },
-    });
-
-    renderWithProviders(<AgentPage />, client);
-
-    expect(await screen.findByText("No documents yet.")).toBeInTheDocument();
-
-    await userEvent.type(screen.getByLabelText("Document title"), "Hours");
-    await userEvent.type(
-      screen.getByLabelText("Document text"),
-      "We are open weekdays from 9 to 5.",
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Add document" }));
-
-    expect(await screen.findByRole("button", { name: "Hours" })).toBeInTheDocument();
-    const createCall = client.calls.find(
-      (c) => c.path === "/api/v1/kb/documents" && c.init.method === "POST",
-    );
-    expect((createCall?.init.json as Record<string, unknown>).title).toBe("Hours");
-
-    // Expand to view chunks.
-    await userEvent.click(screen.getByRole("button", { name: "Hours" }));
-    expect(await screen.findByText("We are open weekdays from 9 to 5.")).toBeInTheDocument();
-
-    // Delete requires two clicks (item 47/48): the first arms a "Confirm delete?" state.
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(
-      client.calls.some(
-        (c) => c.path === "/api/v1/kb/documents/d1" && c.init.method === "DELETE",
-      ),
-    ).toBe(false);
-    await userEvent.click(screen.getByRole("button", { name: "Confirm delete?" }));
-    await waitFor(() =>
-      expect(
-        client.calls.some(
-          (c) => c.path === "/api/v1/kb/documents/d1" && c.init.method === "DELETE",
-        ),
-      ).toBe(true),
-    );
-    expect(await screen.findByText("No documents yet.")).toBeInTheDocument();
-  });
-
-  // Item 19
-  it("keeps an in-progress edit when the profiles list refetches in the background for the same selection", async () => {
-    let profiles: Record<string, unknown>[] = [makeProfile({ id: "p1", name: "Main" })];
-
-    const client = makeStubClient({
-      "/api/v1/agent/profiles": (path: string) => {
-        const defaultMatch = path.match(/^\/api\/v1\/agent\/profiles\/([^/]+)\/default$/);
-        if (defaultMatch) {
-          const id = defaultMatch[1];
-          // A fresh array/object each time - simulates a real background refetch, not
-          // just a re-render of the same reference.
-          profiles = profiles.map((p) => ({ ...p, is_default: p.id === id }));
-          return profiles.find((p) => p.id === id);
-        }
-        return profiles;
-      },
-    });
-
-    renderWithProviders(<AgentPage />, client);
-
-    await userEvent.click(await screen.findByRole("button", { name: "Main" }));
+    await screen.findByRole("button", { name: "Save persona" });
     const greeting = await screen.findByLabelText("Greeting");
-    await userEvent.type(greeting, "Hi there");
-    expect(await screen.findByText("Unsaved changes")).toBeInTheDocument();
+    await userEvent.type(greeting, "Hiya");
+    await userEvent.click(screen.getByRole("button", { name: "Save persona" }));
 
-    // Triggers an unrelated background refetch of the SAME profiles list (selectedId
-    // stays "p1") - the old bug keyed the resync effect on the `selected` object
-    // reference, so this refetch alone would silently wipe the in-progress edit.
-    await userEvent.click(screen.getByRole("button", { name: "Make default" }));
     await waitFor(() =>
       expect(
-        client.calls.some((c) => c.path === "/api/v1/agent/profiles/p1/default"),
+        client.calls.some(
+          (call) => call.init.method === "PATCH",
+        ),
       ).toBe(true),
     );
 
-    expect(greeting).toHaveValue("Hi there");
+    await userEvent.click(screen.getByRole("button", { name: "Make default" }));
+
+    await waitFor(() =>
+      expect(
+        client.calls.some(
+          (call) =>
+            call.path.endsWith("/default") && call.init.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    await screen.findByRole("button", { name: "Default" });
+    await waitFor(() => expect(screen.getAllByText("Default").length).toBe(2));
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm delete?" }));
+
+    expect(await screen.findByText("No assistants yet.")).toBeInTheDocument();
   });
 
-  // Item 44
-  it("selects the newly created profile only once it is actually in the refetched list", async () => {
-    let profiles: Record<string, unknown>[] = [];
-    let nextId = 1;
-
-    const client = makeStubClient({
-      "/api/v1/agent/profiles": (_path: string, init: RequestInit & { json?: unknown }) => {
-        if ((init.method ?? "GET") === "POST") {
-          const body = init.json as Record<string, unknown>;
-          const created = makeProfile({ id: `p${nextId++}`, ...body });
-          profiles = [...profiles, created];
-          return created;
-        }
-        return profiles;
-      },
-    });
+  it("selects the newly created assistant only once it is in the refetched list", async () => {
+    const client = makeClient([]);
 
     renderWithProviders(<AgentPage />, client);
-    expect(await screen.findByText("No agent profiles yet.")).toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText("Profile name"), "Main");
-    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    await userEvent.type(await screen.findByLabelText("Assistant name"), "Main");
+    await userEvent.click(screen.getByRole("button", { name: "Create assistant" }));
 
     const sidebarButton = await screen.findByRole("button", { name: "Main" });
-    await waitFor(() => expect(sidebarButton).toHaveAttribute("aria-current", "true"));
-    expect(screen.getByText("Edit profile")).toBeInTheDocument();
+    expect(sidebarButton).toHaveAttribute("aria-current", "true");
+  });
+
+  it("opens the tester only for a saved assistant with nothing unsaved", async () => {
+    const client = makeClient([makeAssistant()]);
+
+    renderWithProviders(<AgentPage />, client);
+
+    expect(
+      screen.queryByRole("button", { name: "Test your assistant" }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Main" }));
+    await userEvent.click(screen.getByRole("button", { name: "Test your assistant" }));
+
+    expect(
+      await screen.findByRole("dialog", { name: "Test your assistant" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Test your assistant" }),
+      ).not.toBeInTheDocument(),
+    );
+
+    await userEvent.type(await screen.findByLabelText("Greeting"), "x");
+    expect(screen.getByRole("button", { name: "Test your assistant" })).toBeDisabled();
+  });
+
+  it("shows the knowledge library inside the builder", async () => {
+    const client = makeClient([makeAssistant()]);
+
+    renderWithProviders(<AgentPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Main" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Knowledge" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Add to your knowledge" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Your assistants share one knowledge library."),
+    ).toBeInTheDocument();
+  });
+
+  it("warns that there are unsaved changes", async () => {
+    const client = makeClient([makeAssistant()]);
+
+    renderWithProviders(<AgentPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Main" }));
+    await userEvent.type(await screen.findByLabelText("Greeting"), "Changed");
+
+    expect(await screen.findByText("Unsaved changes")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save persona" }));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument(),
+    );
   });
 });

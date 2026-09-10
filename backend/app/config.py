@@ -202,6 +202,10 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str = ""
     cartesia_api_key: SecretStr = SecretStr("")
 
+    # P23a: when true, GET /api/v1/agent/config/{call_id} hands the worker the
+    # DECRYPTED per-org AI keys. Off until the voice worker can accept them.
+    ai_per_org_keys: bool = False
+
     # ---------------- media / storage ----------------
     media_store_backend: str = "local"   # local | memory | s3 (s3 raises until P5)
     media_local_root: str = "var/media"

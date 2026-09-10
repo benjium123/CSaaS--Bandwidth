@@ -350,3 +350,65 @@ async def reconciliation(session: AsyncSession, org_id: uuid.UUID, day: date) ->
             }
         )
     return out
+
+
+# ----------------------------------------------------------------------------------
+# P23a: assistant-simulator token metering.
+# ----------------------------------------------------------------------------------
+#
+# WARNING (escalated to Fable - see ent/p23a_backend/VERDICT.md, open item 1): this is the
+# ONE write in this module that is NOT derived. Every other usage_records row is recomputed
+# from a source table by ``rollup_day``, which is why re-running a day is idempotent.
+# ``ai_tokens`` is currently derived from agent_sms_turns + call_scores, and P23a's in-app
+# simulator has NO source table of its own (adding one is a migration, and migrations are
+# Fable-only). So simulator tokens are ADDED to today's ai_tokens row here, and the next
+# ``rollup_day`` for that same day WILL overwrite them with the sms+score total.
+#
+# That is acceptable only because P24 (billing) is not live yet. Before P24 charges anyone,
+# ONE of these has to happen:
+#   (a) an `ai_simulations` (or equivalent) table gets the per-turn rows and ``_compute_day``
+#       sums it into ai_tokens like it already sums AgentSmsTurn and CallScore, or
+#   (b) simulator turns are declared non-billable and this function is deleted.
+# Do not "fix" this by teaching rollup_day to skip ai_tokens - that would silently stop
+# metering the SMS agent, which really is billable.
+async def record_ai_tokens(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    tokens_in: int,
+    tokens_out: int,
+    day: date | None = None,
+) -> None:
+    """Add one AI turn's token count to today's ``ai_tokens`` usage row for ``org_id``.
+
+    Does NOT commit - the caller owns the transaction, so the metering row lands (or rolls
+    back) with whatever else that request did. Requires org context already bound.
+    """
+    total = int(tokens_in or 0) + int(tokens_out or 0)
+    if total <= 0:
+        return
+    period = day or _now().date()
+
+    existing = (
+        await session.execute(
+            sa.select(UsageRecord).where(
+                UsageRecord.org_id == org_id,
+                UsageRecord.period_date == period,
+                UsageRecord.metric == "ai_tokens",
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        session.add(
+            UsageRecord(
+                id=uuid.uuid4(),
+                org_id=org_id,
+                period_date=period,
+                metric="ai_tokens",
+                quantity=total,
+                carrier_quantity=None,
+            )
+        )
+    else:
+        existing.quantity = int(existing.quantity or 0) + total
+    await session.flush()

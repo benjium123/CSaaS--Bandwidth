@@ -15,6 +15,10 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** P23a: the whole parsed `error` object from the body. A 422 often carries MORE than a
+     * message - e.g. the list of things an assistant is still missing before it can go live -
+     * and flattening it to a string here would throw that away before any page could read it. */
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -96,6 +100,7 @@ export function createClient(baseUrl = ""): ApiClient {
           res.status,
           err?.code ?? "http_error",
           err?.message ?? `Request failed with ${res.status}`,
+          err,
         );
       }
       return payload as T;

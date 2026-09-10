@@ -34,6 +34,12 @@ vi.mock("@/pages/AgentPage", () => ({
 vi.mock("@/pages/AppointmentsPage", () => ({
   AppointmentsPage: () => <div>Appointments page</div>,
 }));
+vi.mock("@/components/assistants/AiProvidersTab", () => ({
+  AiProvidersTab: () => <button>Add a connection</button>,
+}));
+vi.mock("@/components/assistants/KnowledgeTab", () => ({
+  KnowledgeTab: () => <div>Knowledge page</div>,
+}));
 vi.mock("@/pages/PlatformPage", () => ({
   PlatformPage: () => <div>Platform page</div>,
 }));
@@ -187,6 +193,27 @@ describe("SettingsPage", () => {
 
     renderSettings({ initialEntries: ["/settings/workspace"], memberCount: 2 });
     expect(await screen.findByText("2 members")).toBeInTheDocument();
+  });
+
+  it("disables the AI section's controls for a member without settings:write", async () => {
+    renderSettings({
+      initialEntries: ["/settings/ai?tab=providers"],
+      permissions: ["org:read", "members:read", "settings:read"],
+    });
+
+    expect(
+      await screen.findByText("You can view this, but only an admin can make changes here."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add a connection" })).toBeDisabled();
+  });
+
+  it("leaves the AI section's controls enabled when settings:write is permitted", async () => {
+    renderSettings({ initialEntries: ["/settings/ai?tab=providers"] });
+
+    expect(
+      screen.queryByText("You can view this, but only an admin can make changes here."),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Add a connection" })).toBeEnabled();
   });
 
   it("renders a SpendCard stub per provider account", async () => {

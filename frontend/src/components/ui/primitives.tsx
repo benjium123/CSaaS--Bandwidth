@@ -54,6 +54,24 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
 );
 Input.displayName = "Input";
 
+/** P23a: the assistant builder is mostly long-form text (system prompt, goals, guardrails,
+ * pasted knowledge), and the repo had the same raw <textarea> class string copied into every
+ * one of them. Same look, one definition. */
+export const Textarea = React.forwardRef<
+  HTMLTextAreaElement,
+  React.TextareaHTMLAttributes<HTMLTextAreaElement>
+>(({ className, ...props }, ref) => (
+  <textarea
+    ref={ref}
+    className={cn(
+      "flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2",
+      className,
+    )}
+    {...props}
+  />
+));
+Textarea.displayName = "Textarea";
+
 export function Badge({
   className,
   children,
