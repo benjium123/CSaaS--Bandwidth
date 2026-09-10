@@ -10,9 +10,9 @@ least as much UI as it adds.
 | # | Phase | Plan | Migration | Status |
 |---|---|---|---|---|
 | 1 | P22 Contact ownership, visibility, custom roles | docs/PLAN_P22_P25.md | 0024 | DEPLOYED 2026-09-10 (060b087) |
-| 2 | P20 Simplicity: two-surface product | docs/phase-20-plan.md | – | P20a DEPLOYED (8a5b61e); P20b DEPLOYED (3af6de7); P20c (⌘K, phone menus on rows, one palette) deploying |
+| 2 | P20 Simplicity: two-surface product | docs/phase-20-plan.md | – | P20a DEPLOYED (8a5b61e); P20 COMPLETE — P20a/b/c DEPLOYED 2026-09-10 (22e2a4d) |
 | 3 | P21 Smart routing | docs/phase-21-plan.md | 0039 | DEPLOYED 2026-09-10 (b0f02d3; D43 campaign routing → P28) |
-| 4 | P23a AI assistant: providers + builder + simulate | docs/PLAN_P22_P25.md | 0025 | queued |
+| 4 | P23a AI assistant: providers + builder + simulate | docs/PLAN_P22_P25.md | 0025 (schema deployed 109aa17) | drafting |
 | 5 | P23b AI assistant: inbound/outbound wiring + outcomes | docs/PLAN_P22_P25.md | 0025 | queued |
 | 6 | P24 AI metering, credits, Stripe (Fable owns ledger) | docs/PLAN_P22_P25.md | 0026 | queued |
 | 7 | P25 Enterprise identity: sessions, 2FA policy, IP allowlist, OIDC | docs/PLAN_P22_P25.md | 0027 | queued |
