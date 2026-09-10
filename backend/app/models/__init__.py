@@ -97,6 +97,13 @@ from app.models.outbound import (
     OutboundCampaign,
     OutboundSend,
 )
+from app.models.plans import (
+    INVOICE_STATUSES,
+    PLAN_ALLOWANCE_KEYS,
+    Invoice,
+    InvoiceLine,
+    Plan,
+)
 from app.models.platform import (
     API_KEY_STATUSES,
     DELIVERY_BACKOFF_SECONDS,
@@ -196,6 +203,11 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "INVOICE_STATUSES",
+    "PLAN_ALLOWANCE_KEYS",
+    "Invoice",
+    "InvoiceLine",
+    "Plan",
     "DEFAULT_NOTIFICATION_PREFS",
     "NOTIFICATION_PREF_KEYS",
     "PushSubscription",

@@ -60,5 +60,15 @@ class Org(Base, TimestampMixin):
     )
     recording_announcement_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 
+    # P32 plans + invoicing (money: Fable-owned). plan_code NULL = no plan (prepaid credits only).
+    plan_code: Mapped[str | None] = mapped_column(
+        sa.String(32), sa.ForeignKey("plans.code", ondelete="SET NULL"), nullable=True
+    )
+    plan_started_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    billing_email: Mapped[str | None] = mapped_column(sa.String(320), nullable=True)
+    tax_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+
     def __repr__(self) -> str:
         return f"<Org {self.slug}>"
