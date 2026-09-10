@@ -21,7 +21,7 @@ least as much UI as it adds.
 | 10 | P28 Messaging: MMS, send-later, link tracking, plain failure reasons | docs/PLAN_P26_P36.md | 0030 (schema committed) | queued |
 | 11 | P29 Voice: coaching enforcement, dual recording, consent, failover, dispositions | docs/PLAN_P26_P36.md | 0031 (schema committed) | queued |
 | 12 | P30 Reports: team, SLA, campaigns, assistant; export; email; wallboard | docs/PLAN_P26_P36.md | 0032 (schema committed) | queued |
-| 13 | P31 Notifications, PWA, mobile | docs/PLAN_P26_P36.md | 0033 | queued |
+| 13 | P31 Notifications, PWA, mobile | docs/PLAN_P26_P36.md | 0033 (schema committed) | queued |
 | 14 | P32 Plans, traffic billing, invoices (Fable owns money) | docs/PLAN_P26_P36.md | 0034 | queued |
 | 15 | P33 Agencies: sub-accounts, white-label, custom domain | docs/PLAN_P26_P36.md | 0035 | queued |
 | 16 | P34 Developers and integrations: API docs, Zapier, HubSpot, Salesforce | docs/PLAN_P26_P36.md | 0036 | queued |

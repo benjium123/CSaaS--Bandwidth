@@ -119,6 +119,7 @@ from app.models.provider_accounts import (
     PROVIDER_NAMES,
     ProviderAccount,
 )
+from app.models.push import DEFAULT_NOTIFICATION_PREFS, NOTIFICATION_PREF_KEYS, PushSubscription
 from app.models.rbac import PERMISSIONS, SYSTEM_ROLES, WILDCARD, OrgMembership, Role
 from app.models.reports import (
     EMAIL_PROVIDERS,
@@ -195,6 +196,9 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "DEFAULT_NOTIFICATION_PREFS",
+    "NOTIFICATION_PREF_KEYS",
+    "PushSubscription",
     "EMAIL_PROVIDERS",
     "REPORT_CADENCES",
     "REPORT_KINDS",

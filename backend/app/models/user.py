@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
-from app.db.types import GUID
+from app.db.types import GUID, PortableJSON
 
 
 class User(Base, TimestampMixin):
@@ -33,6 +33,9 @@ class User(Base, TimestampMixin):
     totp_enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
     # Blocks replay of a code that was just accepted.
     totp_last_used_step: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+    # P31: {mention, assignment, new_inbound, missed_call, sla_breach, digest: bool}; NULL =
+    # every toggle on (models/push.py::DEFAULT_NOTIFICATION_PREFS).
+    notification_prefs: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"
