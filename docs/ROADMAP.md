@@ -14,7 +14,7 @@ least as much UI as it adds.
 | 3 | P21 Smart routing | docs/phase-21-plan.md | 0039 | DEPLOYED 2026-09-10 (b0f02d3; D43 campaign routing → P28) |
 | 4 | P23a AI assistant: providers + builder + simulate | docs/PLAN_P22_P25.md | 0025 (schema deployed 109aa17) | drafting |
 | 5 | P23b AI assistant: inbound/outbound wiring + outcomes | docs/PLAN_P22_P25.md | 0025 | queued |
-| 6 | P24 AI metering, credits, Stripe (Fable owns ledger) | docs/PLAN_P22_P25.md | 0026 | queued |
+| 6 | P24 AI metering, credits, Stripe (Fable owns ledger) | docs/PLAN_P22_P25.md | 0026 (schema + ledger service committed fb03825) | queued behind P23b |
 | 7 | P25 Enterprise identity: sessions, 2FA policy, IP allowlist, OIDC | docs/PLAN_P22_P25.md | 0027 | queued |
 | 8 | P26 Inbox pro: notes, mentions, "/" quick replies, snooze, SLA | docs/PLAN_P26_P36.md | 0028 | queued |
 | 9 | P27 Contacts pro: export, merge, saved views, retention, erasure | docs/PLAN_P26_P36.md | 0029 | queued |
