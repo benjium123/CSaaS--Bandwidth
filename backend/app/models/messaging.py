@@ -196,6 +196,12 @@ class Message(Base, TenantScoped, TimestampMixin):
     # P21 smart routing: one plain sentence saying why this route was chosen
     # ("Sent via Telnyx - cheapest healthy route"). Set by services/smart_routing.py.
     route_reason: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    # P28: single-message send-later (the sweeper releases it; quiet hours still apply) and
+    # the plain-words failure reason shown on the bubble ("This number can't receive texts").
+    scheduled_for: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    failure_reason_public: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     # Set when quiet hours DEFER a send. The message row exists and is queued; the
     # sweeper releases it and RE-RUNS THE FULL GATE, so an opt-out landing during the
     # hold still kills the send. Gate at dispatch, never only at enqueue.

@@ -67,6 +67,7 @@ from app.models.inboxes import (
     InboxGrant,
 )
 from app.models.invites import Invite
+from app.models.links import LinkClick, ShortLink
 from app.models.messaging import (
     EVENT_TO_STATUS,
     STATUS_RANK,
@@ -187,6 +188,8 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "LinkClick",
+    "ShortLink",
     "ERASURE_STATUSES",
     "ErasureRequest",
     "RetentionPolicy",
