@@ -1,6 +1,11 @@
-"""P12 services/supervisor.py (DR-9): monitor (canPublish=false), whisper (B7: raises
-FeatureUnavailableError - no server-side subscription-permission API exists), barge (full
+"""P12 services/supervisor.py (DR-9): monitor (canPublish=false), whisper, barge (full
 token). monitor/barge each write a VoiceEvent; a non-supervisor role is RBAC-denied.
+
+P29 (D15) changed whisper: it no longer refuses outright. It mints a publish token AND
+records the coaching identity on the call, because the backend now polices the room from
+the webhook path (`enforce_coaching_privacy`, covered in test_p29_voice_completeness.py).
+It still refuses when there is no RoomService client to police WITH - the two remaining
+"unavailable" tests below are that case and the wrong-call-type case, both unchanged.
 """
 
 from __future__ import annotations
@@ -88,11 +93,11 @@ async def test_monitor_token_cannot_publish(session, engine):
     assert any(e.event_type == "supervisor.monitor" for e in events)
 
 
-async def test_whisper_raises_feature_unavailable(session, engine):
-    """B7 (verified against the live LiveKit server): RoomService has no server-side
-    subscription-permission API, so whisper cannot be honestly enforced here - it must
-    raise rather than mint a token that would silently behave like barge. No VoiceEvent
-    is recorded either, since the action never actually happened."""
+async def test_whisper_mints_a_coaching_token_and_records_the_identity(session, engine):
+    """P29/D15: with a RoomService client present, whisper mints a publish token and
+    stamps the supervisor's identity into `call.extra["coaching_identities"]` - that list
+    is what `enforce_coaching_privacy` matches a publisher against, so the enforcement
+    never has to guess from an identity prefix (which is caller-controlled data)."""
     org_id = await _make_org(session)
     set_org_context(session, org_id)
     call = _room_call(org_id)
@@ -114,14 +119,18 @@ async def test_whisper_raises_feature_unavailable(session, engine):
     settings = _settings()
     fake_api = FakeLiveKitApi()
 
-    with pytest.raises(FeatureUnavailableError):
-        await supervisor_svc.whisper(
-            session, settings, fake_api, call, identity="supervisor-1", name="Sup One"
-        )
+    token = await supervisor_svc.whisper(
+        session, settings, fake_api, call, identity="supervisor-1", name="Sup One"
+    )
+    claims = _decode(token, LIVEKIT_SECRET)
+    assert claims["video"]["canPublish"] is True
+    assert claims["video"]["room"] == "call-abc"
 
+    assert (call.extra or {}).get("coaching_identities") == ["supervisor-1"]
+    # Nothing is force-unsubscribed at mint time - enforcement is driven by room events.
     assert fake_api.update_subscriptions_calls == []
     events = (await session.execute(sa.select(VoiceEventRow))).scalars().all()
-    assert not any(e.event_type == "supervisor.whisper" for e in events)
+    assert any(e.event_type == "supervisor.whisper" for e in events)
 
 
 async def test_whisper_raises_feature_unavailable_even_with_no_livekit_api_configured(

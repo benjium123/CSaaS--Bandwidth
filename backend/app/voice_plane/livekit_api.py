@@ -35,6 +35,7 @@ def mint_access_token(
     can_subscribe: bool = True,
     room_admin: bool = False,
     admin_grants: dict | None = None,
+    sip_grants: dict | None = None,
 ) -> str:
     now = int(time.time())
     claims: dict[str, Any] = {
@@ -63,6 +64,13 @@ def mint_access_token(
             "roomAdmin": room_admin,
         }
 
+    # A top-level claim, not nested under "video" - LiveKit's SIP twirp service
+    # (CreateSIPParticipant, trunk management) authorizes off this grant alone and
+    # ignores "video"/roomAdmin entirely, so a token missing it 401s on every SIP call
+    # even though RoomService calls with the same token succeed.
+    if sip_grants is not None:
+        claims["sip"] = sip_grants
+
     return jwt.encode(claims, api_secret, algorithm="HS256")
 
 
@@ -79,6 +87,7 @@ def admin_token(api_key: str, api_secret: str) -> str:
         api_secret=api_secret,
         identity="csaas-backend",
         admin_grants=grants,
+        sip_grants={"admin": True, "call": True},
     )
 
 
@@ -230,6 +239,32 @@ class LiveKitApi:
             "AgentDispatchService",
             "CreateDispatch",
             {"room": room, "agent_name": agent_name, "metadata": metadata},
+        )
+
+    async def start_track_egress(self, *, room: str, track_id: str, filepath: str) -> dict:
+        """EgressService / StartTrackEgress: record ONE participant's track to a file.
+
+        Exists so a dual-channel recording can capture each side separately; nothing in
+        the live call path calls this yet — the capture side is wired by the operator,
+        and the stitch/serve half (services/recordings.py) is what P29 ships.
+        """
+        return await self._twirp(
+            "EgressService",
+            "StartTrackEgress",
+            {"room_name": room, "track_id": track_id, "file": {"filepath": filepath}},
+        )
+
+    async def stop_egress(self, *, egress_id: str) -> dict:
+        """EgressService / StopEgress.
+
+        Exists so a dual-channel recording can capture each side separately; nothing in
+        the live call path calls this yet — the capture side is wired by the operator,
+        and the stitch/serve half (services/recordings.py) is what P29 ships.
+        """
+        return await self._twirp(
+            "EgressService",
+            "StopEgress",
+            {"egress_id": egress_id},
         )
 
     async def transfer_sip_participant(

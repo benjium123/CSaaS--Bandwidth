@@ -51,6 +51,12 @@ module's own ``/queue-entries/{id}/claim`` (routes/flows.py) is the pull-based
 counterpart for an agent working a queue directly; both use a single conditional
 ``UPDATE ... WHERE state IN ('waiting','offered')`` so first-answer-wins even under a real
 race (B9) and publish the same ``call.handoff.claimed`` shape.
+
+The recording consent announcement (P29 voice completeness) is played by
+``_announcement_commands`` immediately before the first connecting action — ring-group
+hold, queue hold, or transfer — once per call. The outbound half of that announcement
+lives in the carrier answer path
+(``api/routes/webhooks.py::_outbound_answer_commands``).
 """
 
 from __future__ import annotations
@@ -64,6 +70,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ConflictError, NotFoundError
+from app.models import Org
 from app.models.callflow import (
     BusinessHours,
     CallFlow,
@@ -74,6 +81,7 @@ from app.models.callflow import (
 from app.models.messaging import OrgNumber
 from app.models.voice import TERMINAL_CALL_STATUSES, Call
 from app.providers import voice
+from app.services import calling_settings as calling_settings_svc
 from app.services import flow_engine as fe
 from app.services import flows as flows_svc
 from app.services import voicemail as voicemail_svc
@@ -136,14 +144,40 @@ def _persist_flow_state(
 # CARRIER executor
 # ========================================================================================
 async def resolve_inbound_flow(session: AsyncSession, our_e164: str) -> CallFlow | None:
-    """None means "keep today's default behaviour" - either the number isn't bound to a
-    flow at all, or (defensively) the bound row has vanished."""
+    """None means "keep today's default behaviour" - the number isn't bound to a flow,
+    the bound row has vanished, or (D17) the bound row is not active and there is no
+    active version of the same flow name for its org. When the bound row is active it is
+    returned unchanged; when it is not active, the active version of the same name for
+    that org is returned instead."""
     org_number = (
         await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == our_e164))
     ).scalar_one_or_none()
     if org_number is None or org_number.call_flow_id is None:
         return None
-    return await session.get(CallFlow, org_number.call_flow_id)
+    pinned = await session.get(CallFlow, org_number.call_flow_id)
+    if pinned is None:
+        return None
+    if pinned.status == "active":
+        return pinned
+    active = (
+        await session.execute(
+            sa.select(CallFlow)
+            .where(
+                CallFlow.org_id == pinned.org_id,
+                CallFlow.name == pinned.name,
+                CallFlow.status == "active",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if active is None:
+        log.warning(
+            "inbound_flow_not_active",
+            flow_name=pinned.name,
+            number=our_e164,
+        )
+        return None
+    return active
 
 
 async def start_carrier_flow(
@@ -204,6 +238,23 @@ async def continue_carrier_flow(
     return await _drive(session, bus, call, flow, result, now=now)
 
 
+async def _announcement_commands(
+    session: AsyncSession, call: Call, *, force: bool = False
+) -> list[voice.Speak]:
+    """P29: the recording consent line, played once per call immediately before the
+    first action that connects the caller to somebody. Returns ``[]`` when the org is
+    missing, the announcement is disabled, or this call already announced it (unless
+    ``force`` is set)."""
+    org = await session.get(Org, call.org_id)
+    if org is None or not calling_settings_svc.announcement_enabled(org):
+        return []
+    if not force and (call.extra or {}).get("consent_announced"):
+        return []
+    if not force:
+        call.extra = {**(call.extra or {}), "consent_announced": True}
+    return [voice.Speak(text=calling_settings_svc.announcement_text_for(org))]
+
+
 async def _drive(
     session: AsyncSession,
     bus,  # noqa: ANN001
@@ -258,6 +309,7 @@ async def _drive(
                 break
             elif isinstance(action, fe.RingGroup):
                 rg = await session.get(RingGroupDef, uuid.UUID(action.ring_group_id))
+                commands.extend(await _announcement_commands(session, call))
                 commands.append(voice.Speak(text="Please hold while we try to connect you."))
                 wait_seconds = min(
                     rg.ring_timeout_seconds if rg is not None else DEFAULT_RING_TIMEOUT_SECONDS,
@@ -276,6 +328,7 @@ async def _drive(
                 looped = True
                 break
             elif isinstance(action, fe.Enqueue):
+                commands.extend(await _announcement_commands(session, call))
                 commands.extend(await _carrier_enqueue(session, call, flow, result, action))
                 return commands
             elif isinstance(action, fe.RecordVoicemail):
@@ -285,6 +338,7 @@ async def _drive(
                 # Item 11: blind transfer to a real E.164 number - the one DR-2 node type
                 # the neutral command set expresses directly. New-leg semantics on answer
                 # are P5's problem; this just emits the command.
+                commands.extend(await _announcement_commands(session, call))
                 commands.append(voice.Transfer(to=action.to, from_=call.our_e164))
             elif isinstance(action, fe.Hangup):
                 commands.append(voice.Hangup())
@@ -352,21 +406,35 @@ async def _rerender_from_state(
             if queue is not None
             else voice.Speak(text="Please hold, you're in the queue.")
         )
-        return [
+        commands: list[voice.VoiceCommand] = []
+        commands.extend(
+            await _announcement_commands(
+                session, call, force=bool((call.extra or {}).get("consent_announced"))
+            )
+        )
+        commands.append(
             voice.Gather(
                 max_digits=1,
                 timeout_seconds=wait_seconds,
                 prompt=hold_prompt,
                 action_tag="flow_queue_wait",
             )
-        ]
+        )
+        return commands
 
     if terminal == "voicemail":
         greeting = node.get("greeting", "Please leave a message after the tone.")
         return [voice.Speak(text=greeting), voice.StartRecording()]
 
     if terminal == "transferred":
-        return [voice.Transfer(to=node.get("to", ""), from_=call.our_e164)]
+        commands: list[voice.VoiceCommand] = []
+        commands.extend(
+            await _announcement_commands(
+                session, call, force=bool((call.extra or {}).get("consent_announced"))
+            )
+        )
+        commands.append(voice.Transfer(to=node.get("to", ""), from_=call.our_e164))
+        return commands
 
     if terminal == "callback_requested":
         return [

@@ -245,8 +245,8 @@ async def activate_flow(session: AsyncSession, org_id: uuid.UUID, flow_id: uuid.
         (
             await session.execute(
                 sa.select(CallFlow).where(
+                    CallFlow.org_id == org_id,
                     CallFlow.name == target.name,
-                    CallFlow.status == "active",
                     CallFlow.id != target.id,
                 )
             )
@@ -254,10 +254,26 @@ async def activate_flow(session: AsyncSession, org_id: uuid.UUID, flow_id: uuid.
         .scalars()
         .all()
     )
+    old_ids = [other.id for other in others]
     for other in others:
-        other.status = "archived"
+        if other.status == "active":
+            other.status = "archived"
 
     target.status = "active"
+
+    # D17: numbers pinned to any other version of this flow would otherwise keep running
+    # the now-archived row until an operator re-binds them by hand. Re-point them all to
+    # the newly active version in the same transaction.
+    if old_ids:
+        await session.execute(
+            sa.update(OrgNumber)
+            .where(
+                OrgNumber.org_id == org_id,
+                OrgNumber.call_flow_id.in_(old_ids),
+            )
+            .values(call_flow_id=target.id)
+        )
+
     await session.commit()
     return target
 

@@ -60,6 +60,11 @@ class Org(Base, TimestampMixin):
     )
     recording_announcement_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 
+    # P29: org-level calling settings that have no column of their own:
+    # {"channel_layout": "mixed"|"dual", "dispositions": ["Interested", ...]}.
+    # NULL = platform defaults (services/calling_settings.py).
+    calling_settings: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
+
     # P32 plans + invoicing (money: Fable-owned). plan_code NULL = no plan (prepaid credits only).
     plan_code: Mapped[str | None] = mapped_column(
         sa.String(32), sa.ForeignKey("plans.code", ondelete="SET NULL"), nullable=True

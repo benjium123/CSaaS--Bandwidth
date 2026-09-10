@@ -27,12 +27,14 @@ from app.providers.bandwidth import webhooks as bw_webhooks
 from app.providers.telnyx.voice import TelnyxVoiceCommandError
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
 from app.services import assistant_dispatch
+from app.services import calling_settings as calling_settings_svc
 from app.services import calls as calls_svc
 from app.services import credits
 from app.services import credentials as credential_svc
 from app.services import messaging as svc
 from app.services import routing_exec as routing_exec_svc
 from app.services import stripe_client
+from app.services import supervisor as supervisor_svc
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
 
@@ -325,10 +327,15 @@ async def _to_is_org_number(session: AsyncSession, org_id, to: str) -> bool:  # 
     ).scalar_one_or_none() is not None
 
 
-def _outbound_answer_commands(call, *, needs_pause: bool) -> list[VoiceCommand]:  # noqa: ANN001
+def _outbound_answer_commands(call, org, *, needs_pause: bool) -> list[VoiceCommand]:  # noqa: ANN001
     """F3+F5: the ONE place that decides what happens when an OUTBOUND call answers. P6
     (rooms) / P7 (media) take over answer handling entirely and replace this single
     function - nothing else in the voice webhook path needs to change when they do.
+
+    P29: when the org has the recording consent announcement enabled, the answering
+    party hears it before any other answer command - including StartRecording - so the
+    announcement precedes the recording rather than playing inside it. The inbound half
+    lives in `services/routing_exec.py` (the flow engine's connect path).
 
     `needs_pause` is true for a carrier that delivers commands inline in the webhook
     response (Bandwidth): an empty `<Response/>` there hangs the line up immediately, so
@@ -337,6 +344,8 @@ def _outbound_answer_commands(call, *, needs_pause: bool) -> list[VoiceCommand]:
     needs the Pause.
     """
     commands: list[VoiceCommand] = []
+    if org is not None and calling_settings_svc.announcement_enabled(org):
+        commands.append(Speak(text=calling_settings_svc.announcement_text_for(org)))
     if call.extra.get("record"):
         commands.append(StartRecording())
     if needs_pause:
@@ -515,7 +524,10 @@ async def _handle_voice_webhook(
                 # into a StartRecording, and (Bandwidth only) the one place the line must be
                 # deliberately held open past the answer webhook.
                 inline_commands = carrier.render_commands([]) is not None
-                outbound_commands = _outbound_answer_commands(call, needs_pause=inline_commands)
+                org_row = await session.get(Org, org_id)
+                outbound_commands = _outbound_answer_commands(
+                    call, org_row, needs_pause=inline_commands
+                )
                 if inline_commands:
                     commands = outbound_commands
                 elif outbound_commands:
@@ -624,6 +636,13 @@ async def livekit_webhook(
         # documented retry contract to lean on here, so swallowing (not 500ing) is the
         # safer default rather than inviting an infinite redelivery loop.
         log.exception("livekit_webhook_event_failed", event_type=event.get("event"))
+
+    try:
+        await supervisor_svc.enforce_coaching_privacy(
+            session, getattr(request.app.state, "livekit", None), event
+        )
+    except Exception:  # noqa: BLE001 - enforcement must never fail the webhook ack
+        log.exception("coaching_enforcement_failed", event_type=event.get("event"))
 
     try:
         await assistant_dispatch.on_livekit_event(

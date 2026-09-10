@@ -15,6 +15,7 @@ from app.errors import ConflictError, NotFoundError, PermissionDeniedError, Vali
 from app.models import WILDCARD, Invite, OrgMembership, Role, User
 from app.repositories import orgs as orgs_repo
 from app.services import audit as audit_svc
+from app.services import calling_settings as calling_settings_svc
 from app.services import contact_visibility
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
@@ -65,6 +66,13 @@ class OrgSettingsIn(BaseModel):
     contact_visibility: str = Field(min_length=1, max_length=16)
 
 
+class CallingSettingsIn(BaseModel):
+    recording_announcement: bool | None = None
+    recording_announcement_text: str | None = None
+    channel_layout: str | None = None
+    dispositions: list[str] | None = None
+
+
 @router.post("", response_model=OrgOut, status_code=201)
 async def create_org(
     payload: OrgCreateIn,
@@ -113,6 +121,70 @@ async def update_org_settings(
     )
     await ctx.session.commit()
     return {"contact_visibility": ctx.org.contact_visibility}
+
+
+@router.get("/current/calling")
+async def current_calling(
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+) -> dict:
+    return calling_settings_svc.as_dict(ctx.org)
+
+
+@router.patch("/current/calling")
+async def update_calling_settings(
+    payload: CallingSettingsIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+) -> dict:
+    changed: list[str] = []
+
+    if "recording_announcement" in payload.model_fields_set:
+        if payload.recording_announcement is None:
+            raise ValidationFailedError("Recording announcement must be true or false")
+        ctx.org.recording_announcement = payload.recording_announcement
+        changed.append("recording_announcement")
+
+    if "recording_announcement_text" in payload.model_fields_set:
+        ctx.org.recording_announcement_text = (
+            calling_settings_svc.normalize_announcement_text(
+                payload.recording_announcement_text
+            )
+        )
+        changed.append("recording_announcement_text")
+
+    normalized_dispositions = None
+    normalized_channel_layout = None
+
+    if "dispositions" in payload.model_fields_set:
+        normalized_dispositions = calling_settings_svc.normalize_dispositions(
+            payload.dispositions
+        )
+        changed.append("dispositions")
+
+    if "channel_layout" in payload.model_fields_set:
+        normalized_channel_layout = calling_settings_svc.normalize_channel_layout(
+            payload.channel_layout
+        )
+        changed.append("channel_layout")
+
+    if normalized_dispositions is not None or normalized_channel_layout is not None:
+        calling_settings_svc.apply(
+            ctx.org,
+            dispositions=normalized_dispositions,
+            channel_layout=normalized_channel_layout,
+        )
+
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="org.calling_settings_update",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={"fields": changed},
+    )
+    await ctx.session.commit()
+    return calling_settings_svc.as_dict(ctx.org)
 
 
 @router.get("/current/retention", response_model=RetentionOut)

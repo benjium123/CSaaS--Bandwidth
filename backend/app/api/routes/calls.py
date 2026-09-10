@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.api.routes import flows as flow_routes
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, get_current_user, require_permission
 from app.errors import (
@@ -31,6 +32,8 @@ from app.models import (
 from app.models.voice import TERMINAL_CALL_STATUSES, TERMINAL_LEG_STATUSES
 from app.providers.voice import as_voice_carrier
 from app.routing import router as routing_svc
+from app.services import audit as audit_svc
+from app.services import calling_settings as calling_settings_svc
 from app.services import calls as calls_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services import recordings as recordings_svc
@@ -91,6 +94,13 @@ class CallLegOut(BaseModel):
     created_at: datetime
 
 
+class RecordingFileOut(BaseModel):
+    #: "mixed" (both parties in one file), "agent" (our side only), "customer"
+    #: (their side only). A single-file recording offers "mixed" alone.
+    layout: str
+    url: str
+
+
 class RecordingOut(BaseModel):
     id: uuid.UUID
     status: str
@@ -99,6 +109,10 @@ class RecordingOut(BaseModel):
     size_bytes: int | None
     #: OUR api url - the carrier's own URL is never exposed here or anywhere else.
     url: str | None = None
+    #: P29: "mixed" = one file with both parties; "dual" = the two sides were recorded
+    #: separately and stitched, so the separate files are downloadable too.
+    channel_layout: str = "mixed"
+    files: list[RecordingFileOut] = []
 
 
 class CallOut(BaseModel):
@@ -117,6 +131,10 @@ class CallOut(BaseModel):
     #: ("Called via Telnyx - cheapest healthy route", "Via your calling trunk").
     #: None for every call placed before P21 shipped.
     route_reason: str | None = None
+    #: P29 "call result": the outcome a human picked after the call, from the org's
+    #: configurable list (Settings -> Calling). None until somebody picks one.
+    disposition: str | None = None
+    disposition_note: str | None = None
 
 
 class TranscriptSegmentOut(BaseModel):
@@ -172,6 +190,8 @@ def _call_out(c: Call) -> CallOut:
         duration_seconds=c.duration_seconds,
         created_at=c.created_at,
         route_reason=_livekit_route_reason(c),
+        disposition=c.disposition,
+        disposition_note=c.disposition_note,
     )
 
 
@@ -193,8 +213,13 @@ def _leg_out(leg: CallLeg) -> CallLegOut:
 
 def _recording_out(rec: CallRecording, base_url: str, call_id: uuid.UUID) -> RecordingOut:
     url = None
+    files: list[RecordingFileOut] = []
     if rec.status == "stored":
         url = f"{base_url.rstrip('/')}/api/v1/calls/{call_id}/recordings/{rec.id}"
+        files = [
+            RecordingFileOut(layout=layout, url=f"{url}?layout={layout}")
+            for layout in recordings_svc.available_layouts(rec)
+        ]
     return RecordingOut(
         id=rec.id,
         status=rec.status,
@@ -202,6 +227,8 @@ def _recording_out(rec: CallRecording, base_url: str, call_id: uuid.UUID) -> Rec
         duration_seconds=rec.duration_seconds,
         size_bytes=rec.size_bytes,
         url=url,
+        channel_layout=rec.channel_layout,
+        files=files,
     )
 
 
@@ -459,6 +486,7 @@ async def list_calls(
     ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
     contact_e164: str | None = None,
     status: str | None = None,
+    disposition: str | None = Query(default=None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> list[CallOut]:
@@ -470,10 +498,72 @@ async def list_calls(
         stmt = stmt.where(Call.contact_e164 == contact_e164)
     if status:
         stmt = stmt.where(Call.status == status)
+    if disposition:
+        stmt = stmt.where(Call.disposition == disposition)
     if not access.is_admin:
         stmt = stmt.where(Call.our_e164.in_(access.member_e164s | access.viewer_e164s))
     rows = (await ctx.session.execute(stmt)).scalars().all()
     return [_call_out(c) for c in rows]
+
+
+class CallbackOut(BaseModel):
+    id: uuid.UUID            # the queue entry id
+    call_id: uuid.UUID
+    queue_id: uuid.UUID
+    #: The number to call back.
+    callback_e164: str
+    #: The number they originally reached us on, and who they are.
+    our_e164: str | None
+    contact_e164: str | None
+    #: When the call we missed came in.
+    missed_at: datetime
+    #: True once somebody has clicked "call back" — the dial is in flight.
+    dialing: bool
+
+
+@router.get("/calls/callbacks", response_model=list[CallbackOut])
+async def list_callbacks(
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[CallbackOut]:
+    stmt = (
+        sa.select(QueueEntry, Call)
+        .join(Call, Call.id == QueueEntry.call_id)
+        .where(
+            QueueEntry.state == "callback_requested",
+            QueueEntry.resolved_at.is_(None),
+        )
+        .order_by(QueueEntry.enqueued_at.asc())
+        .limit(limit)
+    )
+    rows = (await ctx.session.execute(stmt)).all()
+    return [
+        CallbackOut(
+            id=entry.id,
+            call_id=entry.call_id,
+            queue_id=entry.queue_id,
+            callback_e164=entry.callback_e164 or "",
+            our_e164=call.our_e164,
+            contact_e164=call.contact_e164,
+            missed_at=call.created_at,
+            dialing=entry.dial_now_claimed_at is not None,
+        )
+        for entry, call in rows
+    ]
+
+
+@router.post("/calls/callbacks/{entry_id}/dial-now", response_model=flow_routes.QueueEntryOut)
+async def dial_callback(
+    entry_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+    user: Annotated[User, Depends(get_current_user)],
+) -> flow_routes.QueueEntryOut:
+    """Calls-page entry point for the SAME action the queue screen exposes, deliberately
+    delegating so the compliance gates and the single-dial claim guard have exactly one
+    implementation.
+    """
+    return await flow_routes.dial_callback_now(entry_id, request, ctx, user)
 
 
 async def _access_or_404(
@@ -509,6 +599,52 @@ async def get_call(
     if not access.is_admin and not access.can_view(call.our_e164):
         # An inaccessible call's detail is a 404, never a 403 - don't leak existence.
         raise NotFoundError("Call not found")
+    return await _detail_out(ctx.session, request, call)
+
+
+class DispositionIn(BaseModel):
+    disposition: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.patch("/calls/{call_id}/disposition", response_model=CallDetailOut)
+async def set_call_disposition(
+    call_id: uuid.UUID,
+    payload: DispositionIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
+) -> CallDetailOut:
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
+
+    note = payload.note.strip() if payload.note else None
+    if payload.disposition is None:
+        # A note with no result is a 422, not a silent clear - the note would have nothing
+        # to hang off, and "clear" is what an empty body means.
+        if note:
+            raise ValidationFailedError("Pick a call result before adding a note")
+        call.disposition = None
+        call.disposition_note = None
+    else:
+        catalogue = calling_settings_svc.dispositions_for(ctx.org)
+        if payload.disposition not in catalogue:
+            raise ValidationFailedError("That call result is not on this workspace's list")
+        call.disposition = payload.disposition
+        call.disposition_note = note
+
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="call.disposition_set",
+        target_type="call",
+        target_id=str(call.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        detail={"disposition": call.disposition},
+    )
+    await ctx.session.commit()
     return await _detail_out(ctx.session, request, call)
 
 
@@ -750,6 +886,7 @@ async def get_recording(
     recording_id: uuid.UUID,
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
+    layout: str = Query(default="mixed", max_length=16),
 ) -> Response:
     recording = await ctx.session.get(CallRecording, recording_id)
     if recording is None or recording.call_id != call_id:
@@ -758,6 +895,8 @@ async def get_recording(
     if call is None:
         raise NotFoundError("Recording not found")
     await _access_or_404(ctx, call, require_use=False, message="Recording not found")
+    if layout not in recordings_svc.available_layouts(recording):
+        raise NotFoundError("Recording not found")
     if recording.status != "stored" or not recording.storage_key:
         raise NotFoundError("Recording not found")
 
@@ -766,7 +905,7 @@ async def get_recording(
         raise ValidationFailedError("Media storage is not configured")
 
     try:
-        data = await recordings_svc.load_recording_bytes(store, recording)
+        data = await recordings_svc.load_recording_bytes(store, recording, layout=layout)
     except KeyError as exc:
         raise NotFoundError("Recording not found") from exc
 

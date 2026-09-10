@@ -14,12 +14,23 @@ a column is out of scope here, and putting a carrier-authenticated link one quer
 the API/UI is exactly the leak this module exists to prevent), so the fetch re-derives it
 from the `voice_events` row the webhook already ledgered, by re-parsing that row's stored
 payload through the owning carrier's own `parse_voice_webhook`.
+
+P29 dual-channel layer: a 'dual' recording keeps three stored objects - the agent's
+side, the customer's side, and a stitched two-channel WAV. The mixed layout's storage key
+is exactly the pre-P29 `recording.storage_key`, so single-file recordings do not move. The
+org's "recording layout" setting is an INTENT for the capture side only; a carrier-delivered
+single file is 'mixed' no matter what the setting says, and `on_recording_ready` therefore
+keeps writing rows at the 'mixed' default.
 """
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 import uuid
+import wave
+from array import array
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -30,7 +41,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.errors import FeatureUnavailableError
+from app.errors import FeatureUnavailableError, ValidationFailedError
 from app.models.voice import Call, CallLeg, CallRecording
 from app.models.voice import VoiceEvent as VoiceEventRow
 from app.providers import registry_org
@@ -47,6 +58,11 @@ ALLOWED_RECORDING_CONTENT_TYPES = frozenset(
     {"audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"}
 )
 _OCTET_STREAM = "application/octet-stream"
+
+RECORDING_LAYOUTS: tuple[str, ...] = ("mixed", "agent", "customer")
+
+#: PCM sample width -> `array` typecode. 8-bit WAV is unsigned; 16- and 32-bit signed.
+_ARRAY_TYPECODES = {1: "B", 2: "h", 4: "i"}
 
 #: Per-carrier host allowlist for recording URLs. A webhook payload is untrusted input;
 #: never fetch a recording from a host the carrier has not explicitly named as safe.
@@ -73,6 +89,96 @@ def _now() -> datetime:
 
 def storage_key(org_id: uuid.UUID, recording_id: uuid.UUID) -> str:
     return f"org/{org_id}/recordings/{recording_id}"
+
+
+def layout_storage_key(recording: CallRecording, layout: str) -> str:
+    if layout == "mixed":
+        return recording.storage_key
+    if layout in ("agent", "customer"):
+        return f"{recording.storage_key}/{layout}"
+    raise ValueError("Unknown recording layout")
+
+
+def available_layouts(recording: CallRecording) -> list[str]:
+    if recording.channel_layout != "dual":
+        return ["mixed"]
+    return list(RECORDING_LAYOUTS)
+
+
+def _read_pcm_mono_wav(data: bytes) -> tuple[int, int, bytes]:
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wav:
+            if wav.getnchannels() != 1 or wav.getcomptype() != "NONE":
+                raise ValidationFailedError("Recording tracks must be mono PCM WAV")
+            sampwidth = wav.getsampwidth()
+            if sampwidth not in (1, 2, 4):
+                raise ValidationFailedError(
+                    "Recording tracks must use 8-, 16-, or 32-bit PCM"
+                )
+            framerate = wav.getframerate()
+            frames = bytes(wav.readframes(wav.getnframes()))
+            return sampwidth, framerate, frames
+    except (wave.Error, EOFError) as exc:
+        raise ValidationFailedError("Recording tracks must be mono PCM WAV") from exc
+
+
+def wav_duration_seconds(data: bytes) -> int | None:
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wav:
+            framerate = wav.getframerate()
+            if framerate <= 0:
+                return None
+            return wav.getnframes() // framerate
+    except (wave.Error, EOFError, ValueError):
+        return None
+
+
+def stitch_dual_channel(agent_wav: bytes, customer_wav: bytes) -> bytes:
+    """Stitch two mono PCM WAV tracks into one two-channel WAV.
+
+    Agent frames are channel 0 (left) and customer frames are channel 1 (right). The
+    shorter track is padded with digital silence, never truncated or mixed down.
+    """
+    agent_sampwidth, agent_framerate, agent_frames = _read_pcm_mono_wav(agent_wav)
+    customer_sampwidth, customer_framerate, customer_frames = _read_pcm_mono_wav(
+        customer_wav
+    )
+    if agent_sampwidth != customer_sampwidth or agent_framerate != customer_framerate:
+        raise ValidationFailedError("Recording tracks must share the same audio format")
+
+    sampwidth = agent_sampwidth
+    framerate = agent_framerate
+    #: 8-bit WAV is UNSIGNED, so its digital zero is 128, not 0.
+    silence = 128 if sampwidth == 1 else 0
+
+    left = array(_ARRAY_TYPECODES[sampwidth], agent_frames)
+    right = array(_ARRAY_TYPECODES[sampwidth], customer_frames)
+    if sys.byteorder == "big":
+        # WAV samples are little-endian on the wire; `array` is native-endian.
+        left.byteswap()
+        right.byteswap()
+
+    total_samples = max(len(left), len(right))
+    left.extend([silence] * (total_samples - len(left)))
+    right.extend([silence] * (total_samples - len(right)))
+
+    # Interleave left=agent, right=customer at C speed - a per-sample Python loop turns a
+    # 30-minute call into tens of seconds of CPU. A mono downmix would silently destroy
+    # the speaker separation that dual-channel recording exists to preserve, so this
+    # deliberately writes BOTH channels rather than summing them.
+    interleaved = array(_ARRAY_TYPECODES[sampwidth], bytes(total_samples * 2 * sampwidth))
+    interleaved[0::2] = left
+    interleaved[1::2] = right
+    if sys.byteorder == "big":
+        interleaved.byteswap()
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(2)
+        wav.setsampwidth(sampwidth)
+        wav.setframerate(framerate)
+        wav.writeframes(interleaved.tobytes())
+    return output.getvalue()
 
 
 def _recording_host_allowed(carrier_name: str, url: str) -> bool:
@@ -345,6 +451,56 @@ async def _fetch_one_recording(
     return True
 
 
-async def load_recording_bytes(store, recording: CallRecording) -> bytes:  # noqa: ANN001
-    """Mirror routes/media.py's `content` endpoint: read the stored bytes back for serving."""
-    return await store.get(recording.storage_key)
+async def finalize_dual_recording(
+    session: AsyncSession,
+    store,  # noqa: ANN001 - ObjectStore protocol (app/storage/base.py)
+    recording: CallRecording,
+    *,
+    agent_wav: bytes,
+    customer_wav: bytes,
+) -> CallRecording:
+    """Store all three objects for a dual-channel recording and flip the row to stored.
+
+    The caller owns the transaction; this never commits, same discipline as
+    `on_recording_ready`.
+    """
+    if len(agent_wav) > MAX_RECORDING_BYTES:
+        await _fail(recording, "agent track exceeds MAX_RECORDING_BYTES")
+        return recording
+    if len(customer_wav) > MAX_RECORDING_BYTES:
+        await _fail(recording, "customer track exceeds MAX_RECORDING_BYTES")
+        return recording
+
+    mixed = stitch_dual_channel(agent_wav, customer_wav)
+    if len(mixed) > MAX_RECORDING_BYTES:
+        await _fail(
+            recording, "stitched dual-channel recording exceeds MAX_RECORDING_BYTES"
+        )
+        return recording
+
+    await store.put(layout_storage_key(recording, "agent"), agent_wav, "audio/wav")
+    await store.put(layout_storage_key(recording, "customer"), customer_wav, "audio/wav")
+    await store.put(layout_storage_key(recording, "mixed"), mixed, "audio/wav")
+
+    recording.channel_layout = "dual"
+    recording.content_type = "audio/wav"
+    recording.size_bytes = len(mixed)
+    if recording.duration_seconds is None:
+        recording.duration_seconds = wav_duration_seconds(mixed)
+    recording.status = "stored"
+    return recording
+
+
+async def load_recording_bytes(
+    store,  # noqa: ANN001 - ObjectStore protocol (app/storage/base.py)
+    recording: CallRecording,
+    layout: str = "mixed",
+) -> bytes:
+    """Read one layout of a stored recording back for serving.
+
+    The default ``"mixed"`` preserves the pre-P29 storage key exactly. A layout not in
+    ``available_layouts(recording)`` raises ``KeyError``; callers turn that into a 404.
+    """
+    if layout not in available_layouts(recording):
+        raise KeyError(layout)
+    return await store.get(layout_storage_key(recording, layout))
