@@ -20,7 +20,7 @@ NOTIFICATION_PREF_KEYS: tuple[str, ...] = (
     "sla_breach",
     "digest",
 )
-DEFAULT_NOTIFICATION_PREFS: dict[str, bool] = {k: True for k in NOTIFICATION_PREF_KEYS}
+DEFAULT_NOTIFICATION_PREFS: dict[str, bool] = dict.fromkeys(NOTIFICATION_PREF_KEYS, True)
 
 
 class PushSubscription(Base, TenantScoped, TimestampMixin):
