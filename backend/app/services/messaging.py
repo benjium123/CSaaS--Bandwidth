@@ -240,6 +240,21 @@ async def send_message(
         # P11 DR-3: a bulk campaign send (BULK_SEND_KEY) is not a takeover either.
         thread.ai_state = "handed_off"
 
+    # P26: the first HUMAN reply after an inbound message starts the inbox's first-reply
+    # clock. The three signals that mean "not a person typing in this thread" are exactly
+    # the ones the takeover check above already distinguishes - an AI reply, a compliance
+    # auto-reply (which carries an exemption) and a bulk campaign send. stamp_first_response
+    # is itself a no-op unless the thread has an inbound message and no stamp yet, and it
+    # does not commit - the commit below covers it atomically with the message row.
+    if (
+        exemption is None
+        and not session.info.get(AI_SEND_KEY)
+        and not session.info.get(BULK_SEND_KEY)
+    ):
+        from app.services import inbox_sla as inbox_sla_svc
+
+        await inbox_sla_svc.stamp_first_response(session, thread)
+
     message = Message(
         id=uuid.uuid4(),
         org_id=org_id,

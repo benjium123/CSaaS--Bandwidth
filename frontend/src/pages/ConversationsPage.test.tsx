@@ -323,7 +323,10 @@ describe("ConversationsPage", () => {
     await screen.findByText("Ada Lovelace");
 
     await userEvent.click(screen.getByRole("tab", { name: "Calls" }));
-    await userEvent.click(screen.getByRole("button", { name: "Unread" }));
+    // P26: the filter chips collapse into one "Filter" dropdown by default (5 chips,
+    // MAX_VISIBLE_CHIPS=4).
+    await userEvent.click(screen.getByRole("button", { name: /^Filter/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Unread" }));
     await userEvent.type(screen.getByLabelText("Search conversations"), "ada");
 
     // F20: the search box is debounced 300ms before it reaches the query - give it room.
@@ -714,8 +717,11 @@ describe("ConversationsPage", () => {
     // P20b: "Important" now exists twice - as this chip in the conversation list AND as
     // a row in the new inbox column (two controls over one `filter` value). Scope the
     // query to the list so the assertion keeps testing the chip specifically.
+    // P26: the chips collapse into one "Filter" dropdown by default (5 chips,
+    // MAX_VISIBLE_CHIPS=4).
     const list = screen.getByRole("complementary", { name: "Conversation list" });
-    await userEvent.click(within(list).getByRole("button", { name: "Important" }));
+    await userEvent.click(within(list).getByRole("button", { name: /^Filter/ }));
+    await userEvent.click(within(list).getByRole("menuitemradio", { name: "Important" }));
 
     await waitFor(() => {
       const call = client.calls.find(

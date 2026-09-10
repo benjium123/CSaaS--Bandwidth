@@ -188,7 +188,10 @@ describe("ConversationList", () => {
 
     expect(screen.getAllByLabelText("Important")).toHaveLength(1);
 
-    await userEvent.click(screen.getByRole("button", { name: "Important" }));
+    // P26: the filter chips collapse into one "Filter" dropdown by default (5 chips,
+    // MAX_VISIBLE_CHIPS=4).
+    await userEvent.click(screen.getByRole("button", { name: /^Filter/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Important" }));
     expect(onFilterChange).toHaveBeenCalledWith("important");
   });
 

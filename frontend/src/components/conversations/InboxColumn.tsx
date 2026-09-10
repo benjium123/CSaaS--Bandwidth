@@ -8,7 +8,45 @@ import { cn } from "@/lib/utils";
 export type InboxColumnSelection =
   | { kind: "all" }
   | { kind: "inbox"; inboxId: string }
-  | { kind: "view"; view: "important" | "unresponded" };
+  | { kind: "view"; view: "important" | "unresponded" | "snoozed" | "overdue" };
+
+type ViewKey = "important" | "unresponded" | "snoozed" | "overdue";
+
+/**
+ * Kept as a local component so the four view rows cannot drift apart.
+ * The markup/classes are the same as the old Important row.
+ */
+function ViewRow({
+  view,
+  label,
+  selection,
+  onSelect,
+}: {
+  view: ViewKey;
+  label: string;
+  selection: InboxColumnSelection;
+  onSelect: (selection: InboxColumnSelection) => void;
+}) {
+  const selected = selection.kind === "view" && selection.view === view;
+
+  return (
+    <li>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        aria-current={selected ? "true" : undefined}
+        onClick={() => onSelect({ kind: "view", view })}
+        className={cn(
+          "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
+          selected && "bg-muted",
+        )}
+      >
+        {label}
+      </Button>
+    </li>
+  );
+}
 
 /**
  * The column's own "+ New" trigger. It is a deliberate TWIN of the identically-behaved
@@ -247,49 +285,30 @@ export function InboxColumn({
 
             <li aria-hidden="true" className="my-1 border-t border-border" />
 
-            <li>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-current={
-                  selection.kind === "view" && selection.view === "important"
-                    ? "true"
-                    : undefined
-                }
-                onClick={() => onSelect({ kind: "view", view: "important" })}
-                className={cn(
-                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
-                  selection.kind === "view" &&
-                    selection.view === "important" &&
-                    "bg-muted",
-                )}
-              >
-                Important
-              </Button>
-            </li>
-
-            <li>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-current={
-                  selection.kind === "view" && selection.view === "unresponded"
-                    ? "true"
-                    : undefined
-                }
-                onClick={() => onSelect({ kind: "view", view: "unresponded" })}
-                className={cn(
-                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
-                  selection.kind === "view" &&
-                    selection.view === "unresponded" &&
-                    "bg-muted",
-                )}
-              >
-                Unresponded
-              </Button>
-            </li>
+            <ViewRow
+              view="important"
+              label="Important"
+              selection={selection}
+              onSelect={onSelect}
+            />
+            <ViewRow
+              view="unresponded"
+              label="Unresponded"
+              selection={selection}
+              onSelect={onSelect}
+            />
+            <ViewRow
+              view="snoozed"
+              label="Snoozed"
+              selection={selection}
+              onSelect={onSelect}
+            />
+            <ViewRow
+              view="overdue"
+              label="Overdue"
+              selection={selection}
+              onSelect={onSelect}
+            />
           </ul>
         )}
       </nav>

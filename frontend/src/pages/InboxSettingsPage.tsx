@@ -36,6 +36,49 @@ function adminInboxes(inboxes: Inbox[]): Inbox[] {
   return inboxes.filter((inbox) => inbox.my_role === "admin");
 }
 
+type InboxDraft = {
+  name: string;
+  color: string;
+  firstReplyMinutes: string;
+  resolveMinutes: string;
+};
+
+type InboxSaveVars = {
+  id: string;
+  name: string;
+  color: string;
+  sla_first_response_minutes?: number;
+  sla_resolution_minutes?: number;
+  clear_sla_first_response?: boolean;
+  clear_sla_resolution?: boolean;
+};
+
+function seedDraft(inbox: Inbox): InboxDraft {
+  return {
+    name: inbox.name,
+    color: inbox.color,
+    firstReplyMinutes:
+      inbox.sla_first_response_minutes == null
+        ? ""
+        : String(inbox.sla_first_response_minutes),
+    resolveMinutes:
+      inbox.sla_resolution_minutes == null ? "" : String(inbox.sla_resolution_minutes),
+  };
+}
+
+/**
+ * Reply times are held as text in state because a number input is still a text field to
+ * React. Parsing on save keeps a user from clearing "15" and then having "15" jump back
+ * under their "5".
+ */
+function parseMinutesField(value: string): number | "clear" | "invalid" {
+  const trimmed = value.trim();
+  if (trimmed === "") return "clear";
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 44640) return "invalid";
+  return parsed;
+}
+
 /** Small inline pending/error readout, matching ContactPanel's EditableField pattern -
  * F14: every bare async mutation on this page now goes through useMutation so a failure
  * is visible instead of silently swallowed. */
@@ -405,109 +448,198 @@ function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
 function InboxesTable({ inboxes }: { inboxes: Inbox[] }) {
   const { api } = useAuth();
   const queryClient = useQueryClient();
-  const [drafts, setDrafts] = React.useState<Record<string, { name: string; color: string }>>({});
+  const [drafts, setDrafts] = React.useState<Record<string, InboxDraft>>({});
+  const [rowValidation, setRowValidation] = React.useState<Record<string, string | undefined>>(
+    {},
+  );
 
   // F15: key on the joined inbox ids, not the array reference - a background refetch of
-  // the SAME inboxes must not reset name/color drafts the admin is still editing.
+  // the SAME inboxes must not reset name/color/reply-time drafts the admin is still editing.
   const inboxIdsKey = inboxes.map((inbox) => inbox.id).join(",");
   React.useEffect(() => {
-    const next: Record<string, { name: string; color: string }> = {};
+    const next: Record<string, InboxDraft> = {};
     inboxes.forEach((inbox) => {
-      next[inbox.id] = { name: inbox.name, color: inbox.color };
+      next[inbox.id] = seedDraft(inbox);
     });
     setDrafts(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inboxIdsKey]);
 
   const saveMutation = useMutation({
-    mutationFn: (vars: { id: string; name: string; color: string }) =>
-      patchInbox(api, vars.id, { name: vars.name, color: vars.color }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["inboxes"] }),
+    mutationFn: (vars: InboxSaveVars) => {
+      const { id, ...data } = vars;
+      return patchInbox(api, id, data);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["inboxes"] });
+      setRowValidation({});
+    },
   });
 
   return (
-    <Card className="overflow-x-auto p-0">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Name</th>
-            <th className="px-3 py-2 font-medium">Color</th>
-            <th className="px-3 py-2 font-medium">Number</th>
-            <th className="px-3 py-2 font-medium">Your role</th>
-            <th className="px-3 py-2 font-medium">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {inboxes.map((inbox) => {
-            const draft = drafts[inbox.id] ?? { name: inbox.name, color: inbox.color };
-            const rowSaving =
-              saveMutation.isPending && saveMutation.variables?.id === inbox.id;
-            const rowError =
-              saveMutation.isError && saveMutation.variables?.id === inbox.id;
-            return (
-              <React.Fragment key={inbox.id}>
-                <tr className="bg-muted">
-                  <td className="px-3 py-2">
-                    <Input
-                      aria-label={`Inbox name ${inbox.name}`}
-                      value={draft.name}
-                      onChange={(e) =>
-                        setDrafts((prev) => ({
-                          ...prev,
-                          [inbox.id]: { ...draft, name: e.target.value },
-                        }))
-                      }
-                      className="h-8 w-full px-2 text-xs"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <Input
-                      aria-label={`Inbox color ${inbox.name}`}
-                      type="color"
-                      value={draft.color}
-                      onChange={(e) =>
-                        setDrafts((prev) => ({
-                          ...prev,
-                          [inbox.id]: { ...draft, color: e.target.value },
-                        }))
-                      }
-                      className="h-8 w-14 px-1 py-1"
-                    />
-                  </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
-                    {formatPhone(inbox.e164)}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{inbox.my_role}</td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        disabled={rowSaving}
-                        onClick={() =>
-                          saveMutation.mutate({ id: inbox.id, name: draft.name, color: draft.color })
-                        }
-                      >
-                        {rowSaving ? "Saving…" : "Save"}
-                      </Button>
-                      <MutationStatus
-                        pending={false}
-                        error={rowError ? saveMutation.error : undefined}
-                        className="text-[10px]"
+    <>
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <th className="px-3 py-2 font-medium">Name</th>
+              <th className="px-3 py-2 font-medium">Color</th>
+              <th className="px-3 py-2 font-medium">Number</th>
+              <th className="px-3 py-2 font-medium">Your role</th>
+              <th className="px-3 py-2 font-medium">Reply times</th>
+              <th className="px-3 py-2 font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {inboxes.map((inbox) => {
+              const draft = drafts[inbox.id] ?? seedDraft(inbox);
+              const rowSaving =
+                saveMutation.isPending && saveMutation.variables?.id === inbox.id;
+              const rowError =
+                saveMutation.isError && saveMutation.variables?.id === inbox.id;
+              const validationMessage = rowValidation[inbox.id];
+
+              function updateDraft(patch: Partial<InboxDraft>) {
+                setDrafts((prev) => {
+                  const current = prev[inbox.id] ?? seedDraft(inbox);
+                  return { ...prev, [inbox.id]: { ...current, ...patch } };
+                });
+                setRowValidation((prev) => ({ ...prev, [inbox.id]: undefined }));
+              }
+
+              function handleSave() {
+                const first = parseMinutesField(draft.firstReplyMinutes);
+                const resolve = parseMinutesField(draft.resolveMinutes);
+
+                if (first === "invalid" || resolve === "invalid") {
+                  setRowValidation((prev) => ({
+                    ...prev,
+                    [inbox.id]:
+                      "Enter a whole number of minutes, or leave it blank.",
+                  }));
+                  return;
+                }
+
+                const vars: InboxSaveVars = {
+                  id: inbox.id,
+                  name: draft.name,
+                  color: draft.color,
+                };
+
+                if (first === "clear") {
+                  vars.clear_sla_first_response = true;
+                } else {
+                  vars.sla_first_response_minutes = first;
+                }
+
+                if (resolve === "clear") {
+                  vars.clear_sla_resolution = true;
+                } else {
+                  vars.sla_resolution_minutes = resolve;
+                }
+
+                saveMutation.mutate(vars);
+              }
+
+              return (
+                <React.Fragment key={inbox.id}>
+                  <tr className="bg-muted">
+                    <td className="px-3 py-2">
+                      <Input
+                        aria-label={`Inbox name ${inbox.name}`}
+                        value={draft.name}
+                        onChange={(e) => updateDraft({ name: e.target.value })}
+                        className="h-8 w-full px-2 text-xs"
                       />
-                    </div>
-                  </td>
-                </tr>
-                <tr className="border-b border-border bg-background">
-                  <td colSpan={5} className="px-3 py-2">
-                    <InboxGrantEditor inbox={inbox} />
-                  </td>
-                </tr>
-              </React.Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-    </Card>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input
+                        aria-label={`Inbox color ${inbox.name}`}
+                        type="color"
+                        value={draft.color}
+                        onChange={(e) => updateDraft({ color: e.target.value })}
+                        className="h-8 w-14 px-1 py-1"
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {formatPhone(inbox.e164)}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{inbox.my_role}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">
+                            First reply within (minutes)
+                          </span>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={44640}
+                            aria-label={`First reply within (minutes) for ${inbox.name}`}
+                            value={draft.firstReplyMinutes}
+                            onChange={(e) =>
+                              updateDraft({ firstReplyMinutes: e.target.value })
+                            }
+                            className="h-8 w-24 px-2 text-xs"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">
+                            Resolve within (minutes)
+                          </span>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={44640}
+                            aria-label={`Resolve within (minutes) for ${inbox.name}`}
+                            value={draft.resolveMinutes}
+                            onChange={(e) =>
+                              updateDraft({ resolveMinutes: e.target.value })
+                            }
+                            className="h-8 w-24 px-2 text-xs"
+                          />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            disabled={rowSaving}
+                            onClick={handleSave}
+                          >
+                            {rowSaving ? "Saving…" : "Save"}
+                          </Button>
+                          <MutationStatus
+                            pending={false}
+                            error={rowError ? saveMutation.error : undefined}
+                            className="text-[10px]"
+                          />
+                        </div>
+                        {validationMessage ? (
+                          <p role="alert" className="text-xs text-destructive">
+                            {validationMessage}
+                          </p>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                  <tr className="border-b border-border bg-background">
+                    <td colSpan={6} className="px-3 py-2">
+                      <InboxGrantEditor inbox={inbox} />
+                    </td>
+                  </tr>
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Leave a box blank to stop tracking that time.
+      </p>
+    </>
   );
 }
 

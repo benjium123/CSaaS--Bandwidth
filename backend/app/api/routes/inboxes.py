@@ -32,11 +32,17 @@ class InboxOut(BaseModel):
     number_id: uuid.UUID
     #: "admin" | "member" | "viewer" - the caller's own relationship to this inbox.
     my_role: str
+    sla_first_response_minutes: int | None
+    sla_resolution_minutes: int | None
 
 
 class InboxPatchIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=127)
     color: str | None = Field(default=None, max_length=16)
+    sla_first_response_minutes: int | None = None
+    sla_resolution_minutes: int | None = None
+    clear_sla_first_response: bool = False
+    clear_sla_resolution: bool = False
 
 
 class GrantIn(BaseModel):
@@ -72,6 +78,11 @@ async def _get_inbox(ctx: OrgContext, inbox_id: uuid.UUID) -> Inbox:
     return inbox
 
 
+def _validate_sla_minutes(value: int | None) -> None:
+    if value is not None and (value < 1 or value > 44640):
+        raise ValidationFailedError("Enter a number of minutes between 1 and 44640.")
+
+
 @router.get("", response_model=list[InboxOut])
 async def list_inboxes(
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:read"))],
@@ -97,6 +108,8 @@ async def list_inboxes(
                 e164=e164,
                 number_id=inbox.number_id,
                 my_role=my_role,
+                sla_first_response_minutes=inbox.sla_first_response_minutes,
+                sla_resolution_minutes=inbox.sla_resolution_minutes,
             )
         )
     return out
@@ -113,6 +126,41 @@ async def patch_inbox(
         inbox.name = payload.name.strip()
     if payload.color is not None:
         inbox.color = payload.color
+
+    old_first = inbox.sla_first_response_minutes
+    old_resolution = inbox.sla_resolution_minutes
+
+    new_first = old_first
+    if payload.sla_first_response_minutes is not None:
+        _validate_sla_minutes(payload.sla_first_response_minutes)
+        new_first = payload.sla_first_response_minutes
+    elif payload.clear_sla_first_response:
+        new_first = None
+
+    new_resolution = old_resolution
+    if payload.sla_resolution_minutes is not None:
+        _validate_sla_minutes(payload.sla_resolution_minutes)
+        new_resolution = payload.sla_resolution_minutes
+    elif payload.clear_sla_resolution:
+        new_resolution = None
+
+    if new_first != old_first or new_resolution != old_resolution:
+        inbox.sla_first_response_minutes = new_first
+        inbox.sla_resolution_minutes = new_resolution
+        audit_svc.record(
+            ctx.session,
+            ctx.org.id,
+            action="inbox.sla_set",
+            target_type="inbox",
+            target_id=str(inbox.id),
+            actor_user_id=ctx.actor_user_id,
+            actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+            detail={
+                "first_response_minutes": new_first,
+                "resolution_minutes": new_resolution,
+            },
+        )
+
     await ctx.session.commit()
     number = await ctx.session.get(OrgNumber, inbox.number_id)
     return InboxOut(
@@ -123,6 +171,8 @@ async def patch_inbox(
         number_id=inbox.number_id,
         # inboxes:admin is required to reach this route at all.
         my_role="admin",
+        sla_first_response_minutes=inbox.sla_first_response_minutes,
+        sla_resolution_minutes=inbox.sla_resolution_minutes,
     )
 
 

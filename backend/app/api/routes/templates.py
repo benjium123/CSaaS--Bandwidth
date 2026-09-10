@@ -44,13 +44,31 @@ def _out(t: MessageTemplate) -> TemplateOut:
     )
 
 
+def _escape_like(s: str) -> str:
+    """Escape LIKE metacharacters so a caller-supplied `q` cannot smuggle its own
+    wildcards into the pattern (5.9). Backslash first - escaping % and _ before it
+    would double-escape a literal backslash already present in the input."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @router.get("", response_model=list[TemplateOut])
 async def list_templates(
     ctx: Annotated[OrgContext, Depends(require_permission("templates:read"))],
+    q: str | None = None,
 ) -> list[TemplateOut]:
-    rows = (
-        await ctx.session.execute(sa.select(MessageTemplate).order_by(MessageTemplate.name))
-    ).scalars().all()
+    # The composer "/" quick-reply menu calls this with `q` to search by name or body.
+    stmt = sa.select(MessageTemplate)
+    stripped_q = (q or "").strip()
+    if stripped_q:
+        needle = f"%{_escape_like(stripped_q.lower())}%"
+        stmt = stmt.where(
+            sa.or_(
+                sa.func.lower(MessageTemplate.name).like(needle, escape="\\"),
+                sa.func.lower(MessageTemplate.body).like(needle, escape="\\"),
+            )
+        )
+    stmt = stmt.order_by(MessageTemplate.name)
+    rows = (await ctx.session.execute(stmt)).scalars().all()
     return [_out(t) for t in rows]
 
 

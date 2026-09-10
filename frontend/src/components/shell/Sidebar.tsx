@@ -6,6 +6,7 @@ import { useGate } from "@/api/capabilities";
 import { useAuth } from "@/auth/AuthContext";
 import { Button } from "@/components/ui/primitives";
 import { openCommandPalette } from "@/components/ui/CommandPalette";
+import { NotificationBell } from "@/components/shell/NotificationBell";
 import { cn } from "@/lib/utils";
 import { SETTINGS_SECTIONS } from "@/pages/settingsSections";
 
@@ -75,6 +76,11 @@ export function Sidebar() {
         <Search className="h-5 w-5" aria-hidden="true" />
         <span className="sr-only">Search</span>
       </Button>
+
+      {/* P26: the bell sits with Search above the navigation, not inside it - it is not
+          a place you go, it is a thing that happened. It renders with or without the
+          realtime socket, so a bare <Sidebar /> in a test still works. */}
+      <NotificationBell />
 
       <nav
         aria-label="Sidebar"

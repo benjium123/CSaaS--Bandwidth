@@ -40,6 +40,10 @@ import { Sidebar } from "./Sidebar";
 
 vi.mock("@/softphone/SoftphoneProvider", () => ({
   SoftphoneProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  // P26: the rail's alerts bell reads the realtime socket through this hook. The mock
+  // stubs the provider away entirely, which is exactly the "no socket" case the hook
+  // exists for - it returns null and the bell falls back to polling.
+  useOptionalSoftphone: () => null,
 }));
 vi.mock("@/softphone/SoftphonePanel", () => ({ SoftphonePanel: () => null }));
 vi.mock("@/pages/ConversationsPage", () => ({

@@ -4,7 +4,8 @@ Portable-first: the LIKE-on-lower() path works identically on SQLite and Postgre
 what the main suite exercises. On Postgres the SAME function switches to
 ``websearch_to_tsquery`` against the generated tsvector + GIN index the migration created
 (dialect-guarded there, same rule as ``db/types.py``) - only a ``pg_only`` test can prove
-that branch since SQLite has no tsvector type.
+that branch since SQLite has no tsvector type. On Postgres the segment ``matched`` flag is
+computed by the same tsvector query that selected the calls (closes D25).
 """
 
 from __future__ import annotations
@@ -81,6 +82,22 @@ async def _tsvector_matching_call_ids(
     return [r[0] for r in rows]
 
 
+async def _matched_segment_ids(
+    session: AsyncSession,
+    call_ids: list[uuid.UUID],
+    query: str,
+) -> set[uuid.UUID]:
+    """Return segment ids matching the same Postgres tsquery used to pick the calls."""
+    ts_query = sa.func.websearch_to_tsquery("english", query)
+    tsv = sa.func.to_tsvector("english", CallTranscriptSegment.text)
+    stmt = sa.select(CallTranscriptSegment.id).where(
+        CallTranscriptSegment.call_id.in_(call_ids),
+        tsv.op("@@")(ts_query),
+    )
+    rows = (await session.execute(stmt)).all()
+    return {row[0] for row in rows}
+
+
 async def search_transcripts(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -133,6 +150,11 @@ async def search_transcripts(
     )
 
     needle = query.lower()
+    if _is_postgres(session):
+        matched_ids = await _matched_segment_ids(session, call_ids, query)
+    else:
+        matched_ids = None
+
     by_call: dict[uuid.UUID, dict] = {}
     for seg in segments:
         call = calls.get(seg.call_id)
@@ -147,12 +169,16 @@ async def search_transcripts(
                 "segments": [],
             },
         )
+        if matched_ids is not None:
+            matched = seg.id in matched_ids
+        else:
+            matched = needle in seg.text.lower()
         bucket["segments"].append(
             {
                 "role": seg.role,
                 "text": seg.text,
                 "at_ms": seg.at_ms,
-                "matched": needle in seg.text.lower(),
+                "matched": matched,
             }
         )
     return [by_call[cid] for cid in call_ids if cid in by_call]

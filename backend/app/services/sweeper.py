@@ -39,7 +39,7 @@ SPEND_TICK_INTERVAL_SECONDS = 3600
 _SWEEPER_ADVISORY_LOCK_KEY = 872341995
 
 
-async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
+async def run_once(app) -> dict[str, int]:
     """Acquires a Postgres advisory lock for the WHOLE pass before running it, so a
     second sweeper worker/process cannot double-run the same pass concurrently - every
     task below assumes it is the only writer claiming its own rows this tick. A worker
@@ -83,14 +83,16 @@ async def run_once(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
         await lock_session.close()
 
 
-async def _run_once_locked(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
+async def _run_once_locked(app) -> dict[str, int]:
     """One pass. Each task gets its own session so one failure cannot poison the others."""
     from random import Random
 
     from app.db.session import get_sessionmaker
     from app.services import dialer as dialer_svc
+    from app.services import inbox_sla as inbox_sla_svc
     from app.services import media as media_svc
     from app.services import messaging as messaging_svc
+    from app.services import notifications as notifications_svc
     from app.services import number_orders
     from app.services import outbound as outbound_svc
     from app.services import recordings as recordings_svc
@@ -231,6 +233,37 @@ async def _run_once_locked(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     except Exception:
         log.exception("sweeper_routing_tick_failed")
 
+    # P26 inbox pro: three cheap, all-org passes - snoozed conversations come back when
+    # they are due, inbox first-reply/resolution targets are checked, and missed inbound
+    # calls become bell entries. Each gets its own session and its own try/except so one
+    # failure can never poison the others, same discipline as every task above. All three
+    # commit per row internally, and each is idempotent (a due snooze is cleared once,
+    # sla_breached_at is stamped once, and every notification carries a dedupe key), so a
+    # repeated pass is a no-op rather than a duplicate.
+    try:
+        async with get_sessionmaker()() as session:
+            results["snoozes_reopened"] = await inbox_sla_svc.reopen_due_snoozes(session)
+    except Exception:
+        log.exception("sweeper_snooze_reopen_failed")
+
+    try:
+        async with get_sessionmaker()() as session:
+            sla_counts = await inbox_sla_svc.sla_tick(
+                session, getattr(app.state, "event_bus", None)
+            )
+        results["sla_breached"] = sla_counts.get("breached", 0)
+    except Exception:
+        log.exception("sweeper_sla_tick_failed")
+
+    try:
+        async with get_sessionmaker()() as session:
+            missed_counts = await notifications_svc.missed_call_tick(
+                session, getattr(app.state, "event_bus", None)
+            )
+        results["missed_call_notifications"] = missed_counts.get("notifications", 0)
+    except Exception:
+        log.exception("sweeper_missed_call_tick_failed")
+
     if store is not None:
         try:
             async with get_sessionmaker()() as session:
@@ -321,7 +354,7 @@ async def _run_once_locked(app) -> dict[str, int]:  # noqa: ANN001 - FastAPI app
     return results
 
 
-async def sweeper_loop(app, interval_seconds: int) -> None:  # noqa: ANN001
+async def sweeper_loop(app, interval_seconds: int) -> None:
     log.info("sweeper_started", interval_seconds=interval_seconds)
     try:
         while True:

@@ -249,7 +249,12 @@ export function ConversationsPage() {
   const canCompose = fromOptions.length > 0;
 
   const inboxSelection = React.useMemo<InboxColumnSelection>(() => {
-    if (filter === "important" || filter === "unresponded") {
+    if (
+      filter === "important" ||
+      filter === "unresponded" ||
+      filter === "snoozed" ||
+      filter === "overdue"
+    ) {
       return { kind: "view", view: filter };
     }
     if (isAllInboxes) return { kind: "all" };
@@ -260,6 +265,8 @@ export function ConversationsPage() {
   const scopeLabel = React.useMemo(() => {
     if (filter === "important") return "Important";
     if (filter === "unresponded") return "Unresponded";
+    if (filter === "snoozed") return "Snoozed";
+    if (filter === "overdue") return "Overdue";
     if (isAllInboxes) return "All conversations";
     if (selectedInboxId) {
       return inboxes.find((inbox) => inbox.id === selectedInboxId)?.name ?? "All conversations";
@@ -500,6 +507,10 @@ export function ConversationsPage() {
                     // switch (a half-typed reply to Ada must not reappear addressed to Bob).
                     key={selectedConversation.contact_e164}
                     disabled={!canSend}
+                    threadId={selectedConversation.thread_id}
+                    onNoted={() => {
+                      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+                    }}
                     onSend={async (body, allowReassign) => {
                       await sendMessage.mutateAsync({
                         to: selectedConversation.contact_e164,

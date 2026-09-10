@@ -435,7 +435,13 @@ async def test_me_router_does_not_shadow_auth_me(client, settings):
     # Nothing on /api/v1/me is a wildcard that could swallow another router's path,
     # and no other router owns a path under /api/v1/me.
     me_paths = sorted(p for p in paths if p.startswith("/api/v1/me/"))
-    assert me_paths == ["/api/v1/me/capabilities"], me_paths
+    # P26 added the personal bell here; the guard is still "these exact paths, no
+    # wildcard, nothing from another router" - update the list when /me grows again.
+    assert me_paths == [
+        "/api/v1/me/capabilities",
+        "/api/v1/me/notifications",
+        "/api/v1/me/notifications/read",
+    ], me_paths
 
     token = await register_and_login(client, "p20v-shadow@example.com")
     org = await create_org(client, token, "Verify Shadow")

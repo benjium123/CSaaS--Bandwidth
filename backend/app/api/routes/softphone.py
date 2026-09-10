@@ -245,15 +245,27 @@ async def _event_visible(
     ``sms.handoff`` / ``message.received`` (by thread_id) need only VIEW access, resolved
     via one DB lookup each - also fail-closed when the target row cannot be resolved.
 
+    ``notification.created`` (P26) is the ONE type checked BEFORE the admin
+    short-circuit: a bell notification belongs to exactly one person, so it goes to that
+    person and nobody else. An admin holds ``inboxes:admin`` over every inbox, but that
+    is access to CONVERSATIONS, never to a teammate's personal bell - without this early
+    return every admin would receive every mention, assignment and missed-call entry
+    addressed to someone else.
+
     Every other event type is FAIL-CLOSED (hidden from non-admins) unless it is in the
     explicit ``_BROADCAST_EVENT_TYPES`` allowlist (``ping`` and similar org-wide,
     no-per-recipient-meaning notifications) - a future event type this gate doesn't know
     about must never default to visible-to-everyone.
     """
+    event_type = event.get("type")
+
+    if event_type == "notification.created":
+        # Fail-closed: an event with no recipient reaches nobody.
+        recipient = event.get("user_id")
+        return bool(recipient) and str(recipient) == str(user_id)
+
     if access.is_admin:
         return True
-
-    event_type = event.get("type")
 
     if event_type == "call.ring":
         to = event.get("to")

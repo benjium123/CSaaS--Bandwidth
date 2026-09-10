@@ -3,8 +3,9 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
 import sqlalchemy as sa
@@ -12,6 +13,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.api.routes.calls import _livekit_route_reason
+from app.api.routes.inbox import _get_thread
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
 from app.errors import NotFoundError, ValidationFailedError
@@ -24,11 +26,17 @@ from app.models import (
     Inbox,
     Message,
     MessageThread,
+    OrgMembership,
     OrgNumber,
+    Role,
+    ThreadNote,
+    User,
     VoiceEvent,
     Voicemail,
 )
 from app.services import inbox_access as inbox_access_svc
+from app.services import inbox_sla as inbox_sla_svc
+from app.services import notifications as notifications_svc
 
 router = APIRouter(prefix="/api/v1", tags=["conversations"])
 
@@ -81,12 +89,26 @@ def _decode_item_cursor(token: str) -> tuple[datetime, uuid.UUID]:
         raise ValidationFailedError("Invalid cursor") from exc
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    """Attach UTC to a naive SQLite timestamp for comparisons against aware now."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 # ----------------------------------------------------------------------------------
 # Response models
 # ----------------------------------------------------------------------------------
 class ConversationContact(BaseModel):
     id: uuid.UUID
     display_name: str
+
+
+class SlaOut(BaseModel):
+    due_at: datetime | None
+    breached: bool
 
 
 class ConversationItem(BaseModel):
@@ -102,6 +124,8 @@ class ConversationItem(BaseModel):
     contact: ConversationContact | None
     status: str
     important: bool
+    snoozed_until: datetime | None = None
+    sla: SlaOut | None = None
 
 
 class ConversationListResponse(BaseModel):
@@ -157,8 +181,41 @@ class VoicemailTimelineEvent(BaseModel):
     recording: CallRecordingOut | None
 
 
+class NoteMention(BaseModel):
+    user_id: uuid.UUID
+    name: str
+
+
+class NoteOut(BaseModel):
+    id: uuid.UUID
+    thread_id: uuid.UUID
+    author_user_id: uuid.UUID | None
+    author_name: str
+    body: str
+    mentions: list[NoteMention]
+    created_at: datetime
+
+
+class NoteIn(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    mention_user_ids: list[uuid.UUID] = []
+
+
+class SnoozeIn(BaseModel):
+    until: datetime
+
+
+class NoteTimelineEvent(BaseModel):
+    kind: Literal["note"] = "note"
+    id: uuid.UUID
+    author_name: str
+    body: str
+    mentions: list[NoteMention]
+    occurred_at: datetime
+
+
 TimelineEvent = Annotated[
-    MessageTimelineEvent | CallTimelineEvent | VoicemailTimelineEvent,
+    MessageTimelineEvent | CallTimelineEvent | VoicemailTimelineEvent | NoteTimelineEvent,
     Field(discriminator="kind"),
 ]
 
@@ -166,6 +223,8 @@ TimelineEvent = Annotated[
 class TimelineResponse(BaseModel):
     items: list[TimelineEvent]
     next_cursor: str | None
+    snoozed_until: datetime | None = None
+    sla: SlaOut | None = None
 
 
 # ----------------------------------------------------------------------------------
@@ -329,8 +388,264 @@ def _latest_recording(
 
 
 # ----------------------------------------------------------------------------------
+# Note helpers
+# ----------------------------------------------------------------------------------
+def _user_display_name(user: User | None) -> str:
+    if user is None:
+        return "Automation"
+    return user.full_name or user.email
+
+
+def _first_word(display_name: str) -> str:
+    stripped = display_name.strip()
+    if not stripped:
+        return ""
+    return stripped.split()[0].lower()
+
+
+async def _mentionable_members(session) -> dict[uuid.UUID, str]:
+    """Who may be @-mentioned: every member of THIS org whose role can work the inbox.
+
+    OrgMembership is selected as an entity (not merely joined) so the session-level
+    tenant guard attaches its org filter to it too - a join-only mapper is not
+    guaranteed to be seen by the guard.
+    """
+    rows = (
+        await session.execute(
+            sa.select(User, Role, OrgMembership)
+            .join(OrgMembership, OrgMembership.user_id == User.id)
+            .join(Role, Role.id == OrgMembership.role_id)
+        )
+    ).all()
+
+    mentionable: dict[uuid.UUID, str] = {}
+    for user, role, _membership in rows:
+        permissions = role.permissions or []
+        if "*" not in permissions and "inbox:read" not in permissions:
+            continue
+        display = user.full_name or user.email
+        if display:
+            mentionable[user.id] = display
+    return mentionable
+
+
+def _mentions_name(body: str, name: str) -> bool:
+    """True when `body` contains "@name" as a whole token.
+
+    The trailing guard matters: without it "@Sam" would also fire on "@Sammy Jones",
+    quietly notifying the wrong teammate. A name is matched case-insensitively and only
+    when the character right after it is not another word character.
+    """
+    if not name:
+        return False
+    pattern = re.compile("@" + re.escape(name) + r"(?![\w'\-])", re.IGNORECASE)
+    return pattern.search(body) is not None
+
+
+def _extract_parsed_mentions(body: str, mentionable: dict[uuid.UUID, str]) -> set[uuid.UUID]:
+    first_word_counts: dict[str, int] = {}
+    for display_name in mentionable.values():
+        first = _first_word(display_name)
+        if first:
+            first_word_counts[first] = first_word_counts.get(first, 0) + 1
+
+    matched: set[uuid.UUID] = set()
+    for user_id, display_name in mentionable.items():
+        if _mentions_name(body, display_name.strip()):
+            matched.add(user_id)
+            continue
+        # A first name only counts when it belongs to exactly one teammate - an
+        # ambiguous "@Sam" with two Sams in the org deliberately matches nobody.
+        first = _first_word(display_name)
+        if first and first_word_counts.get(first) == 1 and _mentions_name(body, first):
+            matched.add(user_id)
+    return matched
+
+
+def _note_mention_uuids(mentions: list | None) -> list[uuid.UUID]:
+    result: list[uuid.UUID] = []
+    for raw in mentions or []:
+        try:
+            result.append(uuid.UUID(str(raw)))
+        except (ValueError, TypeError):
+            continue
+    return result
+
+
+async def _resolve_note_names(session, notes: list[ThreadNote]) -> dict[uuid.UUID, str]:
+    user_ids: set[uuid.UUID] = set()
+    for note in notes:
+        if note.author_user_id is not None:
+            user_ids.add(note.author_user_id)
+        user_ids.update(_note_mention_uuids(note.mentions))
+    if not user_ids:
+        return {}
+
+    users = list(
+        (await session.execute(sa.select(User).where(User.id.in_(user_ids))))
+        .scalars()
+        .all()
+    )
+    return {user.id: (user.full_name or user.email) for user in users}
+
+
+def _note_author_name(name_by_id: dict[uuid.UUID, str], author_user_id: uuid.UUID | None) -> str:
+    if author_user_id is None:
+        return "Automation"
+    return name_by_id.get(author_user_id, "Unknown user")
+
+
+def _note_out_from(note: ThreadNote, name_by_id: dict[uuid.UUID, str]) -> NoteOut:
+    mentions = [
+        NoteMention(user_id=user_id, name=name_by_id.get(user_id, "Unknown user"))
+        for user_id in _note_mention_uuids(note.mentions)
+    ]
+    return NoteOut(
+        id=note.id,
+        thread_id=note.thread_id,
+        author_user_id=note.author_user_id,
+        author_name=_note_author_name(name_by_id, note.author_user_id),
+        body=note.body,
+        mentions=mentions,
+        created_at=note.created_at,
+    )
+
+
+def _note_timeline_item(note: ThreadNote, name_by_id: dict[uuid.UUID, str]) -> dict[str, Any]:
+    return {
+        "kind": "note",
+        "id": note.id,
+        "author_name": _note_author_name(name_by_id, note.author_user_id),
+        "body": note.body,
+        "mentions": [
+            NoteMention(user_id=user_id, name=name_by_id.get(user_id, "Unknown user"))
+            for user_id in _note_mention_uuids(note.mentions)
+        ],
+        "occurred_at": note.created_at,
+    }
+
+
+# ----------------------------------------------------------------------------------
 # Endpoints
 # ----------------------------------------------------------------------------------
+@router.get("/conversations/{thread_id}/notes", response_model=list[NoteOut])
+async def list_notes(
+    thread_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("inbox:read"))],
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+) -> list[NoteOut]:
+    thread = await _get_thread(ctx, thread_id, require_use=True)
+
+    # Newest-first in SQL so a long-running conversation returns its RECENT notes, then
+    # reversed so the response still reads oldest -> newest like the timeline does.
+    notes = list(
+        (
+            await ctx.session.execute(
+                sa.select(ThreadNote)
+                .where(ThreadNote.thread_id == thread.id)
+                .order_by(ThreadNote.created_at.desc(), ThreadNote.id.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    notes.reverse()
+    name_by_id = await _resolve_note_names(ctx.session, notes)
+    return [_note_out_from(note, name_by_id) for note in notes]
+
+
+@router.post("/conversations/{thread_id}/notes", response_model=NoteOut, status_code=201)
+async def create_note(
+    thread_id: uuid.UUID,
+    payload: NoteIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("inbox:send"))],
+) -> NoteOut:
+    thread = await _get_thread(ctx, thread_id, require_use=True)
+
+    mentionable = await _mentionable_members(ctx.session)
+    parsed_ids = _extract_parsed_mentions(payload.body, mentionable)
+    valid_ids = set(mentionable.keys())
+    requested_ids = set(payload.mention_user_ids)
+    if not requested_ids.issubset(valid_ids):
+        raise ValidationFailedError("You can only mention teammates who can use the inbox.")
+
+    final_ids = parsed_ids | requested_ids
+    if ctx.actor_user_id in final_ids:
+        final_ids.remove(ctx.actor_user_id)
+
+    if ctx.actor_user_id is not None:
+        author_user = await ctx.session.get(User, ctx.actor_user_id)
+        author_name = _user_display_name(author_user)
+    else:
+        author_name = "Automation"
+
+    note = ThreadNote(
+        id=uuid.uuid4(),
+        org_id=ctx.org.id,
+        thread_id=thread.id,
+        author_user_id=ctx.actor_user_id,
+        body=payload.body,
+        mentions=[str(user_id) for user_id in sorted(final_ids)],
+    )
+    ctx.session.add(note)
+    await ctx.session.flush()
+
+    note_id = note.id
+    if final_ids:
+        await notifications_svc.notify_mention(
+            ctx.session,
+            ctx.org.id,
+            thread_id=thread.id,
+            note_id=note_id,
+            author_name=author_name,
+            user_ids=final_ids,
+            bus=notifications_svc.bus_from_session(ctx.session),
+        )
+
+    await ctx.session.commit()
+    await ctx.session.refresh(note)
+
+    response_names = dict(mentionable)
+    if ctx.actor_user_id is not None:
+        response_names[ctx.actor_user_id] = author_name
+    return _note_out_from(note, response_names)
+
+
+@router.post("/conversations/{thread_id}/snooze")
+async def snooze_thread(
+    thread_id: uuid.UUID,
+    payload: SnoozeIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("inbox:send"))],
+) -> dict:
+    thread = await _get_thread(ctx, thread_id, require_use=True)
+
+    until = payload.until
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+
+    if until <= now:
+        raise ValidationFailedError("Choose a time in the future to bring this conversation back.")
+    if until > now + timedelta(days=365):
+        raise ValidationFailedError("Snooze for up to a year at a time.")
+
+    thread.snoozed_until = until
+    await ctx.session.commit()
+    return {"id": thread.id, "snoozed_until": until}
+
+
+@router.delete("/conversations/{thread_id}/snooze")
+async def unsnooze_thread(
+    thread_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("inbox:send"))],
+) -> dict:
+    thread = await _get_thread(ctx, thread_id, require_use=True)
+    thread.snoozed_until = None
+    await ctx.session.commit()
+    return {"id": thread.id, "snoozed_until": None}
+
+
 @router.get("/conversations")
 async def list_conversations(
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:read"))],
@@ -339,7 +654,9 @@ async def list_conversations(
     # Named `filter_` internally so it never shadows the `filter` builtin; the wire
     # param name (`?filter=`) is unchanged via `alias` (P16 Opus review point 12).
     filter_: str = Query(
-        "open", alias="filter", pattern="^(open|unread|unresponded|all|important)$"
+        "open",
+        alias="filter",
+        pattern="^(open|unread|unresponded|all|important|snoozed|overdue)$",
     ),
     q: str | None = None,
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -348,6 +665,7 @@ async def list_conversations(
     # P16 Opus review point 1: call/voicemail-derived data additionally requires
     # calls:read (inbox:read alone only ever grants message visibility here).
     has_calls_read = ctx.role.grants("calls:read")
+    now = datetime.now(timezone.utc)
 
     access = await inbox_access_svc.resolve_access(
         ctx.session, ctx.actor_user_id, ctx.role.permissions or []
@@ -406,11 +724,16 @@ async def list_conversations(
     # P16 Opus re-review: push what's expressible on MessageThread alone into SQL so the
     # window is drawn from rows that actually matter for this request, instead of a
     # generic recency window that a heavy read/closed/non-matching tail can exhaust with
-    # zero real matches (empirically: 20 read threads newer than 2 unread, limit=5).
-    # tab, unresponded and call-derived unread stay Python-only (see the safety net at
-    # the bottom of this function) - they depend on state this query alone can't express.
+    # zero real matches. P26 adds snooze and overdue filters to the same push-down
+    # strategy; the Python re-check below keeps call-derived pairs honest.
     if filter_ == "open":
-        thread_stmt = thread_stmt.where(MessageThread.status != "closed")
+        thread_stmt = thread_stmt.where(
+            MessageThread.status != "closed",
+            sa.or_(
+                MessageThread.snoozed_until.is_(None),
+                MessageThread.snoozed_until <= now,
+            ),
+        )
     elif filter_ == "unread":
         # Approximate: a thread whose own last message was never read - or was read
         # before that message arrived - is a CANDIDATE unread thread. This may still
@@ -425,13 +748,19 @@ async def list_conversations(
             ),
         )
     elif filter_ == "important":
-        # SQL-side, like the unread candidate filter above: a call-only pair has no
-        # MessageThread row at all, so it is never important (nothing here can flip it
-        # to important) - excluded by definition once thread_stmt is restricted.
         thread_stmt = thread_stmt.where(MessageThread.is_important.is_(True))
+    elif filter_ == "snoozed":
+        thread_stmt = thread_stmt.where(
+            MessageThread.snoozed_until.is_not(None),
+            MessageThread.snoozed_until > now,
+        )
+    elif filter_ == "overdue":
+        thread_stmt = thread_stmt.where(
+            MessageThread.sla_breached_at.is_not(None),
+            MessageThread.status != "closed",
+        )
+
     if q:
-        # Same substring-match semantics as the Python q check below (contacts.py's
-        # list_contacts uses this identical lower()/like() pattern), just pushed to SQL.
         needle = f"%{_escape_like(q.strip().lower())}%"
         matching_contact_e164s = (
             sa.select(ContactPhone.e164)
@@ -453,8 +782,6 @@ async def list_conversations(
     messages: list[Message] = []
     thread_ids = [t.id for t in threads]
     if thread_ids:
-        # Latest message PER thread via a group_by/max subquery join - never select a
-        # thread's full message history (same pattern as the call pair_latest below).
         latest_msg_sub = (
             sa.select(Message.thread_id, sa.func.max(Message.created_at).label("max_created"))
             .where(Message.thread_id.in_(thread_ids))
@@ -536,8 +863,6 @@ async def list_conversations(
                     await ctx.session.execute(
                         sa.select(Voicemail).where(
                             Voicemail.call_id.in_(call_ids),
-                            # An untranscribed voicemail never becomes the last event -
-                            # there is nothing yet worth showing as the snippet.
                             Voicemail.transcript.is_not(None),
                         )
                     )
@@ -578,28 +903,16 @@ async def list_conversations(
             "unread": unread,
             "status": thread.status,
             "important": thread.is_important,
+            "snoozed_until": thread.snoozed_until,
+            "sla_breached_at": thread.sla_breached_at,
             "thread": thread,
             "latest_msg": msg,
             "latest_call": None,
         }
 
-    # A call-derived pair whose MessageThread wasn't captured by the (bounded, possibly
-    # filter_/q-narrowed) thread fetch above must still get its REAL thread state before
-    # being merged - never silently default to "open"/no-read-cursor. This happens
-    # whenever the thread's own message recency (or the filter_/q predicates just
-    # pushed into thread_stmt) put it outside that window while its call stayed inside
-    # the calls window (P16 Opus re-review: this is also what keeps filter=open/unread
-    # correct now that thread_stmt is filtered - status and last_read_at for these
-    # pairs would otherwise come from nowhere).
     extra_threads_by_key: dict[tuple[str, str], MessageThread] = {}
     missing_keys = [key for key in latest_call_by_pair if key not in pairs]
     if missing_keys:
-        # 5.18: an IN(our_e164) x IN(contact_e164) query is a CARTESIAN cross of both
-        # sets - it can match a thread sharing only one half of a key (our_e164 A with
-        # some OTHER contact, or contact_e164 B on some OTHER number), pulled in by the
-        # post-filter below only to be thrown away, and the candidate set it scans grows
-        # quadratically with the number of distinct numbers/contacts involved. Query the
-        # exact (our_e164, contact_e164) pairs instead.
         candidate_threads = list(
             (
                 await ctx.session.execute(
@@ -625,8 +938,6 @@ async def list_conversations(
 
     for (our_e164, contact_e164), call in latest_call_by_pair.items():
         key = (our_e164, contact_e164)
-        # P16 Opus review point 10: rank/merge by the same coalesce(ended_at,
-        # created_at) expression the SQL candidate query above ranks by.
         call_dt = call.ended_at or call.created_at
         vm = voicemail_by_call.get(call.id)
         existing_pair = pairs.get(key)
@@ -658,9 +969,9 @@ async def list_conversations(
                 "snippet": snippet,
                 "unread": call_unread,
                 "status": base_status,
-                # Call-only pairs (thread_for_pair is None) are never important - there
-                # is no thread row to hold the star.
                 "important": thread_for_pair.is_important if thread_for_pair else False,
+                "snoozed_until": thread_for_pair.snoozed_until if thread_for_pair else None,
+                "sla_breached_at": thread_for_pair.sla_breached_at if thread_for_pair else None,
                 "thread": thread_for_pair,
                 "latest_msg": None,
                 "latest_call": call,
@@ -678,10 +989,6 @@ async def list_conversations(
             )
 
     # ---- Contact resolution - batch, via ContactPhone (P16 Opus review point 6) ----
-    # Every pair (message-led AND call-only) resolves its contact the same way a phone
-    # number resolves everywhere else in this codebase (services/contacts.py:
-    # find_contact_by_phone) - one batch lookup keyed by contact_e164, not a
-    # thread.contact_id FK that a call-only pair never has.
     all_contact_e164s = {key[1] for key in pairs}
     contact_by_e164: dict[str, Contact] = {}
     if all_contact_e164s:
@@ -698,13 +1005,25 @@ async def list_conversations(
     for pair in pairs.values():
         if tab == "calls" and pair["last_event_type"] not in {"call", "voicemail"}:
             continue
-        if filter_ == "open" and pair["status"] == "closed":
-            continue
+        if filter_ == "open":
+            if pair["status"] == "closed":
+                continue
+            snoozed_until = _aware(pair.get("snoozed_until"))
+            if snoozed_until is not None and snoozed_until > now:
+                continue
         if filter_ == "unread" and not pair["unread"]:
             continue
         if filter_ == "unresponded" and not _is_unresponded(pair):
             continue
         if filter_ == "important" and not pair["important"]:
+            continue
+        if filter_ == "snoozed":
+            snoozed_until = _aware(pair.get("snoozed_until"))
+            if snoozed_until is None or snoozed_until <= now:
+                continue
+        if filter_ == "overdue" and (
+            pair.get("sla_breached_at") is None or pair["status"] == "closed"
+        ):
             continue
 
         contact_obj = contact_by_e164.get(pair["contact_e164"])
@@ -735,6 +1054,7 @@ async def list_conversations(
                 else None,
                 status=pair["status"],
                 important=pair["important"],
+                snoozed_until=_aware(pair["snoozed_until"]),
             )
         )
 
@@ -756,36 +1076,6 @@ async def list_conversations(
         else None
     )
 
-    # P16 bugfix (Opus review, empirical repro: 20 read threads newer than 2 unread,
-    # limit=5, filter=unread -> [] / None): a `limit * 3` per-source window can be
-    # exhausted entirely by non-matching rows (tab=calls, unresponded, and call-based
-    # unread all stay Python-only per the plan, so the calls window especially can fill
-    # with rows the page below never keeps). When that happens the page can come back
-    # shorter than `limit` with matches still sitting deeper in the table, even though
-    # the normal has_more check above (driven purely by the materialized `items` count)
-    # sees nothing to page past. Safety net: if any source's window was completely
-    # full and the surviving page is short, hand back a continuation cursor instead of
-    # reporting next_cursor=None as if every source were exhausted.
-    #
-    # P16 second-round bugfix (Opus review BLOCKER): the continuation cursor must NOT
-    # be the overall oldest row across both sources - that publishes the deepest
-    # frontier and makes the SQL `<= cursor_dt` bound on the next request skip every
-    # not-yet-examined row of the SHALLOWER source that sits between the two
-    # frontiers (repro: 15 decoy threads pass the loose SQL unread predicate but fail
-    # the exact Python check at minutes 1-15, so the thread window - full at 15 rows -
-    # never reaches the real unread thread at minute 20; 16 unrelated calls at minutes
-    # 30-45 make the calls window - also full - bottom out at minute 44; taking the
-    # global min picks minute 44, and `thread_order_expr <= (now - 44min)` then
-    # excludes the minute-20 thread forever since it is NEWER than that bound).
-    # Only a source whose window came back full might have more rows beyond what was
-    # fetched; a source with a partial window already returned everything relevant and
-    # must never cap how far the other source is allowed to look. So: compute the
-    # oldest-examined tuple separately PER full source, then take the MAX (shallowest)
-    # of those - the next request's `<=` bound stays permissive enough to reach every
-    # unexamined row of every full source, while a source that already finished just
-    # re-scans (and Python-filters out) rows it already covered. Emit the cursor only
-    # when it is strictly older than the incoming cursor tuple, so it is guaranteed to
-    # shrink each round and paging terminates.
     if next_cursor is None and len(page) < limit and (thread_window_full or calls_window_full):
         frontiers: list[tuple[datetime, str, str]] = []
         if thread_window_full and threads:
@@ -806,6 +1096,26 @@ async def list_conversations(
             )
             if prev_cursor_tuple is None or frontier < prev_cursor_tuple:
                 next_cursor = _encode_pair_cursor(*frontier)
+
+    # P26: SLA is fetched once for only the rows actually shipped on this page.
+    thread_by_pair_key: dict[tuple[str, str], MessageThread] = {
+        (pair["our_e164"], pair["contact_e164"]): pair["thread"]
+        for pair in pairs.values()
+        if pair.get("thread") is not None
+    }
+    page_threads = [
+        thread_by_pair_key[(item.our_e164, item.contact_e164)]
+        for item in page
+        if (item.our_e164, item.contact_e164) in thread_by_pair_key
+    ]
+    if page_threads:
+        sla_states = await inbox_sla_svc.sla_for_threads(ctx.session, page_threads)
+        for item in page:
+            thread = thread_by_pair_key.get((item.our_e164, item.contact_e164))
+            if thread is not None:
+                state = sla_states.get(thread.id)
+                if state is not None:
+                    item.sla = SlaOut(due_at=state.due_at, breached=state.breached)
 
     return ConversationListResponse(items=page, next_cursor=next_cursor)
 
@@ -831,6 +1141,15 @@ async def conversation_timeline(
     )
     if not access.can_view(our_e164):
         raise NotFoundError("Conversation not found")
+
+    thread = (
+        await ctx.session.execute(
+            sa.select(MessageThread).where(
+                MessageThread.our_e164 == our_e164,
+                MessageThread.contact_e164 == contact_e164,
+            )
+        )
+    ).scalar_one_or_none()
 
     cursor_dt: datetime | None = None
     cursor_id: uuid.UUID | None = None
@@ -893,6 +1212,15 @@ async def conversation_timeline(
             (await ctx.session.execute(voicemail_stmt)).scalars().all()
         )
 
+    notes: list[ThreadNote] = []
+    if thread is not None:
+        note_stmt = sa.select(ThreadNote).where(ThreadNote.thread_id == thread.id)
+        note_stmt = apply_cursor(note_stmt, ThreadNote)
+        note_stmt = note_stmt.order_by(
+            ThreadNote.created_at.desc(), ThreadNote.id.desc()
+        ).limit(limit + 1)
+        notes = list((await ctx.session.execute(note_stmt)).scalars().all())
+
     call_ids = {c.id for c in calls}
 
     all_call_voicemails: list[Voicemail] = []
@@ -928,10 +1256,6 @@ async def conversation_timeline(
             .all()
         )
 
-    # P16 Opus review point 11: a voicemail on this page may reference a recording
-    # whose owning call already fell outside `call_ids` (paginated away on an earlier
-    # page) - so this lookup must run whenever EITHER source could name a recording,
-    # never only nested inside `if call_ids:`.
     recording_ids = {
         vm.recording_id
         for vm in list(voicemail_page) + all_call_voicemails
@@ -964,6 +1288,7 @@ async def conversation_timeline(
 
     recordings_by_id = {r.id: r for r in recordings}
     has_voicemail_by_call = {vm.call_id for vm in all_call_voicemails}
+    note_names = await _resolve_note_names(ctx.session, notes)
 
     timeline_items: list[dict[str, Any]] = []
 
@@ -1036,6 +1361,9 @@ async def conversation_timeline(
             }
         )
 
+    for note in notes:
+        timeline_items.append(_note_timeline_item(note, note_names))
+
     timeline_items.sort(key=lambda x: (x["occurred_at"], x["id"]), reverse=True)
 
     if cursor_dt is not None and cursor_id is not None:
@@ -1053,4 +1381,17 @@ async def conversation_timeline(
         else None
     )
 
-    return TimelineResponse(items=page, next_cursor=next_cursor)
+    snoozed_until = _aware(thread.snoozed_until) if thread is not None else None
+    sla = None
+    if thread is not None:
+        sla_states = await inbox_sla_svc.sla_for_threads(ctx.session, [thread])
+        state = sla_states.get(thread.id)
+        if state is not None:
+            sla = SlaOut(due_at=state.due_at, breached=state.breached)
+
+    return TimelineResponse(
+        items=page,
+        next_cursor=next_cursor,
+        snoozed_until=snoozed_until,
+        sla=sla,
+    )

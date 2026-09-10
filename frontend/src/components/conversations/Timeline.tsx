@@ -14,9 +14,11 @@ import {
   fetchConversationTimeline,
   type CallTimelineItem,
   type MessageTimelineItem,
+  type NoteTimelineItem,
   type TimelineItem,
   type VoicemailTimelineItem,
 } from "@/api/conversations";
+import { Pill } from "@/components/ui/primitives";
 import { useSoftphone } from "@/softphone/SoftphoneProvider";
 import { relativeTime, statusTick } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -250,6 +252,32 @@ function VoicemailTimelineItemView({ item, api }: { item: VoicemailTimelineItem;
   );
 }
 
+function NoteTimelineItemView({ item }: { item: NoteTimelineItem }) {
+  return (
+    // An <article>, not a <div>: a plain div has no role, so its aria-label is dropped by
+    // the accessibility tree and a screen-reader user would meet the note with no warning
+    // that it is private.
+    <article
+      aria-label={`Note from ${item.author_name}`}
+      className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-foreground"
+    >
+      <div className="flex items-center gap-2">
+        <Pill tone="warning">Note</Pill>
+        <span className="font-medium">{item.author_name}</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">
+          {relativeTime(item.occurred_at)}
+        </span>
+      </div>
+      <p className="mt-2 whitespace-pre-wrap break-words">{item.body}</p>
+      {item.mentions.length > 0 && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Mentioned: {item.mentions.map((mention) => mention.name).join(", ")}
+        </p>
+      )}
+    </article>
+  );
+}
+
 export function Timeline({
   contactE164,
   ourE164,
@@ -374,6 +402,8 @@ export function Timeline({
                   return <CallTimelineItemView key={item.id} item={item} api={api} />;
                 case "voicemail":
                   return <VoicemailTimelineItemView key={item.id} item={item} api={api} />;
+                case "note":
+                  return <NoteTimelineItemView key={item.id} item={item} />;
                 default:
                   return null;
               }

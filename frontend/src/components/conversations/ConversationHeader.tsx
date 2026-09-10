@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Loader2, MessageSquare, MoreHorizontal, Phone, Star } from "lucide-react";
+import { ArrowLeft, Clock, Loader2, MessageSquare, MoreHorizontal, Phone, Star } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { useSoftphone } from "@/softphone/SoftphoneProvider";
 import {
@@ -9,9 +9,16 @@ import {
   type Conversation,
   type CursorPage,
 } from "@/api/conversations";
-import { Button } from "@/components/ui/primitives";
+import {
+  parseLocalDateTime,
+  snoozeThread,
+  SNOOZE_PRESETS,
+  unsnoozeThread,
+} from "@/api/inboxPro";
+import { Button, Input } from "@/components/ui/primitives";
 import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
-import { formatPhone } from "@/lib/format";
+import { SlaChip } from "./SlaChip";
+import { formatPhone, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export function ConversationHeader({
@@ -35,6 +42,10 @@ export function ConversationHeader({
   const queryClient = useQueryClient();
   const [moreOpen, setMoreOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement>(null);
+  const [snoozeOpen, setSnoozeOpen] = React.useState(false);
+  const [customOpen, setCustomOpen] = React.useState(false);
+  const [customValue, setCustomValue] = React.useState("");
+  const snoozeContainerRef = React.useRef<HTMLDivElement | null>(null);
 
   const startCall = React.useCallback(async () => {
     if (!conversation || !canSend) return;
@@ -118,6 +129,27 @@ export function ConversationHeader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation, canSend]);
 
+  const snoozeMutation = useMutation({
+    mutationFn: (vars: { threadId: string; until: Date }) =>
+      snoozeThread(api, vars.threadId, vars.until),
+    onSuccess: () => {
+      setSnoozeOpen(false);
+      setCustomOpen(false);
+      setCustomValue("");
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+  });
+
+  const unsnoozeMutation = useMutation({
+    mutationFn: (threadId: string) => unsnoozeThread(api, threadId),
+    onSuccess: () => {
+      setSnoozeOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+  });
+
+  const snoozePending = snoozeMutation.isPending || unsnoozeMutation.isPending;
+
   // F19: close the "more" menu on outside click and Escape.
   React.useEffect(() => {
     if (!moreOpen) return undefined;
@@ -137,6 +169,28 @@ export function ConversationHeader({
     };
   }, [moreOpen]);
 
+  // Snooze uses the same outside-click + Escape pattern as the more menu.
+  React.useEffect(() => {
+    if (!snoozeOpen) return undefined;
+
+    function onMousedown(e: MouseEvent) {
+      if (snoozeContainerRef.current && !snoozeContainerRef.current.contains(e.target as Node)) {
+        setSnoozeOpen(false);
+      }
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setSnoozeOpen(false);
+    }
+
+    document.addEventListener("mousedown", onMousedown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMousedown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [snoozeOpen]);
+
   if (!conversation) {
     return (
       <div
@@ -150,9 +204,18 @@ export function ConversationHeader({
     );
   }
 
+  const threadId = conversation.thread_id;
+
   const title =
     conversation.contact?.display_name ??
     formatPhone(conversation.contact_e164);
+
+  const snoozeError =
+    snoozeMutation.isError
+      ? (snoozeMutation.error as Error).message
+      : unsnoozeMutation.isError
+        ? (unsnoozeMutation.error as Error).message
+        : null;
 
   return (
     <header
@@ -204,6 +267,7 @@ export function ConversationHeader({
                   )}
                 />
               </Button>
+              <SlaChip sla={conversation.sla} />
             </div>
             {/* A <div>, not the old <p>: PhoneNumberMenu renders a positioned <div> wrapper
                 for its pop-up menu, and a <div> inside a <p> is invalid HTML - the browser
@@ -247,6 +311,132 @@ export function ConversationHeader({
           >
             <MessageSquare className="h-4 w-4" />
           </Button>
+
+          <div className="relative" ref={snoozeContainerRef}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-haspopup="menu"
+              aria-expanded={snoozeOpen}
+              aria-label={conversation.snoozed_until ? "Snoozed - bring back now" : "Snooze"}
+              disabled={!canSend || !threadId || snoozePending}
+              title={
+                !threadId
+                  ? "This conversation has no messages yet - there is nothing to snooze"
+                  : !canSend
+                    ? "Read-only inbox - you can view but not snooze"
+                    : undefined
+              }
+              onClick={() => setSnoozeOpen((value) => !value)}
+              className="text-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              {snoozePending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Clock
+                  className={cn(
+                    "h-4 w-4",
+                    conversation.snoozed_until && "fill-amber-400 text-amber-400",
+                  )}
+                />
+              )}
+            </Button>
+            {snoozeOpen && (
+              <div
+                role="menu"
+                aria-label="Snooze until"
+                className="absolute right-0 top-9 z-20 w-64 rounded-md border border-border bg-muted p-1 shadow-lg"
+              >
+                {conversation.snoozed_until ? (
+                  <Button
+                    type="button"
+                    role="menuitem"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (!threadId) return;
+                      unsnoozeMutation.mutate(threadId);
+                    }}
+                    disabled={unsnoozeMutation.isPending}
+                    className="w-full justify-start rounded px-2 py-1 text-xs text-foreground hover:bg-foreground/10 disabled:opacity-50"
+                  >
+                    Bring back now
+                  </Button>
+                ) : null}
+
+                {SNOOZE_PRESETS.map((preset) => (
+                  <Button
+                    key={preset.id}
+                    type="button"
+                    role="menuitem"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (!threadId) return;
+                      snoozeMutation.mutate({
+                        threadId,
+                        until: preset.at(new Date()),
+                      });
+                    }}
+                    disabled={snoozeMutation.isPending}
+                    className="w-full justify-start rounded px-2 py-1 text-xs text-foreground hover:bg-foreground/10 disabled:opacity-50"
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
+
+                <div role="separator" className="my-1 border-t border-border" />
+
+                <Button
+                  type="button"
+                  role="menuitem"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={customOpen}
+                  onClick={() => setCustomOpen((value) => !value)}
+                  className="w-full justify-start rounded px-2 py-1 text-xs text-foreground hover:bg-foreground/10"
+                >
+                  Pick a date and time
+                </Button>
+
+                {customOpen && (
+                  <div className="p-2">
+                    <Input
+                      type="datetime-local"
+                      aria-label="Date and time"
+                      value={customValue}
+                      onChange={(event) => setCustomValue(event.target.value)}
+                      className="h-8 text-xs"
+                    />
+                    {/* Only once the value is actually unusable. Shown unconditionally it
+                        reads as a complaint about a time the person has not typed yet. */}
+                    {customValue !== "" && parseLocalDateTime(customValue) === null && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        Choose a time in the future.
+                      </p>
+                    )}
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      aria-label="Snooze until this time"
+                      disabled={!parseLocalDateTime(customValue) || snoozeMutation.isPending}
+                      onClick={() => {
+                        const until = parseLocalDateTime(customValue);
+                        if (!threadId || !until) return;
+                        snoozeMutation.mutate({ threadId, until });
+                      }}
+                      className="mt-2 w-full"
+                    >
+                      Snooze
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="relative" ref={menuRef}>
             <Button
               type="button"
@@ -304,6 +494,13 @@ export function ConversationHeader({
           </div>
         </div>
       </div>
+
+      {conversation.snoozed_until && (
+        <p className="px-3 pb-2 text-[11px] text-muted-foreground">
+          Snoozed - coming back {relativeTime(conversation.snoozed_until)}
+        </p>
+      )}
+
       {toggleThreadMutation.isError && (
         <p role="alert" className="px-3 pb-2 text-[11px] text-destructive">
           {(toggleThreadMutation.error as Error).message}
@@ -312,6 +509,11 @@ export function ConversationHeader({
       {importantMutation.isError && (
         <p role="alert" className="px-3 pb-2 text-[11px] text-destructive">
           {(importantMutation.error as Error).message}
+        </p>
+      )}
+      {snoozeError != null && (
+        <p role="alert" className="px-3 pb-2 text-[11px] text-destructive">
+          {snoozeError}
         </p>
       )}
     </header>

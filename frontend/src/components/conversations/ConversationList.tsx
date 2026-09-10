@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Star,
   Voicemail,
+  type LucideIcon,
 } from "lucide-react";
 import type {
   Conversation,
@@ -17,6 +18,7 @@ import type {
   ConversationTab,
 } from "@/api/conversations";
 import type { NewConversationKind } from "@/components/conversations/NewConversationPanel";
+import { SlaChip } from "./SlaChip";
 import { formatPhone, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +76,18 @@ function EventIcon({ conversation }: { conversation: Conversation }) {
   return <DirectionIcon direction={conversation.direction} />;
 }
 
+/** One plain word per filter, shared by the Open/All menu's trigger and the collapsed
+ * chip dropdown, so the same filter never reads two different ways. */
+const FILTER_LABELS: Record<ConversationFilter, string> = {
+  open: "Open",
+  all: "All",
+  unread: "Unread",
+  unresponded: "Unresponded",
+  important: "Important",
+  snoozed: "Snoozed",
+  overdue: "Overdue",
+};
+
 function FilterMenu({
   filter,
   onFilterChange,
@@ -83,16 +97,10 @@ function FilterMenu({
 }) {
   const [open, setOpen] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const label =
-    filter === "all"
-      ? "All"
-      : filter === "open"
-        ? "Open"
-        : filter === "unread"
-          ? "Unread"
-          : filter === "important"
-            ? "Important"
-            : "Unresponded";
+  // A Record, not a ternary chain: P26 added two more filter values and the old chain's
+  // final `else` labelled BOTH of them "Unresponded". A Record makes the compiler ask
+  // for a word the next time someone adds a filter.
+  const label = FILTER_LABELS[filter];
 
   // F19: close on outside click and Escape.
   React.useEffect(() => {
@@ -153,6 +161,128 @@ function FilterMenu({
           >
             All
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export type FilterChip = { filter: ConversationFilter; label: string; icon?: LucideIcon };
+
+export const FILTER_CHIPS: FilterChip[] = [
+  { filter: "unread", label: "Unread" },
+  { filter: "important", label: "Important", icon: Star },
+  { filter: "unresponded", label: "Unresponded" },
+  { filter: "snoozed", label: "Snoozed" },
+  { filter: "overdue", label: "Overdue" },
+];
+
+export const MAX_VISIBLE_CHIPS = 4;
+
+export function FilterChips({
+  chips = FILTER_CHIPS,
+  filter,
+  onFilterChange,
+}: {
+  chips?: FilterChip[];
+  filter: ConversationFilter;
+  onFilterChange: (filter: ConversationFilter) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return undefined;
+    function onPointerDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (chips.length <= MAX_VISIBLE_CHIPS) {
+    return (
+      <>
+        {chips.map((chip) => {
+          const Icon = chip.icon;
+          const active = chip.filter === filter;
+          return (
+            <button
+              key={chip.filter}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onFilterChange(active ? "open" : chip.filter)}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-xs font-medium",
+                active
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-foreground hover:bg-foreground/10",
+                Icon && "flex items-center gap-1",
+              )}
+            >
+              {Icon ? <Icon className="h-3 w-3" /> : null}
+              {chip.label}
+            </button>
+          );
+        })}
+      </>
+    );
+  }
+
+  // More than MAX_VISIBLE_CHIPS things in a row stops being a row of choices and
+  // becomes noise - collapse to a single menu so the choices stay legible.
+  const activeChip = chips.find((chip) => chip.filter === filter);
+  const triggerLabel = activeChip ? `Filter: ${activeChip.label}` : "Filter";
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "rounded-full px-2.5 py-1 text-xs font-medium",
+          activeChip
+            ? "bg-primary text-primary-foreground"
+            : "bg-muted text-foreground hover:bg-foreground/10",
+        )}
+      >
+        {triggerLabel}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          aria-label="Filter conversations"
+          className="absolute left-0 top-8 z-20 w-28 rounded-md border border-border bg-muted p-1 shadow-lg"
+        >
+          {chips.map((chip) => {
+            const checked = chip.filter === filter;
+            return (
+              <button
+                key={chip.filter}
+                type="button"
+                role="menuitemradio"
+                aria-checked={checked}
+                onClick={() => {
+                  onFilterChange(checked ? "open" : chip.filter);
+                  setOpen(false);
+                }}
+                className="block w-full rounded px-2 py-1 text-left text-xs text-foreground hover:bg-foreground/10"
+              >
+                {chip.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -319,52 +449,7 @@ export function ConversationList({
 
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <FilterMenu filter={filter} onFilterChange={onFilterChange} />
-          <button
-            type="button"
-            aria-pressed={filter === "unread"}
-            onClick={() =>
-              onFilterChange(filter === "unread" ? "open" : "unread")
-            }
-            className={cn(
-              "rounded-full px-2.5 py-1 text-xs font-medium",
-              filter === "unread"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-foreground hover:bg-foreground/10",
-            )}
-          >
-            Unread
-          </button>
-          <button
-            type="button"
-            aria-pressed={filter === "important"}
-            onClick={() =>
-              onFilterChange(filter === "important" ? "open" : "important")
-            }
-            className={cn(
-              "flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
-              filter === "important"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-foreground hover:bg-foreground/10",
-            )}
-          >
-            <Star className="h-3 w-3" />
-            Important
-          </button>
-          <button
-            type="button"
-            aria-pressed={filter === "unresponded"}
-            onClick={() =>
-              onFilterChange(filter === "unresponded" ? "open" : "unresponded")
-            }
-            className={cn(
-              "rounded-full px-2.5 py-1 text-xs font-medium",
-              filter === "unresponded"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-foreground hover:bg-foreground/10",
-            )}
-          >
-            Unresponded
-          </button>
+          <FilterChips filter={filter} onFilterChange={onFilterChange} />
         </div>
 
         <input
@@ -444,6 +529,7 @@ export function ConversationList({
                         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                           {conversation.snippet || "No messages"}
                         </span>
+                        <SlaChip sla={conversation.sla} className="shrink-0" />
                       </span>
                     </span>
                   </button>

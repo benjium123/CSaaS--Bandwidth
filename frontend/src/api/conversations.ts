@@ -1,4 +1,5 @@
 import type { ApiClient } from "./client";
+import type { NoteMention, Sla } from "./inboxPro";
 
 export type InboxRole = "admin" | "member" | "viewer";
 
@@ -9,6 +10,11 @@ export interface Inbox {
   e164: string;
   number_id: string;
   my_role: InboxRole;
+  /** P26: reply/resolve targets in minutes, null when this inbox has none. Optional
+   * because older fixtures and callers omit them; the backend InboxOut always sends
+   * both (null or a number). */
+  sla_first_response_minutes?: number | null;
+  sla_resolution_minutes?: number | null;
 }
 
 export interface ContactPhone {
@@ -69,10 +75,22 @@ export interface Conversation {
   /** Starred/important pair (POST /api/v1/inbox/important-pair). Optional because older
    * callers/fixtures may omit it entirely - treat undefined the same as false. */
   important?: boolean;
+  /** P26: set while this conversation is put off until a time. The `open` list excludes
+   * a live snooze, so a row carrying this only shows up under the Snoozed view. */
+  snoozed_until?: string | null;
+  /** P26: reply-by time for this row, or a breach. Null when the inbox has no target. */
+  sla?: Sla | null;
 }
 
 export type ConversationTab = "chats" | "calls";
-export type ConversationFilter = "open" | "unread" | "unresponded" | "important" | "all";
+export type ConversationFilter =
+  | "open"
+  | "unread"
+  | "unresponded"
+  | "important"
+  | "all"
+  | "snoozed"
+  | "overdue";
 
 export interface CursorPage<T> {
   items: T[];
@@ -135,7 +153,22 @@ export interface VoicemailTimelineItem {
   recording: CallTimelineRecording | null;
 }
 
-export type TimelineItem = MessageTimelineItem | CallTimelineItem | VoicemailTimelineItem;
+/** P26: a private note, in the same unified timeline as messages and calls. It is never
+ * sent to the contact - the backend writes it to thread_notes, not to messages. */
+export interface NoteTimelineItem {
+  kind: "note";
+  id: string;
+  author_name: string;
+  body: string;
+  mentions: NoteMention[];
+  occurred_at: string;
+}
+
+export type TimelineItem =
+  | MessageTimelineItem
+  | CallTimelineItem
+  | VoicemailTimelineItem
+  | NoteTimelineItem;
 
 export interface InboxGrant {
   grantee_type: "department" | "user";
@@ -171,10 +204,20 @@ export async function fetchInboxes(api: ApiClient): Promise<Inbox[]> {
   return api.request<Inbox[]>("/api/v1/inboxes");
 }
 
+/** P26 widened this: the same PATCH now carries the two reply/resolve targets. Sending
+ * `sla_first_response_minutes: null` does NOT clear it (the backend reads null as "not
+ * supplied") - pass `clear_sla_first_response: true` instead. */
 export async function patchInbox(
   api: ApiClient,
   id: string,
-  data: { name?: string; color?: string },
+  data: {
+    name?: string;
+    color?: string;
+    sla_first_response_minutes?: number;
+    sla_resolution_minutes?: number;
+    clear_sla_first_response?: boolean;
+    clear_sla_resolution?: boolean;
+  },
 ): Promise<Inbox> {
   return api.request<Inbox>(`/api/v1/inboxes/${id}`, { method: "PATCH", json: data });
 }

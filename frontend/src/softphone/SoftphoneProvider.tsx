@@ -147,6 +147,19 @@ export function useSoftphone(): SoftphoneValue {
   return ctx;
 }
 
+/**
+ * P26: the same context, but null instead of a throw when there is no provider.
+ *
+ * The rail bell lives in <Sidebar>, which App.tsx does mount inside <SoftphoneProvider>,
+ * but which several existing tests render bare. The bell only wants the realtime socket
+ * so it can refresh itself sooner; it is fully correct without one (it polls). Throwing
+ * would have made the socket a hard dependency of the whole rail. No behaviour above
+ * this line changes - this is a second reader of an existing context.
+ */
+export function useOptionalSoftphone(): SoftphoneValue | null {
+  return React.useContext(SoftphoneContext);
+}
+
 /** Swallow the "already hung up" 422 the same way CallsPage's hangup button does - the
  * room disconnect still has to happen either way. */
 async function ignoreAlreadyHungUp(promise: Promise<unknown>): Promise<void> {

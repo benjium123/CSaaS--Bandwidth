@@ -11,10 +11,20 @@ from pydantic import BaseModel, Field
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
 from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
-from app.models import Call, Message, MessageThread, OrgMembership, OrgNumber, Tag, ThreadLabel
+from app.models import (
+    Call,
+    Message,
+    MessageThread,
+    OrgMembership,
+    OrgNumber,
+    Tag,
+    ThreadLabel,
+    User,
+)
 from app.services import inbox as inbox_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services import messaging as messaging_svc
+from app.services import notifications as notifications_svc
 
 router = APIRouter(prefix="/api/v1", tags=["inbox"])
 
@@ -110,6 +120,7 @@ async def patch_thread(
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:manage"))],
 ) -> dict:
     thread = await _get_thread(ctx, thread_id, require_use=True)
+    previous_assignee = thread.assigned_user_id
 
     if payload.status is not None:
         if payload.status not in ("open", "closed"):
@@ -155,6 +166,31 @@ async def patch_thread(
             thread.assigned_user_id = payload.assigned_user_id
         else:
             thread.assigned_user_id = payload.assigned_user_id
+
+    # P26: tell someone when a conversation lands on their desk - but never tell them
+    # about their own click (a self-claim), and never re-send when the assignee did not
+    # actually change. The dedupe key inside notify_assignment covers the rest: a thread
+    # reassigned back and forth to the same person keeps ONE bell entry.
+    new_assignee = thread.assigned_user_id
+    if (
+        new_assignee is not None
+        and new_assignee != previous_assignee
+        and new_assignee != ctx.actor_user_id
+    ):
+        actor = (
+            await ctx.session.get(User, ctx.actor_user_id)
+            if ctx.actor_user_id is not None
+            else None
+        )
+        actor_name = (actor.full_name or actor.email) if actor is not None else "Automation"
+        await notifications_svc.notify_assignment(
+            ctx.session,
+            ctx.org.id,
+            thread_id=thread.id,
+            user_id=new_assignee,
+            actor_name=actor_name,
+            bus=notifications_svc.bus_from_session(ctx.session),
+        )
 
     await ctx.session.commit()
     return {
