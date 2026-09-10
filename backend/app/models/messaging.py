@@ -140,6 +140,17 @@ class MessageThread(Base, TenantScoped, TimestampMixin):
     )
     #: Operator-set "important" star (2026-09-09): a conversation-list filter and a
     #: toggle in the header. Per-thread, not per-user - the whole team shares it.
+    # P26 inbox pro (migration 0028): snooze hides the conversation until this time; the
+    # SLA fields are stamped by services/inbox_sla.py from the inbox's targets.
+    snoozed_until: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    first_response_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    sla_breached_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
     is_important: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )

@@ -56,6 +56,7 @@ from app.models.contacts import (
     ThreadLabel,
 )
 from app.models.identity import LOGIN_OUTCOMES, LoginEvent, Session
+from app.models.inbox_pro import NOTIFICATION_KINDS, Notification, ThreadNote
 from app.models.inboxes import (
     GRANTEE_TYPES,
     INBOX_GRANT_ROLES,
@@ -185,6 +186,9 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "NOTIFICATION_KINDS",
+    "Notification",
+    "ThreadNote",
     "LOGIN_OUTCOMES",
     "LoginEvent",
     "Session",

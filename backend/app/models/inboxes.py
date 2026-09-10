@@ -84,6 +84,9 @@ class Inbox(Base, TenantScoped, TimestampMixin):
     )
     #: Optional UI accent (hex string or token). Purely cosmetic.
     color: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
+    # P26: SLA targets in minutes; NULL = no SLA for this inbox.
+    sla_first_response_minutes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    sla_resolution_minutes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
 
     def __repr__(self) -> str:
         return f"<Inbox {self.name}>"
