@@ -1,8 +1,10 @@
 import * as React from "react";
 import { Navigate, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useAuth } from "@/auth/AuthContext";
+import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { useGate } from "@/api/capabilities";
+import { DataRetentionCard } from "@/components/settings/DataRetentionCard";
+import { CreditsSection } from "@/components/billing/CreditsSection";
 import { fetchProviderAccounts } from "@/api/providers";
 import { SpendCard } from "@/components/spend/SpendCard";
 import { AiProvidersTab } from "@/components/assistants/AiProvidersTab";
@@ -192,7 +194,34 @@ function AiSettingsSection() {
   );
 }
 
+/** P27: Workspace gained a second thing to say, so it gained tabs. "General" is what the
+ * workspace IS; "Data" is how long it keeps what it collects. */
 function WorkspaceSection() {
+  const { me, orgId } = useAuth();
+  const canReadRetention = hasPermission(me, orgId, "settings:read");
+
+  const tabs = canReadRetention
+    ? [
+        { id: "general", label: "General" },
+        { id: "data", label: "Data" },
+      ]
+    : [{ id: "general", label: "General" }];
+  const { value, onChange } = useSettingsTab(tabs, "general");
+
+  return (
+    <SettingsTabs
+      id="settings-workspace"
+      tabs={tabs}
+      value={value}
+      onChange={onChange}
+      ariaLabel="Workspace settings"
+    >
+      {value === "data" ? <DataRetentionCard /> : <WorkspaceGeneral />}
+    </SettingsTabs>
+  );
+}
+
+function WorkspaceGeneral() {
   const { api } = useAuth();
   const gate = useGate();
   const currentOrgQuery = useQuery({
@@ -270,10 +299,11 @@ function MessagingSection() {
 
 function BillingSettingsSection() {
   const tabs = [
+    { id: "credits", label: "Credits" },
     { id: "usage", label: "Usage" },
     { id: "dashboard", label: "Dashboard" },
   ];
-  const { value, onChange } = useSettingsTab(tabs, "usage");
+  const { value, onChange } = useSettingsTab(tabs, "credits");
 
   return (
     <SettingsTabs
@@ -285,7 +315,13 @@ function BillingSettingsSection() {
     >
       {/* Dashboard is mounted here (rather than routed directly) until P30 Reports
           replaces it; /dashboard redirects to this tab so the page stays reachable. */}
-      {value === "usage" ? <BillingUsageSection /> : <DashboardPage />}
+      {value === "credits" ? (
+        <CreditsSection />
+      ) : value === "usage" ? (
+        <BillingUsageSection />
+      ) : (
+        <DashboardPage />
+      )}
     </SettingsTabs>
   );
 }

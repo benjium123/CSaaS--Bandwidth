@@ -5,7 +5,6 @@ import { ConversationsPage } from "@/pages/ConversationsPage";
 import { ContactsPage } from "@/pages/ContactsPage";
 import { CampaignsPage } from "@/pages/CampaignsPage";
 import { CallsPage } from "@/pages/CallsPage";
-import { ListsPage } from "@/pages/ListsPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
@@ -18,14 +17,15 @@ import { ErrorBoundary } from "@/components/shell/ErrorBoundary";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 import { CommandPalette } from "@/components/ui/CommandPalette";
+import { LowBalanceBanner } from "@/components/billing/LowBalanceBanner";
 
 /**
  * Legacy routes kept as redirects so saved links still land somewhere useful:
  * /dashboard, /agent, /appointments, /flows, /queues, /numbers,
  * /providers, /security, /team, /platform, and /inbox/legacy.
  * Every one of these now points into the new /settings surface (or the inbox).
- * /lists stays a live route (no rail entry) — it is still the only UI for
- * list import/management until P27 folds it into Contacts.
+ * P27 folded list import/management into Contacts as its "Lists" tab, so /lists is
+ * now a redirect too — saved links land on the tab that replaced the page.
  */
 
 function InboxRoute() {
@@ -45,6 +45,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="dark flex h-full bg-background text-foreground">
         <Sidebar />
         <main className="min-h-0 flex-1 pb-14 sm:pb-0">
+          <LowBalanceBanner />
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>
@@ -92,7 +93,7 @@ export function App() {
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
 
         <Route path="/dashboard" element={<Navigate to="/settings/billing?tab=dashboard" replace />} />
-        <Route path="/lists" element={<ListsPage />} />
+        <Route path="/lists" element={<Navigate to="/contacts?tab=lists" replace />} />
         <Route path="/agent" element={<Navigate to="/settings/ai" replace />} />
         <Route path="/appointments" element={<Navigate to="/settings/ai" replace />} />
         <Route path="/flows" element={<Navigate to="/settings/calling" replace />} />

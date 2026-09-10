@@ -50,7 +50,7 @@ const CAMPAIGN_DRAFT = {
 const ASSISTANTS = [{ id: "p1", name: "Ava" }];
 
 describe("CampaignsPage", () => {
-  it("links to the contact lists page", async () => {
+  it("no longer offers a Contact lists button (P27 folded lists into Contacts)", async () => {
     const client = makeStubClient({
       "/api/v1/outbound/campaigns": [],
       "/api/v1/outbound/lists": [LIST_1],
@@ -59,7 +59,8 @@ describe("CampaignsPage", () => {
     });
     renderWithProviders(<CampaignsPage />, client);
 
-    expect(await screen.findByRole("button", { name: "Contact lists" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "New" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Contact lists" })).not.toBeInTheDocument();
   });
 
   it("creates an SMS campaign", async () => {

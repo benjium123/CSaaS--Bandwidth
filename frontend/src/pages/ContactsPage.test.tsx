@@ -97,6 +97,8 @@ describe("ContactsPage", () => {
   // key, otherwise every owner/bulk request is swallowed by the list stub.
   it("renders Owner and Team columns with resolved names and null fallbacks", async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,
@@ -114,6 +116,8 @@ describe("ContactsPage", () => {
 
   it("adds a contact and shows a success confirmation", async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,
@@ -148,6 +152,8 @@ describe("ContactsPage", () => {
 
   it("filters by My team and clears when the chip is clicked again", async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,
@@ -160,7 +166,7 @@ describe("ContactsPage", () => {
     const teamChip = screen.getByRole("button", { name: "My team" });
     await userEvent.click(teamChip);
     await waitFor(() => {
-      expect(client.calls.some((call) => call.path === "/api/v1/contacts?filter=team")).toBe(
+      expect(client.calls.some((call) => call.path === "/api/v1/contacts?scope=team")).toBe(
         true,
       );
     });
@@ -177,6 +183,8 @@ describe("ContactsPage", () => {
 
   it("assigns a single contact via the row drawer", async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       // Specific owner route must appear before general contacts.
       "/api/v1/contacts/c1/owner": {
         ...CONTACTS[0],
@@ -211,6 +219,8 @@ describe("ContactsPage", () => {
 
   it("bulk assigns selected contacts", async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/contacts/bulk/assign": { updated: 2 },
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
@@ -242,6 +252,8 @@ describe("ContactsPage", () => {
 
   it("shows assign buttons disabled when the user lacks contacts:assign", async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_NO_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,
@@ -265,6 +277,8 @@ describe("ContactsPage", () => {
   it("shows a list error and recovers via Retry", async () => {
     let contactsCalls = 0;
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,
@@ -285,6 +299,8 @@ describe("ContactsPage", () => {
 
   it("each contact row renders a phone menu", async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,
@@ -301,6 +317,8 @@ describe("ContactsPage", () => {
 
   it('"Call" dials the contact\'s number with NO from-number', async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,
@@ -323,6 +341,8 @@ describe("ContactsPage", () => {
 
   it('"Text" navigates to /inbox?compose=...', async () => {
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,
@@ -350,6 +370,8 @@ describe("ContactsPage", () => {
       department_id: null,
     };
     const client = makeStubClient({
+      // Ahead of "/api/v1/contacts": the harness matches by startsWith in key order.
+      "/api/v1/contacts/views": [],
       "/api/v1/auth/me": ME_CAN_ASSIGN,
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/departments": DEPARTMENTS,

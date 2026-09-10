@@ -26,16 +26,24 @@ vi.mock("@/pages/ConversationsPage", () => ({
   },
 }));
 vi.mock("@/pages/ContactsPage", () => ({
-  ContactsPage: () => <div>Contacts page</div>,
+  // Echoes ?tab= so the /lists redirect can be asserted to land on the Lists TAB, not
+  // merely on the Contacts page.
+  ContactsPage: () => {
+    const [searchParams] = useSearchParams();
+    const tab = searchParams.get("tab");
+    return (
+      <div>
+        Contacts page
+        {tab ? ` tab=${tab}` : ""}
+      </div>
+    );
+  },
 }));
 vi.mock("@/pages/CallsPage", () => ({
   CallsPage: () => <div>Calls page</div>,
 }));
 vi.mock("@/pages/CampaignsPage", () => ({
   CampaignsPage: () => <div>Campaigns page</div>,
-}));
-vi.mock("@/pages/ListsPage", () => ({
-  ListsPage: () => <div>Lists page</div>,
 }));
 vi.mock("@/pages/TeamPage", () => ({
   TeamPage: () => <div>Team page</div>,
@@ -166,10 +174,10 @@ describe("App routes and legacy redirects", () => {
     expect(await screen.findByText("Settings page providers")).toBeInTheDocument();
   });
 
-  it("/lists renders the Lists page (live route, no rail entry)", async () => {
+  it("/lists redirects to the Contacts Lists tab (P27 folded the page in)", async () => {
     renderApp(["/lists"]);
 
-    expect(await screen.findByText("Lists page")).toBeInTheDocument();
+    expect(await screen.findByText("Contacts page tab=lists")).toBeInTheDocument();
   });
 
   it("/team lands on Team settings and /security lands on the Security tab", async () => {

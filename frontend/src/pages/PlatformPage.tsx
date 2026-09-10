@@ -35,6 +35,7 @@ import {
   Spinner,
 } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import { PlatformBillingOps } from "@/components/billing/PlatformBillingOps";
 
 function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
@@ -817,6 +818,7 @@ export function PlatformPage() {
       <WebhooksSection />
       <AuditSection />
       <UsageSection />
+      <PlatformBillingOps />
     </div>
   );
 }

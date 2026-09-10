@@ -218,7 +218,9 @@ describe("SettingsPage", () => {
 
   it("renders a SpendCard stub per provider account", async () => {
     renderSettings({
-      initialEntries: ["/settings/billing"],
+      // P24: Billing defaults to the Credits tab now, so Usage-tab content needs an
+      // explicit ?tab=usage - same pattern the Dashboard tab tests below already use.
+      initialEntries: ["/settings/billing?tab=usage"],
       providerAccounts: [{ id: "pa1", provider: "twilio" }],
     });
 
@@ -226,7 +228,7 @@ describe("SettingsPage", () => {
   });
 
   it("renders the billing empty state when there are no provider accounts", async () => {
-    renderSettings({ initialEntries: ["/settings/billing"] });
+    renderSettings({ initialEntries: ["/settings/billing?tab=usage"] });
 
     expect(await screen.findByText("No spend yet")).toBeInTheDocument();
     expect(screen.getByText("Connect a provider to see what you are spending.")).toBeInTheDocument();

@@ -40,7 +40,10 @@ export function useContacts(
 ) {
   const query = new URLSearchParams();
   if (params.q) query.set("q", params.q);
-  if (params.filter) query.set("filter", params.filter);
+  // P27: the list endpoint's parameter is `scope`, not `filter` - it always was, and
+  // sending `filter` meant the Mine/My team/Unowned chips silently returned everything.
+  // Saved views store the same key, so the two cannot be allowed to drift again.
+  if (params.filter) query.set("scope", params.filter);
   const qs = query.toString();
 
   return useQuery({
