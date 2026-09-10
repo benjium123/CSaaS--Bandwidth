@@ -23,7 +23,7 @@ least as much UI as it adds.
 | 12 | P30 Reports: team, SLA, campaigns, assistant; export; email; wallboard | docs/PLAN_P26_P36.md | 0032 (schema committed) | queued |
 | 13 | P31 Notifications, PWA, mobile | docs/PLAN_P26_P36.md | 0033 (schema committed) | queued |
 | 14 | P32 Plans, traffic billing, invoices (Fable owns money) | docs/PLAN_P26_P36.md | 0034 (schema committed) | queued |
-| 15 | P33 Agencies: sub-accounts, white-label, custom domain | docs/PLAN_P26_P36.md | 0035 | queued |
+| 15 | P33 Agencies: sub-accounts, white-label, custom domain | docs/PLAN_P26_P36.md | 0035 (schema committed) | queued |
 | 16 | P34 Developers and integrations: API docs, Zapier, HubSpot, Salesforce | docs/PLAN_P26_P36.md | 0036 | queued |
 | 17 | P35 Channels: email, WhatsApp, web chat | docs/PLAN_P26_P36.md | 0037 | queued |
 | 18 | P36 Trust: PII encryption at rest, status history, i18n | docs/PLAN_P26_P36.md | 0038 | queued |

@@ -18,6 +18,7 @@ from app.models.billing import (
     CreditLedgerEntry,
     PaymentMethod,
 )
+from app.models.branding import DOMAIN_STATUSES, OrgBranding
 from app.models.callflow import (
     FLOW_STATUSES,
     QUEUE_ENTRY_STATES,
@@ -203,6 +204,8 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "DOMAIN_STATUSES",
+    "OrgBranding",
     "INVOICE_STATUSES",
     "PLAN_ALLOWANCE_KEYS",
     "Invoice",

@@ -70,5 +70,12 @@ class Org(Base, TimestampMixin):
     billing_email: Mapped[str | None] = mapped_column(sa.String(320), nullable=True)
     tax_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
 
+    # P33 agencies: a client workspace under an agency. Tenant scoping is unchanged (every
+    # row still belongs to the CHILD org); parent access is an explicit cross-org grant
+    # checked in one place (services/agency.py).
+    parent_org_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("orgs.id", ondelete="SET NULL"), nullable=True
+    )
+
     def __repr__(self) -> str:
         return f"<Org {self.slug}>"
