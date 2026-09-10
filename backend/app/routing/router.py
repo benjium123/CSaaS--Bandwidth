@@ -129,6 +129,8 @@ async def plan_route(
     thread_our_number: str | None = None,
     is_reply_in_thread: bool = False,
     require_registration: bool = False,
+    is_campaign: bool = False,
+    campaign_excluded: set[str] | None = None,
 ) -> RoutePlan:
     """Resolve the send to a primary route plus an ordered fallback list.
 
@@ -158,6 +160,31 @@ async def plan_route(
             or "No number on this organisation is registered to send"
         )
 
+    # D43: BULK traffic excludes a number whose recent sending record is in breach; a 1:1
+    # reply only penalises it (P21 rule). rank_routes enforces this for the candidates it
+    # ranks, but the early branches below (explicit from, explicit carrier, sticky sender)
+    # return before ranking ever happens - so the exclusion is applied HERE, once, where
+    # every branch is downstream of it. `campaign_excluded` lets the campaign runner pass
+    # a set it already computed for this tick instead of paying for the trailing-window
+    # aggregate on every single row.
+    excluded: set[str] = set()
+    if is_campaign:
+        from app.services import smart_routing  # keep this module cycle-free
+
+        excluded = (
+            campaign_excluded
+            if campaign_excluded is not None
+            else await smart_routing.campaign_excluded_e164s(session, org_id)
+        )
+        if excluded:
+            kept = [n for n in numbers if n.e164 not in excluded]
+            if not kept:
+                raise ComplianceBlockedError(
+                    "Bulk sending from this number is paused while its recent delivery "
+                    "problems clear. Use another number, or send one-to-one."
+                )
+            numbers = kept
+
     by_e164 = {n.e164: n for n in numbers}
     policy = await get_policy(session, org_id)
 
@@ -167,6 +194,14 @@ async def plan_route(
         if number is None:
             # Distinguish "not yours" from "yours but not allowed to send" - the second is
             # actionable and the operator needs to know which one they are looking at.
+            if requested_from in excluded:
+                # D43: it IS this org's number, and it is fine for one-to-one - it is only
+                # this BULK send it may not carry. Saying "not an active number" here
+                # would send the operator hunting a problem that does not exist.
+                raise ComplianceBlockedError(
+                    f"Bulk sending from {requested_from} is paused while its recent "
+                    "delivery problems clear. Use another number, or send one-to-one."
+                )
             if requested_from in refused:
                 raise ComplianceBlockedError(refused[requested_from])
             raise ValidationFailedError(
@@ -275,7 +310,7 @@ async def plan_route(
 
     candidates = await smart_routing.rank_routes(
         session, org_id, kind="sms", registry=registry,
-        to_e164=contact_e164, is_campaign=False, policy=policy, numbers=numbers)
+        to_e164=contact_e164, is_campaign=is_campaign, policy=policy, numbers=numbers)
     score_by_key = {(c.provider, c.e164): c.score for c in candidates}
     ranked.sort(key=lambda r: -score_by_key.get((r.carrier_name, r.from_e164), 0.0))
     if policy.pinned_carrier:

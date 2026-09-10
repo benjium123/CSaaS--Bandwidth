@@ -40,6 +40,7 @@ from app.models import (
 from app.services import contacts as contacts_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services import inbox_sla as inbox_sla_svc
+from app.services import links as links_svc
 from app.services import notifications as notifications_svc
 
 router = APIRouter(prefix="/api/v1", tags=["conversations"])
@@ -137,6 +138,14 @@ class ConversationListResponse(BaseModel):
     next_cursor: str | None
 
 
+class TrackedLinkOut(BaseModel):
+    """P28: one tracked link inside an outbound message."""
+
+    code: str
+    target_url: str
+    clicks: int
+
+
 class MessageTimelineEvent(BaseModel):
     kind: Literal["message"] = "message"
     id: uuid.UUID
@@ -148,6 +157,12 @@ class MessageTimelineEvent(BaseModel):
     error_code: str | None
     # P21: why this route was chosen (plain sentence) - tooltip in the unified timeline.
     route_reason: str | None = None
+    # P28: the failure in words, the send-later moment, and tracked-link clicks. All
+    # defaulted so every pre-P28 caller and every stored message keeps working unchanged.
+    failure_reason_public: str | None = None
+    scheduled_for: datetime | None = None
+    clicks: int = 0
+    links: list[TrackedLinkOut] = []
 
 
 class CallRecordingOut(BaseModel):
@@ -1347,6 +1362,11 @@ async def conversation_timeline(
 
     timeline_items: list[dict[str, Any]] = []
 
+    # ONE query for every tracked link on the page, not one per bubble.
+    links_by_message = await links_svc.links_for_messages(
+        ctx.session, [msg.id for msg in messages]
+    )
+
     for msg in messages:
         timeline_items.append(
             {
@@ -1359,6 +1379,19 @@ async def conversation_timeline(
                 "occurred_at": msg.created_at,
                 "error_code": msg.error_code,
                 "route_reason": msg.route_reason,
+                # P28: the bubble shows the plain sentence, not the code; and a tracked
+                # link shows how many times it was actually opened.
+                "failure_reason_public": msg.failure_reason_public,
+                "scheduled_for": msg.scheduled_for,
+                "clicks": sum(link.clicks for link in links_by_message.get(msg.id, [])),
+                "links": [
+                    {
+                        "code": link.code,
+                        "target_url": link.target_url,
+                        "clicks": link.clicks,
+                    }
+                    for link in links_by_message.get(msg.id, [])
+                ],
             }
         )
 

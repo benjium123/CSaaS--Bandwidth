@@ -313,18 +313,94 @@ async def test_reply_send_penalises_but_keeps_a_breached_number(sms_app, session
 async def test_campaign_send_does_not_exclude_a_breached_number_in_production(
     app_with_carrier, session
 ):
-    """FINDING (non-blocking): the spec's campaign EXCLUSION is unreachable in production.
+    """FLIPPED IN P28 (D43). The finding this probe used to pin is FIXED.
 
-    `rank_routes(is_campaign=True)` is never called by app code - `plan_route` hardcodes
-    `is_campaign=False`, and the campaign runner (`services/outbound.py::outbound_tick`)
-    passes `plan=None`, bypassing routing entirely. This probe pins the behaviour that
-    actually ships: a campaign still sends from a breached number.
+    What it pinned: `services/outbound.py::outbound_tick` called `send_message(plan=None)`,
+    so a campaign never consulted routing at all - `rank_routes(is_campaign=True)` was
+    unreachable in production, a number in a spam-class breach still carried campaign
+    traffic, and no route sentence was recorded for a campaign send either.
+
+    What it asserts now, both halves:
+      1. the breached number is EXCLUDED from bulk traffic and the clean one carries the
+         campaign (a breach only PENALISES a 1:1 reply - see the probe above - and that
+         asymmetry is the whole rule);
+      2. the send records its `route_reason` sentence, exactly as a 1:1 send does.
     """
-    client, fake, _app = app_with_carrier
-    bad = "+12145550602"
+    client, fake, application = app_with_carrier
+    bad, clean = "+12145550602", "+19725550602"
     token, org, _ = await make_org_with_number(client, "rep-b@example.com", "Org Rep", bad)
     org_id = uuid.UUID(org["id"])
+    r = await client.post(
+        "/api/v1/numbers", json={"e164": clean}, headers=auth_headers(token, org_id)
+    )
+    assert r.status_code == 201, r.text
     await _breach_number(client, session, token, org_id, bad)
+    sent_before = len(fake.sent)
+
+    set_org_context(session, org_id)
+    lst = ContactList(
+        id=uuid.uuid4(), org_id=org_id, name="L", source_filename="l.csv", status="ready",
+        total_rows=1, accepted_count=1,
+    )
+    session.add(lst)
+    await session.flush()
+    contact = Contact(id=uuid.uuid4(), org_id=org_id, display_name="c")
+    session.add(contact)
+    await session.flush()
+    session.add(
+        ContactListRow(
+            id=uuid.uuid4(), org_id=org_id, list_id=lst.id, row_number=1,
+            raw={"phone": CONTACT}, e164=CONTACT, contact_id=contact.id, status="accepted",
+        )
+    )
+    await session.commit()
+
+    campaign = await outbound_svc.create_campaign(
+        session, org_id, name="C", channel="sms", list_id=lst.id, body="Hello",
+        rate_per_minute=600, daily_cap=200, respect_warmup=False,
+        max_attempts=2, retry_backoff_minutes=240,
+    )
+    await outbound_svc.enqueue_campaign_rows(session, campaign)
+    await outbound_svc.start_campaign(session, campaign)
+
+    counts = await outbound_svc.outbound_tick(
+        session, fake, None, Random(1), registry=application.state.carriers
+    )
+    assert counts["sent"] == 1, counts
+    assert fake.sent[-1].from_ == clean, (
+        "D43 FIXED: a breached number must not carry campaign traffic - the clean number "
+        "does"
+    )
+    assert all(m.from_ != bad for m in fake.sent[sent_before:]), (
+        "nothing at all may leave the breached number once the campaign starts"
+    )
+    set_org_context(session, org_id)
+    sent = (
+        await session.execute(
+            sa.select(Message)
+            .where(Message.to_e164 == CONTACT, Message.direction == "outbound")
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    assert sent.route_reason, (
+        "D43 FIXED, second half: a campaign send now goes through plan_route, so it "
+        "records the same customer-facing route sentence a 1:1 send does"
+    )
+    assert sent.route_reason.startswith("Sent via"), sent.route_reason
+
+
+async def test_campaign_with_only_a_breached_number_sends_nothing(app_with_carrier, session):
+    """The other side of the D43 rule: when the ONLY number is in breach there is nothing
+    to fail over to, so the campaign waits rather than sending from it anyway. The row
+    stays queued (retryable) - a reputation breach clears on its own as the window rolls,
+    so failing the row terminally would be wrong."""
+    client, fake, application = app_with_carrier
+    bad = "+12145550603"
+    token, org, _ = await make_org_with_number(client, "rep-c@example.com", "Org RepC", bad)
+    org_id = uuid.UUID(org["id"])
+    await _breach_number(client, session, token, org_id, bad)
+    sent_before = len(fake.sent)
 
     set_org_context(session, org_id)
     lst = ContactList(
@@ -352,25 +428,11 @@ async def test_campaign_send_does_not_exclude_a_breached_number_in_production(
     await outbound_svc.enqueue_campaign_rows(session, campaign)
     await outbound_svc.start_campaign(session, campaign)
 
-    counts = await outbound_svc.outbound_tick(session, fake, None, Random(1))
-    assert counts["sent"] == 1
-    assert fake.sent[-1].from_ == bad, (
-        "documented gap: campaign sends never consult rank_routes, so a breached number "
-        "is NOT excluded in production"
+    counts = await outbound_svc.outbound_tick(
+        session, fake, None, Random(1), registry=application.state.carriers
     )
-    set_org_context(session, org_id)
-    sent = (
-        await session.execute(
-            sa.select(Message)
-            .where(Message.to_e164 == CONTACT, Message.direction == "outbound")
-            .order_by(Message.created_at.desc())
-            .limit(1)
-        )
-    ).scalar_one()
-    assert sent.route_reason is None, (
-        "second half of the same gap: a campaign send passes plan=None, so no route "
-        "sentence is recorded for it either"
-    )
+    assert counts["sent"] == 0, counts
+    assert len(fake.sent) == sent_before, "a breached-only pool must send nothing at all"
 
 
 # ==================================================================================

@@ -26,7 +26,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.compliance import gate, registration
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.errors import ComplianceBlockedError, ValidationFailedError
+from app.errors import (
+    ComplianceBlockedError,
+    ConflictError,
+    NotFoundError,
+    ValidationFailedError,
+)
 from app.models.compliance import MediaAsset
 from app.models.messaging import (
     EVENT_TO_STATUS,
@@ -47,8 +52,9 @@ from app.providers.domain import (
     UnknownEvent,
 )
 from app.providers.segments import estimate
-from app.services import contact_visibility
+from app.services import contact_visibility, messaging_errors
 from app.services import credentials as credential_svc
+from app.services import links as links_svc
 from app.services.contacts import resolve_or_create_contact
 from app.services.outbox import record_platform_event
 
@@ -70,6 +76,14 @@ BULK_SEND_KEY = "bulk_originated_send"
 #: unbounded SELECT that drags the whole process down.
 SWEEPER_BATCH_LIMIT = 500
 STALE_QUEUED_MINUTES = 10
+#: P28 send-later. A scheduled row is NOT "queued": it must be invisible to
+#: release_held_messages (quiet-hours holds) and to recover_stale_queued (crash recovery),
+#: both of which claim on status="queued". Deliberately absent from STATUS_RANK - a
+#: scheduled message has no provider id yet, so no delivery event can ever address it.
+SCHEDULED_STATUS = "scheduled"
+#: How far ahead a message may be scheduled. Long enough for any real use, short enough
+#: that a typo'd year cannot park a message in the table forever.
+MAX_SCHEDULE_DAYS = 90
 
 
 class Outcome(enum.Enum):
@@ -143,6 +157,39 @@ async def upsert_thread(
 # --------------------------------------------------------------------------------------
 # Send path
 # --------------------------------------------------------------------------------------
+def _media_ceiling(carrier) -> int:  # noqa: ANN001 - MessagingCarrier protocol
+    """The smallest attachment ceiling that actually applies to this send.
+
+    The provider CATALOGUE declares its own limit (`capabilities.max_media_bytes`); the
+    media service enforces a floor of its own at upload time. Taking the minimum means a
+    provider with a tighter limit than the uploader's is respected, and a duck-typed test
+    carrier with no capabilities at all still gets a sane number instead of an
+    AttributeError.
+    """
+    from app.services.media import MAX_MEDIA_BYTES
+
+    capabilities = getattr(carrier, "capabilities", None)
+    declared = getattr(capabilities, "max_media_bytes", None)
+    if not isinstance(declared, int) or declared <= 0:
+        return MAX_MEDIA_BYTES
+    return min(declared, MAX_MEDIA_BYTES)
+
+
+def _check_media_size(carrier, assets: list[MediaAsset]) -> None:  # noqa: ANN001
+    """422 with a sentence a person can act on - no provider name, no byte counts.
+
+    The number is rendered in MB (one decimal, trailing .0 trimmed) because "3750000" is
+    not a size anybody recognises as "the picture is too big".
+    """
+    ceiling = _media_ceiling(carrier)
+    if all((asset.size_bytes or 0) <= ceiling for asset in assets):
+        return
+    # FLOOR, never round: rounding 3_750_000 up to "3.8 MB" would advertise a ceiling we
+    # then refuse, which is the one way this sentence could be actively misleading.
+    megabytes = f"{int(ceiling / 100_000) / 10:.1f}".rstrip("0").rstrip(".")
+    raise ValidationFailedError(f"Attachments up to {megabytes} MB")
+
+
 async def send_message(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -158,6 +205,9 @@ async def send_message(
     plan=None,  # noqa: ANN001 - routing.RoutePlan
     bulk: bool = False,
     require_registration: bool = False,
+    scheduled_for: datetime | None = None,
+    track_links: bool = False,
+    public_web_url: str = "",
 ) -> Message:
     """Create and dispatch one outbound message.
 
@@ -204,6 +254,13 @@ async def send_message(
     deferred_until = getattr(verdict, "defer_until", None)
     if not verdict.allowed and deferred_until is None:
         raise ComplianceBlockedError(verdict.reason or "Blocked by compliance policy")
+    if scheduled_for is not None:
+        # P28 send-later: a quiet-hours DEFER at scheduling time is meaningless - the
+        # message is not going out now anyway, and the window it would be measured
+        # against is the one at RELEASE. A hard block (opt-out, DNC) above still refuses
+        # immediately, because telling someone "scheduled!" for a message that can never
+        # be sent is worse than refusing it while they are still looking at it.
+        deferred_until = None
 
     assets: list[MediaAsset] = []
     if media_ids:
@@ -220,6 +277,7 @@ async def send_message(
         )
         if len(assets) != len(set(media_ids)):
             raise ValidationFailedError("One or more media attachments were not found")
+        _check_media_size(carrier, assets)
 
     est = estimate(body)
     thread = await upsert_thread(session, org_id, from_e164, to_e164)
@@ -272,6 +330,39 @@ async def send_message(
         carrier=getattr(carrier, "name", CARRIER_DEFAULT),
         segment_count_est=est.segments,
     )
+
+    # P28 link tracking. Done AFTER the row is flushed, never before: short_links.
+    # message_id is a real foreign key, and creating the links first would let an
+    # autoflush insert them while the message they point at does not exist yet.
+    if track_links and public_web_url and (message.body or "").strip():
+        session.add(message)
+        await session.flush()
+        tracked_body, _links = await links_svc.create_tracked_links(
+            session,
+            org_id,
+            body=message.body or "",
+            message_id=message.id,
+            contact_id=thread.contact_id,
+            public_web_url=public_web_url,
+        )
+        if tracked_body != message.body:
+            message.body = tracked_body
+            # A short link is usually SHORTER than what it replaced, but not always -
+            # the estimate has to follow the body that actually goes out, or billing and
+            # the segment warning in the composer both describe a message nobody sent.
+            message.segment_count_est = estimate(tracked_body).segments
+
+    if scheduled_for is not None:
+        # P28 send-later. Nothing is dispatched now; release_scheduled_messages re-runs
+        # the FULL gate (including quiet hours) when the moment arrives, exactly as the
+        # quiet-hours hold path does. Status is deliberately not "queued" - see
+        # SCHEDULED_STATUS.
+        message.status = SCHEDULED_STATUS
+        message.scheduled_for = scheduled_for
+        session.add(message)
+        await session.commit()
+        return message
+
     if deferred_until is not None:
         # QUIET HOURS: defer, do not drop. The row exists and is queued; the sweeper
         # releases it and RE-RUNS THE FULL GATE, so an opt-out arriving during the hold
@@ -287,10 +378,78 @@ async def send_message(
     # Both present = phase-3b routing with failover. Absent = the P1 single-carrier path,
     # unchanged, which is what the seam tests exercise.
     if registry is not None and plan is not None:
-        return await dispatch_with_failover(
+        sent = await dispatch_with_failover(
             session, org_id, registry, plan, message, media_urls or []
         )
-    return await _dispatch_to_carrier(session, org_id, carrier, message, media_urls or [])
+    else:
+        sent = await _dispatch_to_carrier(
+            session, org_id, carrier, message, media_urls or []
+        )
+    if media_urls:
+        sent = await _fallback_mms_to_sms(
+            session,
+            org_id,
+            registry.get(sent.carrier) if registry is not None else carrier,
+            sent,
+            media_urls,
+            public_web_url=public_web_url,
+        )
+    return sent
+
+
+async def _fallback_mms_to_sms(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    carrier,  # noqa: ANN001
+    message: Message,
+    media_urls: list[str],
+    *,
+    public_web_url: str = "",
+) -> Message:
+    """A picture the recipient's phone cannot take becomes a text with a link to it.
+
+    Only the ATTACHMENT-specific rejections qualify (see messaging_errors.is_mms_problem):
+    retrying every rejection as a text would resend a message the network refused on its
+    merits, which is exactly the behaviour the spam rules exist to punish.
+
+    Exactly ONE retry, and never a recursive call back into send_message - the compliance
+    gate already ran for this recipient moments ago, and a fallback that could itself fall
+    back is a loop with a carrier bill attached.
+    """
+    if message.status != "rejected" or carrier is None:
+        return message
+    if not messaging_errors.is_mms_problem(message.error_code, message.error_detail):
+        return message
+
+    set_org_context(session, org_id)
+    link = media_urls[0]
+    if public_web_url:
+        try:
+            tracked, _links = await links_svc.create_tracked_links(
+                session,
+                org_id,
+                body=link,
+                message_id=message.id,
+                contact_id=None,
+                public_web_url=public_web_url,
+            )
+            link = tracked
+        except Exception:  # noqa: BLE001 - a plain long link still delivers the picture
+            log.exception("mms_fallback_link_failed", message_id=str(message.id))
+
+    body = f"{(message.body or '').strip()} {link}".strip()
+    message.body = body
+    message.segment_count_est = estimate(body).segments
+    # The attachment is dropped from the row as well as the send: leaving it would make
+    # the bubble render a picture that was never actually delivered as one.
+    message.media = []
+    message.status = "queued"
+    message.error_code = None
+    message.error_detail = None
+    message.failure_reason_public = messaging_errors.MMS_FALLBACK_REASON
+    await session.commit()
+
+    return await _dispatch_to_carrier(session, org_id, carrier, message, [])
 
 
 async def dispatch_with_failover(
@@ -418,6 +577,11 @@ async def _dispatch_to_carrier(
         # A prior attempt's stale error must not linger once a retry actually succeeds.
         message.error_code = None
         message.error_detail = None
+        # P28: ...and neither must the plain sentence built from it. The one exception is
+        # the MMS-fell-back-to-a-link note, which describes what WAS sent rather than a
+        # failure, so it must survive the acceptance that follows it.
+        if message.failure_reason_public != messaging_errors.MMS_FALLBACK_REASON:
+            message.failure_reason_public = None
     else:
         # Carrier rejection is DATA, not an HTTP error (DR-7). The client reads one uniform
         # resource whether the carrier accepted, refused, or was unreachable.
@@ -426,6 +590,16 @@ async def _dispatch_to_carrier(
         if result.error:
             message.error_code = (result.error.carrier_code or result.error.category)[:32]
             message.error_detail = result.error.detail[:255] or None
+        # P28: one plain sentence a person can act on, alongside the raw code the
+        # engineers need. Written on EVERY rejection, including the no-error case (which
+        # falls through to the generic sentence) - a bubble that says nothing at all is
+        # the thing this column exists to stop.
+        message.failure_reason_public = messaging_errors.public_reason(
+            carrier=message.carrier,
+            error_code=message.error_code,
+            category=getattr(result.error, "category", None) if result.error else None,
+            detail=message.error_detail,
+        )
     await session.commit()
     return message
 
@@ -515,6 +689,159 @@ async def release_held_messages(
         finally:
             registry_org.CURRENT_ORG_ID.reset(org_token)
     return released
+
+
+async def release_scheduled_messages(
+    session: AsyncSession,
+    carrier,  # noqa: ANN001
+    now: datetime | None = None,
+    registry=None,  # noqa: ANN001 - CarrierRegistry; dispatches each row via its OWN carrier
+    settings=None,  # noqa: ANN001 - app.config.Settings; D4 org-context priming
+) -> int:
+    """P28 send-later: dispatch messages whose scheduled moment has arrived.
+
+    Three properties this function exists to guarantee, in order of how badly getting
+    them wrong would hurt:
+
+    1. **No double-send, ever.** Each row is CLAIMED with a conditional UPDATE
+       (``status='scheduled'`` -> ``'queued'``, ``scheduled_for`` cleared) that is
+       COMMITTED BEFORE the carrier is called, one row at a time. A second sweeper pass -
+       or a second worker racing this one - finds zero rows still in ``scheduled`` and
+       sends nothing. Committing once at the END of the batch instead would mean a crash
+       mid-batch replays every already-sent row on the next pass; on the test SQLite
+       StaticPool it would also mean the whole batch shares one transaction and a single
+       bad row rolls back the good ones.
+    2. **The gate runs at RELEASE, not at scheduling.** An opt-out that lands while a
+       message waits still kills it, and quiet hours are measured against the window in
+       force NOW - a message scheduled for 9pm that turns out to be quiet hours becomes a
+       hold, not a violation.
+    3. **A crash between the claim and the dispatch is recoverable.** A claimed row is
+       plain ``queued`` with no hold, which is exactly what ``recover_stale_queued``
+       already looks for.
+    """
+    moment = now or _now()
+    bind_moment = moment.replace(tzinfo=None) if _is_sqlite(session) else moment
+    stmt = (
+        sa.select(Message)
+        .where(
+            Message.status == SCHEDULED_STATUS,
+            Message.scheduled_for.is_not(None),
+            Message.scheduled_for <= bind_moment,
+        )
+        .order_by(Message.scheduled_for.asc())
+        .limit(SWEEPER_BATCH_LIMIT)
+        .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    )
+    due = list((await session.execute(stmt)).scalars().all())
+
+    released = 0
+    for message in due:
+        org_id = message.org_id
+        set_org_context(session, org_id)
+        org_token = registry_org.CURRENT_ORG_ID.set(org_id)
+        try:
+            # THE CLAIM. Conditional on the row still being scheduled, so a racing worker
+            # gets rowcount 0 and skips it rather than sending it a second time.
+            claimed = await session.execute(
+                sa.update(Message)
+                .where(Message.id == message.id, Message.status == SCHEDULED_STATUS)
+                .values(status="queued", scheduled_for=None)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True}, synchronize_session=False)
+            )
+            await session.commit()
+            if claimed.rowcount == 0:
+                continue
+            # The UPDATE was issued with synchronize_session=False (the identity map
+            # cannot be kept in step with a Core update), and this sessionmaker runs
+            # expire_on_commit=False - so the in-memory row still says "scheduled" until
+            # it is corrected by hand. _dispatch_to_carrier re-fetches through the
+            # identity map, so a stale status here would be written straight back.
+            message.status = "queued"
+            message.scheduled_for = None
+
+            if (
+                settings is not None
+                and registry is not None
+                and credential_svc.master_key_present(settings)
+                and not registry_org.is_primed(org_id)
+            ):
+                try:
+                    global_registry = getattr(registry, "global_registry", None)
+                    await registry_org.prime_org_registry(
+                        session, settings, org_id, global_registry=global_registry
+                    )
+                except Exception:  # noqa: BLE001 - priming must not kill the whole pass
+                    log.exception("org_registry_prime_failed", org_id=str(org_id))
+
+            verdict = await gate.check_outbound(
+                session,
+                org_id,
+                gate.OutboundDraft(
+                    to_e164=message.to_e164,
+                    from_e164=message.from_e164,
+                    body=message.body or "",
+                ),
+            )
+            defer_until = getattr(verdict, "defer_until", None)
+            if not verdict.allowed and defer_until is None:
+                message.status = "rejected"
+                message.hold_until = None
+                message.error_code = f"{verdict.reason or 'blocked'}_when_due"[:32]
+                message.failure_reason_public = messaging_errors.public_reason(
+                    carrier=message.carrier, error_code=message.error_code
+                )
+                await session.commit()
+                continue
+            if defer_until is not None:
+                # Due, but due inside quiet hours. Hand it to the ORDINARY hold path
+                # rather than sending it: the recipient's local night is not negotiable
+                # just because somebody scheduled into it.
+                message.hold_until = defer_until
+                await session.commit()
+                continue
+
+            row_carrier = registry.get(message.carrier) if registry is not None else None
+            if row_carrier is None:
+                row_carrier = carrier
+            if row_carrier is None:
+                # Nothing to send through. Leave it queued; recover_stale_queued owns it
+                # from here rather than this pass inventing its own retry ladder.
+                continue
+
+            await _dispatch_to_carrier(session, org_id, row_carrier, message)
+            released += 1
+        except Exception:  # noqa: BLE001 - one bad row must not end the pass
+            log.exception("scheduled_release_failed", message_id=str(message.id))
+            await session.rollback()
+        finally:
+            registry_org.CURRENT_ORG_ID.reset(org_token)
+    return released
+
+
+async def cancel_scheduled_message(
+    session: AsyncSession, org_id: uuid.UUID, message_id: uuid.UUID
+) -> None:
+    """Cancel a send-later message that has not gone out yet.
+
+    Conditional on ``status='scheduled'`` so cancelling one the sweeper has already
+    claimed is a clean 409-shaped refusal rather than a silent no-op that leaves the
+    sender believing they stopped a message that is already at the carrier.
+    """
+    set_org_context(session, org_id)
+    message = await session.get(Message, message_id)
+    if message is None:
+        raise NotFoundError("Message not found")
+    if message.status != SCHEDULED_STATUS:
+        raise ConflictError("This message has already been sent")
+    result = await session.execute(
+        sa.delete(Message).where(
+            Message.id == message_id, Message.status == SCHEDULED_STATUS
+        )
+    )
+    if result.rowcount == 0:
+        await session.rollback()
+        raise ConflictError("This message has already been sent")
+    await session.commit()
 
 
 def _is_sqlite(session: AsyncSession) -> bool:
@@ -831,6 +1158,13 @@ def _apply_dlr_to_message(message: Message, event: DeliveryReceipt) -> None:
         if new_status == "failed":
             message.error_code = (event.error_code or "unknown")[:32]
             message.error_detail = (event.error_description or "")[:255] or None
+            # P28: a delivery failure reported later is exactly as confusing to a person
+            # as an immediate rejection, so it gets the same plain sentence.
+            message.failure_reason_public = messaging_errors.public_reason(
+                carrier=message.carrier,
+                error_code=message.error_code,
+                detail=message.error_detail,
+            )
 
     if event.segment_count is not None:
         # The carrier's count is truth; ours was only an estimate.

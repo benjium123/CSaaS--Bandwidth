@@ -179,6 +179,19 @@ async def _run_once_locked(app) -> dict[str, int]:
     except Exception:
         log.exception("sweeper_reprocess_failed")
 
+    # P28 send-later: messages whose scheduled moment has arrived. Placed BEFORE the
+    # stale-queued recovery below on purpose - the release claims a row by flipping it to
+    # `queued`, and a recovery pass that ran first would only ever see rows from an
+    # EARLIER tick, never one this pass just claimed.
+    if carrier is not None or registry is not None:
+        try:
+            async with get_sessionmaker()() as session:
+                results["scheduled_released"] = await messaging_svc.release_scheduled_messages(
+                    session, carrier, registry=registry, settings=app.state.settings
+                )
+        except Exception:
+            log.exception("sweeper_scheduled_release_failed")
+
     try:
         async with get_sessionmaker()() as session:
             # 2.11: re-drive messages stranded in `queued` with no hold_until after a

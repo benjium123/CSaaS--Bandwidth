@@ -26,6 +26,7 @@ from app.api.routes import health as health_routes
 from app.api.routes import identity as identity_routes
 from app.api.routes import inbox as inbox_routes
 from app.api.routes import inboxes as inboxes_routes
+from app.api.routes import links as links_routes
 from app.api.routes import me as me_routes
 from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
@@ -235,6 +236,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(media_routes.router)
     app.include_router(template_routes.router)
     app.include_router(message_routes.router)
+    # P28: the PUBLIC tracked-link redirect. No /api/v1 prefix and no auth - the
+    # short code itself is the credential, and the row it resolves to carries the org.
+    app.include_router(links_routes.router)
     app.include_router(call_routes.router)
     app.include_router(outbound_routes.router)
     app.include_router(agent_routes.router)

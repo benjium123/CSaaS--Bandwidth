@@ -31,7 +31,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.compliance import registration
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.errors import ComplianceBlockedError, ConflictError, ValidationFailedError
+from app.errors import (
+    CarrierNotConfiguredError,
+    ComplianceBlockedError,
+    ConflictError,
+    ValidationFailedError,
+)
 from app.models import (
     SEND_TERMINAL,
     ContactList,
@@ -43,8 +48,9 @@ from app.models import (
     OutboundSend,
 )
 from app.providers import registry_org
+from app.routing import router as routing
 from app.services import credentials as credential_svc
-from app.services import pacing
+from app.services import pacing, smart_routing
 from app.services import sender as sender_svc
 from app.services import templates as tmpl
 from app.services.messaging import BULK_SEND_KEY, send_message
@@ -498,10 +504,24 @@ async def outbound_tick(
             ),
         )
         eligible_e164s = {n.e164 for n in eligible_numbers}
+        # D43: a number whose recent sending record is in breach is EXCLUDED from bulk
+        # traffic (P21's campaign rule, which until now was unreachable in production
+        # because this runner never consulted routing at all). Computed ONCE per campaign
+        # per tick - `compute_number_stats` is a trailing-window aggregate, and paying for
+        # it on every row would be a real regression. The same set is handed to plan_route
+        # below so the runner and the router cannot disagree about which numbers are out.
+        try:
+            excluded_e164s = await smart_routing.campaign_excluded_e164s(
+                session, campaign.org_id
+            )
+        except Exception:  # noqa: BLE001 - reputation must never kill the whole tick
+            log.exception("campaign_reputation_exclusion_failed", campaign_id=str(campaign.id))
+            excluded_e164s = set()
         pool = [
             n.e164
             for n in numbers
             if n.e164 in eligible_e164s
+            and n.e164 not in excluded_e164s
             and (not campaign.from_numbers or n.e164 in campaign.from_numbers)
         ]
         warmup_by_number = {n.e164: _aware(n.warmup_started_at) for n in numbers}
@@ -595,6 +615,48 @@ async def outbound_tick(
                 counts["skipped"] += 1
                 continue
 
+            # D43: build the routing plan for THIS row through the same router a
+            # one-to-one send uses, with is_campaign=True so the bulk exclusion rule
+            # applies - and hand it to send_message so the customer-facing route sentence
+            # lands on `messages.route_reason` exactly the way P21 does for 1:1 sends.
+            # `requested_from` pins the number this runner already chose (campaign pool +
+            # sticky sender + per-number pacing all hang off it); routing's job here is the
+            # carrier, the eligibility gate and the explanation, not re-picking the sender.
+            plan = None
+            require_reg = bool(
+                settings is not None and settings.require_number_registration
+            )
+            if registry is not None and len(registry) > 0:
+                try:
+                    plan = await routing.plan_route(
+                        session,
+                        campaign.org_id,
+                        registry,
+                        contact_e164=row.e164,
+                        requested_from=from_e164,
+                        is_campaign=True,
+                        campaign_excluded=excluded_e164s,
+                        require_registration=require_reg,
+                    )
+                except ComplianceBlockedError as exc:
+                    row.status = "blocked"
+                    row.last_error = str(exc)[:255]
+                    await session.commit()
+                    counts["blocked"] += 1
+                    continue
+                except (ValidationFailedError, CarrierNotConfiguredError) as exc:
+                    # Nothing sendable right now for a reason that may clear on its own
+                    # (a number just released, a carrier not yet configured). Same
+                    # backoff as the no-eligible-sender path: never a terminal failure.
+                    row.status = "queued"
+                    row.last_error = str(exc)[:255]
+                    row.next_attempt_at = moment + timedelta(
+                        minutes=NO_ELIGIBLE_SENDER_RETRY_MINUTES
+                    )
+                    await session.commit()
+                    remaining += 1  # this row was claimed but never dispatched
+                    continue
+
             session.info[BULK_SEND_KEY] = True
             send_org_token = registry_org.CURRENT_ORG_ID.set(campaign.org_id)
             try:
@@ -606,14 +668,13 @@ async def outbound_tick(
                     from_e164=from_e164,
                     body=body,
                     registry=registry,
-                    plan=None,
-                    # D1: this call bypasses routing.plan_route (plan=None), which is
-                    # otherwise the only place the 10DLC/TFV registration gate runs -
-                    # send_message's own require_registration kwarg was never wired to
-                    # the deployment's actual setting, silently defaulting to False.
-                    require_registration=bool(
-                        settings is not None and settings.require_number_registration
-                    ),
+                    plan=plan,
+                    # D1: when no plan could be built (no registry at all), this call still
+                    # bypasses routing.plan_route - which is otherwise the only place the
+                    # 10DLC/TFV registration gate runs - so the gate is passed explicitly.
+                    # send_message ignores it when a plan IS present, because the plan's
+                    # numbers were already filtered for eligibility while it was built.
+                    require_registration=require_reg,
                 )
             except ComplianceBlockedError as exc:
                 row.status = "blocked"

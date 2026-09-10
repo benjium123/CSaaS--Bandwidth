@@ -280,6 +280,27 @@ async def rank_routes(
     return ordered
 
 
+async def campaign_excluded_e164s(
+    session: AsyncSession, org_id: uuid.UUID
+) -> set[str]:
+    """Numbers a CAMPAIGN must not send from right now (D43).
+
+    ``rank_routes(is_campaign=True)`` already deletes these candidates, but the campaign
+    runner picks its own sender out of the campaign's own number pool before any plan is
+    built - so the exclusion has to be available as a plain set the runner can subtract
+    from that pool, and as a filter ``plan_route`` applies to every one of its branches.
+    Computing it once per campaign per tick (instead of once per row) is the whole reason
+    it is a separate function: ``compute_number_stats`` is a trailing-7-day aggregate.
+
+    The rule itself is unchanged from P21: a breach only PENALISES a 1:1 reply, but it
+    EXCLUDES bulk traffic - a number the phone networks are already unhappy with must not
+    be handed a campaign's volume.
+    """
+    set_org_context(session, org_id)
+    stats = await reputation_svc.compute_number_stats(session, org_id)
+    return {s.e164 for s in stats if reputation_svc._breaches(s)}
+
+
 def route_sentence(
     candidate: RouteCandidate,
     *,
