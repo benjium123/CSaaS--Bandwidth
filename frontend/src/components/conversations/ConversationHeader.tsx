@@ -141,7 +141,7 @@ export function ConversationHeader({
     return (
       <div
         className={cn(
-          "flex h-14 items-center border-b border-neutral-800 bg-neutral-900 px-3 text-sm text-neutral-400",
+          "flex h-14 items-center border-b border-border bg-background px-3 text-sm text-muted-foreground",
           className,
         )}
       >
@@ -157,7 +157,7 @@ export function ConversationHeader({
   return (
     <header
       className={cn(
-        "flex flex-col border-b border-neutral-800 bg-neutral-900",
+        "flex flex-col border-b border-border bg-background",
         className,
       )}
     >
@@ -170,14 +170,14 @@ export function ConversationHeader({
               size="icon"
               onClick={onBack}
               aria-label="Back to conversation list"
-              className="shrink-0 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 md:hidden"
+              className="shrink-0 text-foreground hover:bg-muted hover:text-foreground md:hidden"
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
           )}
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-sm font-semibold text-neutral-50">{title}</h2>
+              <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
               <Button
                 type="button"
                 variant="ghost"
@@ -195,7 +195,7 @@ export function ConversationHeader({
                 aria-label={conversation.important ? "Unmark as important" : "Mark as important"}
                 // size="icon" is a 36px box, which would double the height of this title
                 // row - the star sits INSIDE the heading line, so it keeps its old 0.5 padding.
-                className="h-auto w-auto shrink-0 rounded-md p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-50 disabled:pointer-events-none disabled:opacity-40"
+                className="h-auto w-auto shrink-0 rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
               >
                 <Star
                   className={cn(
@@ -209,14 +209,14 @@ export function ConversationHeader({
                 for its pop-up menu, and a <div> inside a <p> is invalid HTML - the browser
                 closes the paragraph early and the layout breaks. OUR number is plain text:
                 you cannot text or call yourself. */}
-            <div className="flex min-w-0 items-center gap-1 text-[11px] text-neutral-400">
+            <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
               <PhoneNumberMenu
                 e164={conversation.contact_e164}
                 fromE164={conversation.our_e164}
                 onText={focusComposer}
                 disabled={!canSend}
                 disabledReason="Read-only inbox — you can view but not call"
-                className="h-auto min-w-0 px-0 py-0 text-[11px] font-normal text-neutral-400 hover:text-neutral-200"
+                className="h-auto min-w-0 px-0 py-0 text-[11px] font-normal text-muted-foreground hover:text-foreground"
               />
               <span className="shrink-0">· via</span>
               <span className="truncate">{formatPhone(conversation.our_e164)}</span>
@@ -233,7 +233,7 @@ export function ConversationHeader({
             disabled={!canSend}
             title={canSend ? undefined : "Read-only inbox — you can view but not call"}
             aria-label={`Call ${title}`}
-            className="text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 disabled:pointer-events-none disabled:opacity-40"
+            className="text-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
           >
             <Phone className="h-4 w-4" />
           </Button>
@@ -243,7 +243,7 @@ export function ConversationHeader({
             size="icon"
             onClick={focusComposer}
             aria-label={`Message ${title}`}
-            className="text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50"
+            className="text-foreground hover:bg-muted hover:text-foreground"
           >
             <MessageSquare className="h-4 w-4" />
           </Button>
@@ -260,7 +260,7 @@ export function ConversationHeader({
               aria-label="Conversation actions"
               disabled={toggleThreadMutation.isPending}
               onClick={() => setMoreOpen((v) => !v)}
-              className="text-neutral-300 hover:bg-neutral-800 hover:text-neutral-50 disabled:opacity-50"
+              className="text-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
             >
               {toggleThreadMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -272,7 +272,7 @@ export function ConversationHeader({
               <div
                 role="menu"
                 aria-label="Conversation actions"
-                className="absolute right-0 top-9 z-20 w-44 rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg"
+                className="absolute right-0 top-9 z-20 w-44 rounded-md border border-border bg-muted p-1 shadow-lg"
               >
                 <Button
                   type="button"
@@ -295,7 +295,7 @@ export function ConversationHeader({
                         ? undefined
                         : "Read-only inbox — you can view but not close or reopen"
                   }
-                  className="w-full justify-start rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+                  className="w-full justify-start rounded px-2 py-1 text-left text-xs text-foreground hover:bg-foreground/10 disabled:opacity-50"
                 >
                   {conversation.status === "closed" ? "Reopen" : "Close"}
                 </Button>
@@ -305,12 +305,12 @@ export function ConversationHeader({
         </div>
       </div>
       {toggleThreadMutation.isError && (
-        <p role="alert" className="px-3 pb-2 text-[11px] text-red-400">
+        <p role="alert" className="px-3 pb-2 text-[11px] text-destructive">
           {(toggleThreadMutation.error as Error).message}
         </p>
       )}
       {importantMutation.isError && (
-        <p role="alert" className="px-3 pb-2 text-[11px] text-red-400">
+        <p role="alert" className="px-3 pb-2 text-[11px] text-destructive">
           {(importantMutation.error as Error).message}
         </p>
       )}

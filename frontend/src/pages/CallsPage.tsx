@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchAuthedBlob, type ApiClient } from "@/api/client";
@@ -17,6 +18,7 @@ import {
 } from "@/api/hooks";
 import { fetchInboxes } from "@/api/conversations";
 import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +71,7 @@ function statusBadgeClass(status: string): string {
 
 export function CallsPage() {
   const { api } = useAuth();
+  const navigate = useNavigate();
   const { data: numbers } = useNumbers(api);
   const [status, setStatus] = React.useState("");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -202,7 +205,29 @@ export function CallsPage() {
                       c.id === selectedId && "bg-muted",
                     )}
                   >
-                    <td className="px-3 py-2">{formatPhone(c.contact_e164)}</td>
+                    {/* This cell is the boundary between the phone menu and the row's own
+                        select-on-click / select-on-Enter handlers. Without stopping
+                        propagation, opening the menu or pressing Enter on a menu item
+                        would also select the call row. */}
+                    <td
+                      className="px-3 py-2"
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <PhoneNumberMenu
+                        e164={c.contact_e164}
+                        // A call row knows which of our numbers was on the call, so a
+                        // callback goes out from the same number.
+                        fromE164={c.our_e164}
+                        ariaLabel={`Actions for ${formatPhone(c.contact_e164)}`}
+                        onText={(e164) =>
+                          navigate(
+                            `/inbox?compose=${encodeURIComponent(e164)}&from=${encodeURIComponent(c.our_e164)}`,
+                          )
+                        }
+                        className="h-auto px-1 py-0 font-normal"
+                      />
+                    </td>
                     <td className="px-2 py-2 text-center" aria-label={c.direction}>
                       {directionArrow(c.direction)}
                     </td>

@@ -1,9 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import type { Me } from "@/auth/AuthContext";
 import { ContactsPage } from "./ContactsPage";
 import { makeStubClient, renderWithProviders, type RouteStub } from "@/test/harness";
+
+const { dialMock, navigateMock } = vi.hoisted(() => ({
+  dialMock: vi.fn(),
+  navigateMock: vi.fn(),
+}));
+
+vi.mock("@/softphone/SoftphoneProvider", () => ({
+  SoftphoneProvider: ({ children }: { children: ReactNode }) => children,
+  useSoftphone: () => ({ dial: dialMock }),
+}));
+
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router-dom")>()),
+  useNavigate: () => navigateMock,
+}));
 
 const MEMBERS = [
   { user_id: "u1", email: "owner@example.com", full_name: "Owner Person", role_name: "owner" },
@@ -68,6 +84,12 @@ const ME_NO_ASSIGN: Me = {
     },
   ],
 };
+
+beforeEach(() => {
+  dialMock.mockReset();
+  dialMock.mockResolvedValue(undefined);
+  navigateMock.mockReset();
+});
 
 describe("ContactsPage", () => {
   // The stub matcher is startsWith-based, first insertion wins. The specific
@@ -259,5 +281,85 @@ describe("ContactsPage", () => {
 
     expect(await screen.findByText("Ada Lovelace")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("each contact row renders a phone menu", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME_CAN_ASSIGN,
+      "/api/v1/orgs/current/members": MEMBERS,
+      "/api/v1/departments": DEPARTMENTS,
+      "/api/v1/contacts": CONTACTS,
+    });
+    renderWithProviders(<ContactsPage />, client);
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Actions for (972) 555-0199 (Ada Lovelace)",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('"Call" dials the contact\'s number with NO from-number', async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME_CAN_ASSIGN,
+      "/api/v1/orgs/current/members": MEMBERS,
+      "/api/v1/departments": DEPARTMENTS,
+      "/api/v1/contacts": CONTACTS,
+    });
+    renderWithProviders(<ContactsPage />, client);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Actions for (972) 555-0199 (Ada Lovelace)",
+    });
+    await userEvent.click(trigger);
+
+    const menu = await screen.findByRole("menu", { name: "Phone number actions" });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Call" }));
+
+    await waitFor(() => {
+      expect(dialMock).toHaveBeenCalledWith("+19725550199", undefined);
+    });
+  });
+
+  it('"Text" navigates to /inbox?compose=...', async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME_CAN_ASSIGN,
+      "/api/v1/orgs/current/members": MEMBERS,
+      "/api/v1/departments": DEPARTMENTS,
+      "/api/v1/contacts": CONTACTS,
+    });
+    renderWithProviders(<ContactsPage />, client);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Actions for (972) 555-0199 (Ada Lovelace)",
+    });
+    await userEvent.click(trigger);
+
+    const menu = await screen.findByRole("menu", { name: "Phone number actions" });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Text" }));
+
+    expect(navigateMock).toHaveBeenCalledWith("/inbox?compose=%2B19725550199");
+  });
+
+  it("a contact with phones: [] renders — and no menu trigger", async () => {
+    const EMPTY_PHONE_CONTACT = {
+      id: "c4",
+      display_name: "No Phone",
+      phones: [],
+      owner_user_id: null,
+      department_id: null,
+    };
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME_CAN_ASSIGN,
+      "/api/v1/orgs/current/members": MEMBERS,
+      "/api/v1/departments": DEPARTMENTS,
+      "/api/v1/contacts": [...CONTACTS, EMPTY_PHONE_CONTACT],
+    });
+    renderWithProviders(<ContactsPage />, client);
+
+    await screen.findByText("Ada Lovelace");
+    const noPhoneRow = screen.getByText("No Phone").closest("tr") as HTMLTableRowElement;
+    expect(within(noPhoneRow).getByText("—")).toBeInTheDocument();
+    expect(within(noPhoneRow).queryByRole("button", { name: /Actions for/ })).not.toBeInTheDocument();
   });
 });

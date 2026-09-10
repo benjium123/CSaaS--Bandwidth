@@ -81,6 +81,25 @@ export function ConversationsPage() {
   // Item 1: "+ New" compose mode - independent of the URL-selected conversation, so
   // Cancel can return to whatever was selected before without losing/mangling it.
   const [composeMode, setComposeMode] = React.useState<NewConversationKind | null>(null);
+  /** Seed for a compose opened from another page via `/inbox?compose=<e164>[&from=<our>]`.
+   *  Cleared as soon as compose mode ends, so a later "+ New" starts blank. */
+  const [composeSeed, setComposeSeed] = React.useState<{ to: string; from: string | null } | null>(
+    null,
+  );
+
+  // `?compose=` is consumed once and stripped from the URL (replace, so Back doesn't
+  // re-open it): the panel owns the value from here on, and a refresh should not
+  // resurrect a half-typed message.
+  React.useEffect(() => {
+    const to = searchParams.get("compose");
+    if (!to) return;
+    setComposeSeed({ to, from: searchParams.get("from") });
+    setComposeMode("message");
+    const next = new URLSearchParams(searchParams);
+    next.delete("compose");
+    next.delete("from");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const isBelowSm = useMediaQuery("(max-width: 639px)");
 
@@ -279,6 +298,7 @@ export function ConversationsPage() {
   });
 
   function handleSelect(contactE164: string) {
+    setComposeSeed(null);
     setComposeMode(null);
     const conversation = items.find((item) => item.contact_e164 === contactE164);
     const next = new URLSearchParams(searchParams);
@@ -324,12 +344,14 @@ export function ConversationsPage() {
       body: vars.body,
       allow_reassign: vars.allowReassign,
     });
+    setComposeSeed(null);
     setComposeMode(null);
     selectPair(vars.to, vars.from);
   }
 
   async function handleComposeCall(vars: { from: string; to: string }) {
     await softphone.dial(vars.to, vars.from);
+    setComposeSeed(null);
     setComposeMode(null);
     selectPair(vars.to, vars.from);
   }
@@ -343,7 +365,10 @@ export function ConversationsPage() {
       onSelect={handleInboxSelect}
       unread={unreadQuery.data?.counts ?? {}}
       unreadTruncated={unreadQuery.data?.truncated ?? false}
-      onNew={(kind) => setComposeMode(kind)}
+      onNew={(kind) => {
+        setComposeSeed(null);
+        setComposeMode(kind);
+      }}
       canCompose={canCompose}
       canComposeLoading={inboxesQuery.isLoading}
       className={cn("h-full", isBelowSm ? "!w-full border-r-0" : "")}
@@ -363,10 +388,10 @@ export function ConversationsPage() {
   );
 
   return (
-    <div className="dark grid h-full grid-cols-[minmax(0,1fr)] bg-neutral-950 text-neutral-100 lg:grid-cols-[220px_minmax(0,1fr)_300px]">
+    <div className="dark grid h-full grid-cols-[minmax(0,1fr)] bg-background text-foreground lg:grid-cols-[220px_minmax(0,1fr)_300px]">
       {isBelowSm ? (
         <>
-          <div className="sm:hidden bg-neutral-950 p-2">
+          <div className="sm:hidden bg-background p-2">
             <Button
               type="button"
               variant="outline"
@@ -409,23 +434,35 @@ export function ConversationsPage() {
           error={conversationsQuery.error ? (conversationsQuery.error as Error).message : null}
           hasNoInboxAccess={!inboxesQuery.isLoading && inboxes.length === 0}
           className={cn((selectedConversation || composeMode) && "hidden", "md:flex")}
-          onNew={(kind) => setComposeMode(kind)}
+          onNew={(kind) => {
+            setComposeSeed(null);
+            setComposeMode(kind);
+          }}
           canCompose={canCompose}
           canComposeLoading={inboxesQuery.isLoading}
         />
 
-        <section className="flex min-w-0 flex-col bg-neutral-900">
+        <section className="flex min-w-0 flex-col bg-background">
           {composeMode ? (
             <NewConversationPanel
+              // Load-bearing key: the panel seeds its state on mount, so without a
+              // changing key a second `?compose=` for a different number would leave
+              // the first number in the To field.
+              key={composeSeed ? `compose-${composeSeed.to}` : "compose-new"}
               kind={composeMode}
               fromOptions={fromOptions}
-              onCancel={() => setComposeMode(null)}
+              initialTo={composeSeed?.to ?? null}
+              initialFrom={composeSeed?.from ?? null}
+              onCancel={() => {
+                setComposeSeed(null);
+                setComposeMode(null);
+              }}
               onSendMessage={handleComposeSendMessage}
               onCall={handleComposeCall}
             />
           ) : (
             <>
-              <div className="flex items-center border-b border-neutral-800">
+              <div className="flex items-center border-b border-border">
                 <div className="min-w-0 flex-1">
                   <ConversationHeader
                     conversation={selectedConversation}
@@ -439,7 +476,7 @@ export function ConversationsPage() {
                   size="icon"
                   aria-label="Toggle contact panel"
                   onClick={() => setContactPanelOpen((v) => !v)}
-                  className="mr-2 text-neutral-300 hover:bg-neutral-800 lg:hidden"
+                  className="mr-2 text-foreground hover:bg-muted lg:hidden"
                 >
                   <PanelRight className="h-4 w-4" />
                 </Button>
@@ -453,7 +490,7 @@ export function ConversationsPage() {
               {selectedConversation && (
                 <div>
                   {!canSend && (
-                    <p className="border-t border-neutral-800 px-3 pt-2 text-xs text-neutral-400">
+                    <p className="border-t border-border px-3 pt-2 text-xs text-muted-foreground">
                       Read-only inbox — you can view but not send
                     </p>
                   )}

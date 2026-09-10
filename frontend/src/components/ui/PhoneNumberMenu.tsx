@@ -142,7 +142,7 @@ export function PhoneNumberMenu({
           aria-label="Phone number actions"
           ref={menuRef}
           onKeyDown={handleMenuKeyDown}
-          className="absolute left-0 top-full z-20 mt-1 w-40 rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg"
+          className="absolute left-0 top-full z-20 mt-1 w-40 rounded-md border border-border bg-muted p-1 shadow-lg"
         >
           {onText && (
             <Button
@@ -156,7 +156,7 @@ export function PhoneNumberMenu({
                 onText(e164);
                 setOpen(false);
               }}
-              className="w-full justify-start rounded px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+              className="w-full justify-start rounded px-2 py-1 text-xs text-foreground hover:bg-foreground/10 disabled:opacity-50"
             >
               <MessageSquare className="h-3.5 w-3.5" />
               Text
@@ -170,7 +170,7 @@ export function PhoneNumberMenu({
             disabled={disabled}
             title={disabled ? disabledReason : undefined}
             onClick={call}
-            className="w-full justify-start rounded px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+            className="w-full justify-start rounded px-2 py-1 text-xs text-foreground hover:bg-foreground/10 disabled:opacity-50"
           >
             <Phone className="h-3.5 w-3.5" />
             Call

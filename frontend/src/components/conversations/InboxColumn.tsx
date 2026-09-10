@@ -80,7 +80,7 @@ function NewConversationMenu({
             : undefined
         }
         onClick={() => setOpen((value) => !value)}
-        className="justify-start rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-700 disabled:pointer-events-none disabled:opacity-40"
+        className="justify-start rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-foreground/10 disabled:pointer-events-none disabled:opacity-40"
       >
         <Plus className="h-3.5 w-3.5" />
         New
@@ -91,7 +91,7 @@ function NewConversationMenu({
           role="menu"
           aria-label="New conversation"
           ref={menuRef}
-          className="absolute left-0 top-9 z-20 w-44 rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg"
+          className="absolute left-0 top-9 z-20 w-44 rounded-md border border-border bg-muted p-1 shadow-lg"
         >
           <Button
             type="button"
@@ -102,7 +102,7 @@ function NewConversationMenu({
               setOpen(false);
               onNew("message");
             }}
-            className="w-full justify-start rounded px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+            className="w-full justify-start rounded px-2 py-1 text-xs text-foreground hover:bg-foreground/10"
           >
             <MessageSquare className="h-3.5 w-3.5" />
             New text message
@@ -116,7 +116,7 @@ function NewConversationMenu({
               setOpen(false);
               onNew("call");
             }}
-            className="w-full justify-start rounded px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+            className="w-full justify-start rounded px-2 py-1 text-xs text-foreground hover:bg-foreground/10"
           >
             <Phone className="h-3.5 w-3.5" />
             New call
@@ -155,13 +155,13 @@ export function InboxColumn({
   return (
     <aside
       className={cn(
-        "flex h-full w-[220px] shrink-0 flex-col border-r border-neutral-800 bg-neutral-900 text-neutral-100",
+        "flex h-full w-[220px] shrink-0 flex-col border-r border-border bg-background text-foreground",
         className,
       )}
       aria-label="Inbox column"
     >
       {onNew && (
-        <div className="flex items-center border-b border-neutral-800 p-3">
+        <div className="flex items-center border-b border-border p-3">
           <NewConversationMenu
             disabled={!canCompose}
             isLoading={canComposeLoading}
@@ -174,7 +174,7 @@ export function InboxColumn({
         {isLoading ? (
           <Spinner label="Loading inboxes" />
         ) : error ? (
-          <p role="alert" className="p-2 text-sm text-red-400">
+          <p role="alert" className="p-2 text-sm text-destructive">
             {error}
           </p>
         ) : inboxes.length === 0 ? (
@@ -182,7 +182,7 @@ export function InboxColumn({
           // ask an admin": that sentence teaches the next step and belongs in the one
           // place the user is actually looking. Repeating it in two columns reads as a
           // duplicated error.
-          <p className="p-2 text-sm text-neutral-400">No inboxes yet</p>
+          <p className="p-2 text-sm text-muted-foreground">No inboxes yet</p>
         ) : (
           <ul className="space-y-1">
             <li>
@@ -193,8 +193,8 @@ export function InboxColumn({
                 aria-current={selection.kind === "all" ? "true" : undefined}
                 onClick={() => onSelect({ kind: "all" })}
                 className={cn(
-                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800",
-                  selection.kind === "all" && "bg-neutral-800",
+                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
+                  selection.kind === "all" && "bg-muted",
                 )}
               >
                 All conversations
@@ -215,8 +215,8 @@ export function InboxColumn({
                     aria-current={selected ? "true" : undefined}
                     onClick={() => onSelect({ kind: "inbox", inboxId: inbox.id })}
                     className={cn(
-                      "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800",
-                      selected && "bg-neutral-800",
+                      "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
+                      selected && "bg-muted",
                     )}
                   >
                     {/* Tailwind cannot express a runtime colour - inline style is the
@@ -235,7 +235,7 @@ export function InboxColumn({
                             ? "Only the most recent unread conversations are counted"
                             : undefined
                         }
-                        className="bg-neutral-700 text-neutral-100"
+                        className="bg-muted text-foreground"
                       >
                         {unreadTruncated ? `${count}+` : count}
                       </Badge>
@@ -245,7 +245,7 @@ export function InboxColumn({
               );
             })}
 
-            <li aria-hidden="true" className="my-1 border-t border-neutral-800" />
+            <li aria-hidden="true" className="my-1 border-t border-border" />
 
             <li>
               <Button
@@ -259,10 +259,10 @@ export function InboxColumn({
                 }
                 onClick={() => onSelect({ kind: "view", view: "important" })}
                 className={cn(
-                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800",
+                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
                   selection.kind === "view" &&
                     selection.view === "important" &&
-                    "bg-neutral-800",
+                    "bg-muted",
                 )}
               >
                 Important
@@ -281,10 +281,10 @@ export function InboxColumn({
                 }
                 onClick={() => onSelect({ kind: "view", view: "unresponded" })}
                 className={cn(
-                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800",
+                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
                   selection.kind === "view" &&
                     selection.view === "unresponded" &&
-                    "bg-neutral-800",
+                    "bg-muted",
                 )}
               >
                 Unresponded

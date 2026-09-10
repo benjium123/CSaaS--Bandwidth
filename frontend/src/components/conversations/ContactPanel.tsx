@@ -88,11 +88,11 @@ function EditableField({
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           {label}
         </p>
         {status === "saving" && (
-          <span className="flex items-center gap-1 text-[10px] text-neutral-500">
+          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" /> Saving…
           </span>
         )}
@@ -116,7 +116,7 @@ function EditableField({
             size="icon"
             disabled={status === "saving"}
             aria-label={`Save ${label}`}
-            className="h-7 w-7 shrink-0 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+            className="h-7 w-7 shrink-0 text-foreground hover:bg-muted disabled:opacity-50"
           >
             <Check className="h-3.5 w-3.5" />
           </Button>
@@ -131,7 +131,7 @@ function EditableField({
               setEditing(false);
             }}
             aria-label={`Cancel ${label}`}
-            className="h-7 w-7 shrink-0 text-neutral-300 hover:bg-neutral-800"
+            className="h-7 w-7 shrink-0 text-foreground hover:bg-muted"
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -142,13 +142,13 @@ function EditableField({
           variant="ghost"
           size="sm"
           onClick={() => setEditing(true)}
-          className="w-full justify-start rounded-md px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+          className="w-full justify-start rounded-md px-2 py-1 text-left text-xs text-foreground hover:bg-muted"
         >
           {value || "Add"}
         </Button>
       )}
       {status === "error" && error && (
-        <p role="alert" className="text-[11px] text-red-400">
+        <p role="alert" className="text-[11px] text-destructive">
           {error}
         </p>
       )}
@@ -247,7 +247,7 @@ export function ContactPanel({
     return (
       <div
         className={cn(
-          "flex h-full items-center justify-center bg-neutral-900 px-3 text-sm text-neutral-400",
+          "flex h-full items-center justify-center bg-background px-3 text-sm text-muted-foreground",
           className,
         )}
       >
@@ -332,13 +332,13 @@ export function ContactPanel({
   return (
     <aside
       className={cn(
-        "h-full overflow-y-auto border-l border-neutral-800 bg-neutral-900 px-3 py-3 text-neutral-100",
+        "h-full overflow-y-auto border-l border-border bg-background px-3 py-3 text-foreground",
         className,
       )}
       aria-label="Contact panel"
     >
       <div className="flex flex-col items-center text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-neutral-700 text-lg font-semibold text-neutral-100">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted text-lg font-semibold text-foreground">
           {initialsFor(title)}
         </div>
         {contactId ? (
@@ -352,7 +352,7 @@ export function ContactPanel({
             />
           </div>
         ) : (
-          <h2 className="mt-2 text-sm font-semibold text-neutral-50">{title}</h2>
+          <h2 className="mt-2 text-sm font-semibold text-foreground">{title}</h2>
         )}
 
         <div className="mt-2 flex gap-2">
@@ -364,7 +364,7 @@ export function ContactPanel({
             disabled={!canSend}
             title={canSend ? undefined : "Read-only inbox — you can view but not call"}
             aria-label={`Call ${title}`}
-            className="text-neutral-300 hover:bg-neutral-800 disabled:pointer-events-none disabled:opacity-40"
+            className="text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
           >
             <Phone className="h-4 w-4" />
           </Button>
@@ -374,7 +374,7 @@ export function ContactPanel({
             size="icon"
             onClick={focusComposer}
             aria-label={`Message ${title}`}
-            className="text-neutral-300 hover:bg-neutral-800"
+            className="text-foreground hover:bg-muted"
           >
             <MessageSquare className="h-4 w-4" />
           </Button>
@@ -382,21 +382,21 @@ export function ContactPanel({
       </div>
 
       {!contactId ? (
-        <p className="mt-4 rounded-md border border-neutral-800 bg-neutral-950 p-3 text-xs text-neutral-400">
+        <p className="mt-4 rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
           This number isn’t saved as a contact yet.
         </p>
       ) : (
         <>
-          <div className="mt-4 space-y-1 border-t border-neutral-800 pt-3 text-xs text-neutral-200">
+          <div className="mt-4 space-y-1 border-t border-border pt-3 text-xs text-foreground">
             <p>
-              Owner: <span className="text-neutral-400">{ownerLabel}</span>
+              Owner: <span className="text-muted-foreground">{ownerLabel}</span>
             </p>
             <p>
-              Team: <span className="text-neutral-400">{teamLabel}</span>
+              Team: <span className="text-muted-foreground">{teamLabel}</span>
             </p>
             {tagsToRender && (
               <div className="flex flex-wrap items-center gap-1 pt-1">
-                <span className="text-neutral-500">Tags:</span>
+                <span className="text-muted-foreground">Tags:</span>
                 {tagsToRender.map((tag) => (
                   <Pill key={tag} tone="neutral">
                     {tag}
@@ -412,7 +412,7 @@ export function ContactPanel({
                 the contact record itself is not visible to them. */}
             <Link
               to={`/contacts/${contactId}`}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium text-neutral-200 hover:bg-neutral-800"
+              className="inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium text-foreground hover:bg-muted"
             >
               Open contact
             </Link>
@@ -436,7 +436,7 @@ export function ContactPanel({
                   }}
                 />
                 <div className="space-y-1">
-                  <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                     Phone
                   </p>
                   <div className="space-y-1">
@@ -480,22 +480,22 @@ export function ContactPanel({
             <Collapsible storageKey="contact-panel.notes" title="Notes">
               <div className="space-y-2">
                 {notesQuery.isLoading ? (
-                  <p className="text-xs text-neutral-400">Loading notes…</p>
+                  <p className="text-xs text-muted-foreground">Loading notes…</p>
                 ) : notesQuery.isError ? (
-                  <p role="alert" className="text-[11px] text-red-400">
+                  <p role="alert" className="text-[11px] text-destructive">
                     {(notesQuery.error as Error).message}
                   </p>
                 ) : (notesQuery.data ?? []).length === 0 ? (
-                  <p className="text-xs text-neutral-400">No notes yet.</p>
+                  <p className="text-xs text-muted-foreground">No notes yet.</p>
                 ) : (
                   <ul aria-label="Notes" className="space-y-2">
                     {(notesQuery.data ?? []).map((note) => (
                       <li
                         key={note.id}
-                        className="rounded-md border border-neutral-800 bg-neutral-950 p-2 text-xs text-neutral-200"
+                        className="rounded-md border border-border bg-background p-2 text-xs text-foreground"
                       >
                         <p className="whitespace-pre-wrap break-words">{note.body}</p>
-                        <p className="mt-1 text-[10px] text-neutral-500">
+                        <p className="mt-1 text-[10px] text-muted-foreground">
                           {relativeTime(note.created_at)}
                         </p>
                       </li>
@@ -518,7 +518,7 @@ export function ContactPanel({
                     placeholder="Add a note…"
                     rows={3}
                     disabled={addNoteMutation.isPending}
-                    className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+                    className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-muted-foreground"
                   />
                   <div className="flex items-center gap-2">
                     <Button
@@ -526,18 +526,18 @@ export function ContactPanel({
                       variant="outline"
                       size="sm"
                       disabled={!newNote.trim() || addNoteMutation.isPending}
-                      className="text-neutral-200 hover:bg-neutral-800 disabled:pointer-events-none disabled:opacity-50"
+                      className="text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
                     >
                       Add note
                     </Button>
                     {addNoteMutation.isPending && (
-                      <span className="flex items-center gap-1 text-[10px] text-neutral-500">
+                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                         <Loader2 className="h-3 w-3 animate-spin" /> Saving…
                       </span>
                     )}
                   </div>
                   {addNoteMutation.isError && (
-                    <p role="alert" className="text-[11px] text-red-400">
+                    <p role="alert" className="text-[11px] text-destructive">
                       {(addNoteMutation.error as Error).message}
                     </p>
                   )}
@@ -555,7 +555,7 @@ export function ContactPanel({
           <Collapsible storageKey="contact-panel.sharing" title="Shared with">
             <div className="space-y-2">
               {grants.length === 0 ? (
-                <p className="text-xs text-neutral-400">
+                <p className="text-xs text-muted-foreground">
                   No one else has access to this inbox.
                 </p>
               ) : (
@@ -570,10 +570,10 @@ export function ContactPanel({
                     return (
                       <li
                         key={`${grant.grantee_type}-${grant.grantee_id}`}
-                        className="flex items-center justify-between rounded-md bg-neutral-950 px-2 py-1 text-xs text-neutral-200"
+                        className="flex items-center justify-between rounded-md bg-background px-2 py-1 text-xs text-foreground"
                       >
                         <span>{label}</span>
-                        <span className="text-neutral-500">{grant.role}</span>
+                        <span className="text-muted-foreground">{grant.role}</span>
                       </li>
                     );
                   })}

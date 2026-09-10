@@ -67,7 +67,7 @@ function MessageTimelineItemView({ item }: { item: MessageTimelineItem }) {
           "max-w-[75%] space-y-1 rounded-lg px-3 py-2 text-sm",
           outbound
             ? "bg-primary text-primary-foreground"
-            : "bg-neutral-800 text-neutral-100",
+            : "bg-muted text-foreground",
         )}
       >
         {item.route_reason && <span className="sr-only">{item.route_reason}</span>}
@@ -149,14 +149,14 @@ function CallRecordingPlayer({
         type="button"
         onClick={play}
         disabled={loading || status !== "stored"}
-        className="inline-flex items-center gap-1 rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-muted disabled:opacity-50"
       >
         <Play className="h-3 w-3" />
         {loading ? "Loading…" : "Play recording"}
       </button>
       {audioUrl && <audio ref={audioRef} src={audioUrl} controls className="h-8" />}
       {error && (
-        <span role="alert" className="text-xs text-red-400">
+        <span role="alert" className="text-xs text-destructive">
           {error}
         </span>
       )}
@@ -181,22 +181,22 @@ function CallTimelineItemView({ item, api }: { item: CallTimelineItem; api: ApiC
     <div
       title={item.route_reason ?? undefined}
       className={cn(
-        "flex items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm",
-        failed || missed ? "text-red-400" : "text-neutral-200",
+        "flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2 text-sm",
+        failed || missed ? "text-destructive" : "text-foreground",
       )}
     >
       {item.route_reason && <span className="sr-only">{item.route_reason}</span>}
       {failed || missed ? (
-        <PhoneMissed className="h-4 w-4 shrink-0 text-red-400" />
+        <PhoneMissed className="h-4 w-4 shrink-0 text-destructive" />
       ) : item.direction === "inbound" ? (
-        <ArrowDownLeft className="h-4 w-4 shrink-0 text-neutral-400" />
+        <ArrowDownLeft className="h-4 w-4 shrink-0 text-muted-foreground" />
       ) : (
-        <ArrowUpRight className="h-4 w-4 shrink-0 text-neutral-400" />
+        <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground" />
       )}
       <div className="min-w-0 flex-1">
         <p className="font-medium">{label}</p>
         {item.duration_seconds !== null && item.duration_seconds > 0 && (
-          <p className="text-xs text-neutral-500">{formatDuration(item.duration_seconds)}</p>
+          <p className="text-xs text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
         )}
         {item.recording && (
           <CallRecordingPlayer
@@ -207,7 +207,7 @@ function CallTimelineItemView({ item, api }: { item: CallTimelineItem; api: ApiC
           />
         )}
       </div>
-      <span className="ml-auto shrink-0 self-start text-[11px] text-neutral-500">
+      <span className="ml-auto shrink-0 self-start text-[11px] text-muted-foreground">
         {relativeTime(item.occurred_at)}
       </span>
     </div>
@@ -216,24 +216,24 @@ function CallTimelineItemView({ item, api }: { item: CallTimelineItem; api: ApiC
 
 function VoicemailTimelineItemView({ item, api }: { item: VoicemailTimelineItem; api: ApiClient }) {
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3 text-sm text-neutral-200">
+    <div className="rounded-lg border border-border bg-background p-3 text-sm text-foreground">
       <div className="flex items-center gap-2">
-        <Voicemail className="h-4 w-4 shrink-0 text-neutral-400" />
+        <Voicemail className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="font-medium">Voicemail</span>
-        <span className="ml-auto text-[11px] text-neutral-500">
+        <span className="ml-auto text-[11px] text-muted-foreground">
           {relativeTime(item.occurred_at)}
         </span>
       </div>
       {item.duration_seconds !== null && item.duration_seconds > 0 && (
-        <p className="mt-1 text-xs text-neutral-500">{formatDuration(item.duration_seconds)}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
       )}
       {item.transcript && (
-        <p className="mt-2 whitespace-pre-wrap break-words text-xs text-neutral-400">
+        <p className="mt-2 whitespace-pre-wrap break-words text-xs text-muted-foreground">
           {item.transcript}
         </p>
       )}
       {item.transcript_status === "processing" && (
-        <p className="mt-2 text-xs text-neutral-500">Transcript is processing…</p>
+        <p className="mt-2 text-xs text-muted-foreground">Transcript is processing…</p>
       )}
       {/* F11 follow-up: the backend now exposes the same {id, status, duration_seconds}
        * recording on voicemail timeline events as it does on calls - play it the same
@@ -303,7 +303,7 @@ export function Timeline({
 
   if (!enabled) {
     return (
-      <div className="flex h-full items-center justify-center bg-neutral-900 text-sm text-neutral-400">
+      <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
         Select a conversation
       </div>
     );
@@ -311,7 +311,7 @@ export function Timeline({
 
   if (query.isLoading) {
     return (
-      <div className="flex h-full items-center justify-center bg-neutral-900 text-sm text-neutral-400">
+      <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
         Loading timeline…
       </div>
     );
@@ -319,8 +319,8 @@ export function Timeline({
 
   if (query.error) {
     return (
-      <div className="flex h-full items-center justify-center bg-neutral-900">
-        <p role="alert" className="text-sm text-red-400">
+      <div className="flex h-full items-center justify-center bg-background">
+        <p role="alert" className="text-sm text-destructive">
           {(query.error as Error).message}
         </p>
       </div>
@@ -333,7 +333,7 @@ export function Timeline({
   // from "Select a conversation" (not enabled) and "Loading timeline…".
   if (groups.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center bg-neutral-900 text-sm text-neutral-400">
+      <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
         No messages or calls yet
       </div>
     );
@@ -345,7 +345,7 @@ export function Timeline({
       role="log"
       aria-live="polite"
       aria-label="Conversation timeline"
-      className="min-h-0 flex-1 overflow-y-auto bg-neutral-900 p-3"
+      className="min-h-0 flex-1 overflow-y-auto bg-background p-3"
     >
       <div className="space-y-4">
         {query.hasNextPage && (
@@ -354,7 +354,7 @@ export function Timeline({
               type="button"
               onClick={() => query.fetchNextPage()}
               disabled={query.isFetchingNextPage}
-              className="rounded-md px-3 py-1 text-xs font-medium text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+              className="rounded-md px-3 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
             >
               {query.isFetchingNextPage ? "Loading…" : "Load older"}
             </button>
@@ -363,7 +363,7 @@ export function Timeline({
 
         {groups.map((group) => (
           <section key={group.date} className="space-y-2">
-            <div className="sticky top-0 z-10 bg-neutral-900 py-1 text-center text-[11px] font-medium text-neutral-500">
+            <div className="sticky top-0 z-10 bg-background py-1 text-center text-[11px] font-medium text-muted-foreground">
               {group.label}
             </div>
             {group.items.map((item) => {

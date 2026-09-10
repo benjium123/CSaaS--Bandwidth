@@ -1,8 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { CallsPage } from "./CallsPage";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
+
+const { dialMock, navigateMock } = vi.hoisted(() => ({
+  dialMock: vi.fn(),
+  navigateMock: vi.fn(),
+}));
+
+vi.mock("@/softphone/SoftphoneProvider", () => ({
+  SoftphoneProvider: ({ children }: { children: ReactNode }) => children,
+  useSoftphone: () => ({ dial: dialMock }),
+}));
+
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router-dom")>()),
+  useNavigate: () => navigateMock,
+}));
 
 const CALL_1 = {
   id: "call-1",
@@ -33,6 +49,18 @@ const NEW_CALL_DETAIL = {
   legs: [],
   recordings: [],
 };
+
+beforeEach(() => {
+  dialMock.mockReset();
+  dialMock.mockResolvedValue(undefined);
+  navigateMock.mockReset();
+});
+
+async function selectCallRow(phone: string) {
+  const trigger = await screen.findByRole("button", { name: `Actions for ${phone}` });
+  const row = trigger.closest("tr") as HTMLTableRowElement;
+  await userEvent.click(within(row).getByLabelText("outbound"));
+}
 
 describe("CallsPage", () => {
   it("renders the call list and places a new call", async () => {
@@ -91,7 +119,7 @@ describe("CallsPage", () => {
     });
     renderWithProviders(<CallsPage />, client);
 
-    await userEvent.click(await screen.findByText("(972) 555-0188"));
+    await selectCallRow("(972) 555-0188");
 
     const transcript = await screen.findByLabelText("Transcript");
     const bubbles = within(transcript).getAllByRole("listitem");
@@ -114,7 +142,7 @@ describe("CallsPage", () => {
     });
     renderWithProviders(<CallsPage />, client);
 
-    await userEvent.click(await screen.findByText("(972) 555-0199"));
+    await selectCallRow("(972) 555-0199");
     await screen.findByText("Legs");
     expect(screen.queryByLabelText("Transcript")).not.toBeInTheDocument();
   });
@@ -136,7 +164,7 @@ describe("CallsPage", () => {
     });
     renderWithProviders(<CallsPage />, client);
 
-    await userEvent.click(await screen.findByText("(972) 555-0199"));
+    await selectCallRow("(972) 555-0199");
     await userEvent.click(await screen.findByRole("button", { name: "Send AI agent" }));
 
     await waitFor(() =>
@@ -164,7 +192,7 @@ describe("CallsPage", () => {
     });
     renderWithProviders(<CallsPage />, client);
 
-    await userEvent.click(await screen.findByText("(972) 555-0199"));
+    await selectCallRow("(972) 555-0199");
     await userEvent.click(await screen.findByRole("button", { name: "Send AI agent" }));
 
     expect(
@@ -196,7 +224,7 @@ describe("CallsPage", () => {
     });
     renderWithProviders(<CallsPage />, client);
 
-    await userEvent.click(await screen.findByText("(972) 555-0199"));
+    await selectCallRow("(972) 555-0199");
 
     expect(
       await screen.findByText("Read-only inbox — you can view but not act on this call"),
@@ -204,5 +232,88 @@ describe("CallsPage", () => {
     expect(screen.getByRole("button", { name: "Transfer" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send AI agent" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Hang up" })).toBeDisabled();
+  });
+
+  it("call row renders a phone menu for the contact number", async () => {
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return NEW_CALL_DETAIL;
+        if (/^\/api\/v1\/calls(\?|$)/.test(path)) return [CALL_1];
+        return NEW_CALL_DETAIL;
+      },
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    expect(
+      await screen.findByRole("button", { name: "Actions for (972) 555-0199" }),
+    ).toBeInTheDocument();
+  });
+
+  it('"Call" dials with the call\'s own our-number', async () => {
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return NEW_CALL_DETAIL;
+        if (/^\/api\/v1\/calls(\?|$)/.test(path)) return [CALL_1];
+        return NEW_CALL_DETAIL;
+      },
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Actions for (972) 555-0199",
+    });
+    await userEvent.click(trigger);
+
+    const menu = await screen.findByRole("menu", { name: "Phone number actions" });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Call" }));
+
+    await waitFor(() => {
+      expect(dialMock).toHaveBeenCalledWith("+19725550199", "+12145550100");
+    });
+  });
+
+  it('"Text" navigates to /inbox?compose=...&from=...', async () => {
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return NEW_CALL_DETAIL;
+        if (/^\/api\/v1\/calls(\?|$)/.test(path)) return [CALL_1];
+        return NEW_CALL_DETAIL;
+      },
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Actions for (972) 555-0199",
+    });
+    await userEvent.click(trigger);
+
+    const menu = await screen.findByRole("menu", { name: "Phone number actions" });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Text" }));
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/inbox?compose=%2B19725550199&from=%2B12145550100",
+    );
+  });
+
+  it("opening the menu does NOT select the call row", async () => {
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return NEW_CALL_DETAIL;
+        if (/^\/api\/v1\/calls(\?|$)/.test(path)) return [CALL_1];
+        return NEW_CALL_DETAIL;
+      },
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Actions for (972) 555-0199",
+    });
+    await userEvent.click(trigger);
+
+    expect(screen.getByText("Select a call to see details.")).toBeInTheDocument();
   });
 });

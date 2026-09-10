@@ -17,6 +17,7 @@ import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist
 import { ErrorBoundary } from "@/components/shell/ErrorBoundary";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
+import { CommandPalette } from "@/components/ui/CommandPalette";
 
 /**
  * Legacy routes kept as redirects so saved links still land somewhere useful:
@@ -48,6 +49,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <MobileTabBar />
+      <CommandPalette />
       <SoftphonePanel />
     </SoftphoneProvider>
   );

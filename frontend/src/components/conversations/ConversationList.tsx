@@ -58,7 +58,7 @@ function initialsFor(title: string): string {
  * event) - render a neutral glyph instead of guessing/defaulting to an arrow either
  * direction wouldn't actually mean. */
 function DirectionIcon({ direction }: { direction: "inbound" | "outbound" | null }) {
-  const className = "h-3.5 w-3.5 shrink-0 text-neutral-400";
+  const className = "h-3.5 w-3.5 shrink-0 text-muted-foreground";
   if (direction === "inbound") return <ArrowDownLeft className={className} />;
   if (direction === "outbound") return <ArrowUpRight className={className} />;
   return <Minus className={className} aria-label="Direction unknown" />;
@@ -66,10 +66,10 @@ function DirectionIcon({ direction }: { direction: "inbound" | "outbound" | null
 
 function EventIcon({ conversation }: { conversation: Conversation }) {
   if (conversation.last_event_type === "voicemail") {
-    return <Voicemail className="h-3.5 w-3.5 shrink-0 text-neutral-400" />;
+    return <Voicemail className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
   }
   if (conversation.last_event_type === "call" && /missed/i.test(conversation.snippet ?? "")) {
-    return <PhoneMissed className="h-3.5 w-3.5 shrink-0 text-red-400" />;
+    return <PhoneMissed className="h-3.5 w-3.5 shrink-0 text-destructive" />;
   }
   return <DirectionIcon direction={conversation.direction} />;
 }
@@ -120,7 +120,7 @@ function FilterMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded-full bg-neutral-800 px-2.5 py-1 text-xs font-medium text-neutral-200 hover:bg-neutral-700"
+        className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/10"
       >
         {label}
         <ChevronDown className="h-3 w-3" />
@@ -129,7 +129,7 @@ function FilterMenu({
         <div
           role="menu"
           aria-label="Conversation filter"
-          className="absolute left-0 top-8 z-20 w-28 rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg"
+          className="absolute left-0 top-8 z-20 w-28 rounded-md border border-border bg-muted p-1 shadow-lg"
         >
           <button
             role="menuitemradio"
@@ -138,7 +138,7 @@ function FilterMenu({
               onFilterChange("open");
               setOpen(false);
             }}
-            className="block w-full rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-700"
+            className="block w-full rounded px-2 py-1 text-left text-xs text-foreground hover:bg-foreground/10"
           >
             Open
           </button>
@@ -149,7 +149,7 @@ function FilterMenu({
               onFilterChange("all");
               setOpen(false);
             }}
-            className="block w-full rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-700"
+            className="block w-full rounded px-2 py-1 text-left text-xs text-foreground hover:bg-foreground/10"
           >
             All
           </button>
@@ -206,7 +206,7 @@ function NewConversationMenu({
             : undefined
         }
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-700 disabled:pointer-events-none disabled:opacity-40"
+        className="flex items-center gap-1 rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-foreground/10 disabled:pointer-events-none disabled:opacity-40"
       >
         <Plus className="h-3.5 w-3.5" />
         New
@@ -215,7 +215,7 @@ function NewConversationMenu({
         <div
           role="menu"
           aria-label="New conversation"
-          className="absolute right-0 top-9 z-20 w-44 rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg"
+          className="absolute right-0 top-9 z-20 w-44 rounded-md border border-border bg-muted p-1 shadow-lg"
         >
           <button
             role="menuitem"
@@ -224,7 +224,7 @@ function NewConversationMenu({
               setOpen(false);
               onNew("message");
             }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-700"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-foreground/10"
           >
             <MessageSquare className="h-3.5 w-3.5" />
             New text message
@@ -236,7 +236,7 @@ function NewConversationMenu({
               setOpen(false);
               onNew("call");
             }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-700"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-foreground/10"
           >
             <Phone className="h-3.5 w-3.5" />
             New call
@@ -271,12 +271,12 @@ export function ConversationList({
   return (
     <aside
       className={cn(
-        "flex h-full min-w-0 flex-col border-r border-neutral-800 bg-neutral-900",
+        "flex h-full min-w-0 flex-col border-r border-border bg-background",
         className,
       )}
       aria-label="Conversation list"
     >
-      <div className="border-b border-neutral-800 p-3">
+      <div className="border-b border-border p-3">
         <div className="flex items-center gap-1">
           <div className="flex flex-1 gap-1" role="tablist" aria-label="Channel">
           <button
@@ -287,8 +287,8 @@ export function ConversationList({
             className={cn(
               "flex-1 rounded-md px-3 py-1.5 text-sm font-medium",
               tab === "chats"
-                ? "bg-neutral-800 text-neutral-50"
-                : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200",
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
           >
             Chats
@@ -301,8 +301,8 @@ export function ConversationList({
             className={cn(
               "flex-1 rounded-md px-3 py-1.5 text-sm font-medium",
               tab === "calls"
-                ? "bg-neutral-800 text-neutral-50"
-                : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200",
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
           >
             Calls
@@ -328,8 +328,8 @@ export function ConversationList({
             className={cn(
               "rounded-full px-2.5 py-1 text-xs font-medium",
               filter === "unread"
-                ? "bg-neutral-100 text-neutral-900"
-                : "bg-neutral-800 text-neutral-200 hover:bg-neutral-700",
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-foreground hover:bg-foreground/10",
             )}
           >
             Unread
@@ -343,8 +343,8 @@ export function ConversationList({
             className={cn(
               "flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
               filter === "important"
-                ? "bg-neutral-100 text-neutral-900"
-                : "bg-neutral-800 text-neutral-200 hover:bg-neutral-700",
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-foreground hover:bg-foreground/10",
             )}
           >
             <Star className="h-3 w-3" />
@@ -359,8 +359,8 @@ export function ConversationList({
             className={cn(
               "rounded-full px-2.5 py-1 text-xs font-medium",
               filter === "unresponded"
-                ? "bg-neutral-100 text-neutral-900"
-                : "bg-neutral-800 text-neutral-200 hover:bg-neutral-700",
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-foreground hover:bg-foreground/10",
             )}
           >
             Unresponded
@@ -373,25 +373,25 @@ export function ConversationList({
           placeholder="Search"
           value={q}
           onChange={(e) => onQChange(e.target.value)}
-          className="mt-2 h-8 w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+          className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-muted-foreground"
         />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {hasNoInboxAccess ? (
-          <div className="flex h-full items-center justify-center p-4 text-center text-sm text-neutral-400">
+          <div className="flex h-full items-center justify-center p-4 text-center text-sm text-muted-foreground">
             You have no inbox access yet — ask an admin
           </div>
         ) : error ? (
-          <p role="alert" className="p-4 text-sm text-red-400">
+          <p role="alert" className="p-4 text-sm text-destructive">
             {error}
           </p>
         ) : isLoading ? (
-          <p className="p-4 text-sm text-neutral-400">Loading conversations…</p>
+          <p className="p-4 text-sm text-muted-foreground">Loading conversations…</p>
         ) : items.length === 0 ? (
-          <p className="p-4 text-sm text-neutral-400">No conversations yet</p>
+          <p className="p-4 text-sm text-muted-foreground">No conversations yet</p>
         ) : (
-          <ul className="divide-y divide-neutral-800" aria-label="Conversations">
+          <ul className="divide-y divide-border" aria-label="Conversations">
             {items.map((conversation) => {
               const title =
                 conversation.contact?.display_name ??
@@ -408,11 +408,11 @@ export function ConversationList({
                     onClick={() => onSelect(conversation.contact_e164)}
                     aria-current={selected ? "true" : undefined}
                     className={cn(
-                      "flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-neutral-800",
-                      selected && "bg-neutral-800",
+                      "flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-muted",
+                      selected && "bg-muted",
                     )}
                   >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-700 text-xs font-semibold text-neutral-100">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground">
                       {initialsFor(title)}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -428,20 +428,20 @@ export function ConversationList({
                             className={cn(
                               "truncate text-sm",
                               unread
-                                ? "font-bold text-neutral-50"
-                                : "font-medium text-neutral-200",
+                                ? "font-bold text-foreground"
+                                : "font-medium text-foreground",
                             )}
                           >
                             {title}
                           </span>
                         </span>
-                        <span className="shrink-0 text-[11px] text-neutral-500">
+                        <span className="shrink-0 text-[11px] text-muted-foreground">
                           {relativeTime(conversation.last_event_at)}
                         </span>
                       </span>
                       <span className="mt-0.5 flex items-center gap-1">
                         <EventIcon conversation={conversation} />
-                        <span className="min-w-0 flex-1 truncate text-xs text-neutral-500">
+                        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                           {conversation.snippet || "No messages"}
                         </span>
                       </span>
@@ -455,12 +455,12 @@ export function ConversationList({
       </div>
 
       {hasNextPage && (
-        <div className="border-t border-neutral-800 p-2">
+        <div className="border-t border-border p-2">
           <button
             type="button"
             onClick={onLoadMore}
             disabled={isFetchingNextPage}
-            className="w-full rounded-md px-3 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+            className="w-full rounded-md px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
           >
             {isFetchingNextPage ? "Loading…" : "Load more"}
           </button>

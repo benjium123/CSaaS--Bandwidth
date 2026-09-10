@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { fetchDepartments, fetchOrgMembers } from "@/api/conversations";
@@ -11,10 +12,12 @@ import {
 } from "@/api/contacts";
 import { AssignOwnerDrawer } from "@/components/contacts/AssignOwnerDrawer";
 import { Button, Input, Spinner } from "@/components/ui/primitives";
+import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { formatPhone } from "@/lib/format";
 
 export function ContactsPage() {
   const { api, me, orgId } = useAuth();
+  const navigate = useNavigate();
   const [q, setQ] = React.useState("");
   const [filter, setFilter] = React.useState<ContactFilter | null>(null);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -51,6 +54,13 @@ export function ContactsPage() {
   React.useEffect(() => {
     setSelected(new Set());
   }, [q, filter]);
+
+  function handleText(e164: string) {
+    // `?compose=<e164>` starts a NEW conversation with this number. A ContactsPage
+    // row has no way to know whether a conversation already exists, and `?contact=`
+    // only selects an EXISTING thread.
+    navigate(`/inbox?compose=${encodeURIComponent(e164)}`);
+  }
 
   function toggleSelected(id: string) {
     setSelected((previous) => {
@@ -257,7 +267,24 @@ export function ContactsPage() {
                     </td>
                     <td className="px-3 py-2">{contact.display_name}</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {contact.phones.map((entry) => formatPhone(entry.e164)).join(", ")}
+                      {contact.phones.length === 0 ? (
+                        "—"
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {contact.phones.map((entry, index) => (
+                            <PhoneNumberMenu
+                              key={`${entry.e164}-${index}`}
+                              e164={entry.e164}
+                              ariaLabel={`Actions for ${formatPhone(entry.e164)} (${contact.display_name})`}
+                              onText={handleText}
+                              // This page does not know which of our numbers to call
+                              // from, so omit fromE164 and let the softphone pick the
+                              // org default.
+                              className="h-auto px-1 py-0 text-xs font-normal"
+                            />
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{ownerName}</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{teamName}</td>

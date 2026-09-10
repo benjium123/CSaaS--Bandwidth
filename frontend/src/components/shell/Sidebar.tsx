@@ -1,10 +1,11 @@
 import * as React from "react";
 import { NavLink } from "react-router-dom";
-import { Contact, Inbox, LogOut, Megaphone, Phone, Settings } from "lucide-react";
+import { Contact, Inbox, LogOut, Megaphone, Phone, Search, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useGate } from "@/api/capabilities";
 import { useAuth } from "@/auth/AuthContext";
 import { Button } from "@/components/ui/primitives";
+import { openCommandPalette } from "@/components/ui/CommandPalette";
 import { cn } from "@/lib/utils";
 import { SETTINGS_SECTIONS } from "@/pages/settingsSections";
 
@@ -62,6 +63,19 @@ export function Sidebar() {
 
   return (
     <aside className="dark hidden w-14 shrink-0 flex-col items-center border-r border-border bg-background py-2 sm:flex">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label="Search"
+        title="Search (Ctrl K)"
+        className="mb-1"
+        onClick={() => openCommandPalette()}
+      >
+        <Search className="h-5 w-5" aria-hidden="true" />
+        <span className="sr-only">Search</span>
+      </Button>
+
       <nav
         aria-label="Sidebar"
         aria-busy={gate.isLoading}

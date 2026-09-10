@@ -49,12 +49,18 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 export function NewConversationPanel({
   kind,
   fromOptions,
+  initialTo = null,
+  initialFrom = null,
   onCancel,
   onSendMessage,
   onCall,
 }: {
   kind: NewConversationKind;
   fromOptions: FromOption[];
+  /** Prefill the To field, e.g. from `/inbox?compose=<e164>`. */
+  initialTo?: string | null;
+  /** Prefill the From select when the caller knows which of our numbers to use. */
+  initialFrom?: string | null;
   onCancel: () => void;
   onSendMessage: (vars: {
     from: string;
@@ -65,9 +71,11 @@ export function NewConversationPanel({
   onCall: (vars: { from: string; to: string }) => Promise<void>;
 }) {
   const { api } = useAuth();
-  const [from, setFrom] = React.useState(fromOptions[0]?.e164 ?? "");
-  const [toQuery, setToQuery] = React.useState("");
-  const [toE164, setToE164] = React.useState<string | null>(null);
+  const [from, setFrom] = React.useState(initialFrom ?? fromOptions[0]?.e164 ?? "");
+  const [toQuery, setToQuery] = React.useState(initialTo ? formatPhone(initialTo) : "");
+  // Seeding toE164 also switches OFF the contacts lookup (`searchEnabled = !toE164 && …`),
+  // which is exactly right: the number is already resolved.
+  const [toE164, setToE164] = React.useState<string | null>(initialTo ?? null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [highlightedIndex, setHighlightedIndex] = React.useState(-1);
   const [body, setBody] = React.useState("");
@@ -85,6 +93,25 @@ export function NewConversationPanel({
   React.useEffect(() => {
     if (!from && fromOptions.length > 0) setFrom(fromOptions[0].e164);
   }, [from, fromOptions]);
+
+  // Honour initialFrom only when it is a number this user may actually send from -
+  // fromOptions excludes viewer-role inboxes, and preselecting a number that is not in
+  // the list would show the wrong From with no way to tell.
+  //
+  // ONE-SHOT (the ref): this must seed and then get out of the way. `fromOptions` is a
+  // useMemo over the inboxes query, so its identity changes on every refetch; without
+  // the guard, a background refetch would re-run this effect and silently snap From
+  // back to the seed, throwing away a From the user had picked by hand.
+  const seededFromRef = React.useRef(false);
+  React.useEffect(() => {
+    if (seededFromRef.current || !initialFrom || fromOptions.length === 0) return;
+    seededFromRef.current = true;
+    setFrom(
+      fromOptions.some((option) => option.e164 === initialFrom)
+        ? initialFrom
+        : fromOptions[0].e164,
+    );
+  }, [initialFrom, fromOptions]);
 
   React.useEffect(() => {
     if (needsReassign) reassignButtonRef.current?.focus();
@@ -215,14 +242,14 @@ export function NewConversationPanel({
       aria-label={kind === "message" ? "New text message" : "New call"}
     >
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-neutral-50">
+        <h2 className="text-sm font-semibold text-foreground">
           {kind === "message" ? "New text message" : "New call"}
         </h2>
         <button
           type="button"
           onClick={onCancel}
           aria-label="Cancel"
-          className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-50"
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <X className="h-4 w-4" />
         </button>
@@ -230,7 +257,7 @@ export function NewConversationPanel({
 
       <div className="space-y-3">
         <div>
-          <label htmlFor="new-convo-from" className="mb-1 block text-xs text-neutral-400">
+          <label htmlFor="new-convo-from" className="mb-1 block text-xs text-muted-foreground">
             From
           </label>
           <select
@@ -238,7 +265,7 @@ export function NewConversationPanel({
             value={from}
             onChange={(e) => setFrom(e.target.value)}
             disabled={fromOptions.length === 0}
-            className="h-9 w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+            className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-muted-foreground"
           >
             {fromOptions.length === 0 && <option value="">No numbers available</option>}
             {fromOptions.map((opt) => (
@@ -250,7 +277,7 @@ export function NewConversationPanel({
         </div>
 
         <div className="relative" ref={pickerRef}>
-          <label htmlFor="new-convo-to" className="mb-1 block text-xs text-neutral-400">
+          <label htmlFor="new-convo-to" className="mb-1 block text-xs text-muted-foreground">
             To
           </label>
           <input
@@ -272,14 +299,14 @@ export function NewConversationPanel({
             onFocus={() => setPickerOpen(true)}
             onKeyDown={handleToKeyDown}
             autoComplete="off"
-            className="h-9 w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+            className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-muted-foreground"
           />
           {expanded && (
             <ul
               id={TO_LISTBOX_ID}
               role="listbox"
               aria-label="Matching contacts"
-              className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg"
+              className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-md border border-border bg-muted p-1 shadow-lg"
             >
               {options.map((opt, index) => (
                 <li
@@ -290,8 +317,8 @@ export function NewConversationPanel({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => selectContact(opt.displayName, opt.phone)}
                   className={cn(
-                    "cursor-pointer rounded px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700",
-                    index === highlightedIndex && "bg-neutral-700",
+                    "cursor-pointer rounded px-2 py-1 text-xs text-foreground hover:bg-foreground/10",
+                    index === highlightedIndex && "bg-foreground/10",
                   )}
                 >
                   {opt.displayName} · {formatPhone(opt.phone)}
@@ -300,7 +327,7 @@ export function NewConversationPanel({
             </ul>
           )}
           {toQuery.trim() !== "" && !resolvedTo && (
-            <p className="mt-1 text-[11px] text-neutral-500">
+            <p className="mt-1 text-[11px] text-muted-foreground">
               Pick a contact or enter a valid phone number
             </p>
           )}
@@ -308,7 +335,7 @@ export function NewConversationPanel({
 
         {kind === "message" && (
           <div>
-            <label htmlFor="new-convo-body" className="mb-1 block text-xs text-neutral-400">
+            <label htmlFor="new-convo-body" className="mb-1 block text-xs text-muted-foreground">
               Message
             </label>
             <textarea
@@ -318,9 +345,9 @@ export function NewConversationPanel({
               value={body}
               rows={4}
               onChange={(e) => setBody(e.target.value)}
-              className="w-full resize-y rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+              className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-muted-foreground"
             />
-            <p className="mt-1 text-[11px] text-neutral-500">
+            <p className="mt-1 text-[11px] text-muted-foreground">
               {segments.units} char{segments.units === 1 ? "" : "s"} · {segments.encoding} ·{" "}
               {segments.segments} segment{segments.segments === 1 ? "" : "s"}
             </p>
@@ -330,7 +357,7 @@ export function NewConversationPanel({
         {kind === "message" && needsReassign && (
           <div
             role="alert"
-            className="flex items-center justify-between gap-3 rounded-md border border-neutral-700 bg-neutral-800 p-2 text-xs text-neutral-200"
+            className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted p-2 text-xs text-foreground"
           >
             <span>This number was retired. Send from a new number?</span>
             <div className="flex gap-2">
@@ -355,7 +382,7 @@ export function NewConversationPanel({
         )}
 
         {error && (
-          <p role="alert" className="text-xs text-red-400">
+          <p role="alert" className="text-xs text-destructive">
             {error}
           </p>
         )}
