@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -10,6 +10,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchAuthedBlob, type ApiClient } from "@/api/client";
+import { cancelScheduledMessage } from "@/api/messaging";
 import { AiCallCard } from "@/components/conversations/AiCallCard";
 import {
   fetchConversationTimeline,
@@ -59,21 +60,46 @@ function groupByDay(items: TimelineItem[]): { date: string; label: string; items
   return groups;
 }
 
-function MessageTimelineItemView({ item }: { item: MessageTimelineItem }) {
+function MessageTimelineItemView({ item, api }: { item: MessageTimelineItem; api: ApiClient }) {
   const outbound = item.direction === "outbound";
+  // Defensive on purpose: a page still holding a pre-P28 cached timeline (or a fixture
+  // written before this phase) has no `links`/`clicks` at all, and a bubble must never
+  // crash the whole log over a click count.
+  const links = item.links ?? [];
+  const clicks = item.clicks ?? 0;
+  const scheduledFor = item.status === "scheduled" ? item.scheduled_for : null;
+  const scheduled = Boolean(scheduledFor);
   const tick = statusTick(item.status);
+  const queryClient = useQueryClient();
+  const cancelSchedule = useMutation({
+    mutationFn: () => cancelScheduledMessage(api, item.id),
+    // P28: a scheduled message is released by the sweeper on its own clock. If this
+    // mutation succeeds, the timeline entry disappears; if it 409s because the sweeper
+    // already picked it up, surface the server's own message rather than inventing one.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["timeline"] });
+    },
+  });
+
   return (
     <div className={cn("flex", outbound ? "justify-end" : "justify-start")}>
       <div
         title={item.route_reason ?? undefined}
         className={cn(
           "max-w-[75%] space-y-1 rounded-lg px-3 py-2 text-sm",
-          outbound
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-foreground",
+          scheduled
+            ? "border border-dashed border-border bg-muted text-foreground"
+            : outbound
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-foreground",
         )}
       >
         {item.route_reason && <span className="sr-only">{item.route_reason}</span>}
+        {scheduled && scheduledFor && (
+          <p className="text-xs font-medium text-muted-foreground">
+            Scheduled for {new Date(scheduledFor).toLocaleString()}
+          </p>
+        )}
         {item.media && item.media.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {item.media.map((media) => (
@@ -87,9 +113,41 @@ function MessageTimelineItemView({ item }: { item: MessageTimelineItem }) {
           </div>
         )}
         {item.body && <p className="whitespace-pre-wrap break-words">{item.body}</p>}
+        {item.failure_reason_public && (
+          <p role="alert" className="text-xs text-destructive">
+            {item.failure_reason_public}
+          </p>
+        )}
+        {links.length > 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            {clicks === 0
+              ? "Link not opened yet"
+              : clicks === 1
+                ? "Clicked once"
+                : `Clicked ${clicks}×`}
+          </p>
+        )}
+        {scheduled && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => cancelSchedule.mutate()}
+              disabled={cancelSchedule.isPending}
+              aria-label="Cancel scheduled message"
+              className="rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-background disabled:opacity-50"
+            >
+              {cancelSchedule.isPending ? "Cancelling…" : "Cancel"}
+            </button>
+            {cancelSchedule.isError && (
+              <span role="alert" className="text-xs text-destructive">
+                {(cancelSchedule.error as Error).message}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-end gap-2 text-[11px] opacity-70">
           <span>{relativeTime(item.occurred_at)}</span>
-          {outbound && (
+          {outbound && !scheduled && (
             <span title={tick.label} aria-label={tick.label}>
               {tick.glyph}
             </span>
@@ -403,7 +461,7 @@ export function Timeline({
             {group.items.map((item) => {
               switch (item.kind) {
                 case "message":
-                  return <MessageTimelineItemView key={item.id} item={item} />;
+                  return <MessageTimelineItemView key={item.id} item={item} api={api} />;
                 case "call":
                   return <CallTimelineItemView key={item.id} item={item} api={api} />;
                 case "voicemail":

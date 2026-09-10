@@ -22,6 +22,7 @@ import {
 } from "@/components/conversations/NewConversationPanel";
 import { Composer } from "@/components/inbox/Composer";
 import { InboxColumn, type InboxColumnSelection } from "@/components/conversations/InboxColumn";
+import { ScheduledDrawer } from "@/components/conversations/ScheduledDrawer";
 import { Button, Sheet } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
@@ -78,6 +79,9 @@ export function ConversationsPage() {
   const debouncedQ = useDebouncedValue(q, 300);
   const [contactPanelOpen, setContactPanelOpen] = React.useState(false);
   const [mobileInboxSheetOpen, setMobileInboxSheetOpen] = React.useState(false);
+  // P28: the send-later list. Local state, not a URL param - it is a peek at a queue, not
+  // a place you would link somebody to.
+  const [scheduledOpen, setScheduledOpen] = React.useState(false);
   // Item 1: "+ New" compose mode - independent of the URL-selected conversation, so
   // Cancel can return to whatever was selected before without losing/mangling it.
   const [composeMode, setComposeMode] = React.useState<NewConversationKind | null>(null);
@@ -289,8 +293,18 @@ export function ConversationsPage() {
   }
 
   const sendMessage = useMutation({
-    mutationFn: async (vars: { to: string; body: string; allow_reassign: boolean; from: string }) =>
-      api.request("/api/v1/messages", { method: "POST", json: vars }),
+    // P28: media_ids / scheduled_for / track_links come straight from the composer's
+    // extras and are posted verbatim - the page adds nothing and validates nothing here,
+    // because the composer already refused a past time and an oversized attachment.
+    mutationFn: async (vars: {
+      to: string;
+      body: string;
+      allow_reassign: boolean;
+      from: string;
+      media_ids?: string[];
+      scheduled_for?: string;
+      track_links?: boolean;
+    }) => api.request("/api/v1/messages", { method: "POST", json: vars }),
     // Item 10: invalidate off the MUTATION'S OWN variables, not the closed-over
     // selectedConversation/ourE164 - the user can switch to a different conversation
     // while this send is still in flight, and onSuccess would otherwise invalidate the
@@ -375,6 +389,10 @@ export function ConversationsPage() {
       onNew={(kind) => {
         setComposeSeed(null);
         setComposeMode(kind);
+      }}
+      onOpenScheduled={() => {
+        setMobileInboxSheetOpen(false);
+        setScheduledOpen(true);
       }}
       canCompose={canCompose}
       canComposeLoading={inboxesQuery.isLoading}
@@ -511,12 +529,13 @@ export function ConversationsPage() {
                     onNoted={() => {
                       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
                     }}
-                    onSend={async (body, allowReassign) => {
+                    onSend={async (body, allowReassign, extras) => {
                       await sendMessage.mutateAsync({
                         to: selectedConversation.contact_e164,
                         from: selectedConversation.our_e164,
                         body,
                         allow_reassign: allowReassign,
+                        ...extras,
                       });
                     }}
                   />
@@ -539,6 +558,8 @@ export function ConversationsPage() {
       ) : (
         contactPanelElement
       )}
+
+      <ScheduledDrawer open={scheduledOpen} onClose={() => setScheduledOpen(false)} />
     </div>
   );
 }

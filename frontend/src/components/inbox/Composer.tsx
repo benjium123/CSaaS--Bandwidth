@@ -6,6 +6,17 @@ import { Button } from "@/components/ui/primitives";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchOrgMembers, type OrgMember } from "@/api/conversations";
 import { fetchTemplates, postThreadNote, type MessageTemplate } from "@/api/inboxPro";
+import {
+  ALLOWED_MEDIA_TYPES,
+  attachmentLimitSentence,
+  datetimeLocalMin,
+  mediaRejectionReason,
+  scheduleRejectionReason,
+  toIsoWithOffset,
+  trackableUrls,
+  uploadMedia,
+  type MediaAttachment,
+} from "@/api/messaging";
 import { cn } from "@/lib/utils";
 
 /**
@@ -16,6 +27,14 @@ import { cn } from "@/lib/utils";
  * counter must not change. Note mode is a separate mutation, never a fallback inside
  * the reply path.
  */
+
+type Attachment = { name: string; media: MediaAttachment };
+
+export interface ComposerExtras {
+  media_ids?: string[];
+  scheduled_for?: string;
+  track_links?: boolean;
+}
 
 function mentionTokenAt(
   value: string,
@@ -55,7 +74,7 @@ export function Composer({
   threadId,
   onNoted,
 }: {
-  onSend: (body: string, allowReassign: boolean) => Promise<void>;
+  onSend: (body: string, allowReassign: boolean, extras?: ComposerExtras) => Promise<void>;
   disabled?: boolean;
   threadId?: string | null;
   onNoted?: () => void;
@@ -78,10 +97,21 @@ export function Composer({
   const [templateHighlight, setTemplateHighlight] = React.useState(0);
   const [debouncedTemplateSearch, setDebouncedTemplateSearch] = React.useState("");
 
+  const [attachments, setAttachments] = React.useState<Attachment[]>([]);
+  const [uploading, setUploading] = React.useState(false);
+  const [scheduleOpen, setScheduleOpen] = React.useState(false);
+  const [scheduledLocal, setScheduledLocal] = React.useState("");
+  const [trackClicks, setTrackClicks] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
   const mentionIdsByLabel = React.useRef<Map<string, string>>(new Map());
   const noteTabDisabled = !threadId;
 
   const segments = React.useMemo(() => estimateSmsSegments(body), [body]);
+  const trackableUrlCount = React.useMemo(
+    () => (mode === "reply" ? trackableUrls(body).length : 0),
+    [mode, body],
+  );
 
   React.useEffect(() => {
     if (needsReassign) reassignButtonRef.current?.focus();
@@ -98,6 +128,10 @@ export function Composer({
       pendingCaret.current = null;
     }
   }, [body]);
+
+  React.useEffect(() => {
+    if (trackableUrlCount === 0) setTrackClicks(false);
+  }, [trackableUrlCount]);
 
   const mentionToken = React.useMemo(() => {
     if (mode !== "note") return null;
@@ -195,14 +229,89 @@ export function Composer({
     setTemplateHighlight(0);
   }
 
+  function handleFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    // React nulls `currentTarget` once the handler returns, so the element has to be
+    // captured here - reading e.currentTarget inside the promise callbacks below would
+    // throw rather than clear the input.
+    const input = e.currentTarget;
+    const files = Array.from(input.files ?? []);
+    if (files.length === 0) return;
+
+    setError(null);
+
+    // Validate everything before any network call; a bad file should fail instantly, not
+    // after some siblings have already uploaded.
+    for (const file of files) {
+      const rejection = mediaRejectionReason(file);
+      if (rejection) {
+        setError(rejection);
+        input.value = "";
+        return;
+      }
+    }
+
+    setUploading(true);
+    Promise.all(files.map((file) => uploadMedia(api, file)))
+      .then((uploaded) => {
+        setAttachments((prev) => [
+          ...prev,
+          ...uploaded.map((media, index) => ({ name: files[index].name, media })),
+        ]);
+      })
+      .catch((err) => setError((err as Error).message))
+      .finally(() => {
+        setUploading(false);
+        // Clearing the value is what makes re-picking the SAME file fire `change` again.
+        input.value = "";
+      });
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => prev.filter((attachment) => attachment.media.id !== id));
+  }
+
+  function buildComposerExtras(): ComposerExtras | undefined {
+    const extras: ComposerExtras = {};
+    if (attachments.length > 0) {
+      extras.media_ids = attachments.map((attachment) => attachment.media.id);
+    }
+    if (scheduledLocal) {
+      extras.scheduled_for = toIsoWithOffset(scheduledLocal);
+    }
+    if (trackClicks && trackableUrlCount > 0) {
+      extras.track_links = true;
+    }
+    return Object.keys(extras).length > 0 ? extras : undefined;
+  }
+
   async function submit(allowReassign: boolean) {
     if (!body.trim()) return;
+
+    if (mode === "reply" && scheduledLocal) {
+      const rejection = scheduleRejectionReason(scheduledLocal);
+      if (rejection) {
+        setError(rejection);
+        return;
+      }
+    }
+
     setBusy(true);
     setError(null);
     try {
-      await onSend(body.trim(), allowReassign);
+      const extras = mode === "reply" ? buildComposerExtras() : undefined;
+      if (extras) {
+        await onSend(body.trim(), allowReassign, extras);
+      } else {
+        await onSend(body.trim(), allowReassign);
+      }
       setBody("");
       setNeedsReassign(false);
+      if (mode === "reply") {
+        setAttachments([]);
+        setScheduledLocal("");
+        setScheduleOpen(false);
+        setTrackClicks(false);
+      }
     } catch (err) {
       if (err instanceof ApiError && err.code === "sticky_sender_unavailable") {
         setNeedsReassign(true);
@@ -389,6 +498,131 @@ export function Composer({
         </p>
       )}
 
+      {mode === "reply" && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ALLOWED_MEDIA_TYPES.join(",")}
+              // A DIFFERENT label from the button that clicks it: two controls sharing one
+              // accessible name is ambiguous to a screen reader and to getByLabelText.
+              aria-label="Choose files to attach"
+              className="hidden"
+              onChange={handleFiles}
+            />
+            <Button
+              type="button"
+              aria-label="Attach a file"
+              variant="ghost"
+              size="sm"
+              disabled={disabled || busy || uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Attach
+            </Button>
+            <Button
+              type="button"
+              aria-label="Send later"
+              variant="ghost"
+              size="sm"
+              disabled={disabled || busy || uploading}
+              onClick={() => setScheduleOpen((open) => !open)}
+            >
+              Send later
+            </Button>
+            <span className="text-xs text-muted-foreground">{attachmentLimitSentence()}</span>
+          </div>
+
+          {scheduleOpen && (
+            <div className="space-y-2 rounded-md border border-border bg-background p-2">
+              <label className="block text-xs text-muted-foreground">
+                Send at
+                <input
+                  type="datetime-local"
+                  aria-label="Send at"
+                  min={datetimeLocalMin()}
+                  value={scheduledLocal}
+                  onChange={(e) => {
+                    setScheduledLocal(e.currentTarget.value);
+                    setError(null);
+                  }}
+                  className="mt-1 flex h-9 w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2"
+                />
+              </label>
+              {scheduledLocal && (
+                <p className="text-xs text-muted-foreground">
+                  Sending {new Date(scheduledLocal).toLocaleString()}
+                </p>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setScheduledLocal("");
+                  setError(null);
+                }}
+              >
+                Clear
+              </Button>
+            </div>
+          )}
+
+          {trackableUrlCount > 0 && (
+            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                // The label element wraps the hint too, so its text is not a stable
+                // accessible name - name the control explicitly instead.
+                aria-label="Track link clicks"
+                checked={trackClicks}
+                onChange={(e) => setTrackClicks(e.currentTarget.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="text-foreground">Track link clicks</span>
+                {/* The hint appears ONLY while the box is checked: the server rewrites a
+                    link only when track_links is true, so showing it otherwise would
+                    promise tracking that will not happen. */}
+                {trackClicks && (
+                  <span className="block">
+                    We&rsquo;ll swap the link for a trackable one so you can see if it was
+                    opened.
+                  </span>
+                )}
+              </span>
+            </label>
+          )}
+
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {attachments.map((attachment) => (
+                <span
+                  key={attachment.media.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-1 text-xs"
+                >
+                  {attachment.name}
+                  <Button
+                    type="button"
+                    aria-label={`Remove ${attachment.name}`}
+                    variant="ghost"
+                    size="sm"
+                    className="h-4 w-4 p-0"
+                    onClick={() => removeAttachment(attachment.media.id)}
+                  >
+                    ×
+                  </Button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {uploading && <p className="text-xs text-muted-foreground">Uploading…</p>}
+        </div>
+      )}
+
       <form
         className="flex items-end gap-2"
         onSubmit={(e) => {
@@ -502,9 +736,9 @@ export function Composer({
 
         <Button
           type="submit"
-          disabled={disabled || busy || noteMutation.isPending || !body.trim()}
+          disabled={disabled || busy || noteMutation.isPending || uploading || !body.trim()}
         >
-          {mode === "note" ? "Post note" : "Send"}
+          {mode === "note" ? "Post note" : scheduledLocal ? "Schedule" : "Send"}
         </Button>
       </form>
     </div>

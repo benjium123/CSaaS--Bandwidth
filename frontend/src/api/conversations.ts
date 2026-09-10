@@ -3,6 +3,10 @@ import type { NoteMention, Sla } from "./inboxPro";
 // P23b: declared in api/assistantOps.ts so THIS file takes a two-line diff - another phase
 // is rewriting it in parallel and the integrator has to merge by hand.
 import type { AssistantCallSummary } from "./assistantOps";
+// P28: the tracked-link shape is declared once, in the module that talks to the link and
+// media endpoints - a second copy here would be one more thing to keep in step with
+// backend/app/api/routes/conversations.py TrackedLinkOut.
+import type { TrackedLink } from "./messaging";
 
 export type InboxRole = "admin" | "member" | "viewer";
 
@@ -113,6 +117,14 @@ export interface MessageTimelineItem {
   // sentence explaining which provider carried this message and why, e.g. "Sent via
   // Telnyx - cheapest healthy route". Null when smart routing has nothing to say.
   route_reason: string | null;
+  // P28: matches backend/app/api/routes/conversations.py MessageTimelineEvent. The public
+  // failure sentence is the ONLY failure text a person may be shown - error_code above is
+  // for support, never for a bubble. `scheduled_for` is set while status === "scheduled";
+  // `clicks` is the total across `links`, which the server hydrates in one query per page.
+  failure_reason_public: string | null;
+  scheduled_for: string | null;
+  clicks: number;
+  links: TrackedLink[];
 }
 
 /** Matches backend/app/api/routes/conversations.py CallRecordingOut - the draft typed

@@ -174,6 +174,7 @@ export function InboxColumn({
   unread,
   unreadTruncated = false,
   onNew,
+  onOpenScheduled,
   canCompose,
   canComposeLoading,
   className,
@@ -186,6 +187,9 @@ export function InboxColumn({
   unread: Record<string, number>;
   unreadTruncated?: boolean;
   onNew?: (kind: NewConversationKind) => void;
+  /** P28: opens the send-later list. Optional, so every existing caller (and test) that
+   * does not care about scheduled messages renders exactly the column it did before. */
+  onOpenScheduled?: () => void;
   canCompose?: boolean;
   canComposeLoading?: boolean;
   className?: string;
@@ -309,6 +313,24 @@ export function InboxColumn({
               selection={selection}
               onSelect={onSelect}
             />
+
+            {/* P28: NOT a ViewRow. The four rows above filter the conversation list; a
+                send-later message is not a conversation and has no row in that list, so
+                this opens its own panel instead of setting a filter that would return
+                nothing. */}
+            {onOpenScheduled && (
+              <li>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onOpenScheduled}
+                  className="w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted"
+                >
+                  Scheduled
+                </Button>
+              </li>
+            )}
           </ul>
         )}
       </nav>

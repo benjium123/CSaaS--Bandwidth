@@ -330,8 +330,13 @@ function CampaignForm({
                 ))
               )}
             </div>
+            {/* P28/D43: campaign sends now go through the same routing as a one-to-one
+                send, so a number the phone networks are currently rejecting is left out
+                of the rotation on its own. Saying so here stops "why did nothing go out
+                from that number?" from looking like a bug. */}
             <p className="text-[11px] text-muted-foreground">
-              None selected = full active pool (rotates).
+              None selected = full active pool (rotates). A number that is having delivery
+              trouble is skipped until it recovers.
             </p>
           </div>
 
