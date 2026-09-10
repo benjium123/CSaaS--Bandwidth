@@ -200,6 +200,12 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoffRef = React.useRef(RECONNECT_MIN_MS);
   const listenersRef = React.useRef<Set<(event: WsEvent) => void>>(new Set());
+  // Set synchronously (a state update is not visible to a second click in the same
+  // tick) for the whole time between a dial starting and its room becoming current.
+  const dialingRef = React.useRef(false);
+  // The far end can answer while this browser's room is still connecting (slow ICE) -
+  // remembered so the call lands in "in-call" rather than back on "ringing-out".
+  const answeredCallIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     activeCallRef.current = activeCall;
@@ -323,21 +329,39 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       initialStatus: "ringing-out" | "in-call",
     ) => {
       teardownRoom(roomRef.current);
-      roomRef.current = null;
 
+      // D62: the room is current BEFORE connect() resolves. It used to be set only
+      // after, so for the whole ICE connect (10-20s on a slow network) nothing could tear
+      // it down - a hangup missed it, a second dial stacked a second room beside it, and
+      // when the stale room finally connected it overwrote roomRef; its later
+      // Disconnected then wiped the live call's state and every remote <audio> element.
       const room = new Room();
-      attachRoomListeners(room);
-      await room.connect(url, token);
       roomRef.current = room;
+      attachRoomListeners(room);
+      // Shown straight away (status stays "connecting"), not after ICE completes.
+      setActiveCall({ id: meta.id, room: roomName, contact: meta.contact });
       setMutedState(false);
       setDeviceError(null);
+      try {
+        await room.connect(url, token);
+      } catch (err) {
+        // Hung up or replaced while still connecting - that room is already torn down.
+        if (roomRef.current !== room) return;
+        roomRef.current = null;
+        setActiveCall(null);
+        throw err;
+      }
+      if (roomRef.current !== room) {
+        teardownRoom(room);
+        return;
+      }
       try {
         await room.localParticipant.setMicrophoneEnabled(true);
       } catch {
         // RoomEvent.MediaDevicesError already surfaces this to the UI.
       }
-      setActiveCall({ id: meta.id, room: roomName, contact: meta.contact });
-      setStatus(initialStatus);
+      if (roomRef.current !== room) return;
+      setStatus(answeredCallIdRef.current === meta.id ? "in-call" : initialStatus);
       void refreshDevices();
     },
     [attachRoomListeners, refreshDevices, teardownRoom],
@@ -345,6 +369,12 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
 
   const dial = React.useCallback(
     async (to: string, from?: string) => {
+      // Every call button in the app lands here and most are not disabled while a call
+      // is in flight - a re-click during a slow connect used to place a second real call.
+      if (dialingRef.current || roomRef.current) {
+        throw new Error("A call is already in progress");
+      }
+      dialingRef.current = true;
       setStatus("connecting");
       try {
         const result = await api.request<RoomCallOut>("/api/v1/calls", {
@@ -361,6 +391,8 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         setStatus("idle");
         throw err;
+      } finally {
+        dialingRef.current = false;
       }
     },
     [api, joinRoom],
@@ -635,7 +667,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
               setMutedState(false);
               teardownRoom(room);
             } else if (!RINGING_STATUSES.has(msg.status)) {
-              setStatus((prev) => (prev === "ringing-out" || prev === "connecting" ? "in-call" : prev));
+              answeredCallIdRef.current = msg.call_id;
+              // "connecting" is left alone: "in-call" means the room is actually
+              // connected, and joinRoom picks this answer up once it gets there.
+              setStatus((prev) => (prev === "ringing-out" ? "in-call" : prev));
             }
           }
         } else if (msg.type === "sms.handoff") {

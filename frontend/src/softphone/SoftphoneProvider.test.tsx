@@ -1,3 +1,4 @@
+import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -58,6 +59,9 @@ const {
 
     class FakeRoom {
       static instances: FakeRoom[] = [];
+      /** When true, connect() stays pending until releaseConnect() - a slow ICE connect. */
+      static holdConnects = false;
+      private pendingConnect: { resolve: () => void; reject: (err: Error) => void } | null = null;
       connectCalls: Array<{ url: string; token: string }> = [];
       disconnectCalls = 0;
       switchActiveDeviceCalls: Array<[string, string]> = [];
@@ -81,8 +85,19 @@ const {
       }
       async connect(url: string, token: string) {
         this.connectCalls.push({ url, token });
+        if (!FakeRoom.holdConnects) return;
+        await new Promise<void>((resolve, reject) => {
+          this.pendingConnect = { resolve, reject };
+        });
+      }
+      releaseConnect() {
+        this.pendingConnect?.resolve();
+        this.pendingConnect = null;
       }
       async disconnect() {
+        // livekit-client rejects an in-flight connect() once the room is disconnected.
+        this.pendingConnect?.reject(new Error("Client initiated disconnect"));
+        this.pendingConnect = null;
         this.disconnectCalls += 1;
         this.emit("disconnected");
       }
@@ -179,9 +194,11 @@ const CALL_DETAIL_BASE = {
 function Harness() {
   const sp = useSoftphone();
   const { selectOrg, me } = useAuth();
+  const [dialError, setDialError] = React.useState("");
   return (
     <div>
       <div data-testid="status">{sp.status}</div>
+      <div data-testid="dial-error">{dialError}</div>
       <div data-testid="active-call">
         {sp.activeCall ? `${sp.activeCall.id}:${sp.activeCall.room}:${sp.activeCall.contact}` : ""}
       </div>
@@ -196,7 +213,13 @@ function Harness() {
           </li>
         ))}
       </ul>
-      <button onClick={() => sp.dial("+19725550199", "+12145550100")}>Dial</button>
+      <button
+        onClick={() =>
+          sp.dial("+19725550199", "+12145550100").catch((err: Error) => setDialError(err.message))
+        }
+      >
+        Dial
+      </button>
       <button
         onClick={() =>
           sp.hangUp().catch(() => {
@@ -235,8 +258,41 @@ function Harness() {
   );
 }
 
+const DIAL_RESPONSE = {
+  id: "call-1",
+  contact_e164: "+19725550199",
+  status: "queued",
+  room: "call-call-1",
+  token: "tok-abc",
+  url: "wss://lk.example.com",
+  ...CALL_DETAIL_BASE,
+};
+
+function dialRoutes(extra: Record<string, unknown> = {}) {
+  return {
+    // Listed first: a POST to /api/v1/calls/call-9/answer was otherwise served by the
+    // "/api/v1/calls" stub below.
+    ...extra,
+    "/api/v1/auth/me": ME,
+    "/api/v1/calls": (_path: string, init: RequestInit & { json?: unknown }) => {
+      if (init.method === "POST") return DIAL_RESPONSE;
+      throw new Error("unexpected request");
+    },
+  };
+}
+
+function renderSoftphone(client: ReturnType<typeof makeStubClient>) {
+  renderWithProviders(
+    <SoftphoneProvider>
+      <Harness />
+    </SoftphoneProvider>,
+    client,
+  );
+}
+
 beforeEach(() => {
   FakeRoom.instances.length = 0;
+  FakeRoom.holdConnects = false;
   FakeWebSocket.instances.length = 0;
   vi.stubGlobal("WebSocket", FakeWebSocket);
 });
@@ -295,6 +351,134 @@ describe("SoftphoneProvider", () => {
       from: "+12145550100",
       via: "room",
     });
+  });
+
+  // D62: live test call 2026-09-11 - a slow ICE connect kept the call UI hidden for
+  // ~15s, the operator re-clicked, a second real call was placed, and the first room's
+  // late disconnect wiped the live call's audio.
+  it("shows the call as soon as the dial POST returns, while the room is still connecting", async () => {
+    FakeRoom.holdConnects = true;
+    renderSoftphone(makeStubClient(dialRoutes()));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() =>
+      expect(screen.getByTestId("active-call").textContent).toBe("call-1:call-call-1:+19725550199"),
+    );
+    expect(screen.getByTestId("status").textContent).toBe("connecting");
+
+    await act(async () => {
+      FakeRoom.instances.at(-1)!.releaseConnect();
+    });
+    await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("ringing-out"));
+  });
+
+  it("refuses a second dial while the first is still connecting - no second call is placed", async () => {
+    FakeRoom.holdConnects = true;
+    const client = makeStubClient(dialRoutes());
+    renderSoftphone(client);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+    await userEvent.click(screen.getByText("Dial"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("dial-error").textContent).toBe("A call is already in progress"),
+    );
+    const posts = client.calls.filter((c) => c.path === "/api/v1/calls" && c.init.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(FakeRoom.instances).toHaveLength(1);
+  });
+
+  it("hanging up while the room is still connecting tears it down, and the late connect does not bring the call back", async () => {
+    FakeRoom.holdConnects = true;
+    renderSoftphone(makeStubClient(dialRoutes({ "/api/v1/calls/call-1/hangup": () => ({}) })));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+    const room = FakeRoom.instances.at(-1)!;
+
+    await userEvent.click(screen.getByText("HangUp"));
+    await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("idle"));
+    expect(room.disconnectCalls).toBe(1);
+    expect(screen.getByTestId("active-call").textContent).toBe("");
+    expect(screen.getByTestId("dial-error").textContent).toBe("");
+  });
+
+  it("lands in in-call, not back on ringing-out, when the far end answers while the room is still connecting", async () => {
+    FakeRoom.holdConnects = true;
+    renderSoftphone(makeStubClient(dialRoutes()));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+    act(() => {
+      latestWs().onmessage?.({
+        data: JSON.stringify({ type: "call.status", call_id: "call-1", status: "answered" }),
+      });
+    });
+    expect(screen.getByTestId("status").textContent).toBe("connecting");
+
+    await act(async () => {
+      FakeRoom.instances.at(-1)!.releaseConnect();
+    });
+    await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("in-call"));
+  });
+
+  it("a room superseded while still connecting never takes over the live call or wipes its audio", async () => {
+    FakeRoom.holdConnects = true;
+    renderSoftphone(
+      makeStubClient(
+        dialRoutes({
+          "/api/v1/calls/call-9/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+            if (init.method === "POST") {
+              return { url: "wss://lk.example.com", token: "tok-inbound", room: "call-9" };
+            }
+            throw new Error("unexpected request");
+          },
+        }),
+      ),
+    );
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(FakeRoom.instances).toHaveLength(1));
+    const staleRoom = FakeRoom.instances[0];
+
+    FakeRoom.holdConnects = false;
+    act(() => {
+      latestWs().onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: "call-9",
+          room: "call-9",
+          from: "+19725550111",
+          to: "+12145550100",
+        }),
+      });
+    });
+    await userEvent.click(await screen.findByText("Answer-call-9"));
+    await waitFor(() =>
+      expect(screen.getByTestId("active-call").textContent).toBe("call-9:call-9:+19725550111"),
+    );
+    expect(screen.getByTestId("status").textContent).toBe("in-call");
+    expect(staleRoom.disconnectCalls).toBe(1);
+
+    const liveRoom = FakeRoom.instances.at(-1)!;
+    act(() => {
+      liveRoom.emit("trackSubscribed", new FakeRemoteTrack("audio", "track-phone"));
+    });
+    expect(document.querySelectorAll("audio")).toHaveLength(1);
+
+    // The superseded room's own late network drop must leave the live call alone.
+    act(() => {
+      staleRoom.emit("disconnected");
+    });
+    expect(screen.getByTestId("active-call").textContent).toBe("call-9:call-9:+19725550111");
+    expect(screen.getByTestId("status").textContent).toBe("in-call");
+    expect(document.querySelectorAll("audio")).toHaveLength(1);
   });
 
   it("shows an incoming ring on a call.ring ws message and clears it once the call goes terminal", async () => {
