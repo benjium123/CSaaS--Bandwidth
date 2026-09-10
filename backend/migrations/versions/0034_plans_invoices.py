@@ -44,7 +44,10 @@ def upgrade() -> None:
     op.add_column(
         "orgs",
         sa.Column(
-            "plan_code", sa.String(32), sa.ForeignKey("plans.code", ondelete="SET NULL"), nullable=True
+            "plan_code",
+            sa.String(32),
+            sa.ForeignKey("plans.code", ondelete="SET NULL"),
+            nullable=True,
         ),
     )
     op.add_column("orgs", sa.Column("plan_started_at", sa.DateTime(timezone=True), nullable=True))
