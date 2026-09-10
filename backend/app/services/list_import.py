@@ -289,11 +289,15 @@ async def run_import(
         lst.duplicate_count = counts["duplicate"]
         lst.dnc_count = counts["dnc"]
         lst.status = "ready"
-        await session.commit()
 
         summary = {
             "unknown_owner_emails": sorted(unknown_owner_emails),
             "assigned": assigned,
+            "counts": dict(counts),
+            "finished_at": _now().isoformat(),
         }
+        lst.import_summary = summary
+        await session.commit()
+
         log.info("list_import_owner_summary", **summary)
         return summary

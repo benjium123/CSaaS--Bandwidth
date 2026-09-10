@@ -29,6 +29,7 @@ from app.models import (
     ThreadLabel,
     User,
 )
+from app.services import contacts as contacts_svc
 
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 EPOCH_NAIVE = datetime(1970, 1, 1)
@@ -131,8 +132,10 @@ async def list_inbox(
         needle = f"%{_escape_like(filters.q.strip().lower())}%"
         # lower()+LIKE rather than ILIKE: ILIKE is Postgres-only and the local suite runs
         # on SQLite (see the dialect-import ban, ARCHITECTURE/P0 DR-1).
-        name_match = sa.select(Contact.id).where(
-            sa.func.lower(Contact.display_name).like(needle, escape="\\")
+        name_match = (
+            sa.select(Contact.id)
+            .where(sa.func.lower(Contact.display_name).like(needle, escape="\\"))
+            .where(contacts_svc.active_contacts_filter())
         )
         stmt = stmt.where(
             sa.or_(
@@ -232,7 +235,11 @@ async def list_inbox(
         contacts = {
             c.id: {"id": c.id, "display_name": c.display_name}
             for c in (
-                await session.execute(sa.select(Contact).where(Contact.id.in_(contact_ids)))
+                await session.execute(
+                    sa.select(Contact)
+                    .where(Contact.id.in_(contact_ids))
+                    .where(contacts_svc.active_contacts_filter())
+                )
             ).scalars().all()
         }
 

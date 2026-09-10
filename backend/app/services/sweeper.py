@@ -88,6 +88,7 @@ async def _run_once_locked(app) -> dict[str, int]:
     from random import Random
 
     from app.db.session import get_sessionmaker
+    from app.services import contact_lifecycle as contact_lifecycle_svc
     from app.services import dialer as dialer_svc
     from app.services import inbox_sla as inbox_sla_svc
     from app.services import media as media_svc
@@ -95,8 +96,10 @@ async def _run_once_locked(app) -> dict[str, int]:
     from app.services import notifications as notifications_svc
     from app.services import number_orders
     from app.services import outbound as outbound_svc
+    from app.services import privacy as privacy_svc
     from app.services import recordings as recordings_svc
     from app.services import reputation as reputation_svc
+    from app.services import retention as retention_svc
     from app.services import routing_exec as routing_exec_svc
     from app.services import scoring as scoring_svc
     from app.services import spend as spend_svc
@@ -263,6 +266,32 @@ async def _run_once_locked(app) -> dict[str, int]:
         results["missed_call_notifications"] = missed_counts.get("notifications", 0)
     except Exception:
         log.exception("sweeper_missed_call_tick_failed")
+
+    # P27 data lifecycle: retention purges, subject erasure, and the nightly duplicate
+    # scan. Retention and erasure need the object store, so both are gated on it.
+    if store is not None:
+        try:
+            async with get_sessionmaker()() as session:
+                retention_counts = await retention_svc.retention_tick(session, store)
+            results["retention_purged"] = sum(
+                v for k, v in retention_counts.items() if k != "orgs"
+            )
+        except Exception:
+            log.exception("sweeper_retention_tick_failed")
+
+        try:
+            async with get_sessionmaker()() as session:
+                erasure_counts = await privacy_svc.erasure_tick(session, store)
+            results["erasures_completed"] = erasure_counts.get("completed", 0)
+        except Exception:
+            log.exception("sweeper_erasure_tick_failed")
+
+    try:
+        async with get_sessionmaker()() as session:
+            dupe_counts = await contact_lifecycle_svc.duplicates_tick(session)
+        results["duplicate_groups"] = dupe_counts.get("groups", 0)
+    except Exception:
+        log.exception("sweeper_duplicates_tick_failed")
 
     if store is not None:
         try:

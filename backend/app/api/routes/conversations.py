@@ -37,6 +37,7 @@ from app.models import (
     VoiceEvent,
     Voicemail,
 )
+from app.services import contacts as contacts_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services import inbox_sla as inbox_sla_svc
 from app.services import notifications as notifications_svc
@@ -779,6 +780,7 @@ async def list_conversations(
             sa.select(ContactPhone.e164)
             .join(Contact, Contact.id == ContactPhone.contact_id)
             .where(sa.func.lower(Contact.display_name).like(needle, escape="\\"))
+            .where(contacts_svc.active_contacts_filter())
         )
         thread_stmt = thread_stmt.where(
             sa.or_(
@@ -1010,6 +1012,7 @@ async def list_conversations(
                 sa.select(ContactPhone.e164, Contact)
                 .join(Contact, Contact.id == ContactPhone.contact_id)
                 .where(ContactPhone.e164.in_(all_contact_e164s))
+                 .where(contacts_svc.active_contacts_filter())
             )
         ).all()
         contact_by_e164 = {e164: contact for e164, contact in contact_rows}

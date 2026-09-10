@@ -5,13 +5,14 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
-from app.errors import ConflictError, ValidationFailedError
+from app.db.session import get_sessionmaker
+from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import (
     CUSTOM_FIELD_KINDS,
     Company,
@@ -23,11 +24,14 @@ from app.models import (
     Department,
     MessageThread,
     OrgMembership,
+    SavedView,
     Tag,
 )
 from app.services import audit as audit_svc
+from app.services import contact_lifecycle as lifecycle_svc
 from app.services import contact_visibility
 from app.services import contacts as svc
+from app.services import privacy as privacy_svc
 
 router = APIRouter(prefix="/api/v1", tags=["contacts"])
 
@@ -117,9 +121,87 @@ class ContactBulkAssignIn(BaseModel):
     department_id: uuid.UUID | None = None
 
 
+class ExportIn(BaseModel):
+    filters: dict | None = None  # {"q": str|None, "scope": "mine"|"team"|"unowned"|None}
+    view_id: uuid.UUID | None = None
+
+
+class ViewIn(BaseModel):
+    name: str = Field(min_length=1, max_length=63)
+    filters: dict = {}
+    sort: str | None = None
+    shared: bool = False
+
+
+class ViewPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=63)
+    filters: dict | None = None
+    sort: str | None = None
+
+
+class MergeIn(BaseModel):
+    loser_ids: list[uuid.UUID]
+
+
 # ----------------------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------------------
+def _store(request: Request):
+    store = getattr(request.app.state, "media_store", None)
+    if store is None:  # pragma: no cover - lifespan always sets it
+        raise ValidationFailedError("Storage is not configured")
+    return store
+
+
+async def _active_contact(ctx: OrgContext, contact_id: uuid.UUID) -> Contact:
+    """A merged contact is gone as far as the app is concerned: it is not in any
+    list, not in search, and cannot be opened."""
+    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
+    if contact.merged_into_contact_id is not None:
+        raise NotFoundError("Contact not found")
+    return contact
+
+
+async def _get_saved_view_for_caller(ctx: OrgContext, view_id: uuid.UUID) -> SavedView:
+    stmt = sa.select(SavedView).where(SavedView.id == view_id).where(
+        sa.or_(SavedView.user_id.is_(None), SavedView.user_id == ctx.actor_user_id)
+    )
+    view = (await ctx.session.execute(stmt)).scalar_one_or_none()
+    if view is None:
+        raise NotFoundError("Saved view not found")
+    return view
+
+
+def _saved_view_out(view: SavedView) -> dict:
+    return {
+        "id": view.id,
+        "name": view.name,
+        "filters": view.filters,
+        "sort": view.sort,
+        "shared": view.user_id is None,
+        "created_at": view.created_at,
+    }
+
+
+def _assert_export_visibility(ctx: OrgContext, status: dict) -> None:
+    """An export CSV is frozen at the visibility of whoever asked for it, so handing it
+    to a different caller hands over rows that caller may not be allowed to see."""
+    requested_by = status.get("requested_by")
+
+    if requested_by is None:
+        # No human requester means an API key built this one, and P22 grants API keys
+        # workspace-wide contact visibility - so the CSV holds EVERY contact. Only a
+        # caller who can already read every contact may fetch it: another API key, or a
+        # human with contacts:read_all. Without this branch an ordinary agent under an
+        # `owner`/`department` policy could download the whole workspace.
+        if ctx.api_key is None and not ctx.role.grants("contacts:read_all"):
+            raise NotFoundError("That export could not be found")
+        return
+
+    if requested_by != str(ctx.actor_user_id) and not ctx.role.grants("contacts:read_all"):
+        raise NotFoundError("That export could not be found")
+
+
 def _escape_like(s: str) -> str:
     """Escape LIKE metacharacters so a caller-supplied `q` cannot smuggle its own
     wildcards into the pattern (5.9). Backslash first - escaping % and _ before it would
@@ -241,6 +323,7 @@ async def list_contacts(
     predicate = contact_visibility.visible_contacts_filter(vis_scope)
     if predicate is not None:
         stmt = stmt.where(predicate)
+    stmt = stmt.where(svc.active_contacts_filter())
 
     if scope is not None:
         if scope == "mine":
@@ -328,6 +411,190 @@ async def create_contact(
     return await _out(ctx, contact)
 
 
+# ----------------------------------------------------------------------------------
+# Export jobs
+# ----------------------------------------------------------------------------------
+@router.post("/contacts/export", status_code=202)
+async def create_contact_export(
+    payload: ExportIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> dict:
+    filters = payload.filters
+    if payload.filters is not None:
+        unknown = set(payload.filters) - {"q", "scope"}
+        if unknown:
+            raise ValidationFailedError(
+                f"Unknown export filters: {', '.join(sorted(str(k) for k in unknown))}"
+            )
+
+    if payload.view_id is not None:
+        view = await _get_saved_view_for_caller(ctx, payload.view_id)
+        if payload.filters is None:
+            filters = view.filters
+        else:
+            filters = payload.filters
+
+    job_id = uuid.uuid4()
+    lifecycle_svc.spawn_export(
+        get_sessionmaker(),
+        _store(request),
+        org_id=ctx.org.id,
+        job_id=job_id,
+        requester_user_id=ctx.actor_user_id,
+        permissions=list(ctx.role.permissions or []),
+        filters=filters,
+    )
+    return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/contacts/export/{job_id}")
+async def get_contact_export(
+    request: Request,
+    job_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> dict:
+    status = await lifecycle_svc.read_export_status(_store(request), ctx.org.id, job_id)
+    if status is None:
+        raise NotFoundError("That export could not be found")
+
+    _assert_export_visibility(ctx, status)
+
+    download_url = (
+        f"/api/v1/contacts/export/{job_id}/download"
+        if status.get("status") == "done"
+        else None
+    )
+    return {
+        "job_id": job_id,
+        "status": status.get("status"),
+        "rows": status.get("rows", 0),
+        "error": status.get("error"),
+        "download_url": download_url,
+    }
+
+
+@router.get("/contacts/export/{job_id}/download")
+async def download_contact_export(
+    request: Request,
+    job_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> Response:
+    store = _store(request)
+    status = await lifecycle_svc.read_export_status(store, ctx.org.id, job_id)
+    if status is None:
+        raise NotFoundError("That export could not be found")
+
+    _assert_export_visibility(ctx, status)
+
+    try:
+        data = await lifecycle_svc.read_export_csv(store, ctx.org.id, job_id)
+    except KeyError as exc:
+        raise NotFoundError("That export is not ready yet") from exc
+
+    return Response(
+        content=data,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="contacts.csv"'},
+    )
+
+
+# ----------------------------------------------------------------------------------
+# Saved views
+# ----------------------------------------------------------------------------------
+@router.get("/contacts/views")
+async def list_saved_views(
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> list[dict]:
+    stmt = (
+        sa.select(SavedView)
+        .where(sa.or_(SavedView.user_id.is_(None), SavedView.user_id == ctx.actor_user_id))
+        .order_by(SavedView.name.asc(), SavedView.id.asc())
+    )
+    rows = (await ctx.session.execute(stmt)).scalars().all()
+    return [_saved_view_out(view) for view in rows]
+
+
+@router.post("/contacts/views", status_code=201)
+async def create_saved_view(
+    payload: ViewIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> dict:
+    if payload.shared:
+        if not ctx.role.grants("contacts:write"):
+            raise PermissionDeniedError(
+                "You can only save shared views if you can edit contacts"
+            )
+        user_id = None
+    else:
+        if ctx.actor_user_id is None:
+            raise ValidationFailedError(
+                "API keys cannot own private views; save this as a shared view instead"
+            )
+        user_id = ctx.actor_user_id
+
+    view = SavedView(
+        id=uuid.uuid4(),
+        org_id=ctx.org.id,
+        user_id=user_id,
+        name=payload.name.strip(),
+        filters=payload.filters,
+        sort=payload.sort,
+    )
+    ctx.session.add(view)
+    try:
+        await ctx.session.commit()
+    except IntegrityError as exc:
+        await ctx.session.rollback()
+        raise ConflictError(f"A saved view named {payload.name!r} already exists") from exc
+    return _saved_view_out(view)
+
+
+@router.patch("/contacts/views/{view_id}")
+async def patch_saved_view(
+    view_id: uuid.UUID,
+    payload: ViewPatch,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> dict:
+    view = await _get_saved_view_for_caller(ctx, view_id)
+
+    if view.user_id is None and not ctx.role.grants("contacts:write"):
+        raise PermissionDeniedError(
+            "You can only save shared views if you can edit contacts"
+        )
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates and updates["name"] is not None:
+        view.name = updates["name"].strip()
+    if "filters" in updates and updates["filters"] is not None:
+        view.filters = updates["filters"]
+    if "sort" in updates:
+        view.sort = updates["sort"]
+
+    try:
+        await ctx.session.commit()
+    except IntegrityError as exc:
+        await ctx.session.rollback()
+        raise ConflictError(f"A saved view named {view.name!r} already exists") from exc
+    return _saved_view_out(view)
+
+
+@router.delete("/contacts/views/{view_id}", status_code=204)
+async def delete_saved_view(
+    view_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> None:
+    view = await _get_saved_view_for_caller(ctx, view_id)
+
+    if view.user_id is None and not ctx.role.grants("contacts:write"):
+        raise PermissionDeniedError(
+            "You can only save shared views if you can edit contacts"
+        )
+
+    await ctx.session.delete(view)
+    await ctx.session.commit()
+
+
 @router.post("/contacts/bulk/assign", response_model=dict[str, int])
 async def bulk_assign_contacts(
     payload: ContactBulkAssignIn,
@@ -364,6 +631,7 @@ async def bulk_assign_contacts(
     )
     predicate = contact_visibility.visible_contacts_filter(vis_scope)
     stmt = sa.select(Contact).where(Contact.id.in_(requested))
+    stmt = stmt.where(svc.active_contacts_filter())
     if predicate is not None:
         stmt = stmt.where(predicate)
     contacts = (await ctx.session.execute(stmt)).scalars().all()
@@ -391,13 +659,148 @@ async def bulk_assign_contacts(
     return {"updated": updated, "skipped": skipped}
 
 
+# ----------------------------------------------------------------------------------
+# Duplicates, merge, erase, export my data
+# ----------------------------------------------------------------------------------
+@router.get("/contacts/{contact_id}/duplicates")
+async def get_contact_duplicates(
+    contact_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> list[dict]:
+    await _active_contact(ctx, contact_id)
+
+    groups = await lifecycle_svc.duplicates_for_contact(ctx.session, ctx.org.id, contact_id)
+
+    other_ids: list[uuid.UUID] = []
+    reason_by_id: dict[uuid.UUID, str] = {}
+    for group in groups:
+        reason = group.get("reason", "duplicate")
+        for cid_text in group.get("contact_ids", []):
+            try:
+                cid = uuid.UUID(cid_text)
+            except (ValueError, TypeError):
+                continue
+            if cid == contact_id:
+                continue
+            if cid not in reason_by_id:
+                other_ids.append(cid)
+                reason_by_id[cid] = reason
+
+    if not other_ids:
+        return []
+
+    vis_scope = await contact_visibility.resolve_scope(
+        ctx.session,
+        ctx.org,
+        user_id=ctx.actor_user_id,
+        permissions=ctx.role.permissions or [],
+    )
+    predicate = contact_visibility.visible_contacts_filter(vis_scope)
+    stmt = (
+        sa.select(Contact)
+        .where(Contact.id.in_(other_ids))
+        .where(svc.active_contacts_filter())
+    )
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    visible_contacts = (await ctx.session.execute(stmt)).scalars().all()
+    visible_by_id = {c.id: c for c in visible_contacts}
+
+    phones_by_contact: dict[uuid.UUID, list[str]] = {}
+    visible_ids = list(visible_by_id)
+    if visible_ids:
+        phone_rows = (
+            await ctx.session.execute(
+                sa.select(ContactPhone).where(ContactPhone.contact_id.in_(visible_ids))
+            )
+        ).scalars().all()
+        for p in phone_rows:
+            phones_by_contact.setdefault(p.contact_id, []).append(p.e164)
+
+    response: list[dict] = []
+    for cid in other_ids:
+        if cid not in visible_by_id:
+            continue
+        contact = visible_by_id[cid]
+        response.append(
+            {
+                "contact_id": contact.id,
+                "display_name": contact.display_name,
+                "phones": phones_by_contact.get(contact.id, []),
+                "reason": reason_by_id[cid],
+            }
+        )
+    return response
+
+
+@router.post("/contacts/{contact_id}/merge")
+async def merge_contact(
+    contact_id: uuid.UUID,
+    payload: MergeIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
+) -> dict:
+    if not payload.loser_ids:
+        raise ValidationFailedError("Choose at least one contact to merge")
+    if len(payload.loser_ids) > 20:
+        raise ValidationFailedError("You can merge at most 20 contacts at a time")
+
+    survivor = await _active_contact(ctx, contact_id)
+    losers = [await _active_contact(ctx, loser_id) for loser_id in payload.loser_ids]
+
+    counts = await lifecycle_svc.merge_contacts(
+        ctx.session,
+        ctx.org.id,
+        survivor=survivor,
+        losers=losers,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+    )
+    await ctx.session.commit()
+    return {"contact": await _out(ctx, survivor), "merged": counts}
+
+
+@router.post("/contacts/{contact_id}/erase", status_code=202)
+async def erase_contact(
+    contact_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> dict:
+    contact = await _active_contact(ctx, contact_id)
+
+    req = await privacy_svc.request_erasure(
+        ctx.session,
+        ctx.org.id,
+        contact=contact,
+        requested_by=ctx.actor_user_id,
+    )
+    await ctx.session.commit()
+    return {
+        "id": req.id,
+        "status": req.status,
+        "message": (
+            "This person will be erased shortly. Their opt-out and consent records "
+            "are kept, so we never contact them again."
+        ),
+    }
+
+
+@router.get("/contacts/{contact_id}/export-my-data")
+async def export_my_data(
+    contact_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+) -> dict:
+    contact = await _active_contact(ctx, contact_id)
+    bundle = await privacy_svc.build_my_data_bundle(ctx.session, contact)
+    csv_text = privacy_svc.my_data_csv(bundle)
+    return {"contact_id": contact.id, "bundle": bundle, "csv": csv_text}
+
+
 @router.patch("/contacts/{contact_id}/owner", response_model=ContactOut)
 async def assign_contact_owner(
     contact_id: uuid.UUID,
     payload: ContactOwnerAssignIn,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:assign"))],
 ) -> ContactOut:
-    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
+    contact = await _active_contact(ctx, contact_id)
     updates = payload.model_dump(exclude_unset=True)
 
     if "owner_user_id" in updates and updates["owner_user_id"] is not None:
@@ -442,7 +845,7 @@ async def get_contact(
     contact_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
 ) -> ContactOut:
-    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
+    contact = await _active_contact(ctx, contact_id)
     return await _out(ctx, contact)
 
 
@@ -452,7 +855,7 @@ async def patch_contact(
     payload: ContactPatch,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> ContactOut:
-    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
+    contact = await _active_contact(ctx, contact_id)
 
     if payload.display_name is not None:
         contact.display_name = payload.display_name.strip()
@@ -477,7 +880,7 @@ async def delete_contact(
     contact_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> None:
-    contact = await contact_visibility.get_visible_contact(ctx, contact_id)
+    contact = await _active_contact(ctx, contact_id)
     # Threads keep their history: message_threads.contact_id is ON DELETE SET NULL.
     await ctx.session.delete(contact)
     await ctx.session.commit()
@@ -491,7 +894,7 @@ async def list_notes(
     contact_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
 ) -> list[dict]:
-    await contact_visibility.get_visible_contact(ctx, contact_id)
+    await _active_contact(ctx, contact_id)
     rows = (
         await ctx.session.execute(
             sa.select(ContactNote)
@@ -516,7 +919,7 @@ async def add_note(
     payload: NoteIn,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> dict:
-    await contact_visibility.get_visible_contact(ctx, contact_id)
+    await _active_contact(ctx, contact_id)
     note = ContactNote(
         id=uuid.uuid4(),
         org_id=ctx.org.id,
@@ -535,7 +938,7 @@ async def set_contact_tags(
     payload: dict[str, list[uuid.UUID]],
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> dict:
-    await contact_visibility.get_visible_contact(ctx, contact_id)
+    await _active_contact(ctx, contact_id)
     wanted = set(payload.get("tag_ids", []))
 
     if wanted:

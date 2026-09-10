@@ -18,6 +18,7 @@ from app.services import audit as audit_svc
 from app.services import contact_visibility
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
+from app.services import retention as retention_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
 
@@ -44,6 +45,20 @@ class MemberOut(BaseModel):
     email: str
     full_name: str
     role_name: str
+
+
+class RetentionOut(BaseModel):
+    messages_days: int | None
+    recordings_days: int | None
+    transcripts_days: int | None
+    imports_days: int | None
+
+
+class RetentionPatch(BaseModel):
+    messages_days: int | None = None
+    recordings_days: int | None = None
+    transcripts_days: int | None = None
+    imports_days: int | None = None
 
 
 class OrgSettingsIn(BaseModel):
@@ -98,6 +113,50 @@ async def update_org_settings(
     )
     await ctx.session.commit()
     return {"contact_visibility": ctx.org.contact_visibility}
+
+
+@router.get("/current/retention", response_model=RetentionOut)
+async def current_retention(
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+) -> RetentionOut:
+    """The four "how long do we keep this" numbers. Reading them creates the row with the
+    defaults the Settings copy promises, so the page never has to explain a missing row."""
+    policy = await retention_svc.get_or_create_policy(ctx.session, ctx.org.id)
+    await ctx.session.commit()
+    return RetentionOut(
+        messages_days=policy.messages_days,
+        recordings_days=policy.recordings_days,
+        transcripts_days=policy.transcripts_days,
+        imports_days=policy.imports_days,
+    )
+
+
+@router.patch("/current/retention", response_model=RetentionOut)
+async def update_retention(
+    payload: RetentionPatch,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+) -> RetentionOut:
+    """`exclude_unset` matters here: "left alone" and "cleared, so keep it forever" are
+    different answers and must not collapse into one."""
+    updates = payload.model_dump(exclude_unset=True)
+    policy = await retention_svc.update_policy(ctx.session, ctx.org.id, updates)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="retention.update",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail=updates,
+    )
+    await ctx.session.commit()
+    return RetentionOut(
+        messages_days=policy.messages_days,
+        recordings_days=policy.recordings_days,
+        transcripts_days=policy.transcripts_days,
+        imports_days=policy.imports_days,
+    )
 
 
 @router.post("/current/seed-defaults")

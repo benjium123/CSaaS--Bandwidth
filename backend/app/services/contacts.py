@@ -22,6 +22,13 @@ from app.models import Contact, ContactPhone, CustomFieldDef, MessageThread
 KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
+def active_contacts_filter() -> sa.ColumnElement:
+    """A merged loser row is kept for history but is hidden from every contact list,
+    search, phone lookup and conversation card. This is the ONE place that rule is
+    written; every query that reads contacts must apply it."""
+    return Contact.merged_into_contact_id.is_(None)
+
+
 async def find_contact_by_phone(
     session: AsyncSession, e164: str
 ) -> tuple[Contact, ContactPhone] | None:
@@ -30,6 +37,7 @@ async def find_contact_by_phone(
             sa.select(Contact, ContactPhone)
             .join(ContactPhone, ContactPhone.contact_id == Contact.id)
             .where(ContactPhone.e164 == e164)
+            .where(active_contacts_filter())
         )
     ).first()
     return (row[0], row[1]) if row else None
