@@ -11,6 +11,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
+from app.api.routes.calls import _livekit_route_reason
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
 from app.errors import NotFoundError, ValidationFailedError
@@ -117,6 +118,8 @@ class MessageTimelineEvent(BaseModel):
     status: str
     occurred_at: datetime
     error_code: str | None
+    # P21: why this route was chosen (plain sentence) - tooltip in the unified timeline.
+    route_reason: str | None = None
 
 
 class CallRecordingOut(BaseModel):
@@ -137,6 +140,7 @@ class CallTimelineEvent(BaseModel):
     failure_detail: str | None
     recording: CallRecordingOut | None
     has_voicemail: bool
+    route_reason: str | None = None
 
 
 class VoicemailTimelineEvent(BaseModel):
@@ -974,6 +978,7 @@ async def conversation_timeline(
                 "status": msg.status,
                 "occurred_at": msg.created_at,
                 "error_code": msg.error_code,
+                "route_reason": msg.route_reason,
             }
         )
 
@@ -1002,6 +1007,9 @@ async def conversation_timeline(
                 if recording
                 else None,
                 "has_voicemail": call.id in has_voicemail_by_call,
+                # Stored sentence for provider-API calls; derived trunk sentence for LiveKit
+                # room calls (same rule as GET /calls, see routes/calls.py).
+                "route_reason": call.route_reason or _livekit_route_reason(call),
             }
         )
 

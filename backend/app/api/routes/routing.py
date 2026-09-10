@@ -61,6 +61,7 @@ class PolicyOut(BaseModel):
     allow_intra_carrier_failover: bool
     allow_cross_carrier_failover: bool
     pinned_carrier: str | None
+    smart_routing: bool
 
 
 class PolicyIn(BaseModel):
@@ -68,6 +69,7 @@ class PolicyIn(BaseModel):
     allow_intra_carrier_failover: bool | None = None
     allow_cross_carrier_failover: bool | None = None
     pinned_carrier: str | None = None
+    smart_routing: bool | None = None
 
 
 def _registry(request: Request):
@@ -174,6 +176,7 @@ async def get_policy(
         allow_intra_carrier_failover=policy.allow_intra_carrier_failover,
         allow_cross_carrier_failover=policy.allow_cross_carrier_failover,
         pinned_carrier=policy.pinned_carrier,
+        smart_routing=policy.smart_routing,
     )
 
 
@@ -212,10 +215,22 @@ async def update_policy(
     if payload.allow_cross_carrier_failover is not None:
         policy.allow_cross_carrier_failover = payload.allow_cross_carrier_failover
 
+    if payload.smart_routing is not None:
+        if not payload.smart_routing and not policy.pinned_carrier and not (
+            policy.preference or []
+        ):
+            # Turning the switch off has to leave SOMETHING to route by, otherwise the
+            # org would have neither automatic ranking nor a provider to prefer.
+            raise ValidationFailedError(
+                "Turn on Smart routing, or choose a provider to prefer first."
+            )
+        policy.smart_routing = payload.smart_routing
+
     await ctx.session.commit()
     return PolicyOut(
         preference=list(policy.preference or []),
         allow_intra_carrier_failover=policy.allow_intra_carrier_failover,
         allow_cross_carrier_failover=policy.allow_cross_carrier_failover,
         pinned_carrier=policy.pinned_carrier,
+        smart_routing=policy.smart_routing,
     )

@@ -3142,6 +3142,8 @@ export interface components {
             id: string;
             /** Our E164 */
             our_e164: string;
+            /** Route Reason */
+            route_reason: string | null;
             /** Status */
             status: string;
             /** Tag */
@@ -3950,6 +3952,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Route Reason */
+            route_reason: string | null;
             /** Segment Count Carrier */
             segment_count_carrier: number | null;
             /** Segment Count Est */
@@ -4202,6 +4206,8 @@ export interface components {
             pinned_carrier?: string | null;
             /** Preference */
             preference?: string[] | null;
+            /** Smart Routing */
+            smart_routing?: boolean | null;
         };
         /** PolicyOut */
         PolicyOut: {
@@ -4213,6 +4219,8 @@ export interface components {
             pinned_carrier: string | null;
             /** Preference */
             preference: string[];
+            /** Smart Routing */
+            smart_routing: boolean;
         };
         /** ProbeOut */
         ProbeOut: {

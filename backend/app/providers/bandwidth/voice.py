@@ -11,6 +11,7 @@ import httpx
 import structlog
 
 from app.errors import FeatureUnavailableError
+from app.providers.bandwidth import errors
 from app.providers.bandwidth.voice_webhooks import basic_auth_matches, parse_iso_duration_seconds
 from app.providers.voice import (
     CreateCallResult,
@@ -84,16 +85,27 @@ class BandwidthVoiceMixin:
             )
         except httpx.HTTPError as exc:
             logger.warning("bandwidth_create_call_transport_error", error=str(exc))
-            return CreateCallResult("rejected", None, str(exc)[:255])
+            # This error object is what feeds the breaker.
+            return CreateCallResult(
+                "rejected", None, str(exc)[:255], errors.unreachable(str(exc))
+            )
 
         if response.status_code not in (200, 201, 202):
+            try:
+                # NOT `body` - that name already holds the REQUEST payload above.
+                error_body = response.json()
+            except Exception:
+                error_body = response.text
             detail = response.text[:255]
             logger.warning(
                 "bandwidth_create_call_rejected",
                 status_code=response.status_code,
                 detail=detail,
             )
-            return CreateCallResult("rejected", None, detail)
+            # This error object is what feeds the breaker.
+            return CreateCallResult(
+                "rejected", None, detail, errors.classify(response.status_code, error_body)
+            )
 
         try:
             payload = response.json()

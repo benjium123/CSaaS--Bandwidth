@@ -256,6 +256,9 @@ async def test_reseeding_preserves_customised_rows_and_duplicates_nothing(client
             "call_flow:default",
             "compliance_settings",
             "ring_group:everyone",
+            # P21: new orgs are seeded a routing policy too (Smart routing on,
+            # cross-provider failover available).
+            "routing_policy",
             "template:help",
             "template:stop",
         ], body

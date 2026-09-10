@@ -62,6 +62,7 @@ function MessageTimelineItemView({ item }: { item: MessageTimelineItem }) {
   return (
     <div className={cn("flex", outbound ? "justify-end" : "justify-start")}>
       <div
+        title={item.route_reason ?? undefined}
         className={cn(
           "max-w-[75%] space-y-1 rounded-lg px-3 py-2 text-sm",
           outbound
@@ -69,6 +70,7 @@ function MessageTimelineItemView({ item }: { item: MessageTimelineItem }) {
             : "bg-neutral-800 text-neutral-100",
         )}
       >
+        {item.route_reason && <span className="sr-only">{item.route_reason}</span>}
         {item.media && item.media.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {item.media.map((media) => (
@@ -177,11 +179,13 @@ function CallTimelineItemView({ item, api }: { item: CallTimelineItem; api: ApiC
 
   return (
     <div
+      title={item.route_reason ?? undefined}
       className={cn(
         "flex items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm",
         failed || missed ? "text-red-400" : "text-neutral-200",
       )}
     >
+      {item.route_reason && <span className="sr-only">{item.route_reason}</span>}
       {failed || missed ? (
         <PhoneMissed className="h-4 w-4 shrink-0 text-red-400" />
       ) : item.direction === "inbound" ? (

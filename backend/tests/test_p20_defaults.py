@@ -110,6 +110,9 @@ async def test_seed_defaults_is_idempotent(client, session):
         "call_flow:default",
         "compliance_settings",
         "ring_group:everyone",
+        # P21: new orgs are seeded a routing policy too (Smart routing on,
+        # cross-provider failover available).
+        "routing_policy",
         "template:help",
         "template:stop",
     ]
@@ -126,6 +129,8 @@ async def test_seed_defaults_is_idempotent(client, session):
     assert sorted(body["existing"]) == [
         "call_flow:default",
         "ring_group:everyone",
+        # P21: seeded alongside the rest; untouched by re-seeding.
+        "routing_policy",
         "template:help",
         "template:stop",
     ]

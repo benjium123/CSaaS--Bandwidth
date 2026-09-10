@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConversationList } from "./ConversationList";
 import { Timeline } from "./Timeline";
@@ -341,6 +341,76 @@ describe("Timeline", () => {
     expect(await screen.findByText("hello")).toBeInTheDocument();
     expect(screen.getByText("Called you")).toBeInTheDocument();
     expect(screen.getByText("Call failed — carrier_unreachable")).toBeInTheDocument();
+  });
+
+  // P21: a non-null route_reason (backend MessageOut/CallOut.route_reason) renders as a
+  // tooltip on the bubble/call card plus sr-only text for screen readers - layout is
+  // otherwise unchanged. A null reason must add neither.
+  it("shows the route reason as a tooltip and sr-only text on a message and a call, and nothing when null", async () => {
+    const client = makeStubClient({
+      "/api/v1/conversations/%2B19725550199/timeline": {
+        items: [
+          {
+            kind: "message",
+            id: "m2",
+            direction: "outbound",
+            body: "on our way",
+            media: null,
+            status: "sent",
+            occurred_at: new Date().toISOString(),
+            error_code: null,
+            route_reason: "Sent via Telnyx — cheapest healthy route",
+          },
+          {
+            kind: "call",
+            id: "call4",
+            direction: "outbound",
+            status: "completed",
+            duration_seconds: 30,
+            occurred_at: new Date().toISOString(),
+            answered_at: null,
+            ended_at: null,
+            failure_detail: null,
+            recording: null,
+            has_voicemail: false,
+            route_reason: "Failed over to Telnyx — Bandwidth unavailable",
+          },
+          {
+            kind: "message",
+            id: "m3",
+            direction: "inbound",
+            body: "no reason here",
+            media: null,
+            status: "received",
+            occurred_at: new Date().toISOString(),
+            error_code: null,
+            route_reason: null,
+          },
+        ],
+        next_cursor: null,
+      },
+    });
+
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Timeline contactE164="+19725550199" ourE164="+14694617576" />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    const bubble = (await screen.findByText("on our way")).closest("[title]");
+    expect(bubble).toHaveAttribute("title", "Sent via Telnyx — cheapest healthy route");
+    expect(
+      within(bubble as HTMLElement).getByText("Sent via Telnyx — cheapest healthy route"),
+    ).toBeInTheDocument();
+
+    const callCard = screen.getByText("You called").closest("[title]");
+    expect(callCard).toHaveAttribute("title", "Failed over to Telnyx — Bandwidth unavailable");
+    expect(
+      within(callCard as HTMLElement).getByText("Failed over to Telnyx — Bandwidth unavailable"),
+    ).toBeInTheDocument();
+
+    expect(screen.getByText("no reason here").closest("[title]")).toBeNull();
   });
 
   // F12

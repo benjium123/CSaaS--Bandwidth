@@ -498,14 +498,28 @@ async def test_carrier_status_never_leaks_a_credential(multi):
         assert forbidden not in blob
 
 
-async def test_an_org_that_never_touched_routing_behaves_as_before(multi):
-    """The defaults must reproduce pre-phase-3b behaviour exactly."""
+async def test_a_new_org_gets_the_p21_smart_routing_defaults(multi):
+    """P21 CHANGED THIS DEFAULT ON PURPOSE (phase-21-plan design 4).
+
+    Through phase-3b/P14 this test asserted `allow_cross_carrier_failover is False` -
+    "must be opt-in, never a default". P21 makes Smart routing the one customer switch and
+    seeds a new org with cross-provider failover AVAILABLE, so that a dead credential on
+    one provider does not simply stop the org's traffic.
+
+    What did NOT change, and is re-asserted here because it is the guard that keeps this
+    safe: a carrier switch is still refused mid-conversation
+    (`_failover_allowed` / `test_no_cross_carrier_switch_inside_a_conversation`), so a
+    contact who has already been spoken to never sees a new sender. An org created BEFORE
+    P21 keeps whatever policy it had - `services/defaults.py` only ever creates a missing
+    row, it never edits an existing one.
+    """
     client, _, _, _ = multi
     token, org = await _org_with_numbers(client)
     r = await client.get("/api/v1/routing/policy", headers=auth_headers(token, org["id"]))
     body = r.json()
-    assert body["allow_cross_carrier_failover"] is False, "must be opt-in, never a default"
+    assert body["allow_cross_carrier_failover"] is True, "P21 default: available, not off"
     assert body["allow_intra_carrier_failover"] is True
+    assert body["smart_routing"] is True, "P21: the one customer switch, on by default"
     assert body["preference"] == []
     assert body["pinned_carrier"] is None
 

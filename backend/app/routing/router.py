@@ -40,6 +40,8 @@ class Route:
     #: Why this route was chosen. Carried into logs so a surprising send can be explained
     #: after the fact instead of reverse-engineered.
     reason: str
+    #: The customer-facing sentence persisted to messages.route_reason.
+    sentence: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,25 @@ def _carrier_order(policy: RoutingPolicy, registry: CarrierRegistry) -> list[str
     return preferred + remainder
 
 
+def _plain_sentence(provider: str, *, failed_over_from: str | None = None) -> str:
+    """Plain "Sent via X" for the branches that do not call rank_routes."""
+    from app.services import smart_routing  # keep this module cycle-free
+
+    candidate = smart_routing.RouteCandidate(
+        provider=provider,
+        number_id=None,
+        e164="",
+        score=0.0,
+        reasons=(),
+        health_state="closed",
+        cost_micros=0,
+        is_pinned=False,
+    )
+    return smart_routing.route_sentence(
+        candidate, kind="sms", failed_over_from=failed_over_from
+    )
+
+
 async def plan_route(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -152,7 +173,14 @@ async def plan_route(
                 f"{requested_from} is not an active number on this organisation"
             )
         _require_usable(registry, number.carrier, explicit=True)
-        return RoutePlan(Route(number.carrier, number.e164, "explicit_from"))
+        return RoutePlan(
+            Route(
+                number.carrier,
+                number.e164,
+                "explicit_from",
+                _plain_sentence(number.carrier),
+            )
+        )
 
     # ---- 2. explicit carrier -----------------------------------------------------
     if requested_carrier:
@@ -166,9 +194,19 @@ async def plan_route(
                 f"No active number is hosted on {requested_carrier!r}"
             )
         return RoutePlan(
-            Route(requested_carrier, ordered[0], "explicit_carrier"),
+            Route(
+                requested_carrier,
+                ordered[0],
+                "explicit_carrier",
+                _plain_sentence(requested_carrier),
+            ),
             tuple(
-                Route(requested_carrier, e164, "explicit_carrier_failover")
+                Route(
+                    requested_carrier,
+                    e164,
+                    "explicit_carrier_failover",
+                    _plain_sentence(requested_carrier),
+                )
                 for e164 in ordered[1:]
                 if policy.allow_intra_carrier_failover
             ),
@@ -183,7 +221,12 @@ async def plan_route(
             and registry.health.is_healthy(number.carrier)
         ):
             return RoutePlan(
-                Route(number.carrier, number.e164, "sticky_sender"),
+                Route(
+                    number.carrier,
+                    number.e164,
+                    "sticky_sender",
+                    _plain_sentence(number.carrier),
+                ),
                 _fallbacks(
                     numbers, policy, registry, exclude={number.e164},
                     same_carrier=number.carrier, is_reply_in_thread=is_reply_in_thread,
@@ -199,7 +242,15 @@ async def plan_route(
         )
 
     # ---- 4/5. policy, then registry order ----------------------------------------
-    order = [policy.pinned_carrier] if policy.pinned_carrier else _carrier_order(policy, registry)
+    if policy.pinned_carrier:
+        # P21 (Opus verify N2): the pin is attempted FIRST; when the org allows failover
+        # across providers the others stay as fallbacks, in the usual order - the same
+        # rule rank_routes and the voice walk already apply. With it off, pin only.
+        order = [policy.pinned_carrier]
+        if policy.allow_cross_carrier_failover:
+            order += [c for c in _carrier_order(policy, registry) if c != policy.pinned_carrier]
+    else:
+        order = _carrier_order(policy, registry)
     ranked: list[Route] = []
     for carrier_name in order:
         if carrier_name is None or registry.get(carrier_name) is None:
@@ -216,19 +267,69 @@ async def plan_route(
     unhealthy = [r for r in ranked if not registry.health.is_healthy(r.carrier_name)]
     ranked = healthy + unhealthy
 
+    # P21 smart routing: rank the existing order by cost/health/reputation/preference.
+    # Python's sort is stable, so candidates the ranker scores equally keep TODAY'S
+    # order - that keeps every pre-existing phase-3b/P14 routing test's expectations
+    # intact while letting cost/health/preference actually move traffic.
+    from app.services import smart_routing  # local import avoids the router <-> service cycle
+
+    candidates = await smart_routing.rank_routes(
+        session, org_id, kind="sms", registry=registry,
+        to_e164=contact_e164, is_campaign=False, policy=policy, numbers=numbers)
+    score_by_key = {(c.provider, c.e164): c.score for c in candidates}
+    ranked.sort(key=lambda r: -score_by_key.get((r.carrier_name, r.from_e164), 0.0))
+    if policy.pinned_carrier:
+        # A pin is a decision, not a preference: it is attempted first whatever the
+        # score says; only the fallbacks behind it are ranked.
+        pin = policy.pinned_carrier
+        ranked = [r for r in ranked if r.carrier_name == pin] + [
+            r for r in ranked if r.carrier_name != pin
+        ]
+
     if not ranked:
         raise CarrierNotConfiguredError(
             "No active number belongs to a configured carrier - check that each number's "
             "carrier has credentials"
         )
 
-    primary = ranked[0]
-    fallbacks = tuple(
-        r
-        for r in ranked[1:]
-        if _failover_allowed(primary, r, policy, is_reply_in_thread=is_reply_in_thread)
+    def _sentence_for(route: Route, *, failed_over_from: str | None = None) -> str:
+        candidate = next(
+            (
+                c for c in candidates
+                if c.provider == route.carrier_name and c.e164 == route.from_e164
+            ),
+            None,
+        )
+        if candidate is None:
+            # An excluded route that survived as a last resort gets a plain sentence,
+            # because there is no ranking candidate to explain otherwise.
+            return _plain_sentence(route.carrier_name, failed_over_from=failed_over_from)
+        return smart_routing.route_sentence(
+            candidate,
+            kind="sms",
+            failed_over_from=failed_over_from,
+            only_route=len(ranked) == 1,
+        )
+
+    primary = Route(
+        ranked[0].carrier_name,
+        ranked[0].from_e164,
+        ranked[0].reason,
+        _sentence_for(ranked[0]),
     )
-    return RoutePlan(primary, fallbacks)
+    fallback_routes: list[Route] = []
+    for route in ranked[1:]:
+        if _failover_allowed(primary, route, policy, is_reply_in_thread=is_reply_in_thread):
+            fallback_routes.append(
+                Route(
+                    route.carrier_name,
+                    route.from_e164,
+                    route.reason,
+                    _sentence_for(route, failed_over_from=primary.carrier_name),
+                )
+            )
+
+    return RoutePlan(primary, tuple(fallback_routes))
 
 
 def _require_usable(registry: CarrierRegistry, name: str, *, explicit: bool) -> None:

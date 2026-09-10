@@ -43,7 +43,7 @@ from app.models import (
 )
 from app.providers import registry_org
 from app.services import credentials as credential_svc
-from app.services import pacing
+from app.services import pacing, smart_routing
 from app.services.outbox import record_platform_event
 from app.services.sender import pick_deterministic
 from app.voice_plane import service as voice_plane_svc
@@ -185,6 +185,10 @@ async def _start_call(
         from_e164=from_e164,
         identity=identity,
     )
+    # P21: the dialer dials over the LiveKit SIP trunk, never a provider API, so there is
+    # no ranked plan to walk and nothing to explain about carrier choice. Record the one
+    # honest sentence for this path and skip ranking entirely (phase-21-plan design 3).
+    call.route_reason = smart_routing.LIVEKIT_TRUNK_REASON
     # 3.9: await only THIS call's own dial task, not the test-only global set - waiting
     # on every in-flight dial serializes concurrent calls on each other.
     await voice_plane_svc.wait_for_pending_dial_task(call.id)

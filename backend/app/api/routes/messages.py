@@ -50,6 +50,10 @@ class MessageOut(BaseModel):
     error_code: str | None
     hold_until: datetime | None
     created_at: datetime
+    #: P21: one plain sentence saying WHY this message went out the way it did
+    #: ("Sent via Telnyx - cheapest healthy route", "Failed over to Telnyx - Bandwidth
+    #: unavailable"). None for inbound messages and for anything sent before P21.
+    route_reason: str | None = None
 
 
 class ThreadOut(BaseModel):
@@ -73,6 +77,7 @@ def _out(m: Message) -> MessageOut:
         error_code=m.error_code,
         hold_until=m.hold_until,
         created_at=m.created_at,
+        route_reason=m.route_reason,
     )
 
 

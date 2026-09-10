@@ -88,6 +88,10 @@ export interface MessageTimelineItem {
   status: string;
   occurred_at: string;
   error_code: string | null;
+  // P21: matches backend/app/api/routes/messages.py MessageOut.route_reason - a plain
+  // sentence explaining which provider carried this message and why, e.g. "Sent via
+  // Telnyx - cheapest healthy route". Null when smart routing has nothing to say.
+  route_reason: string | null;
 }
 
 /** Matches backend/app/api/routes/conversations.py CallRecordingOut - the draft typed
@@ -112,6 +116,10 @@ export interface CallTimelineItem {
   failure_detail: string | null;
   recording: CallTimelineRecording | null;
   has_voicemail: boolean;
+  // P21: matches backend/app/api/routes/calls.py CallOut.route_reason (same sentence as
+  // messages - e.g. "Failed over to Telnyx - Bandwidth unavailable", or "Via your calling
+  // trunk" for LiveKit human calls). Null when smart routing has nothing to say.
+  route_reason: string | null;
 }
 
 export interface VoicemailTimelineItem {

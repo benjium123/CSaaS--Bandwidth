@@ -598,6 +598,113 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
   );
 }
 
+function SmartRoutingControl({
+  api,
+  accounts,
+  readOnly,
+}: {
+  api: ApiClient;
+  accounts: ProviderAccount[];
+  readOnly: boolean;
+}) {
+  const { data: policy, isLoading } = useRoutingPolicy(api);
+  const updatePolicy = useUpdateRoutingPolicy(api);
+  const [smartRoutingOn, setSmartRoutingOn] = React.useState(true);
+  const [preferredProvider, setPreferredProvider] = React.useState("");
+  // Only sync from the fetched policy once - after that, the switch/select reflect the
+  // operator's in-progress edit, not whatever the query cache happens to hold (e.g. right
+  // after this same control's own successful save, which writes the identical values back).
+  const [initialized, setInitialized] = React.useState(false);
+
+  React.useEffect(() => {
+    if (policy && !initialized) {
+      setSmartRoutingOn(policy.smart_routing);
+      setPreferredProvider(policy.pinned_carrier ?? "");
+      setInitialized(true);
+    }
+  }, [policy, initialized]);
+
+  // The dropdown offers providers the org has actually connected an account for - not
+  // every provider this build supports (that list is `PROVIDER_NAMES`/availableProviders).
+  const connectedProviders = React.useMemo(() => {
+    const seen = new Set<ProviderName>();
+    const list: ProviderName[] = [];
+    for (const account of accounts) {
+      if (!seen.has(account.provider)) {
+        seen.add(account.provider);
+        list.push(account.provider);
+      }
+    }
+    return list;
+  }, [accounts]);
+
+  function handleSave() {
+    if (smartRoutingOn) {
+      updatePolicy.mutate({ smart_routing: true });
+    } else {
+      updatePolicy.mutate({ smart_routing: false, pinned_carrier: preferredProvider || null });
+    }
+  }
+
+  return (
+    <div role="group" aria-label="Smart routing" className="space-y-3 rounded-lg border border-border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground">Smart routing</p>
+          <p className="text-xs text-muted-foreground">
+            Picks the cheapest healthy route for every text and call and says why.
+          </p>
+        </div>
+        <Button
+          type="button"
+          role="switch"
+          aria-checked={smartRoutingOn}
+          aria-label="Smart routing"
+          variant={smartRoutingOn ? "default" : "outline"}
+          size="sm"
+          disabled={readOnly || isLoading}
+          onClick={() => setSmartRoutingOn((on) => !on)}
+        >
+          {smartRoutingOn ? "On" : "Off"}
+        </Button>
+      </div>
+
+      {!smartRoutingOn && (
+        <Select
+          aria-label="Prefer a provider"
+          value={preferredProvider}
+          onChange={(e) => setPreferredProvider(e.target.value)}
+          disabled={readOnly}
+        >
+          <option value="">Choose a provider…</option>
+          {connectedProviders.map((provider) => (
+            <option key={provider} value={provider}>
+              {providerDisplayName(provider)}
+            </option>
+          ))}
+        </Select>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="button" size="sm" disabled={readOnly || updatePolicy.isPending} onClick={handleSave}>
+          Save
+        </Button>
+        {/* Item 45 convention (ProviderAccountCard): MutationStatus renders "Saved"
+            unconditionally once mounted, so it must stay unmounted until a save was
+            actually triggered - otherwise it would show "Saved" on first render. */}
+        {updatePolicy.status !== "idle" && (
+          <MutationStatus
+            pending={updatePolicy.isPending}
+            error={updatePolicy.error}
+            success="Saved"
+            pendingLabel="Saving…"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConnectProviderSection({
   api,
   availableProviders,
@@ -838,6 +945,8 @@ export function ProvidersPage() {
           Read-only: your role can view provider status but not edit credentials.
         </p>
       )}
+
+      <SmartRoutingControl api={api} accounts={accounts} readOnly={readOnly} />
 
       {/* No heading here on purpose. `Section` labels its <section> with the heading, so a
           heading reading "Connect a provider" would give the landmark the SAME accessible

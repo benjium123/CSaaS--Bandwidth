@@ -314,6 +314,17 @@ async def dispatch_with_failover(
 
         set_org_context(session, org_id)
         last = await session.get(Message, message.id)
+        # P21: record WHY this route was chosen before the attempt, so a message that ends
+        # up rejected still explains where it tried to go. `route.sentence` is built by
+        # app/routing/router.py from the ranking (empty string for a route the ranker had
+        # nothing to say about, in which case the column stays as it was).
+        # getattr, not attribute access: `plan` is deliberately untyped here (see the
+        # signature) and callers - the P3b seam tests among them - pass duck-typed route
+        # objects that predate this field. A missing sentence means "nothing to explain",
+        # never an AttributeError that kills an otherwise fine send.
+        sentence = getattr(route, "sentence", "") or ""
+        if sentence:
+            last.route_reason = sentence[:255]
         if last.from_e164 != route.from_e164 or last.carrier != route.carrier_name:
             log.info(
                 "route_switched",
@@ -324,7 +335,9 @@ async def dispatch_with_failover(
             )
             last.from_e164 = route.from_e164
             last.carrier = route.carrier_name
-            await session.commit()
+        # One commit covers both the route switch above and the route_reason write; a
+        # no-op commit is cheap and keeps the row consistent with what we are about to try.
+        await session.commit()
 
         last = await _dispatch_to_carrier(session, org_id, carrier, last, media_urls)
         if last.status == "accepted":

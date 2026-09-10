@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CallFlow, ComplianceSettings, MessageTemplate, RingGroupDef
 from app.models.compliance import FEDERAL_WINDOW_END, FEDERAL_WINDOW_START
+from app.models.routing import RoutingPolicy
 from app.services import flows
 
 _COMPLIANCE_SETTINGS = "compliance_settings"
@@ -30,6 +31,7 @@ _TEMPLATE_HELP = "template:help"
 _TEMPLATE_STOP = "template:stop"
 _RING_GROUP_EVERYONE = "ring_group:everyone"
 _CALL_FLOW_DEFAULT = "call_flow:default"
+_ROUTING_POLICY = "routing_policy"
 
 
 async def seed_org_defaults(
@@ -169,5 +171,25 @@ async def seed_org_defaults(
         created.append(_CALL_FLOW_DEFAULT)
     else:
         existing.append(_CALL_FLOW_DEFAULT)
+
+    # (f) routing_policy - new orgs get Smart routing on with cross-carrier failover
+    # available. Existing orgs keep their current policy exactly as configured.
+    policy_exists = (
+        await session.execute(sa.select(RoutingPolicy).limit(1))
+    ).scalar_one_or_none()
+    if policy_exists is None:
+        session.add(
+            RoutingPolicy(
+                id=uuid.uuid4(),
+                org_id=org_id,
+                preference=[],
+                allow_intra_carrier_failover=True,
+                allow_cross_carrier_failover=True,
+                smart_routing=True,
+            )
+        )
+        created.append(_ROUTING_POLICY)
+    else:
+        existing.append(_ROUTING_POLICY)
 
     return {"created": sorted(created), "existing": sorted(existing)}

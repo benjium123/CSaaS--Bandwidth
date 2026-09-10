@@ -30,9 +30,11 @@ from app.models import (
 )
 from app.models.voice import TERMINAL_CALL_STATUSES, TERMINAL_LEG_STATUSES
 from app.providers.voice import as_voice_carrier
+from app.routing import router as routing_svc
 from app.services import calls as calls_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services import recordings as recordings_svc
+from app.services import smart_routing
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import LiveKitApiError, mint_access_token
 
@@ -111,6 +113,10 @@ class CallOut(BaseModel):
     ended_at: datetime | None
     duration_seconds: int | None
     created_at: datetime
+    #: P21: one plain sentence saying WHY this call went out the way it did
+    #: ("Called via Telnyx - cheapest healthy route", "Via your calling trunk").
+    #: None for every call placed before P21 shipped.
+    route_reason: str | None = None
 
 
 class TranscriptSegmentOut(BaseModel):
@@ -128,6 +134,30 @@ class CallDetailOut(CallOut):
     transcript: list[TranscriptSegmentOut] | None = None
 
 
+def _livekit_route_reason(c: Call) -> str | None:
+    """P21 (design 3): the trunk sentence for a LiveKit call, DERIVED rather than stored.
+
+    A room call does not consult rank_routes at all - the SIP trunk list is the route - so
+    there is exactly one honest sentence and `extra["via"]` already tells us to use it.
+
+    It is derived and not written because writing it is genuinely unsafe HERE. The room
+    branch returns while `start_room_call`'s background dial task is still running against
+    the same SQLite StaticPool connection (see the long comment in `_detail_out`); adding a
+    `session.commit()` in the request to persist one string made that task lose its answered
+    transition, and `test_voice_plane.py::test_hangup_room_call_removes_participant_and_completes`
+    and `::test_transfer_room_call_success_ends_the_call` failed deterministically. Deriving
+    costs nothing, races nothing, and produces the identical API value.
+
+    The DIALER path does store it (`services/dialer.py::_start_call`) - it owns its session
+    and commits only after awaiting the dial task, so there is no race there.
+    """
+    if c.route_reason:
+        return c.route_reason
+    if (c.extra or {}).get("via") == "livekit":
+        return smart_routing.LIVEKIT_TRUNK_REASON
+    return None
+
+
 def _call_out(c: Call) -> CallOut:
     return CallOut(
         id=c.id,
@@ -141,6 +171,7 @@ def _call_out(c: Call) -> CallOut:
         ended_at=c.ended_at,
         duration_seconds=c.duration_seconds,
         created_at=c.created_at,
+        route_reason=_livekit_route_reason(c),
     )
 
 
@@ -270,6 +301,24 @@ async def _resolve_outbound(
     raise ValidationFailedError("No active voice-capable number is available on this org")
 
 
+def _voice_failover_allowed(policy, chosen_carrier: str, candidate) -> bool:  # noqa: ANN001
+    """P21: voice honours the org's failover switches EXACTLY like the SMS walk does.
+
+    This is the voice twin of ``app/routing/router.py::_failover_allowed``, and it exists
+    because a customer who turned cross-carrier failover off meant it for calls too - a
+    call placed from a different provider's number shows the recipient a different caller
+    id, which is the same surprise the switch exists to prevent. A pin is stricter still:
+    ``rank_routes`` already drops other providers under a pin unless cross-carrier failover
+    is on, and the check below keeps that decision intact rather than re-deriving it.
+
+    The route the caller explicitly asked for is NOT filtered here - it is the first
+    attempt, not a failover, and ``create_outbound_call`` always puts it first anyway.
+    """
+    if candidate.provider == chosen_carrier:
+        return bool(policy.allow_intra_carrier_failover)
+    return bool(policy.allow_cross_carrier_failover)
+
+
 async def _resolve_room_from_number(session, org_id: uuid.UUID, payload: CallIn) -> str:  # noqa: ANN001
     """via="room" number resolution (findings 10+11): NO carrier-adapter registry lookup at
     all - a LiveKit-only deploy has none registered, and requiring one would make room
@@ -369,6 +418,26 @@ async def create_call(
     _carrier_name, from_norm = await _resolve_outbound(ctx.session, registry, ctx.org.id, payload)
     if not access.can_use(from_norm):
         raise PermissionDeniedError(f"You do not have call access to {from_norm}")
+    # P21 / D28: the ranked plan the dial walks. Only numbers this caller may actually use
+    # are offered as fallbacks - failing over onto an inbox the operator has no access to
+    # would route around inbox permissions, which is not what a failover is for. The
+    # explicit (carrier_name, from_norm) pair stays first; create_outbound_call enforces
+    # that. Ranking never raises, so a routing failure can never break placing a call.
+    policy = await routing_svc.get_policy(ctx.session, ctx.org.id)
+    routes = await smart_routing.rank_routes(
+        ctx.session,
+        ctx.org.id,
+        kind="voice",
+        registry=registry,
+        from_number=from_norm,
+        to_e164=to_norm,
+        policy=policy,
+    )
+    routes = [
+        c
+        for c in routes
+        if access.can_use(c.e164) and _voice_failover_allowed(policy, _carrier_name, c)
+    ]
     call, _leg = await calls_svc.create_outbound_call(
         ctx.session,
         registry,
@@ -379,6 +448,7 @@ async def create_call(
         machine_detection=payload.machine_detection,
         tag=payload.tag,
         record=payload.record,
+        routes=routes,
     )
     # A call this request just created cannot have any transcript rows yet.
     return await _detail_out(ctx.session, request, call, include_transcript=False)

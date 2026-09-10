@@ -52,6 +52,7 @@ const POLICY = {
   allow_intra_carrier_failover: true,
   allow_cross_carrier_failover: false,
   pinned_carrier: null,
+  smart_routing: true,
 };
 
 const SPEND_SUMMARY = {
@@ -750,13 +751,19 @@ describe("ProvidersPage", () => {
 
   // Item 8: routing policy query is behind Advanced now; open that disclosure before
   // asserting on its error/retry affordance.
+  // P21: the Smart routing control (top of the page) now also reads the routing policy
+  // eagerly on mount, so the FIRST fetch fails before "Advanced" is ever clicked, and
+  // opening Advanced mounts PolicySection as a second observer of the same query - which
+  // itself triggers an immediate refetch-on-mount. Both of those must fail for the error
+  // banner to still be showing by the time the test opens Advanced; only the explicit
+  // Retry click (the third call) succeeds.
   it("shows a retry affordance when the routing policy fails to load, and refetches on retry", async () => {
     let calls = 0;
     const client = makeStubClient(
       baseRoutes({
         "/api/v1/routing/policy": () => {
           calls += 1;
-          if (calls === 1) throw new ApiError(500, "server_error", "policy unavailable");
+          if (calls <= 2) throw new ApiError(500, "server_error", "policy unavailable");
           return POLICY;
         },
       }),
@@ -871,5 +878,109 @@ describe("ProvidersPage", () => {
     await screen.findByRole("list", { name: "Providers" });
 
     expect(screen.queryByText("telnyx")).not.toBeInTheDocument();
+  });
+});
+
+describe("Smart routing", () => {
+  it("renders the switch On by default from the policy, with no provider picker showing", async () => {
+    const client = makeStubClient(baseRoutes());
+    renderWithProviders(<ProvidersPage />, client);
+
+    const toggle = await screen.findByRole("switch", { name: "Smart routing" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByText(
+        "Picks the cheapest healthy route for every text and call and says why.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Prefer a provider")).not.toBeInTheDocument();
+  });
+
+  it("renders the switch Off with the saved preferred provider selected, from the policy", async () => {
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/routing/policy": { ...POLICY, smart_routing: false, pinned_carrier: "twilio" },
+      }),
+    );
+    renderWithProviders(<ProvidersPage />, client);
+
+    // Wait for the connected-provider accounts to load too - the Select's options (and
+    // therefore its displayed value) come from that query, not the policy one.
+    await screen.findByRole("heading", { name: "Twilio prod" });
+
+    const toggle = screen.getByRole("switch", { name: "Smart routing" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Prefer a provider")).toHaveValue("twilio"),
+    );
+  });
+
+  it("switching Off reveals the provider Select, and Save PATCHes smart_routing:false with the chosen provider", async () => {
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/routing/policy": (_path: string, init: RequestInit & { json?: unknown }) => {
+          if (init.method === "PATCH") return { ...POLICY, ...(init.json as object) };
+          return POLICY;
+        },
+      }),
+    );
+    renderWithProviders(<ProvidersPage />, client);
+
+    const smartRouting = await screen.findByRole("group", { name: "Smart routing" });
+    const toggle = within(smartRouting).getByRole("switch", { name: "Smart routing" });
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+
+    // The dropdown only offers providers the org has actually connected an account for
+    // (ACCOUNTS: telnyx, twilio, plivo, signalwire) - not every provider this build
+    // could support.
+    const select = within(smartRouting).getByLabelText("Prefer a provider") as HTMLSelectElement;
+    expect(within(select).getByRole("option", { name: "Telnyx" })).toBeInTheDocument();
+    await userEvent.selectOptions(select, "telnyx");
+
+    await userEvent.click(within(smartRouting).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const call = client.calls.find(
+        (c) => c.path === "/api/v1/routing/policy" && c.init?.method === "PATCH",
+      );
+      expect(call).toBeTruthy();
+    });
+    const call = client.calls.find(
+      (c) => c.path === "/api/v1/routing/policy" && c.init?.method === "PATCH",
+    )!;
+    expect(call.init?.json).toEqual({ smart_routing: false, pinned_carrier: "telnyx" });
+
+    expect(await within(smartRouting).findByText("Saved")).toBeInTheDocument();
+  });
+
+  // Backend rule (routing.py update_policy): turning Smart routing off with neither a
+  // pinned provider nor a preference order leaves nothing to route by - a 422 with a
+  // plain message, which must render inline next to Save rather than being swallowed.
+  it("shows the 422 message inline when Save is pressed with smart routing off and no provider chosen", async () => {
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/routing/policy": (_path: string, init: RequestInit & { json?: unknown }) => {
+          if (init.method === "PATCH") {
+            throw new ApiError(
+              422,
+              "validation_failed",
+              "Turn on Smart routing, or choose a provider to prefer first.",
+            );
+          }
+          return POLICY;
+        },
+      }),
+    );
+    renderWithProviders(<ProvidersPage />, client);
+
+    const smartRouting = await screen.findByRole("group", { name: "Smart routing" });
+    await userEvent.click(within(smartRouting).getByRole("switch", { name: "Smart routing" }));
+    await userEvent.click(within(smartRouting).getByRole("button", { name: "Save" }));
+
+    expect(
+      await within(smartRouting).findByRole("alert"),
+    ).toHaveTextContent("Turn on Smart routing, or choose a provider to prefer first.");
   });
 });

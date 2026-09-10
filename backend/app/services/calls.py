@@ -37,12 +37,14 @@ from app.models.voice import (
 from app.models.voice import (
     VoiceEvent as VoiceEventRow,
 )
+from app.providers.health import opens_breaker
 from app.providers.voice import Gather as GatherCommand
 from app.providers.voice import Hangup as HangupCommand
 from app.providers.voice import Speak as SpeakCommand
 from app.providers.voice import Transfer as TransferCommand
 from app.providers.voice import VoiceEvent, as_voice_carrier
 from app.services import recordings as recordings_svc
+from app.services import smart_routing
 
 log = structlog.get_logger("calls")
 
@@ -240,11 +242,48 @@ async def create_outbound_call(
     machine_detection: str = "off",
     tag: str = "",
     record: bool = False,
+    routes: list | None = None,          # list[smart_routing.RouteCandidate]
 ) -> tuple[Call, CallLeg]:
-    carrier_obj = registry.get(carrier_name) if registry is not None else None
-    if carrier_obj is None:
-        raise CarrierNotConfiguredError(f"Carrier {carrier_name!r} is not configured")
-    voice_carrier = as_voice_carrier(carrier_obj)
+    if routes:
+        attempts = [(candidate.provider, candidate.e164) for candidate in routes]
+        # The caller already resolved and permission-checked (carrier_name, from_); make
+        # sure that pair is attempted first. D28: voice walks the ranked plan, but an
+        # explicit request is never placed behind a lower-ranked fallback.
+        if (carrier_name, from_) in attempts:
+            attempts.remove((carrier_name, from_))
+        attempts.insert(0, (carrier_name, from_))
+        # De-duplicate while preserving order - a provider/number pair must never be
+        # attempted twice.
+        seen: set[tuple[str, str]] = set()
+        deduped: list[tuple[str, str]] = []
+        for pair in attempts:
+            if pair not in seen:
+                seen.add(pair)
+                deduped.append(pair)
+        attempts = deduped
+    else:
+        attempts = [(carrier_name, from_)]
+
+    routes_by_pair = (
+        {(candidate.provider, candidate.e164): candidate for candidate in routes}
+        if routes
+        else {}
+    )
+
+    def candidate_for(provider: str, from_e164: str):
+        candidate = routes_by_pair.get((provider, from_e164)) if routes else None
+        if candidate is None:
+            candidate = smart_routing.RouteCandidate(
+                provider=provider,
+                number_id=None,
+                e164=from_e164,
+                score=0.0,
+                reasons=(),
+                health_state="closed",
+                cost_micros=0,
+                is_pinned=False,
+            )
+        return candidate
 
     call = Call(
         id=uuid.uuid4(),
@@ -274,22 +313,101 @@ async def create_outbound_call(
     # never lose the row entirely, only leave it stuck queued (recovered elsewhere).
     await session.commit()
 
-    result = await voice_carrier.create_call(
-        to=to, from_=from_, machine_detection=machine_detection, tag=tag
-    )
-    call = await session.get(Call, call.id)
-    leg = await session.get(CallLeg, leg.id)
-    if call is None or leg is None:  # pragma: no cover - just inserted FK
-        raise RuntimeError("call/leg disappeared before carrier result")
-    if result.status == "accepted":
-        leg.provider_call_id = result.provider_call_id
-        advance_leg(leg, "dialing")
-        _advance_call(call, "initiated")
-    else:
-        leg.extra = {**(leg.extra or {}), "error_detail": result.error_detail}
-        advance_leg(leg, "failed")
-        _advance_call(call, "failed")
+    result = None
+    #: (provider, from_e164) of the attempt we ACTUALLY placed most recently, and the one
+    #: before it. Tracked rather than derived from the index, because a skipped attempt
+    #: (unconfigured carrier, open breaker) must never be named in a "failed over from"
+    #: sentence - we did not fail over from a provider we never dialled.
+    last_attempt: tuple[str, str] | None = None
+    previous_attempt_provider: str | None = None
+    for index, (provider, from_e164) in enumerate(attempts):
+        carrier_obj = registry.get(provider) if registry is not None else None
+        if carrier_obj is None:
+            if index == 0:
+                raise CarrierNotConfiguredError(f"Carrier {provider!r} is not configured")
+            continue
+        try:
+            voice_carrier = as_voice_carrier(carrier_obj)
+        except FeatureUnavailableError:
+            if index == 0:
+                raise
+            continue
 
+        breaker = registry.health.breaker(provider) if registry is not None else None
+        if breaker is not None and not breaker.allows_send() and index < len(attempts) - 1:
+            # Skip an open breaker unless this is the last thing we could try;
+            # refusing to call at all is worse than one probe.
+            continue
+
+        call = await session.get(Call, call.id)
+        leg = await session.get(CallLeg, leg.id)
+        if call is None or leg is None:  # pragma: no cover - just inserted FK
+            raise RuntimeError("call/leg disappeared before carrier result")
+        if call.carrier != provider or call.our_e164 != from_e164 or leg.from_e164 != from_e164:
+            call.carrier = provider
+            call.our_e164 = from_e164
+            leg.from_e164 = from_e164
+            await session.commit()
+
+        previous_attempt_provider = last_attempt[0] if last_attempt is not None else None
+        last_attempt = (provider, from_e164)
+        result = await voice_carrier.create_call(
+            to=to, from_=from_e164, machine_detection=machine_detection, tag=tag
+        )
+        if result.status == "accepted":
+            breaker.record_success()
+            leg.provider_call_id = result.provider_call_id
+            advance_leg(leg, "dialing")
+            _advance_call(call, "initiated")
+            candidate = candidate_for(provider, from_e164)
+            call.route_reason = smart_routing.route_sentence(
+                candidate,
+                kind="voice",
+                failed_over_from=(
+                    previous_attempt_provider
+                    if previous_attempt_provider not in (None, provider)
+                    else None
+                ),
+            )
+            call.route_reason = (call.route_reason or "")[:255]
+            await session.commit()
+            return call, leg
+
+        breaker.record_failure(result.error)
+        # WALK ONLY ON A CARRIER-OWN FAULT. `providers/health.opens_breaker(error)` is
+        # the authority — do not re-derive the category list here. An invalid_request
+        # or an unregistered number is OUR bug and every provider will reject it
+        # identically, so trying the next one only spreads the damage.
+        # result.error is None for adapters that have not been updated and for the test
+        # doubles, so opens_breaker(None) is False and the walk stops after one attempt -
+        # the correct conservative default.
+        if not opens_breaker(result.error) and not (
+            result.error is not None and result.error.retryable
+        ):
+            break
+
+    # Every attempt failed - or every attempt was SKIPPED (an open breaker on the first of
+    # several, then an unconfigured or voice-incapable carrier on each of the rest). The
+    # skipped-everything case is why this is not an `assert`: it is reachable, and a bare
+    # assert would both vanish under `python -O` and crash the request if it did fire.
+    call = await session.get(Call, call.id) or call
+    leg = await session.get(CallLeg, leg.id) or leg
+    detail = result.error_detail if result is not None else (
+        "No configured provider was available to place this call"
+    )
+    leg.extra = {**(leg.extra or {}), "error_detail": detail}
+    advance_leg(leg, "failed")
+    _advance_call(call, "failed")
+    if last_attempt is not None:
+        call.route_reason = smart_routing.route_sentence(
+            candidate_for(*last_attempt),
+            kind="voice",
+            failed_over_from=(
+                previous_attempt_provider
+                if previous_attempt_provider not in (None, last_attempt[0])
+                else None
+            ),
+        )[:255]
     await session.commit()
     return call, leg
 

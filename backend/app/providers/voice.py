@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.errors import FeatureUnavailableError
+from app.providers.domain import CarrierError
 
 # ----------------------------------------------------------------------------------
 # Commands - frozen, carrier-neutral. Adapters translate; they never interpret.
@@ -130,6 +131,12 @@ class CreateCallResult:
     status: str  # "accepted" | "rejected"
     provider_call_id: str | None = None
     error_detail: str = ""
+    #: P21/D28: the SAME taxonomy the messaging adapters feed into
+    #: providers/health.opens_breaker. `error_detail` stays as the human string it
+    #: always was; this carries the CATEGORY and the retryable flag a failover walk
+    #: needs to tell "this carrier is dead, try another" apart from "this request is
+    #: wrong, retrying anywhere is pointless".
+    error: CarrierError | None = None
 
 
 # ----------------------------------------------------------------------------------
