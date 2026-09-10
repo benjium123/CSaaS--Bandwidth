@@ -120,6 +120,13 @@ from app.models.provider_accounts import (
     ProviderAccount,
 )
 from app.models.rbac import PERMISSIONS, SYSTEM_ROLES, WILDCARD, OrgMembership, Role
+from app.models.reports import (
+    EMAIL_PROVIDERS,
+    REPORT_CADENCES,
+    REPORT_KINDS,
+    OrgEmailSettings,
+    ReportSchedule,
+)
 from app.models.routing import RoutingPolicy
 from app.models.scheduling import Appointment, KbChunk, KbDocument
 from app.models.spend import (
@@ -188,6 +195,11 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "EMAIL_PROVIDERS",
+    "REPORT_CADENCES",
+    "REPORT_KINDS",
+    "OrgEmailSettings",
+    "ReportSchedule",
     "LinkClick",
     "ShortLink",
     "ERASURE_STATUSES",
