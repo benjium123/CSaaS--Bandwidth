@@ -80,11 +80,14 @@ class CreditLedgerEntry(Base, TenantScoped, TimestampMixin):
         sa.UniqueConstraint(
             "org_id", "entry_type", "reference", name="uq_credit_ledger_org_type_ref"
         ),
+        sa.UniqueConstraint("org_id", "seq", name="uq_credit_ledger_org_seq"),
         sa.Index("ix_credit_ledger_org_created", "org_id", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     entry_type: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    #: Strict per-org order; assigned as max(seq)+1 under the per-org lock in services/credits.py.
+    seq: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     #: Signed. topup/refund/release > 0; usage/reserve < 0; adjustment either.
     amount_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     balance_after_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)

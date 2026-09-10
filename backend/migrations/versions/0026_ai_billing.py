@@ -82,6 +82,8 @@ def upgrade() -> None:
         sa.Column("org_id", GUID(), sa.ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False),
         # topup | usage | adjustment | refund | reserve | release
         sa.Column("entry_type", sa.String(16), nullable=False),
+        # Strict per-org order (timestamps can tie); assigned under the per-org lock.
+        sa.Column("seq", sa.BigInteger(), nullable=False),
         sa.Column("amount_micros", sa.BigInteger(), nullable=False),
         sa.Column("balance_after_micros", sa.BigInteger(), nullable=False),
         sa.Column("reference", sa.String(128), nullable=True),
@@ -95,6 +97,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "org_id", "entry_type", "reference", name="uq_credit_ledger_org_type_ref"
         ),
+        sa.UniqueConstraint("org_id", "seq", name="uq_credit_ledger_org_seq"),
     )
     op.create_index("ix_credit_ledger_org_created", "credit_ledger", ["org_id", "created_at"])
 

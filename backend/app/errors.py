@@ -115,6 +115,14 @@ class CarrierCapabilityError(CsaasError):
     message = "The configured carrier does not support this operation"
 
 
+class InsufficientCreditsError(CsaasError):
+    """P24: the workspace's prepaid credits cannot cover the requested AI usage."""
+
+    code = "insufficient_credits"
+    http_status = 402
+    message = "Add credits to keep your assistant answering"
+
+
 class FeatureUnavailableError(CsaasError):
     """A feature is correctly implemented but its prerequisite config is absent."""
 
