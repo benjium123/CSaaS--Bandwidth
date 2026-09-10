@@ -15,7 +15,7 @@ least as much UI as it adds.
 | 4 | P23a AI assistant: providers + builder + simulate | docs/PLAN_P22_P25.md | 0025 | DEPLOYED 2026-09-11 (6fa42a7) |
 | 5 | P23b AI assistant: inbound/outbound wiring + outcomes | docs/PLAN_P22_P25.md | 0025 | DEPLOYED 2026-09-10 (4fd3eb8) |
 | 6 | P24 AI metering, credits, Stripe (Fable owns ledger) | docs/PLAN_P22_P25.md | 0026 (schema + ledger service committed fb03825) | DEPLOYED 2026-09-10 (578bf9e backend, e3f667e frontend) |
-| 7 | P25 Enterprise identity: sessions, 2FA policy, IP allowlist, OIDC | docs/PLAN_P22_P25.md | 0027 (schema committed 4f2ef3b) | backend integrated, verifying; frontend not started |
+| 7 | P25 Enterprise identity: sessions, 2FA policy, IP allowlist, OIDC | docs/PLAN_P22_P25.md | 0027 (schema committed 4f2ef3b) | DEPLOYED 2026-09-11 (a774516 backend, 86c39c4 frontend) |
 | 8 | P26 Inbox pro: notes, mentions, "/" quick replies, snooze, SLA | docs/PLAN_P26_P36.md | 0028 | DEPLOYED 2026-09-11 |
 | 9 | P27 Contacts pro: export, merge, saved views, retention, erasure | docs/PLAN_P26_P36.md | 0029 (schema committed a521370) | DEPLOYED 2026-09-10 (3e174a0 backend, e3f667e frontend) |
 | 10 | P28 Messaging: MMS, send-later, link tracking, plain failure reasons | docs/PLAN_P26_P36.md | 0030 (schema committed) | queued |
