@@ -60,6 +60,11 @@ class Contact(Base, TenantScoped, TimestampMixin):
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("departments.id", ondelete="SET NULL"), nullable=True
     )
+    # P27 merge: the loser row stays (history, audit) but points at the survivor and is
+    # hidden from every list/search; phones, tags, notes and threads are re-parented.
+    merged_into_contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class ContactPhone(Base, TenantScoped, TimestampMixin):

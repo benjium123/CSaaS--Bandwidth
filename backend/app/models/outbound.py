@@ -66,6 +66,8 @@ class ContactList(Base, TenantScoped, TimestampMixin):
     invalid_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
     duplicate_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
     dnc_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    # P27 / D39: summary of the last import ({unknown_owner_emails, assigned, ...}).
+    import_summary: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

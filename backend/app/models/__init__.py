@@ -55,6 +55,7 @@ from app.models.contacts import (
     Tag,
     ThreadLabel,
 )
+from app.models.contacts_pro import ERASURE_STATUSES, ErasureRequest, RetentionPolicy, SavedView
 from app.models.identity import LOGIN_OUTCOMES, LoginEvent, Session
 from app.models.inbox_pro import NOTIFICATION_KINDS, Notification, ThreadNote
 from app.models.inboxes import (
@@ -186,6 +187,10 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "ERASURE_STATUSES",
+    "ErasureRequest",
+    "RetentionPolicy",
+    "SavedView",
     "NOTIFICATION_KINDS",
     "Notification",
     "ThreadNote",
