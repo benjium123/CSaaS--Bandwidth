@@ -1,4 +1,12 @@
 from app.models.agent import AgentProfile, AgentSmsTurn, CallTranscriptSegment
+from app.models.ai_providers import (
+    AI_KEY_MODES,
+    AI_PROVIDER_ACCOUNT_STATUSES,
+    AI_PROVIDER_CREDENTIAL_FIELDS,
+    AI_PROVIDER_KINDS,
+    AI_PROVIDERS_BY_KIND,
+    AiProviderAccount,
+)
 from app.models.callflow import (
     FLOW_STATUSES,
     QUEUE_ENTRY_STATES,
@@ -165,6 +173,12 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "AI_KEY_MODES",
+    "AI_PROVIDER_ACCOUNT_STATUSES",
+    "AI_PROVIDER_CREDENTIAL_FIELDS",
+    "AI_PROVIDER_KINDS",
+    "AI_PROVIDERS_BY_KIND",
+    "AiProviderAccount",
     "CONSENT_EVENTS",
     "CONSENT_SOURCES",
     "CUSTOM_FIELD_KINDS",

@@ -43,6 +43,15 @@ class KbDocument(Base, TenantScoped, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     source: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="pasted")
+    # P23 ingestion state for uploads/URLs: pending -> indexed | failed. Pasted text is
+    # indexed synchronously, hence the default.
+    status: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="indexed", server_default="indexed"
+    )
+    storage_key: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    chunk_count: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
 
     __table_args__ = (
         sa.UniqueConstraint("org_id", "title", name="uq_kb_documents_org_title"),

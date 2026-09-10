@@ -132,6 +132,10 @@ class OutboundCampaign(Base, TenantScoped, TimestampMixin):
     # --- retry policy (both channels) ---------------------------------------------
     max_attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=2)
     retry_backoff_minutes: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=240)
+    # P23: an "AI calls" campaign dials with this assistant instead of a human.
+    agent_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("agent_profiles.id", ondelete="SET NULL"), nullable=True
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

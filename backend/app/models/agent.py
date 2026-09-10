@@ -45,6 +45,43 @@ class AgentProfile(Base, TenantScoped, TimestampMixin):
     #: indexes are not portable to SQLite).
     is_default: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
     extra: Mapped[dict] = mapped_column(PortableJSON(), nullable=False, default=dict)
+    # P23 assistant builder (migration 0025). Instructions are three fields merged
+    # server-side with a fixed compliance preamble the customer cannot remove.
+    goals: Mapped[str] = mapped_column(sa.Text, nullable=False, default="", server_default="")
+    guardrails: Mapped[str] = mapped_column(sa.Text, nullable=False, default="", server_default="")
+    language: Mapped[str] = mapped_column(
+        sa.String(8), nullable=False, default="en", server_default="en"
+    )
+    stt_provider: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="", server_default=""
+    )
+    tts_provider: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="", server_default=""
+    )
+    max_call_seconds: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=900, server_default="900"
+    )
+    silence_timeout_seconds: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=12, server_default="12"
+    )
+    #: low | medium | high - how eagerly the caller may interrupt the assistant.
+    interrupt_sensitivity: Mapped[str] = mapped_column(
+        sa.String(8), nullable=False, default="medium", server_default="medium"
+    )
+    #: leave_message | hang_up | retry_later
+    voicemail_action: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="leave_message", server_default="leave_message"
+    )
+    #: [{"tool": "book_appointment"|"transfer"|"send_followup_sms"|"lookup_contact"|"webhook",
+    #: ...config}]
+    tools: Mapped[list] = mapped_column(
+        PortableJSON(), nullable=False, default=list, server_default="[]"
+    )
+    #: [{"name": str, "type": text|number|date|select, "options": [...], "write_to_attribute":
+    #: str|null}]
+    post_call_fields: Mapped[list] = mapped_column(
+        PortableJSON(), nullable=False, default=list, server_default="[]"
+    )
 
     # --- P10: the SMS surface ---------------------------------------------------
     #: Off is the default FOREVER — an AI that starts texting customers because a

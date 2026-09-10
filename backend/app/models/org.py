@@ -25,5 +25,11 @@ class Org(Base, TimestampMixin):
         sa.String(16), nullable=False, default="everyone", server_default="everyone"
     )
 
+    # P23: 'platform' = CSaaS keys, billed per use (P24); 'byok' = the org's own AI keys
+    # (ai_provider_accounts) - all three kinds must be active before an assistant goes live.
+    ai_key_mode: Mapped[str] = mapped_column(
+        sa.String(8), nullable=False, default="platform", server_default="platform"
+    )
+
     def __repr__(self) -> str:
         return f"<Org {self.slug}>"

@@ -149,6 +149,29 @@ class CallScore(Base, TenantScoped, TimestampMixin):
     #: transport failure before any response).
     tokens_in: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    # P23 outcomes (Fable: extended here rather than a new call_outcomes table - this row
+    # already is the per-call AI record). Written by the worker's outcome batch.
+    disposition: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
+    intent: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    extracted: Mapped[dict] = mapped_column(
+        PortableJSON(), nullable=False, default=dict, server_default="{}"
+    )
+    handoff: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    booked: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    #: "Call me" test calls are flagged and excluded from analytics.
+    is_test: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("agent_profiles.id", ondelete="SET NULL"), nullable=True
+    )
+    follow_up_sms_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class UsageRecord(Base, TenantScoped, TimestampMixin):
