@@ -151,6 +151,10 @@ class MessageThread(Base, TenantScoped, TimestampMixin):
     sla_breached_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    # P35: which channel this conversation lives on; sms default = every pre-P35 row.
+    channel: Mapped[str] = mapped_column(
+        sa.String(8), nullable=False, default="sms", server_default="sms"
+    )
     is_important: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )
@@ -202,6 +206,13 @@ class Message(Base, TenantScoped, TimestampMixin):
         sa.DateTime(timezone=True), nullable=True
     )
     failure_reason_public: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    # P35 email fields.
+    subject: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    html_body: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    # P36 envelope encryption: ciphertext + the org data-key version that produced it. The
+    # plaintext `body` column is dropped by a follow-up migration once the backfill is done.
+    body_enc: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    enc_key_version: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     # Set when quiet hours DEFER a send. The message row exists and is queued; the
     # sweeper releases it and RE-RUNS THE FULL GATE, so an opt-out landing during the
     # hold still kills the send. Gate at dispatch, never only at enqueue.

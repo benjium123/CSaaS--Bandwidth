@@ -65,6 +65,9 @@ class Contact(Base, TenantScoped, TimestampMixin):
     merged_into_contact_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True
     )
+    # P36: keyed hash of the normalised primary phone / name for exact-match search once
+    # PII columns are encrypted (full-text over message bodies is dropped by design).
+    search_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
 
 
 class ContactPhone(Base, TenantScoped, TimestampMixin):
@@ -132,6 +135,9 @@ class ContactNote(Base, TenantScoped, TimestampMixin):
         GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     body: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    # P36 envelope encryption (see Message.body_enc).
+    body_enc: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    enc_key_version: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
 
 
 class CustomFieldDef(Base, TenantScoped, TimestampMixin):

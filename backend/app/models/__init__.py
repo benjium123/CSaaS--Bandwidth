@@ -33,6 +33,13 @@ from app.models.callflow import (
     RingGroupDef,
     Voicemail,
 )
+from app.models.channels import (
+    CHANNEL_KINDS,
+    CHANNEL_PROVIDERS,
+    THREAD_CHANNELS,
+    ChannelAccount,
+    WebchatWidget,
+)
 from app.models.compliance import (
     CHANNELS,
     CONSENT_EVENTS,
@@ -152,6 +159,7 @@ from app.models.spend import (
     ProviderRate,
     ProviderSpendDaily,
 )
+from app.models.trust import STATUS_COMPONENTS, STATUS_SEVERITIES, OrgDataKey, StatusIncident
 from app.models.user import User
 from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
@@ -211,6 +219,15 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "CHANNEL_KINDS",
+    "CHANNEL_PROVIDERS",
+    "THREAD_CHANNELS",
+    "ChannelAccount",
+    "WebchatWidget",
+    "STATUS_COMPONENTS",
+    "STATUS_SEVERITIES",
+    "OrgDataKey",
+    "StatusIncident",
     "INTEGRATION_KINDS",
     "INTEGRATION_STATUSES",
     "SYNC_DIRECTIONS",

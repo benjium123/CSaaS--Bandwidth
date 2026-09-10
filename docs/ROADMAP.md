@@ -25,8 +25,8 @@ least as much UI as it adds.
 | 14 | P32 Plans, traffic billing, invoices (Fable owns money) | docs/PLAN_P26_P36.md | 0034 (schema committed) | queued |
 | 15 | P33 Agencies: sub-accounts, white-label, custom domain | docs/PLAN_P26_P36.md | 0035 (schema committed) | queued |
 | 16 | P34 Developers and integrations: API docs, Zapier, HubSpot, Salesforce | docs/PLAN_P26_P36.md | 0036 (schema committed) | queued |
-| 17 | P35 Channels: email, WhatsApp, web chat | docs/PLAN_P26_P36.md | 0037 | queued |
-| 18 | P36 Trust: PII encryption at rest, status history, i18n | docs/PLAN_P26_P36.md | 0038 | queued |
+| 17 | P35 Channels: email, WhatsApp, web chat | docs/PLAN_P26_P36.md | 0037 (schema committed) | queued |
+| 18 | P36 Trust: PII encryption at rest, status history, i18n | docs/PLAN_P26_P36.md | 0038 (schema committed) | queued |
 
 External inputs still owed by the operator: valid Bandwidth API credentials + application
 callbacks (see session notes 2026-09-09), Bandwidth account upgrade (trial 402), Stripe keys

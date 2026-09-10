@@ -123,6 +123,9 @@ class CallTranscriptSegment(Base, TenantScoped, TimestampMixin):
     text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     #: Milliseconds from call start, as reported by the worker's clock. Ordering key.
     at_ms: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    # P36 envelope encryption (see Message.body_enc).
+    text_enc: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    enc_key_version: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
 
     __table_args__ = (
         sa.UniqueConstraint(
