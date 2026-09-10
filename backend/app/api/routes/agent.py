@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
@@ -29,14 +29,16 @@ from app.db.session import get_session
 from app.errors import (
     ConflictError,
     CsaasError,
+    FeatureUnavailableError,
     NotFoundError,
     UnauthenticatedError,
     ValidationFailedError,
 )
-from app.models import AgentProfile, Contact, ContactPhone, KbDocument, Org
+from app.models import AgentProfile, Contact, ContactPhone, KbDocument, Org, OrgNumber
 from app.models.agent import DEFAULT_SMS_HANDOFF_KEYWORDS
 from app.services import agent as agent_svc
-from app.services import contact_visibility, kb_ingest
+from app.services import assistant_dispatch, contact_visibility, kb_ingest, voice_preview
+from app.services import audit as audit_svc
 from app.services import kb as kb_svc
 
 router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
@@ -143,6 +145,64 @@ async def post_agent_transcript(
     accepted = await agent_svc.upsert_transcript_segments(session, call, payload.segments)
     await session.commit()
     return {"accepted": accepted}
+
+
+class OutcomeItemIn(BaseModel):
+    call_id: uuid.UUID
+    summary: str | None = None
+    disposition: str | None = None
+    sentiment: str | None = None
+    intent: str | None = None
+    extracted: dict | None = None
+    handoff: bool | None = None
+    booked: bool | None = None
+    is_test: bool | None = None
+    follow_up_sms_message_id: uuid.UUID | None = None
+
+
+class OutcomeBatchIn(BaseModel):
+    outcomes: list[OutcomeItemIn] = Field(min_length=1, max_length=agent_svc.MAX_OUTCOME_BATCH)
+
+
+class OutcomeResultOut(BaseModel):
+    call_id: str
+    applied_attributes: list[str]
+
+
+class OutcomeBatchOut(BaseModel):
+    accepted: int
+    results: list[OutcomeResultOut]
+
+
+@router.post("/outcome", response_model=OutcomeBatchOut)
+async def post_agent_outcome(
+    payload: OutcomeBatchIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> OutcomeBatchOut:
+    _require_worker(request)
+
+    results: list[OutcomeResultOut] = []
+    for item in payload.outcomes:
+        call = await agent_svc.get_call_unscoped(session, item.call_id)
+        if call is None:
+            # One bad call id must not reject a batch that is otherwise good.
+            continue
+        set_org_context(session, call.org_id)
+        profile = await agent_svc.resolve_call_profile(session, call)
+        # Pass only fields the worker actually PUT on the wire. `exclude_unset=True` keeps
+        # "absent" distinct from "explicitly null" so apply_outcome can skip absent keys.
+        result = await agent_svc.apply_outcome(
+            session,
+            call,
+            item.model_dump(exclude_unset=True),
+            profile=profile,
+        )
+        results.append(OutcomeResultOut(**result))
+
+    # One commit for the whole batch - it can legitimately span orgs.
+    await session.commit()
+    return OutcomeBatchOut(accepted=len(results), results=results)
 
 
 class ContactMessageOut(BaseModel):
@@ -280,10 +340,15 @@ class HandoffIn(BaseModel):
     call_id: uuid.UUID
     reason: str = Field(max_length=500)
     summary: str = Field(default="", max_length=2000)
+    to_user_id: uuid.UUID | None = None
+    queue_id: uuid.UUID | None = None
 
 
 class HandoffOut(BaseModel):
     published: bool
+    assigned_user_id: uuid.UUID | None = None
+    thread_id: uuid.UUID | None = None
+    queue_id: uuid.UUID | None = None
 
 
 @router.post("/handoff", response_model=HandoffOut)
@@ -299,7 +364,26 @@ async def post_agent_handoff(
     set_org_context(session, call.org_id)
     bus = request.app.state.event_bus
     agent_svc.publish_handoff(bus, call, reason=payload.reason, summary=payload.summary)
-    return HandoffOut(published=True)
+
+    assigned_user_id = None
+    thread_id = None
+    if payload.to_user_id is not None:
+        assignment = await agent_svc.assign_handoff(
+            session, call, to_user_id=payload.to_user_id
+        )
+        await agent_svc.apply_outcome(session, call, {"handoff": True})
+        assigned_user_id = payload.to_user_id
+        thread_id = uuid.UUID(assignment["thread_id"])
+        await session.commit()
+
+    return HandoffOut(
+        published=True,
+        assigned_user_id=assigned_user_id,
+        thread_id=thread_id,
+        # queue_id is accepted and returned for callers, but queue routing remains the
+        # existing routing_exec surface and is intentionally untouched here.
+        queue_id=payload.queue_id,
+    )
 
 
 class AmdIn(BaseModel):
@@ -635,27 +719,156 @@ async def simulate_agent_profile(
     return SimulateOut(**result)
 
 
+class VoicePreviewIn(BaseModel):
+    voice_id: str = Field(default="", max_length=64)
+    tts_provider: str | None = Field(default=None, max_length=16)
+    text: str = Field(default="", max_length=1000)
+
+
+@router.post("/voices/preview", response_class=Response)
+async def preview_agent_voice(
+    payload: VoicePreviewIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    profile_id: uuid.UUID | None = None,
+) -> Response:
+    if profile_id is not None:
+        profile = await agent_svc.get_profile(ctx.session, ctx.org.id, profile_id)
+    else:
+        profile = await agent_svc._pick_profile(ctx.session, ctx.org.id)
+    if profile is None:
+        profile = AgentProfile(id=uuid.uuid4(), org_id=ctx.org.id, name="")
+
+    audio = await voice_preview.preview(
+        ctx.session,
+        request.app.state.settings,
+        request.app.state.media_store,
+        org=ctx.org,
+        profile=profile,
+        tts_provider=payload.tts_provider or "",
+        voice_id=payload.voice_id,
+        text=payload.text or "",
+    )
+    return Response(
+        content=audio,
+        media_type=voice_preview.PREVIEW_CONTENT_TYPE,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+class CallMeIn(BaseModel):
+    to_e164: str = Field(min_length=3, max_length=32)
+
+
+@router.post("/profiles/{profile_id}/call-me")
+async def call_me_agent_profile(
+    profile_id: uuid.UUID,
+    payload: CallMeIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+) -> dict:
+    profile = await agent_svc.get_profile(ctx.session, ctx.org.id, profile_id)
+    readiness = await agent_svc.go_live_readiness(
+        ctx.session, request.app.state.settings, org=ctx.org, profile=profile
+    )
+    if not readiness["ready"]:
+        raise ValidationFailedError("This assistant is not ready to go live yet.")
+
+    api = getattr(request.app.state, "livekit", None)
+    if api is None:
+        raise FeatureUnavailableError("Calling is not set up on this system yet.")
+    settings = request.app.state.settings
+    if not settings.livekit_sip_outbound_trunk_id:
+        raise FeatureUnavailableError("Calling is not set up on this system yet.")
+
+    to_norm = to_e164(payload.to_e164)
+
+    from app.api.routes.calls import _ROOM_TRUNK_CARRIER
+    from app.voice_plane import service as voice_plane_svc
+
+    from_number = (
+        await ctx.session.execute(
+            sa.select(OrgNumber)
+            .where(
+                OrgNumber.org_id == ctx.org.id,
+                OrgNumber.carrier == _ROOM_TRUNK_CARRIER,
+                # BOTH flags: `status` tracks the provider order's lifecycle while
+                # `is_active` is the operator's own switch, and routes/calls.py's room
+                # path checks is_active. A number turned off must not be dialled from.
+                OrgNumber.is_active.is_(True),
+                OrgNumber.status == "active",
+            )
+            .order_by(OrgNumber.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if from_number is None:
+        raise ValidationFailedError("Add a phone number this system can call from first.")
+
+    call, _leg, _room, _token = await voice_plane_svc.start_room_call(
+        ctx.session,
+        api,
+        settings,
+        request.app.state.event_bus,
+        org_id=ctx.org.id,
+        to=to_norm,
+        from_e164=from_number.e164,
+        identity=f"assistant-test-{profile.id}",
+        tag="assistant-test",
+    )
+
+    await assistant_dispatch.mark_for_assistant(
+        ctx.session, call, profile_id=profile.id, is_test=True
+    )
+    await assistant_dispatch.dispatch_into_room(ctx.session, api, settings, call)
+    await agent_svc.apply_outcome(ctx.session, call, {"is_test": True}, profile=profile)
+
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="assistant.test_call",
+        target_type="agent_profile",
+        target_id=str(profile.id),
+        detail={"to": to_norm},
+    )
+    await ctx.session.commit()
+    return {
+        "call_id": call.id,
+        "to": to_norm,
+        "from": from_number.e164,
+        "is_test": True,
+    }
+
+
 @router.get("/config/{call_id}", response_model=None)
 async def get_agent_config(
     call_id: uuid.UUID,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
-    _require_worker(request)
+    settings = request.app.state.settings
+    # Cheap global-shape check first, then resolve the call, then bind the token to THIS
+    # call so a token leaked from another call cannot read this call's configuration.
+    if not agent_svc.verify_worker_token(request.headers, settings):
+        raise UnauthenticatedError("Invalid or missing worker credentials")
     call = await agent_svc.get_call_unscoped(session, call_id)
     if call is None:
         raise NotFoundError("Call not found")
+    if not agent_svc.verify_worker_token_for_call(request.headers, settings, call):
+        raise UnauthenticatedError("Invalid or missing worker credentials")
     set_org_context(session, call.org_id)
 
     org = await session.get(Org, call.org_id)
     if org is None:
         raise NotFoundError("Organization not found")
 
-    profile = await agent_svc._pick_profile(session, call.org_id)
+    profile = await agent_svc.resolve_call_profile(session, call)
     if profile is None:
         profile = AgentProfile(id=uuid.uuid4(), org_id=call.org_id, name="")
 
-    include_keys = getattr(request.app.state.settings, "ai_per_org_keys", False)
+    include_keys = getattr(settings, "ai_per_org_keys", False)
     return await agent_svc.resolve_worker_config(
         session,
         request.app.state.settings,
@@ -683,7 +896,7 @@ async def post_agent_tool(
         raise NotFoundError("Call not found")
     set_org_context(session, call.org_id)
 
-    profile = await agent_svc._pick_profile(session, call.org_id)
+    profile = await agent_svc.resolve_call_profile(session, call)
     if profile is None:
         profile = AgentProfile(id=uuid.uuid4(), org_id=call.org_id, name="")
 
@@ -785,6 +998,16 @@ async def create_kb_document(
         else:
             raise ValidationFailedError("Send a file, a web address, or some text.")
 
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="knowledge.document.created",
+        target_type="kb_document",
+        target_id=str(doc.id),
+        detail={"title": doc.title, "source": doc.source, "status": doc.status},
+    )
     await ctx.session.commit()
     return _kb_document_out(doc)
 
@@ -812,4 +1035,14 @@ async def delete_kb_document(
     if doc is None:
         raise NotFoundError("We could not find that knowledge document.")
     await kb_svc.delete_document(ctx.session, doc.id)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="knowledge.document.deleted",
+        target_type="kb_document",
+        target_id=str(doc.id),
+        detail={"title": doc.title},
+    )
     await ctx.session.commit()

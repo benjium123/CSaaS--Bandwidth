@@ -174,9 +174,11 @@ const SPEND_SUMMARY = {
  */
 function baseStubs(overrides: Record<string, unknown> = {}) {
   return {
+    "/api/v1/agent/profiles": [],
     "/api/v1/numbers/available": [],
     "/api/v1/numbers/order": null,
     "/api/v1/numbers/num-1/campaign": numberFixture(),
+    "/api/v1/numbers/num-1/answered-by": numberFixture(),
     "/api/v1/numbers/num-1": numberFixture(),
     "/api/v1/registration/campaigns": [],
     "/api/v1/routing/catalog": CATALOG,
@@ -582,5 +584,118 @@ describe("NumbersPage", () => {
 
     expect(await screen.findByText("Bandwidth")).toBeInTheDocument();
     expect(screen.queryByText("bandwidth")).not.toBeInTheDocument();
+  });
+
+  it("shows the Answered by column header", async () => {
+    const client = makeStubClient(baseStubs());
+    renderWithProviders(<NumbersPage />, client);
+
+    expect(await screen.findByRole("columnheader", { name: "Answered by" })).toBeInTheDocument();
+  });
+
+  it("reads a number with no routing fields as answered by a person", async () => {
+    const client = makeStubClient(baseStubs());
+    renderWithProviders(<NumbersPage />, client);
+
+    const select = await screen.findByLabelText("Answered by for +12145550100");
+    expect(select).toHaveValue("");
+    expect(screen.getByRole("option", { name: "A person" })).toBeInTheDocument();
+  });
+
+  it("shows the assistant name for a nested answered_by object", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/agent/profiles": [{ id: "p1", name: "Ava" }],
+        "/api/v1/numbers": [
+          numberFixture({ answered_by: { mode: "assistant", profile_id: "p1" } }),
+        ],
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    const select = await screen.findByLabelText("Answered by for +12145550100");
+    expect(select).toHaveValue("p1");
+    expect(screen.getByRole("option", { name: "Ava" })).toBeInTheDocument();
+  });
+
+  it("reads flat answered_by_mode/answered_by_profile_id fields the same way", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/agent/profiles": [{ id: "p1", name: "Ava" }],
+        "/api/v1/numbers": [
+          numberFixture({ answered_by_mode: "assistant", answered_by_profile_id: "p1" }),
+        ],
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    const select = await screen.findByLabelText("Answered by for +12145550100");
+    expect(select).toHaveValue("p1");
+  });
+
+  it("PATCHes answered-by with assistant mode and profile_id when an assistant is chosen", async () => {
+    const client = makeStubClient(
+      baseStubs({ "/api/v1/agent/profiles": [{ id: "p1", name: "Ava" }] }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    const select = await screen.findByLabelText("Answered by for +12145550100");
+    await userEvent.selectOptions(select, "p1");
+
+    await waitFor(() => {
+      const call = client.calls.find(
+        (c) => c.path === "/api/v1/numbers/num-1/answered-by" && c.init.method === "PATCH",
+      );
+      expect(call?.init.json).toEqual({ mode: "assistant", profile_id: "p1" });
+    });
+  });
+
+  it("PATCHes human mode without profile_id when A person is chosen", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/agent/profiles": [{ id: "p1", name: "Ava" }],
+        "/api/v1/numbers": [
+          numberFixture({ answered_by: { mode: "assistant", profile_id: "p1" } }),
+        ],
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    const select = await screen.findByLabelText("Answered by for +12145550100");
+    expect(select).toHaveValue("p1");
+
+    await userEvent.selectOptions(select, "");
+
+    await waitFor(() => {
+      const call = client.calls.find(
+        (c) => c.path === "/api/v1/numbers/num-1/answered-by" && c.init.method === "PATCH",
+      );
+      expect(call?.init.json).toEqual({ mode: "human" });
+      const body = call?.init.json as Record<string, unknown>;
+      expect(Object.keys(body)).toEqual(["mode"]);
+    });
+  });
+
+  it("renders a missing assistant as 'An assistant that is no longer here' instead of A person", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/agent/profiles": [{ id: "p1", name: "Ava" }],
+        "/api/v1/numbers": [
+          numberFixture({ answered_by: { mode: "assistant", profile_id: "missing-p" } }),
+        ],
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    const select = await screen.findByLabelText("Answered by for +12145550100");
+    expect(select).toHaveValue("missing-p");
+
+    expect(
+      screen.getByRole("option", { name: "An assistant that is no longer here" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("An assistant that is no longer here answers this number."),
+    ).toBeInTheDocument();
+    expect(select).not.toHaveValue("");
   });
 });

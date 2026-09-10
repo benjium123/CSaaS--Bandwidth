@@ -206,6 +206,10 @@ class Settings(BaseSettings):
     # DECRYPTED per-org AI keys. Off until the voice worker can accept them.
     ai_per_org_keys: bool = False
 
+    # P23b: the LiveKit agent_name the assistant worker registers under. The dispatch
+    # falls back to "ai-agent" when unset, which is what deploy/livekit/README documents.
+    ai_agent_name: str = "ai-agent"
+
     # ---------------- media / storage ----------------
     media_store_backend: str = "local"   # local | memory | s3 (s3 raises until P5)
     media_local_root: str = "var/media"

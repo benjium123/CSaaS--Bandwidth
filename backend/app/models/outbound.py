@@ -22,7 +22,8 @@ from app.db.types import GUID, PortableJSON
 
 LIST_STATUSES = ("importing", "ready", "failed")
 LIST_ROW_STATUSES = ("accepted", "invalid", "duplicate", "dnc")
-CAMPAIGN_CHANNELS = ("sms", "voice")
+#: "ai_calls" is exactly 8 characters because the channel column is sa.String(8).
+CAMPAIGN_CHANNELS = ("sms", "voice", "ai_calls")
 CAMPAIGN_STATUSES = ("draft", "scheduled", "running", "paused", "completed", "cancelled")
 DIALER_MODES = ("preview", "power", "parallel", "predictive")
 

@@ -24,6 +24,7 @@ from app.providers import registry_org
 from app.providers.bandwidth import webhooks as bw_webhooks
 from app.providers.telnyx.voice import TelnyxVoiceCommandError
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
+from app.services import assistant_dispatch
 from app.services import calls as calls_svc
 from app.services import credentials as credential_svc
 from app.services import messaging as svc
@@ -619,5 +620,12 @@ async def livekit_webhook(
         # documented retry contract to lean on here, so swallowing (not 500ing) is the
         # safer default rather than inviting an infinite redelivery loop.
         log.exception("livekit_webhook_event_failed", event_type=event.get("event"))
+
+    try:
+        await assistant_dispatch.on_livekit_event(
+            session, request.app.state.livekit, settings, event
+        )
+    except Exception:  # noqa: BLE001 - the ack must not depend on a dispatch
+        log.exception("assistant_dispatch_hook_failed", event_type=event.get("event"))
 
     return JSONResponse(status_code=200, content={"status": "ok"})

@@ -33,12 +33,16 @@ from app.models import (
     AgentProfile,
     Appointment,
     Call,
+    CallFlow,
+    CallScore,
     CallTranscriptSegment,
     Contact,
     ContactTag,
     Message,
     MessageThread,
     Org,
+    OrgMembership,
+    OrgNumber,
     Tag,
 )
 from app.models.voice import TERMINAL_CALL_STATUSES
@@ -57,9 +61,172 @@ log = structlog.get_logger("agent")
 _DIRECTION_OUT: dict[str, str] = {"outbound": "out", "inbound": "in"}
 MAX_LAST_MESSAGES = 5
 
+OUTCOME_DISPOSITIONS = (
+    "answered", "voicemail", "no_answer", "busy", "failed", "handoff", "booked", "opted_out",
+)
+MAX_OUTCOME_BATCH = 100
+
+
+async def apply_outcome(session, call, payload: dict, *, profile=None) -> dict:
+    """Upsert THIS call's outcome row and apply the mapped extracted fields.
+
+    Idempotent on call_id: the second delivery of the same batch must change nothing
+    beyond re-writing the same values (the worker posts at least once)."""
+    existing_stmt = sa.select(CallScore).where(
+        CallScore.org_id == call.org_id, CallScore.call_id == call.id
+    )
+    outcome = (await session.execute(existing_stmt)).scalar_one_or_none()
+
+    if outcome is None:
+        # The worker posts AT LEAST ONCE and two deliveries can race on UNIQUE(call_id).
+        # The add() has to happen INSIDE the savepoint: an object added outside it stays
+        # pending in the session after the rollback and re-raises on the next flush.
+        try:
+            async with session.begin_nested():
+                outcome = CallScore(
+                    id=uuid.uuid4(),
+                    org_id=call.org_id,
+                    call_id=call.id,
+                    status="pending",
+                )
+                session.add(outcome)
+                await session.flush()
+        except IntegrityError:
+            outcome = (await session.execute(existing_stmt)).scalar_one()
+
+    # Apply only the keys the payload actually carries. For nullable columns an explicit
+    # null clears; for non-null JSON/bool columns keep nullable Python but never assign
+    # None, because the schema cannot store it.
+    if "summary" in payload:
+        outcome.summary = payload["summary"]
+        if payload["summary"] is not None:
+            outcome.status = "done"
+    if "disposition" in payload:
+        disposition = payload["disposition"]
+        if disposition is not None and disposition not in OUTCOME_DISPOSITIONS:
+            raise ValidationFailedError("That outcome is not recognized.")
+        outcome.disposition = disposition
+    if "sentiment" in payload:
+        sentiment = payload["sentiment"]
+        if sentiment is not None and sentiment not in ("positive", "neutral", "negative"):
+            raise ValidationFailedError("That tone is not recognized.")
+        outcome.sentiment = sentiment
+    if "intent" in payload:
+        outcome.intent = payload["intent"]
+    if "extracted" in payload and payload["extracted"] is not None:
+        outcome.extracted = payload["extracted"]
+    if "handoff" in payload and payload["handoff"] is not None:
+        outcome.handoff = payload["handoff"]
+    if "booked" in payload and payload["booked"] is not None:
+        outcome.booked = payload["booked"]
+    if "is_test" in payload and payload["is_test"] is not None:
+        outcome.is_test = payload["is_test"]
+    if "follow_up_sms_message_id" in payload:
+        message_id = payload["follow_up_sms_message_id"]
+        if message_id is None:
+            outcome.follow_up_sms_message_id = None
+        else:
+            exists = (
+                await session.execute(
+                    sa.select(Message.id).where(
+                        Message.org_id == call.org_id,
+                        Message.id == message_id,
+                    ).limit(1)
+                )
+            ).scalar_one_or_none()
+            if exists is not None:
+                outcome.follow_up_sms_message_id = message_id
+            # A message id from another org is ignored silently - worker input must not
+            # strand the rest of an otherwise-valid batch.
+
+    if profile is not None:
+        outcome.profile_id = profile.id
+
+    applied_attributes: list[str] = []
+    if profile is not None and "extracted" in payload and payload["extracted"] is not None:
+        name_to_attribute = {}
+        for field in profile.post_call_fields or []:
+            write_to = field.get("write_to_attribute")
+            name = field.get("name")
+            if write_to and name:
+                name_to_attribute[name] = write_to
+
+        if name_to_attribute:
+            found = await contacts_svc.find_contact_by_phone(session, call.contact_e164)
+            if found is not None:
+                contact = found[0]
+                extracted = payload["extracted"] or {}
+                surviving: dict = {}
+                for name, write_to in name_to_attribute.items():
+                    if name not in extracted:
+                        continue
+                    try:
+                        validated = await contacts_svc.validate_attributes(
+                            session, {write_to: extracted[name]}
+                        )
+                    except ValidationFailedError:
+                        # An org that deleted a custom field must not fail the whole batch.
+                        continue
+                    if validated:
+                        surviving.update(validated)
+                if surviving:
+                    contact.attributes = {**(contact.attributes or {}), **surviving}
+                    applied_attributes = list(surviving.keys())
+
+    await session.flush()
+    return {
+        "call_id": str(call.id),
+        "applied_attributes": applied_attributes,
+    }
+
+
+async def assign_handoff(session, call, *, to_user_id: uuid.UUID) -> dict:
+    """P22 rule: a warm transfer gives the receiving person the conversation.
+
+    The inbox thread for (our number, the caller) is assigned to that user, and an
+    UNOWNED contact gets that user as its owner. An owned contact is never taken over."""
+    member = (
+        await session.execute(
+            sa.select(OrgMembership.id).where(
+                OrgMembership.org_id == call.org_id,
+                OrgMembership.user_id == to_user_id,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        raise ValidationFailedError("That person is not on this team.")
+
+    from app.services import messaging as messaging_svc
+
+    thread = await messaging_svc.upsert_thread(
+        session, call.org_id, call.our_e164, call.contact_e164
+    )
+    thread.assigned_user_id = to_user_id
+
+    found = await contacts_svc.find_contact_by_phone(session, call.contact_e164)
+    contact_owner_set = False
+    if found is not None:
+        contact = found[0]
+        if contact.owner_user_id is None:
+            contact.owner_user_id = to_user_id
+            contact_owner_set = True
+
+    await session.flush()
+    return {
+        "thread_id": str(thread.id),
+        "assigned_user_id": str(to_user_id),
+        "contact_owner_set": contact_owner_set,
+    }
+
 #: Fixed identity the worker signs its JWT `sub` claim as. Never a real user - the seams
 #: it calls take no OrgContext at all.
 WORKER_IDENTITY = "agent-worker"
+
+#: A per-call worker token is minted when a call is handed to an assistant and lives only
+#: as long as that call plausibly can. It names the call and the org it belongs to, so a
+#: token leaked from one call cannot read another org's assistant configuration - which is
+#: exactly what the config seam hands out once AI_PER_ORG_KEYS is on.
+CALL_TOKEN_TTL_SECONDS = 4 * 3600
 
 _VALID_ROLES = frozenset({"user", "agent"})
 MAX_TRANSCRIPT_BATCH = 200
@@ -322,12 +489,6 @@ async def simulate_turn(session, settings, *, org, profile, messages, client=Non
         session, settings, org=org, profile=profile, include_keys=True
     )
     provider = cfg["llm"]["provider"]
-    if provider not in ("openai", "anthropic"):
-        raise ValidationFailedError(
-            "We cannot test this assistant's language model here yet - choose OpenAI "
-            "or Anthropic for the test."
-        )
-
     api_key = (cfg.get("keys") or {}).get("llm")
     if not api_key:
         raise ValidationFailedError(
@@ -450,29 +611,48 @@ async def resolve_worker_config(
 # ----------------------------------------------------------------------------------
 # Worker auth
 # ----------------------------------------------------------------------------------
-def verify_worker_token(headers: Mapping[str, str], settings: Settings) -> bool:
-    """True iff `headers` carry a valid AI-worker JWT: HS256, signed with the LiveKit
-    API secret, `iss` == our LiveKit API key, `sub` == "agent-worker", `exp` present and
-    unexpired. A user's own bearer token (signed with `jwt_secret`, a different secret)
-    fails signature verification here and is correctly rejected - this is a machine seam,
-    not a user endpoint.
-    """
+def mint_call_worker_token(
+    settings: Settings,
+    *,
+    call_id: uuid.UUID,
+    org_id: uuid.UUID,
+    ttl_seconds: int = CALL_TOKEN_TTL_SECONDS,
+) -> str:
+    secret = settings.livekit_api_secret.get_secret_value()
+    if not settings.livekit_api_key or not secret:
+        return ""
+    now = int(datetime.now(timezone.utc).timestamp())
+    claims = {
+        "iss": settings.livekit_api_key,
+        "sub": WORKER_IDENTITY,
+        "call_id": str(call_id),
+        "org_id": str(org_id),
+        "exp": now + ttl_seconds,
+    }
+    token = jwt.encode(claims, secret, algorithm="HS256")
+    return token if isinstance(token, str) else token.decode("utf-8")
+
+
+def worker_token_claims(headers: Mapping[str, str], settings: Settings) -> dict | None:
+    """Decode and validate exactly once, returning the claims dict if the token is a
+    valid AI-worker JWT: HS256, signed with the LiveKit API secret, ``iss`` == our
+    LiveKit API key, ``sub`` == "agent-worker", ``exp`` present and unexpired."""
     auth_header = None
     for key, value in headers.items():
         if key.lower() == "authorization":
             auth_header = value
             break
     if not auth_header or not auth_header.startswith("Bearer "):
-        return False
+        return None
     token = auth_header[len("Bearer ") :].strip()
     if not token:
-        return False
+        return None
 
     secret = settings.livekit_api_secret.get_secret_value()
     if not secret:
         # LiveKit is not configured on this deployment - there is no key to verify
         # against, so nothing can be a valid worker token.
-        return False
+        return None
 
     try:
         claims = jwt.decode(
@@ -483,13 +663,37 @@ def verify_worker_token(headers: Mapping[str, str], settings: Settings) -> bool:
         )
     except jwt.PyJWTError as exc:
         log.warning("agent_worker_jwt_rejected", error=str(exc))
-        return False
+        return None
 
     if claims.get("iss") != settings.livekit_api_key:
-        return False
+        return None
     if claims.get("sub") != WORKER_IDENTITY:
+        return None
+    return claims
+
+
+def verify_worker_token(headers: Mapping[str, str], settings: Settings) -> bool:
+    """True iff `headers` carry a valid AI-worker JWT: HS256, signed with the LiveKit
+    API secret, `iss` == our LiveKit API key, `sub` == "agent-worker", `exp` present and
+    unexpired. A user's own bearer token (signed with `jwt_secret`, a different secret)
+    fails signature verification here and is correctly rejected - this is a machine seam,
+    not a user endpoint.
+    """
+    return worker_token_claims(headers, settings) is not None
+
+
+def verify_worker_token_for_call(
+    headers: Mapping[str, str], settings: Settings, call: Call
+) -> bool:
+    """True only for a token minted FOR THIS CALL in THIS org.
+
+    A legacy global token (one with no call_id claim) is refused here. It is still
+    accepted on the transcript and outcome batch seams, which the worker posts long after
+    a call and which carry the call id in their own body, until those are migrated too."""
+    claims = worker_token_claims(headers, settings)
+    if claims is None:
         return False
-    return True
+    return claims.get("call_id") == str(call.id) and claims.get("org_id") == str(call.org_id)
 
 
 async def get_call_unscoped(session: AsyncSession, call_id: uuid.UUID) -> Call | None:
@@ -568,6 +772,97 @@ async def _pick_profile(session: AsyncSession, org_id: uuid.UUID) -> AgentProfil
     if len(rows) == 1:
         return rows[0]
     return None
+
+
+async def _flow_profile_for_call(session: AsyncSession, call: Call) -> AgentProfile | None:
+    """The profile named by the entry assistant node of the number's active flow.
+
+    A default profile is deliberately NOT consulted here: an org default must not start
+    answering every inbound call, which would change the human ring path.
+    """
+    if call.direction != "inbound" or not call.our_e164:
+        return None
+
+    number = (
+        await session.execute(
+            sa.select(OrgNumber).where(
+                OrgNumber.org_id == call.org_id,
+                OrgNumber.e164 == call.our_e164,
+            )
+        )
+    ).scalar_one_or_none()
+    if number is None or number.call_flow_id is None:
+        return None
+
+    flow = await session.get(CallFlow, number.call_flow_id)
+    if flow is None:
+        return None
+
+    # ONLY the ENTRY node counts. An assistant node buried behind a menu or an hours
+    # branch is NOT this call's assistant: neither the carrier executor nor the room path
+    # ever reached it, and treating it as one would hand every inbound call on that number
+    # to an assistant instead of ringing a person.
+    definition = flow.definition or {}
+    nodes = definition.get("nodes")
+    entry = definition.get("entry")
+    if not isinstance(nodes, dict) or not isinstance(entry, str):
+        return None
+    entry_node = nodes.get(entry)
+    if not isinstance(entry_node, dict) or entry_node.get("type") != "assistant":
+        return None
+    try:
+        profile_id = uuid.UUID(str(entry_node.get("profile_id")))
+    except (ValueError, TypeError):
+        return None
+
+    return (
+        await session.execute(
+            sa.select(AgentProfile).where(
+                AgentProfile.org_id == call.org_id,
+                AgentProfile.id == profile_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def resolve_call_profile(session: AsyncSession, call: Call) -> AgentProfile | None:
+    """The assistant this call belongs to.
+
+    1. The dispatch marker on the call row wins: a campaign call, a "Call me" test and an
+       inbound call handed over by an assistant flow all stamp
+       ``call.extra["assistant"]["profile_id"]`` at dispatch time.
+    2. Otherwise, for an INBOUND call, the number's active flow decides: a one-node
+       assistant flow (the Numbers "answered by" shortcut) or any assistant node reachable
+       as the flow's entry names the profile.
+    3. Otherwise the org's default profile, exactly as before (``_pick_profile``).
+
+    Requires set_org_context bound to call.org_id.
+    """
+    marker = ((call.extra or {}).get("assistant") or {})
+    profile_id_raw = marker.get("profile_id")
+    if profile_id_raw:
+        try:
+            profile_id = uuid.UUID(str(profile_id_raw))
+        except (ValueError, TypeError):
+            pass
+        else:
+            profile = (
+                await session.execute(
+                    sa.select(AgentProfile).where(
+                        AgentProfile.org_id == call.org_id,
+                        AgentProfile.id == profile_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if profile is not None:
+                return profile
+
+    if call.direction == "inbound":
+        profile = await _flow_profile_for_call(session, call)
+        if profile is not None:
+            return profile
+
+    return await _pick_profile(session, call.org_id)
 
 
 async def resolve_context(session: AsyncSession, call: Call) -> dict:

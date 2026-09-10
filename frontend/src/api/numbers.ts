@@ -28,7 +28,77 @@ export type NumberOut = Omit<GeneratedNumberOut, "status"> & {
   monthly_cost_cents: number | null;
   purchased_at: string | null;
   order_detail: string | null;
+  /** P23b: who picks up when this number rings. The handoff specifies the WRITE
+   * (`PATCH /numbers/{id}/answered-by`); the read shape is not pinned, so it is optional
+   * here and read through `answeredBy()` below, which accepts either the nested object or
+   * the two flat fields. See VERDICT.md open items. */
+  answered_by?: AnsweredBy | null;
+  answered_by_mode?: AnsweredByMode | null;
+  answered_by_profile_id?: string | null;
 };
+
+export type AnsweredByMode = "human" | "assistant";
+
+export type AnsweredBy = {
+  mode: AnsweredByMode;
+  profile_id?: string | null;
+};
+
+/**
+ * Reads "who answers this number" out of whatever the backend sends. A number with no
+ * assistant bound to it answers as a person — that is the seeded default flow, so "human"
+ * is the honest fallback rather than "unknown".
+ */
+export function answeredBy(number: {
+  answered_by?: AnsweredBy | null;
+  answered_by_mode?: AnsweredByMode | null;
+  answered_by_profile_id?: string | null;
+}): AnsweredBy {
+  const nested = number.answered_by;
+  if (nested && (nested.mode === "assistant" || nested.mode === "human")) {
+    return { mode: nested.mode, profile_id: nested.profile_id ?? null };
+  }
+  if (number.answered_by_mode === "assistant" || number.answered_by_mode === "human") {
+    return { mode: number.answered_by_mode, profile_id: number.answered_by_profile_id ?? null };
+  }
+  if (number.answered_by_profile_id) {
+    return { mode: "assistant", profile_id: number.answered_by_profile_id };
+  }
+  return { mode: "human", profile_id: null };
+}
+
+/**
+ * PATCH /api/v1/numbers/{id}/answered-by — mode "human" restores the seeded ring flow;
+ * mode "assistant" binds a one-node flow to the chosen assistant. `profile_id` is sent
+ * ONLY with "assistant": sending a stale id alongside "human" would ask the backend to
+ * reconcile two contradictory instructions.
+ */
+export async function patchAnsweredBy(
+  api: ApiClient,
+  numberId: string,
+  body: AnsweredBy,
+): Promise<NumberOut> {
+  return api.request<NumberOut>(`/api/v1/numbers/${numberId}/answered-by`, {
+    method: "PATCH",
+    json:
+      body.mode === "assistant"
+        ? { mode: "assistant", profile_id: body.profile_id }
+        : { mode: "human" },
+  });
+}
+
+export function useSetAnsweredBy(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { numberId: string } & AnsweredBy) =>
+      patchAnsweredBy(api, vars.numberId, { mode: vars.mode, profile_id: vars.profile_id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: NUMBERS_QUERY_KEY });
+      // The bound flow changed, so any flow list on screen is now stale.
+      qc.invalidateQueries({ queryKey: ["flows"] });
+    },
+  });
+}
 
 export type SearchOut = GeneratedSearchOut & {
   monthly_cost_cents: number | null;

@@ -218,6 +218,45 @@ async def test_already_scored_call_is_not_rescanned(client, session):
     assert row.sentiment == "neutral"  # unchanged by the second pass
 
 
+async def test_an_outcome_row_with_no_sentiment_does_not_suppress_scoring(client, session):
+    """P23b: an AI call's outcome batch (services/agent.py::apply_outcome) can create a
+    CallScore row - disposition, summary, etc. - without ever setting `sentiment`. That
+    row must NOT read as "already scored"; the LLM scorer must still fill in a sentiment
+    for it."""
+    org_id = await _org_id(client, "sc8@example.com", "Org SC8")
+    call = await _terminal_call_with_transcript(session, org_id)
+
+    # Simulate the outcome batch's upsert: a CallScore row already exists for this call,
+    # with a disposition but sentiment still NULL - exactly like apply_outcome() leaves it
+    # when the worker's payload never included a "sentiment" key.
+    set_org_context(session, org_id)
+    session.add(
+        CallScore(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            call_id=call.id,
+            status="done",
+            disposition="answered",
+            sentiment=None,
+        )
+    )
+    await session.commit()
+
+    settings = make_settings(anthropic_api_key="test-anthropic-key")
+    body = '{"sentiment": "positive", "score": 5, "summary": "Happy customer."}'
+    mock = _anthropic_client([_text_reply(body)])
+    async with mock:
+        counts = await scoring.score_pending_calls(session, settings, client=mock, now=FROZEN)
+    assert counts == {"done": 1, "failed": 0, "disabled": 0}
+
+    row = await _score_row(session, org_id, call.id)
+    # The scorer fills in sentiment/score/summary on the SAME row - the outcome's own
+    # disposition is untouched.
+    assert row.sentiment == "positive"
+    assert row.score == 5
+    assert row.disposition == "answered"
+
+
 async def test_openai_is_used_when_only_openai_key_is_configured(client, session):
     org_id = await _org_id(client, "sc7@example.com", "Org SC7")
     call = await _terminal_call_with_transcript(session, org_id)

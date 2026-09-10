@@ -394,7 +394,10 @@ async def test_handoff_publishes_call_handoff_with_room_reason_summary(app_with_
         assert r.status_code == 200, r.text
         event = await asyncio.wait_for(queue.get(), timeout=1)
 
-    assert r.json() == {"published": True}
+    # P23b widened this body with the warm-transfer fields (assigned_user_id,
+    # thread_id, queue_id), all null when the worker named no one. The published
+    # flag is the part this test is about.
+    assert r.json()["published"] is True
     assert event == {
         "type": "call.handoff",
         "call_id": str(call.id),

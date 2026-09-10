@@ -47,12 +47,15 @@ const CAMPAIGN_DRAFT = {
   created_at: new Date().toISOString(),
 };
 
+const ASSISTANTS = [{ id: "p1", name: "Ava" }];
+
 describe("CampaignsPage", () => {
   it("links to the contact lists page", async () => {
     const client = makeStubClient({
       "/api/v1/outbound/campaigns": [],
       "/api/v1/outbound/lists": [LIST_1],
       "/api/v1/numbers": [],
+      "/api/v1/agent/profiles": [],
     });
     renderWithProviders(<CampaignsPage />, client);
 
@@ -77,6 +80,7 @@ describe("CampaignsPage", () => {
       },
       "/api/v1/outbound/lists": [LIST_1],
       "/api/v1/numbers": [NUMBER_1],
+      "/api/v1/agent/profiles": [],
     });
     renderWithProviders(<CampaignsPage />, client);
 
@@ -116,6 +120,7 @@ describe("CampaignsPage", () => {
       "/api/v1/outbound/campaigns": [],
       "/api/v1/outbound/lists": [LIST_1],
       "/api/v1/numbers": [],
+      "/api/v1/agent/profiles": [],
     });
     renderWithProviders(<CampaignsPage />, client);
 
@@ -151,6 +156,7 @@ describe("CampaignsPage", () => {
       "/api/v1/outbound/campaigns": [CAMPAIGN_DRAFT],
       "/api/v1/outbound/lists": [LIST_1],
       "/api/v1/numbers": [NUMBER_1],
+      "/api/v1/agent/profiles": [],
     });
     renderWithProviders(<CampaignsPage />, client);
 
@@ -177,5 +183,189 @@ describe("CampaignsPage", () => {
         true,
       ),
     );
+  });
+
+  it("offers AI calls as a third channel in the new-campaign form", async () => {
+    const client = makeStubClient({
+      "/api/v1/outbound/campaigns": [],
+      "/api/v1/outbound/lists": [LIST_1],
+      "/api/v1/numbers": [],
+      "/api/v1/agent/profiles": [],
+    });
+    renderWithProviders(<CampaignsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New" }));
+    expect(screen.getByRole("radio", { name: "AI calls" })).toBeInTheDocument();
+  });
+
+  it("shows the assistant picker only for the AI calls channel", async () => {
+    const client = makeStubClient({
+      "/api/v1/outbound/campaigns": [],
+      "/api/v1/outbound/lists": [LIST_1],
+      "/api/v1/numbers": [],
+      "/api/v1/agent/profiles": ASSISTANTS,
+    });
+    renderWithProviders(<CampaignsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New" }));
+    expect(screen.queryByLabelText("Assistant")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("radio", { name: "Voice" }));
+    expect(screen.queryByLabelText("Assistant")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("radio", { name: "AI calls" }));
+    expect(await screen.findByLabelText("Assistant")).toBeInTheDocument();
+  });
+
+  it("keeps Create campaign disabled for AI calls until an assistant is selected", async () => {
+    const client = makeStubClient({
+      "/api/v1/outbound/campaigns": [],
+      "/api/v1/outbound/lists": [LIST_1],
+      "/api/v1/numbers": [],
+      "/api/v1/agent/profiles": ASSISTANTS,
+    });
+    renderWithProviders(<CampaignsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New" }));
+    await userEvent.type(screen.getByLabelText("Campaign name"), "AI run");
+    await userEvent.selectOptions(await screen.findByLabelText("Contact list"), "list-1");
+    await userEvent.click(screen.getByRole("radio", { name: "AI calls" }));
+    await userEvent.selectOptions(screen.getByLabelText("Dialer mode"), "power");
+
+    const createButton = screen.getByRole("button", { name: "Create campaign" });
+    expect(createButton).toBeDisabled();
+
+    await userEvent.selectOptions(await screen.findByLabelText("Assistant"), "p1");
+    expect(createButton).not.toBeDisabled();
+  });
+
+  it("creates an AI calls campaign with channel ai_calls and agent_profile_id", async () => {
+    const client = makeStubClient({
+      "/api/v1/outbound/campaigns/camp-1/progress": {
+        campaign_id: "camp-1",
+        status: "draft",
+        counts: {},
+        total: 0,
+      },
+      "/api/v1/outbound/campaigns/camp-1": {
+        ...CAMPAIGN_DRAFT,
+        name: "AI follow-up",
+        channel: "ai_calls",
+        agent_profile_id: "p1",
+      },
+      "/api/v1/outbound/campaigns": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return {
+            ...CAMPAIGN_DRAFT,
+            name: "AI follow-up",
+            channel: "ai_calls",
+            agent_profile_id: "p1",
+          };
+        }
+        return [];
+      },
+      "/api/v1/outbound/lists": [LIST_1],
+      "/api/v1/numbers": [NUMBER_1],
+      "/api/v1/agent/profiles": ASSISTANTS,
+    });
+    renderWithProviders(<CampaignsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New" }));
+    await userEvent.type(screen.getByLabelText("Campaign name"), "AI follow-up");
+    await userEvent.selectOptions(await screen.findByLabelText("Contact list"), "list-1");
+    await userEvent.click(screen.getByRole("radio", { name: "AI calls" }));
+    await userEvent.selectOptions(screen.getByLabelText("Dialer mode"), "power");
+    await userEvent.selectOptions(await screen.findByLabelText("Assistant"), "p1");
+    await userEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+
+    await waitFor(() =>
+      expect(
+        client.calls.some(
+          (c) => c.path === "/api/v1/outbound/campaigns" && c.init.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    const createCall = client.calls.find(
+      (c) => c.path === "/api/v1/outbound/campaigns" && c.init.method === "POST",
+    );
+    expect(createCall?.init.json).toMatchObject({
+      name: "AI follow-up",
+      channel: "ai_calls",
+      agent_profile_id: "p1",
+      dialer_mode: "power",
+    });
+  });
+
+  it("still omits agent_profile_id from a Voice campaign POST body", async () => {
+    const client = makeStubClient({
+      "/api/v1/outbound/campaigns/camp-1/progress": {
+        campaign_id: "camp-1",
+        status: "draft",
+        counts: {},
+        total: 0,
+      },
+      "/api/v1/outbound/campaigns/camp-1": {
+        ...CAMPAIGN_DRAFT,
+        name: "Voice run",
+        channel: "voice",
+      },
+      "/api/v1/outbound/campaigns": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { ...CAMPAIGN_DRAFT, name: "Voice run", channel: "voice" };
+        }
+        return [];
+      },
+      "/api/v1/outbound/lists": [LIST_1],
+      "/api/v1/numbers": [NUMBER_1],
+      "/api/v1/agent/profiles": ASSISTANTS,
+    });
+    renderWithProviders(<CampaignsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New" }));
+    await userEvent.type(screen.getByLabelText("Campaign name"), "Voice run");
+    await userEvent.selectOptions(await screen.findByLabelText("Contact list"), "list-1");
+    await userEvent.click(screen.getByRole("radio", { name: "Voice" }));
+    await userEvent.selectOptions(screen.getByLabelText("Dialer mode"), "power");
+    await userEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+
+    await waitFor(() =>
+      expect(
+        client.calls.some(
+          (c) => c.path === "/api/v1/outbound/campaigns" && c.init.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    const createCall = client.calls.find(
+      (c) => c.path === "/api/v1/outbound/campaigns" && c.init.method === "POST",
+    );
+    const body = createCall?.init.json as Record<string, unknown>;
+    expect(body).toMatchObject({ channel: "voice", dialer_mode: "power" });
+    expect(body).not.toHaveProperty("agent_profile_id");
+  });
+
+  it("renders an ai_calls campaign as AI calls in the list", async () => {
+    const aiCampaign = {
+      ...CAMPAIGN_DRAFT,
+      name: "AI re-engagement",
+      channel: "ai_calls",
+      agent_profile_id: "p1",
+    };
+    const client = makeStubClient({
+      "/api/v1/outbound/campaigns/camp-1/progress": () => ({
+        campaign_id: "camp-1",
+        status: "draft",
+        counts: {},
+        total: 0,
+      }),
+      "/api/v1/outbound/campaigns/camp-1": aiCampaign,
+      "/api/v1/outbound/campaigns": [aiCampaign],
+      "/api/v1/outbound/lists": [LIST_1],
+      "/api/v1/numbers": [NUMBER_1],
+      "/api/v1/agent/profiles": ASSISTANTS,
+    });
+    renderWithProviders(<CampaignsPage />, client);
+
+    expect(await screen.findByText("AI calls")).toBeInTheDocument();
+    expect(screen.queryByText("ai_calls")).not.toBeInTheDocument();
   });
 });

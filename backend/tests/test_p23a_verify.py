@@ -52,14 +52,21 @@ OUR = "+12145550100"
 THEIRS = "+19725550199"
 
 
-def worker_token(*, key=LK_KEY, secret=LK_SECRET, sub="agent-worker", exp_offset=3600) -> str:
+def worker_token(
+    *, key=LK_KEY, secret=LK_SECRET, sub="agent-worker", exp_offset=3600, **extra
+) -> str:
     return jwt.encode(
-        {"iss": key, "sub": sub, "exp": int(time.time()) + exp_offset}, secret, algorithm="HS256"
+        {"iss": key, "sub": sub, "exp": int(time.time()) + exp_offset, **extra},
+        secret,
+        algorithm="HS256",
     )
 
 
-def worker_headers() -> dict:
-    return {"Authorization": f"Bearer {worker_token()}"}
+def worker_headers(**extra) -> dict:
+    """P23b/D46: GET /agent/config/{call_id} now requires a token BOUND to that call and
+    org - pass call_id=/org_id= for that seam. Every other worker seam still takes the
+    plain global token this returns by default."""
+    return {"Authorization": f"Bearer {worker_token(**extra)}"}
 
 
 def _verify_settings(**overrides):
@@ -253,7 +260,10 @@ async def test_no_ai_key_appears_in_any_response_body_anywhere(app_v, session):
 
     call_id = await _insert_call(session, org_id)
     bodies["worker_config_no_flag"] = (
-        await client.get(f"/api/v1/agent/config/{call_id}", headers=worker_headers())
+        await client.get(
+            f"/api/v1/agent/config/{call_id}",
+            headers=worker_headers(call_id=str(call_id), org_id=str(org_id)),
+        )
     ).text
 
     # Audit detail — the provider routes write audit rows; they must record field NAMES only.
@@ -296,7 +306,10 @@ async def test_worker_config_keys_need_both_the_flag_and_the_worker_token(engine
             session, settings, org_id, kind="tts", provider="elevenlabs", secret="el-1"
         )
 
-        off = await client.get(f"/api/v1/agent/config/{call_id}", headers=worker_headers())
+        off = await client.get(
+            f"/api/v1/agent/config/{call_id}",
+            headers=worker_headers(call_id=str(call_id), org_id=str(org_id)),
+        )
         assert off.status_code == 200, off.text
         assert off.json()["keys"] is None
         assert org_secret not in off.text
@@ -315,7 +328,10 @@ async def test_worker_config_keys_need_both_the_flag_and_the_worker_token(engine
             row.credentials_encrypted = credential_svc.encrypt(settings2, {"api_key": plain})
         await session.commit()
 
-        on = await client2.get(f"/api/v1/agent/config/{call_id}", headers=worker_headers())
+        on = await client2.get(
+            f"/api/v1/agent/config/{call_id}",
+            headers=worker_headers(call_id=str(call_id), org_id=str(org_id)),
+        )
         assert on.status_code == 200, on.text
         assert on.json()["keys"]["llm"] == org_secret
 
@@ -365,7 +381,10 @@ async def test_byok_config_never_borrows_another_orgs_key(engine, session):
             session, settings, org_a_id, kind="tts", provider="elevenlabs", secret="a-el"
         )
 
-        cfg = await client.get(f"/api/v1/agent/config/{call_a}", headers=worker_headers())
+        cfg = await client.get(
+            f"/api/v1/agent/config/{call_a}",
+            headers=worker_headers(call_id=str(call_a), org_id=str(org_a_id)),
+        )
         assert cfg.status_code == 200, cfg.text
         body = cfg.json()
         assert b_secret not in cfg.text
@@ -406,7 +425,10 @@ async def test_byok_config_never_hands_one_vendors_key_to_another(engine, sessio
             session, settings, org_id, kind="tts", provider="elevenlabs", secret="v-el"
         )
 
-        cfg = await client.get(f"/api/v1/agent/config/{call_id}", headers=worker_headers())
+        cfg = await client.get(
+            f"/api/v1/agent/config/{call_id}",
+            headers=worker_headers(call_id=str(call_id), org_id=str(org_id)),
+        )
         assert cfg.status_code == 200, cfg.text
         body = cfg.json()
         assert body["llm"]["provider"] == "anthropic"

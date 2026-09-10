@@ -33,6 +33,7 @@ from app.models.callflow import (
 )
 from app.models.messaging import OrgNumber
 from app.models.voice import Call
+from app.services import agent as agent_svc
 from app.services import audit as audit_svc
 from app.services import calls as calls_svc
 from app.services import flows as flows_svc
@@ -127,8 +128,21 @@ async def create_flow_version(
 
 @router.post("/flows/{flow_id}/activate", response_model=FlowOut)
 async def activate_flow(
-    flow_id: uuid.UUID, ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))]
+    flow_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
 ) -> FlowOut:
+    flow = await flows_svc.get_flow(ctx.session, flow_id)
+    for profile_id in flows_svc.assistant_profile_ids(flow.definition):
+        profile = await agent_svc.get_profile(ctx.session, ctx.org.id, uuid.UUID(profile_id))
+        readiness = await agent_svc.go_live_readiness(
+            ctx.session, request.app.state.settings, org=ctx.org, profile=profile
+        )
+        if not readiness["ready"]:
+            raise ValidationFailedError(
+                f"{profile.name} is not ready to answer calls yet. Finish setting it up first."
+            )
+
     flow = await flows_svc.activate_flow(ctx.session, ctx.org.id, flow_id)
     audit_svc.record(
         ctx.session,

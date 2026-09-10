@@ -10,6 +10,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchAuthedBlob, type ApiClient } from "@/api/client";
+import { AiCallCard } from "@/components/conversations/AiCallCard";
 import {
   fetchConversationTimeline,
   type CallTimelineItem,
@@ -166,7 +167,12 @@ function CallRecordingPlayer({
   );
 }
 
+/** P23b: a call an assistant took reads nothing like a human call - it has a summary, an
+ * outcome and a transcript worth opening - so it gets its own card. The plain call card
+ * below is untouched, and the human call path is unchanged. */
 function CallTimelineItemView({ item, api }: { item: CallTimelineItem; api: ApiClient }) {
+  if (item.assistant) return <AiCallCard item={{ ...item, assistant: item.assistant }} api={api} />;
+
   const failed = Boolean(item.failure_detail) || item.status === "failed";
   const missed = item.status === "missed";
   const label = failed

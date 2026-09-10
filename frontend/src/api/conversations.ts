@@ -1,5 +1,8 @@
 import type { ApiClient } from "./client";
 import type { NoteMention, Sla } from "./inboxPro";
+// P23b: declared in api/assistantOps.ts so THIS file takes a two-line diff - another phase
+// is rewriting it in parallel and the integrator has to merge by hand.
+import type { AssistantCallSummary } from "./assistantOps";
 
 export type InboxRole = "admin" | "member" | "viewer";
 
@@ -138,6 +141,8 @@ export interface CallTimelineItem {
   // messages - e.g. "Failed over to Telnyx - Bandwidth unavailable", or "Via your calling
   // trunk" for LiveKit human calls). Null when smart routing has nothing to say.
   route_reason: string | null;
+  /** P23b: present and non-null only when an assistant took this call. */
+  assistant?: AssistantCallSummary | null;
 }
 
 export interface VoicemailTimelineItem {

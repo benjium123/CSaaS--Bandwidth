@@ -21,8 +21,11 @@ import {
   OutcomesTab,
   ToolsTab,
 } from "@/components/assistants/AssistantConfigTabs";
+import { AssistantAnalyticsPanel } from "@/components/assistants/AssistantAnalytics";
+import { CallMePanel } from "@/components/assistants/CallMePanel";
 import { KnowledgeTab } from "@/components/assistants/KnowledgeTab";
 import { SimulatorDrawer } from "@/components/assistants/SimulatorDrawer";
+import { VoicePreviewButton } from "@/components/assistants/VoicePreviewButton";
 import {
   Button,
   EmptyState,
@@ -390,14 +393,12 @@ export function AssistantsBuilder() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* P23b wires the preview endpoint. Until then this control is intentionally
-              inert: it must not request anything. */}
-          <Button type="button" disabled aria-label="Preview voice">
-            Preview voice
-          </Button>
-          <p className="text-xs text-muted-foreground">Playing a sample is coming soon.</p>
-        </div>
+        {/* The sample is generated from the SAVED voice provider but the TYPED voice id, so
+            trying a different voice does not need a save first. */}
+        <VoicePreviewButton
+          ttsProvider={selected?.tts_provider ?? ""}
+          voiceId={form.voice_id}
+        />
 
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={!form.name.trim() || saveMutation.isPending}>
@@ -666,6 +667,12 @@ export function AssistantsBuilder() {
           />
         )}
 
+        {/* A real call is the only way to judge a voice assistant, so it sits above the
+            settings rather than buried in a tab. */}
+        <div className="mt-4 rounded-md border border-border p-3">
+          <CallMePanel assistantId={selectedId} />
+        </div>
+
         <div className="mt-4">
           <BuilderSettingsTabs
             id="assistant-builder"
@@ -778,6 +785,12 @@ export function AssistantsBuilder() {
               )}
             </div>
           </BuilderSettingsTabs>
+        </div>
+
+        {/* Org-wide, not per-assistant: the endpoint has no assistant filter, and the
+            heading says so. */}
+        <div className="mt-8">
+          <AssistantAnalyticsPanel />
         </div>
 
         <SimulatorDrawer

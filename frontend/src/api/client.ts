@@ -124,3 +124,42 @@ export async function fetchAuthedBlob(api: ApiClient, path: string): Promise<Blo
   if (!res.ok) throw new Error(`Failed to load recording (${res.status})`);
   return res.blob();
 }
+
+/**
+ * P23b: the voice sample is the first endpoint that takes a JSON body and answers with
+ * audio, which neither `request` (always parses JSON) nor `fetchAuthedBlob` (GET only) can
+ * do. Additive on purpose — no existing caller changes.
+ *
+ * A failure body IS json, so it is read for the server's own sentence before falling back
+ * to the status code; a customer pressing "Preview voice" with no voice connected should be
+ * told that, not "Request failed with 422".
+ */
+export async function postAuthedBlob(
+  api: ApiClient,
+  path: string,
+  json: unknown,
+): Promise<Blob> {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (api.auth.token) headers.set("Authorization", `Bearer ${api.auth.token}`);
+  if (api.auth.orgId) headers.set("X-Org-Id", api.auth.orgId);
+  const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(json) });
+  if (!res.ok) {
+    let message = `Request failed with ${res.status}`;
+    try {
+      const payload = JSON.parse(await res.text()) as {
+        error?: { message?: string };
+        detail?: unknown;
+        message?: unknown;
+      };
+      const candidate =
+        payload?.error?.message ??
+        (typeof payload?.detail === "string" ? payload.detail : undefined) ??
+        (typeof payload?.message === "string" ? payload.message : undefined);
+      if (candidate) message = candidate;
+    } catch {
+      /* a non-JSON error body is not worth failing over - keep the status sentence */
+    }
+    throw new ApiError(res.status, "http_error", message);
+  }
+  return res.blob();
+}

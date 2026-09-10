@@ -104,7 +104,16 @@ async def _find_candidates(
     session: AsyncSession, *, limit: int, now: datetime | None = None
 ) -> list[Call]:
     moment = now or _now()
-    already_scored = sa.select(CallScore.call_id)
+    # P23b: a CallScore row alone must not suppress LLM sentiment scoring - an AI call's
+    # outcome batch can create one (disposition/summary/etc.) without ever setting
+    # `sentiment`. Only a row that already HAS a sentiment is "already scored"; a row with
+    # sentiment still NULL stays a candidate so the LLM scorer can fill it in. `failed` rows
+    # are excluded here too - unconditionally, sentiment or not - because they are handled
+    # exclusively by the `retryable` query below; without this they would double-match both
+    # queries and get scored twice in the same pass.
+    already_scored = sa.select(CallScore.call_id).where(
+        sa.or_(CallScore.sentiment.is_not(None), CallScore.status == "failed")
+    )
     has_transcript = sa.select(CallTranscriptSegment.call_id).distinct()
 
     fresh = (

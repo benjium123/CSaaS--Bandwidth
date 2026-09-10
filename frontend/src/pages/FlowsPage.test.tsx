@@ -18,6 +18,7 @@ async function waitForCall(
 }
 
 const EMPTY_LISTS = {
+  "/api/v1/agent/profiles": [],
   "/api/v1/business-hours": [],
   "/api/v1/ring-groups": [],
   "/api/v1/queues": [],
@@ -323,5 +324,106 @@ describe("FlowsPage", () => {
     await userEvent.click(removeButton);
 
     expect(screen.queryByLabelText("Option digit 1 for node1")).not.toBeInTheDocument();
+  });
+
+  it("offers the assistant node type in the node type select", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": [],
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+
+    await screen.findByLabelText("Node type for node1");
+    expect(screen.getByRole("option", { name: "assistant" })).toBeInTheDocument();
+  });
+
+  it("shows assistant names from the agent profiles API when picking the assistant node", async () => {
+    const client = makeStubClient({
+      ...EMPTY_LISTS,
+      "/api/v1/flows": [],
+      "/api/v1/agent/profiles": [
+        { id: "p1", name: "Ava" },
+        { id: "p2", name: "Ben" },
+      ],
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.selectOptions(screen.getByLabelText("Node type for node1"), "assistant");
+
+    expect(await screen.findByLabelText("Assistant for node1")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Ava" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Ben" })).toBeInTheDocument();
+  });
+
+  it("tells the user when no assistants exist for an assistant node", async () => {
+    const client = makeStubClient({
+      "/api/v1/flows": [],
+      ...EMPTY_LISTS,
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.selectOptions(screen.getByLabelText("Node type for node1"), "assistant");
+
+    expect(
+      await screen.findByText(
+        "You have no assistants yet. Create one in Settings, then come back here.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("The assistant answers and handles the call from this point on."),
+    ).toBeInTheDocument();
+  });
+
+  it("saves an assistant node as {type:'assistant', profile_id}", async () => {
+    const client = makeStubClient({
+      ...EMPTY_LISTS,
+      "/api/v1/flows": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return CREATED_FLOW;
+        return [];
+      },
+      "/api/v1/agent/profiles": [{ id: "p1", name: "Ava" }],
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New flow" }));
+    await userEvent.type(screen.getByLabelText("Flow name"), "Sales IVR");
+    await userEvent.click(screen.getByRole("button", { name: "Add node" }));
+    await userEvent.selectOptions(screen.getByLabelText("Node type for node1"), "assistant");
+    await userEvent.selectOptions(await screen.findByLabelText("Assistant for node1"), "p1");
+    await userEvent.selectOptions(screen.getByLabelText("Entry node"), "node1");
+    await userEvent.click(screen.getByRole("button", { name: "Create flow" }));
+
+    const createCall = await waitForCall(client, "/api/v1/flows", "POST");
+    const json = createCall.init.json as { definition: { nodes: Record<string, unknown> } };
+    expect(json.definition.nodes.node1).toEqual({ type: "assistant", profile_id: "p1" });
+  });
+
+  it("round-trips an existing assistant node with the chosen assistant preselected", async () => {
+    const flowWithAssistant = {
+      ...FLOW_V1,
+      definition: {
+        entry: "node1",
+        nodes: { node1: { type: "assistant", profile_id: "p1" } },
+      },
+    };
+    const client = makeStubClient({
+      ...EMPTY_LISTS,
+      "/api/v1/flows/by-name/Sales/versions": [flowWithAssistant],
+      "/api/v1/flows": [flowWithAssistant],
+      "/api/v1/agent/profiles": [{ id: "p1", name: "Ava" }],
+    });
+    renderWithProviders(<FlowsPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Sales/ }));
+
+    const picker = await screen.findByLabelText("Assistant for node1");
+    expect(picker).toHaveValue("p1");
   });
 });

@@ -19,10 +19,11 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import AgentSmsTurn
-from app.services import spend as spend_svc
 from app.models.messaging import Message
 from app.models.outbound import OutboundCampaign
+from app.models.platform import CallScore
 from app.models.voice import TERMINAL_CALL_STATUSES, Call
+from app.services import spend as spend_svc
 
 #: `app.models.numbers.Campaign` is the unrelated 10DLC registration record - campaign
 #: PROGRESS here means `OutboundCampaign` (P11).
@@ -157,6 +158,62 @@ async def _ai_series(
         if status == "handoff":
             bucket["handoffs"] += n
     return [by_day[key] for key in sorted(by_day)]
+
+
+async def assistant_summary(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    start: datetime,
+    end: datetime,
+    profile_id: uuid.UUID | None = None,
+) -> dict:
+    """AI-call totals for the window [start, end). TEST calls are excluded everywhere -
+    a "Call me" test must never move a customer's numbers.
+
+    ``profile_id`` narrows the window to ONE assistant; a call whose outcome row names no
+    assistant is then excluded, which is what a per-assistant tile should show."""
+    answered_expr = sa.case((Call.answered_at.is_not(None), 1), else_=0)
+    handoff_expr = sa.case((CallScore.handoff.is_(True), 1), else_=0)
+    booked_expr = sa.case((CallScore.booked.is_(True), 1), else_=0)
+
+    stmt = (
+        sa.select(
+            sa.func.count(Call.id).label("calls"),
+            sa.func.coalesce(sa.func.sum(Call.duration_seconds), 0).label("seconds"),
+            sa.func.coalesce(sa.func.sum(answered_expr), 0).label("answered"),
+            sa.func.coalesce(sa.func.sum(handoff_expr), 0).label("handoffs"),
+            sa.func.coalesce(sa.func.sum(booked_expr), 0).label("booked"),
+            sa.func.avg(Call.duration_seconds).label("avg_duration_seconds"),
+        )
+        .select_from(Call)
+        .join(CallScore, CallScore.call_id == Call.id)
+        .where(
+            Call.org_id == org_id,
+            CallScore.org_id == org_id,
+            CallScore.is_test.is_(False),
+            Call.created_at >= start,
+            Call.created_at < end,
+        )
+    )
+    if profile_id is not None:
+        stmt = stmt.where(CallScore.profile_id == profile_id)
+    row = (await session.execute(stmt)).one()
+
+    calls = int(row.calls or 0)
+    seconds = float(row.seconds or 0)
+    return {
+        "calls": calls,
+        "minutes": round(seconds / 60, 1),
+        "answer_rate": (int(row.answered) / calls) if calls else None,
+        "handoff_rate": (int(row.handoffs) / calls) if calls else None,
+        "booked": int(row.booked or 0),
+        "avg_duration_seconds": float(row.avg_duration_seconds)
+        if row.avg_duration_seconds is not None
+        else None,
+        # Per-call cost arrives with P24's ai_usage_events; there is no source to sum yet.
+        "cost_micros": None,
+    }
 
 
 async def overview(

@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import type { ApiClient } from "@/api/client";
 import {
+  useAgentProfiles,
   useAssignCampaign,
   useCampaigns,
   useCarrierCatalog,
@@ -18,11 +19,13 @@ import {
   type ProviderName,
 } from "@/api/providers";
 import {
+  answeredBy,
   formatMonthlyCost,
   formatSetupCost,
   useAvailableNumbers,
   useNumbers,
   useOrderNumber,
+  useSetAnsweredBy,
   type AvailableNumberFilters,
   type NumberOut,
   type SearchOut,
@@ -140,6 +143,9 @@ export function NumbersPage() {
   const { data: numbers, isLoading, isError, error: numbersError, refetch: refetchNumbers } =
     useNumbers(api);
   const { data: campaigns } = useCampaigns(api);
+  // Same ["agent-profiles"] key the Assistants builder uses, so the two stay in step.
+  const { data: assistants } = useAgentProfiles(api);
+  const setAnsweredBy = useSetAnsweredBy(api);
   const campaignName = React.useCallback(
     (id: string | null | undefined) => campaigns?.find((c) => c.id === id)?.name ?? null,
     [campaigns],
@@ -241,8 +247,10 @@ export function NumbersPage() {
                 <thead>
                   <tr className="border-b border-border text-left text-xs text-muted-foreground">
                     <th className="px-3 py-2 font-medium">Number</th>
-                    {/* Inbox is the only routing column we can honestly show today; human-vs-assistant routing is Phase 23. */}
                     <th className="px-3 py-2 font-medium">Inbox</th>
+                    {/* P23b: who picks up. Writing this binds a one-node flow to the number
+                        (PATCH /numbers/{id}/answered-by); "Human" restores the seeded ring flow. */}
+                    <th className="px-3 py-2 font-medium">Answered by</th>
                     <th className="px-3 py-2 font-medium">Type</th>
                     <th className="px-3 py-2 font-medium">Provider</th>
                     <th className="px-3 py-2 font-medium">Cost</th>
@@ -268,6 +276,13 @@ export function NumbersPage() {
                       number={n}
                       campaignName={campaignName(n.campaign_id)}
                       campaigns={campaigns ?? []}
+                      assistants={assistants ?? []}
+                      onAnsweredByChange={(mode, profileId) =>
+                        setAnsweredBy.mutate({ numberId: n.id, mode, profile_id: profileId })
+                      }
+                      answeredByPending={
+                        setAnsweredBy.isPending && setAnsweredBy.variables?.numberId === n.id
+                      }
                       spendMicros={spendMicrosByNumberId(n.id, n.carrier)}
                       spendUnavailable={spendSummaryQuery.isLoading || spendSummaryQuery.isError}
                       onAssign={(campaignId) => assign(n.id, campaignId)}
@@ -292,6 +307,7 @@ export function NumbersPage() {
                 InboxSettingsPage (P16/P17); not shared since neither exports it. */}
             <MutationStatus pending={releaseNumber.isPending} error={releaseNumber.error} pendingLabel="Saving…" />
             <MutationStatus pending={assignCampaign.isPending} error={assignCampaign.error} pendingLabel="Saving…" />
+            <MutationStatus pending={setAnsweredBy.isPending} error={setAnsweredBy.error} pendingLabel="Saving…" />
           </div>
         </div>
       </Section>
@@ -305,6 +321,9 @@ function NumberRow({
   number,
   campaignName,
   campaigns,
+  assistants,
+  onAnsweredByChange,
+  answeredByPending,
   spendMicros,
   spendUnavailable,
   onAssign,
@@ -316,6 +335,9 @@ function NumberRow({
   number: NumberOut;
   campaignName: string | null;
   campaigns: { id: string; name: string }[];
+  assistants: { id: string; name: string }[];
+  onAnsweredByChange: (mode: "human" | "assistant", profileId: string | null) => void;
+  answeredByPending: boolean;
   spendMicros: number | undefined;
   spendUnavailable: boolean;
   onAssign: (campaignId: string) => void;
@@ -325,6 +347,11 @@ function NumberRow({
   releasePending: boolean;
 }) {
   const released = number.status === "released";
+  const current = answeredBy(number);
+  const assistantName =
+    current.mode === "assistant"
+      ? (assistants.find((a) => a.id === current.profile_id)?.name ?? null)
+      : null;
   const status = numberStatusPill(number.status);
   const providerLabel = providerDisplayLabel(number);
 
@@ -333,6 +360,40 @@ function NumberRow({
       <td className="px-3 py-2 text-foreground">{formatPhone(number.e164)}</td>
       <td className="px-3 py-2 text-xs text-muted-foreground">
         {number.inbox_name ?? "Not in an inbox"}
+      </td>
+      <td className="px-3 py-2">
+        {/* One control, one value: "A person" plus one entry per assistant. The value is the
+            assistant's id, and the empty string means a person - so the two modes the wire
+            has cannot get out of step with each other on screen. */}
+        <Select
+          aria-label={`Answered by for ${number.e164}`}
+          className="h-8 px-2 text-xs text-foreground"
+          value={current.mode === "assistant" ? (current.profile_id ?? "") : ""}
+          onChange={(e) =>
+            e.target.value
+              ? onAnsweredByChange("assistant", e.target.value)
+              : onAnsweredByChange("human", null)
+          }
+          disabled={answeredByPending || released}
+        >
+          <option value="">A person</option>
+          {assistants.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+          {/* An assistant that has been deleted is still what answers this number until
+              somebody changes it. Without this option the select would fall back to the
+              first one and silently claim a person answers - a lie about live routing. */}
+          {current.mode === "assistant" && current.profile_id && !assistantName && (
+            <option value={current.profile_id}>An assistant that is no longer here</option>
+          )}
+        </Select>
+        {current.mode === "assistant" && !assistantName && (
+          <span className="mt-1 block text-[11px] text-muted-foreground">
+            An assistant that is no longer here answers this number.
+          </span>
+        )}
       </td>
       <td className="px-3 py-2 text-xs text-muted-foreground">{number.number_type}</td>
       <td className="px-3 py-2">

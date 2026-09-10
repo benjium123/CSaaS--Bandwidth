@@ -31,6 +31,7 @@ from app.models import (
     OutboundSend,
     User,
 )
+from app.services import agent as agent_svc
 from app.services import audit as audit_svc
 from app.services import dialer as dialer_svc
 from app.services import list_import as list_import_svc
@@ -325,6 +326,7 @@ class CampaignIn(BaseModel):
     local_presence: bool = False
     max_attempts: int = Field(default=2, ge=1, le=10)
     retry_backoff_minutes: int = Field(default=240, ge=1)
+    agent_profile_id: uuid.UUID | None = None
 
 
 class CampaignOut(BaseModel):
@@ -344,6 +346,7 @@ class CampaignOut(BaseModel):
     local_presence: bool
     max_attempts: int
     retry_backoff_minutes: int
+    agent_profile_id: uuid.UUID | None
     created_at: datetime
 
 
@@ -365,6 +368,7 @@ def _campaign_out(c: OutboundCampaign) -> CampaignOut:
         local_presence=c.local_presence,
         max_attempts=c.max_attempts,
         retry_backoff_minutes=c.retry_backoff_minutes,
+        agent_profile_id=c.agent_profile_id,
         created_at=c.created_at,
     )
 
@@ -372,6 +376,7 @@ def _campaign_out(c: OutboundCampaign) -> CampaignOut:
 @router.post("/campaigns", response_model=CampaignOut, status_code=201)
 async def create_campaign(
     payload: CampaignIn,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("campaigns:manage"))],
     user: Annotated[User, Depends(get_current_user)],
 ) -> CampaignOut:
@@ -380,8 +385,22 @@ async def create_campaign(
     contact_list = await ctx.session.get(ContactList, payload.list_id)
     if contact_list is None:
         raise NotFoundError("List not found")
-    if payload.channel == "voice" and payload.dialer_mode not in DIALER_MODES:
+    if payload.channel in ("voice", "ai_calls") and payload.dialer_mode not in DIALER_MODES:
         raise ValidationFailedError(f"dialer_mode must be one of: {', '.join(DIALER_MODES)}")
+
+    if payload.channel == "ai_calls":
+        if payload.agent_profile_id is None:
+            raise ValidationFailedError("Pick which assistant should make these calls.")
+        profile = await agent_svc.get_profile(ctx.session, ctx.org.id, payload.agent_profile_id)
+        readiness = await agent_svc.go_live_readiness(
+            ctx.session, request.app.state.settings, org=ctx.org, profile=profile
+        )
+        if not readiness["ready"]:
+            raise ValidationFailedError(
+                f"{profile.name} is not ready to answer calls yet. Finish setting it up first."
+            )
+    elif payload.agent_profile_id is not None:
+        raise ValidationFailedError("Only an AI calling campaign can use an assistant.")
 
     campaign = await outbound_svc.create_campaign(
         ctx.session,
@@ -400,6 +419,7 @@ async def create_campaign(
         local_presence=payload.local_presence,
         max_attempts=payload.max_attempts,
         retry_backoff_minutes=payload.retry_backoff_minutes,
+        agent_profile_id=payload.agent_profile_id,
         created_by=user.id,
     )
     return _campaign_out(campaign)
@@ -446,7 +466,7 @@ async def start_campaign(
     campaign = await ctx.session.get(OutboundCampaign, campaign_id)
     if campaign is None:
         raise NotFoundError("Campaign not found")
-    if campaign.channel == "voice":
+    if campaign.channel in ("voice", "ai_calls"):
         campaign = await dialer_svc.start_dial_campaign(ctx.session, campaign)
     else:
         campaign = await outbound_svc.start_campaign(ctx.session, campaign)
@@ -565,7 +585,7 @@ async def campaign_progress(
     campaign = await ctx.session.get(OutboundCampaign, campaign_id)
     if campaign is None:
         raise NotFoundError("Campaign not found")
-    model = DialAttempt if campaign.channel == "voice" else OutboundSend
+    model = DialAttempt if campaign.channel in ("voice", "ai_calls") else OutboundSend
     stmt = (
         sa.select(model.status, sa.func.count())
         .where(model.campaign_id == campaign_id)

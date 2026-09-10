@@ -272,8 +272,13 @@ async def test_webhook_tool_secret_never_leaves_the_server(builder, session):
     assert listed_tools[0]["secret"] == agent_svc.REDACTED_SECRET
 
     call_id = await _insert_call(session, org_id)
+    # P23b/D46: the config seam takes a token BOUND to this call and org. A global
+    # worker token is refused there now (it still works on transcript/outcome).
     config = await client.get(
-        f"/api/v1/agent/config/{call_id}", headers=worker_headers(worker_token())
+        f"/api/v1/agent/config/{call_id}",
+        headers=worker_headers(
+            worker_token(call_id=str(call_id), org_id=str(org_id))
+        ),
     )
     assert config.status_code == 200, config.text
     assert secret not in config.text
@@ -650,7 +655,8 @@ async def test_worker_config_hides_keys_unless_the_flag_is_on(engine, session):
             ],
         )
         call_id = await _insert_call(session, org_id)
-        wh = worker_headers(worker_token())
+        # P23b/D46: bound to this call and org, not the global worker identity.
+        wh = worker_headers(worker_token(call_id=str(call_id), org_id=str(org_id)))
 
         no_flag = await client.get(f"/api/v1/agent/config/{call_id}", headers=wh)
         assert no_flag.status_code == 200, no_flag.text
@@ -671,7 +677,10 @@ async def test_worker_config_hides_keys_unless_the_flag_is_on(engine, session):
         elevenlabs_api_key="env-eleven",
     ) as (client2, _):
         with_flag = await client2.get(
-            f"/api/v1/agent/config/{call_id}", headers=worker_headers(worker_token())
+            f"/api/v1/agent/config/{call_id}",
+            headers=worker_headers(
+                worker_token(call_id=str(call_id), org_id=str(org_id))
+            ),
         )
         assert with_flag.status_code == 200, with_flag.text
         body2 = with_flag.json()

@@ -53,6 +53,10 @@ log = structlog.get_logger("dialer")
 DIALER_TICK_BATCH = 25
 STALE_DIALING_MINUTES = 5
 CAP_WINDOW_HOURS = 26
+#: Both channels the DIALER owns. "ai_calls" dials exactly like "voice" - same claim,
+#: same compliance precheck, same pacing, same retry policy - and differs only in who
+#: talks: an assistant worker is dispatched into the room instead of ringing a person.
+DIALER_CHANNELS = ("voice", "ai_calls")
 #: 6.16: enqueue_dial_rows commits (and frees its identity map) every this many rows.
 ENQUEUE_BATCH = 500
 
@@ -119,8 +123,8 @@ async def enqueue_dial_rows(session: AsyncSession, campaign: OutboundCampaign) -
 async def start_dial_campaign(
     session: AsyncSession, campaign: OutboundCampaign
 ) -> OutboundCampaign:
-    if campaign.channel != "voice":
-        raise ValidationFailedError("start_dial_campaign is only for channel='voice' campaigns")
+    if campaign.channel not in DIALER_CHANNELS:
+        raise ValidationFailedError("This campaign is not a calling campaign.")
     if campaign.status not in ("draft", "scheduled", "paused"):
         raise ConflictError(f"Cannot start a campaign in status {campaign.status!r}")
     if campaign.dialer_mode not in DIALER_MODES:
@@ -168,6 +172,8 @@ async def _start_call(
     to_e164: str,
     from_e164: str,
     identity: str,
+    agent_profile_id: uuid.UUID | None = None,
+    is_test: bool = False,
 ) -> DialOutcome:
     """Module-level indirection (DR-13). Production wraps
     ``voice_plane.service.start_room_call`` and waits for its background dial task to
@@ -189,6 +195,17 @@ async def _start_call(
     # no ranked plan to walk and nothing to explain about carrier choice. Record the one
     # honest sentence for this path and skip ranking entirely (phase-21-plan design 3).
     call.route_reason = smart_routing.LIVEKIT_TRUNK_REASON
+    if agent_profile_id is not None:
+        call.extra = {
+            **(call.extra or {}),
+            "assistant": {"profile_id": str(agent_profile_id), "is_test": bool(is_test)},
+        }
+        # The worker asks for its config as soon as it joins the room, so this marker
+        # must be committed before the dial task is awaited.
+        await session.commit()
+        from app.services import assistant_dispatch
+
+        await assistant_dispatch.dispatch_into_room(session, api, settings, call)
     # 3.9: await only THIS call's own dial task, not the test-only global set - waiting
     # on every in-flight dial serializes concurrent calls on each other.
     await voice_plane_svc.wait_for_pending_dial_task(call.id)
@@ -209,7 +226,7 @@ async def _running_voice_campaigns(
     stmt = (
         sa.select(OutboundCampaign)
         .where(
-            OutboundCampaign.channel == "voice",
+            OutboundCampaign.channel.in_(DIALER_CHANNELS),
             sa.or_(
                 OutboundCampaign.status == "running",
                 sa.and_(
@@ -423,8 +440,8 @@ async def dial_next(
     dials it, so nothing would ever get through. Claims and dials exactly ONE due row,
     running the SAME compliance precheck and outcome mapping as every other mode - a
     batch-of-one, not a parallel implementation. Returns None when nothing was due."""
-    if campaign.channel != "voice":
-        raise ValidationFailedError("dial_next is only for channel='voice' campaigns")
+    if campaign.channel not in DIALER_CHANNELS:
+        raise ValidationFailedError("This campaign is not a calling campaign.")
     if campaign.status != "running":
         raise ConflictError(f"Cannot dial on a campaign in status {campaign.status!r}")
 
@@ -459,6 +476,14 @@ async def dial_next(
     row.status = "dialing"
     await session.commit()
 
+    # DR-13: existing voice tests replace _start_call with a fake whose signature has no
+    # agent_profile_id keyword - pass it only for an ai_calls campaign so plain voice
+    # campaigns continue to call the seam exactly as before.
+    assistant_kwargs = (
+        {"agent_profile_id": campaign.agent_profile_id}
+        if campaign.channel == "ai_calls"
+        else {}
+    )
     outcome = await _start_call(
         session,
         settings,
@@ -468,6 +493,7 @@ async def dial_next(
         to_e164=row.e164,
         from_e164=from_e164,
         identity=f"dialer-{row.id}",
+        **assistant_kwargs,
     )
     _apply_outcome(row, outcome, campaign, moment)
     await session.commit()
@@ -631,6 +657,14 @@ async def dialer_tick(
             eligible.append(row)
 
         if eligible:
+            # DR-13: the injectable dial seam. Existing voice tests replace _start_call
+            # with a fake whose signature has no agent_profile_id keyword - pass it only
+            # for an ai_calls campaign so plain voice campaigns are unaffected.
+            assistant_kwargs = (
+                {"agent_profile_id": campaign.agent_profile_id}
+                if campaign.channel == "ai_calls"
+                else {}
+            )
             outcomes = await asyncio.gather(
                 *[
                     _start_call(
@@ -642,6 +676,7 @@ async def dialer_tick(
                         to_e164=row.e164,
                         from_e164=row._dial_from_e164,
                         identity=f"dialer-{row.id}",
+                        **assistant_kwargs,
                     )
                     for row in eligible
                 ]

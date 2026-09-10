@@ -51,6 +51,14 @@ class TransferTo:
     to: str
 
 
+@dataclass(frozen=True)
+class HandToAssistant:
+    """Terminal action: hand the room to the AI assistant worker. After this the
+    assistant owns the call; there is no next node and no further engine step."""
+
+    profile_id: str
+
+
 Action = (
     Speak
     | GatherDigit
@@ -60,6 +68,7 @@ Action = (
     | RecordVoicemail
     | Hangup
     | TransferTo
+    | HandToAssistant
 )
 
 
@@ -155,6 +164,13 @@ def _enter(flow: dict, node_id: str) -> StepResult:
         if ntype == "hangup":
             actions.append(Hangup())
             return StepResult(tuple(actions), {"node": current, "retries": 0}, None, "hangup")
+
+        if ntype == "assistant":
+            profile_id = node.get("profile_id")
+            if not isinstance(profile_id, str) or not profile_id:
+                raise FlowError(f"malformed assistant node '{current}'")
+            actions.append(HandToAssistant(profile_id=profile_id))
+            return StepResult(tuple(actions), {"node": current, "retries": 0}, None, "assistant")
 
         raise FlowError(f"node '{current}' has unknown type '{ntype}'")
 
@@ -271,7 +287,8 @@ def validate_flow(flow: dict) -> list[str]:
 
     references: dict[str, set[str]] = {}
     known_types = {
-        "menu", "hours", "ring_group", "queue", "voicemail", "speak", "hangup", "transfer"
+        "menu", "hours", "ring_group", "queue", "voicemail", "speak", "hangup", "transfer",
+        "assistant",
     }
 
     for node_id, node in nodes.items():
@@ -349,6 +366,11 @@ def validate_flow(flow: dict) -> list[str]:
         elif ntype == "voicemail":
             if "greeting" not in node or node["greeting"] is None:
                 errors.append(f"node '{node_id}' missing required field 'greeting'")
+
+        elif ntype == "assistant":
+            profile_id = node.get("profile_id")
+            if not isinstance(profile_id, str) or not profile_id:
+                errors.append(f"node '{node_id}' missing required field 'profile_id'")
 
         elif ntype == "transfer":
             to = node.get("to")

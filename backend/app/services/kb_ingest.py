@@ -28,7 +28,7 @@ from app.models import KbChunk, KbDocument
 from app.services import kb as kb_svc
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
-MAX_URL_BYTES = 2 * 1024 * 1024
+MAX_URL_BYTES = 10 * 1024 * 1024  # 10 MB
 URL_TIMEOUT_SECONDS = 15.0
 SUPPORTED_EXTENSIONS = ("txt", "md", "markdown", "text", "pdf", "docx")
 
@@ -282,7 +282,7 @@ async def ingest_url(
     url: str,
     client: httpx.AsyncClient | None = None,
 ) -> KbDocument:
-    """Fetch a customer URL after the SSRF guard, then ingest extracted text."""
+    """Fetch a customer URL after SSRF guards, then ingest extracted text."""
     if not is_public_http_url(url):
         return await _store(
             session,
@@ -294,28 +294,19 @@ async def ingest_url(
             error="That web address cannot be reached from here.",
         )
 
-    should_close = client is None
-    _client = client or httpx.AsyncClient(
-        follow_redirects=True, timeout=URL_TIMEOUT_SECONDS
-    )
+    # is_public_http_url only inspects the address syntactically (and rejects literal
+    # private IPs). A DNS name can still resolve to a private A record, so reuse the
+    # outbound-webhook guard which resolves the host and rejects private/loopback/link-
+    # local/reserved answers. It raises ValidationFailedError; this module must never
+    # raise, so convert it to a stored failure.
+    # Lazy import avoids a module-level cycle between services.
+    from app.services import webhooks_out as webhooks_out_svc
 
-    try:
+    hostname = urlsplit(url).hostname
+    if hostname:
         try:
-            response = await _client.get(
-                url, follow_redirects=True, timeout=URL_TIMEOUT_SECONDS
-            )
-        except httpx.RequestError:
-            return await _store(
-                session,
-                org_id,
-                title=title,
-                source="url",
-                storage_key=url[:255],
-                text="",
-                error="We could not reach that web address.",
-            )
-
-        if not is_public_http_url(str(response.url)):
+            await webhooks_out_svc._reject_private_target(hostname)
+        except webhooks_out_svc.ValidationFailedError:
             return await _store(
                 session,
                 org_id,
@@ -326,7 +317,89 @@ async def ingest_url(
                 error="That web address cannot be reached from here.",
             )
 
-        if not (200 <= response.status_code < 300):
+    should_close = client is None
+    _client = client or httpx.AsyncClient(
+        follow_redirects=True, timeout=URL_TIMEOUT_SECONDS
+    )
+
+    try:
+        # Stream instead of materialising response.content. A hostile server can stream
+        # an unbounded body until the timeout if we wait for `response.content` first;
+        # reading incrementally lets us stop as soon as MAX_URL_BYTES is exceeded.
+        try:
+            async with _client.stream(
+                "GET", url, follow_redirects=True, timeout=URL_TIMEOUT_SECONDS
+            ) as response:
+                if not is_public_http_url(str(response.url)):
+                    return await _store(
+                        session,
+                        org_id,
+                        title=title,
+                        source="url",
+                        storage_key=url[:255],
+                        text="",
+                        error="That web address cannot be reached from here.",
+                    )
+
+                if not (200 <= response.status_code < 300):
+                    return await _store(
+                        session,
+                        org_id,
+                        title=title,
+                        source="url",
+                        storage_key=url[:255],
+                        text="",
+                        error="That web address did not return a page.",
+                    )
+
+                buffer = bytearray()
+                async for chunk in response.aiter_bytes():
+                    buffer.extend(chunk)
+                    if len(buffer) > MAX_URL_BYTES:
+                        return await _store(
+                            session,
+                            org_id,
+                            title=title,
+                            source="url",
+                            storage_key=url[:255],
+                            text="",
+                            error="That page is too big.",
+                        )
+
+                text_bytes = bytes(buffer)
+                try:
+                    decoded = text_bytes.decode(
+                        response.encoding or "utf-8", errors="replace"
+                    )
+                except LookupError:
+                    decoded = text_bytes.decode("utf-8", errors="replace")
+
+                content_type = response.headers.get("content-type", "").lower()
+                if "html" in content_type:
+                    text = html_to_text(decoded)
+                elif "text/" in content_type:
+                    text = decoded
+                else:
+                    return await _store(
+                        session,
+                        org_id,
+                        title=title,
+                        source="url",
+                        storage_key=url[:255],
+                        text="",
+                        error="We can read text, Markdown, PDF and Word files.",
+                    )
+
+                return await _store(
+                    session,
+                    org_id,
+                    title=title,
+                    source="url",
+                    storage_key=url[:255],
+                    text=text,
+                    error="",
+                )
+        except httpx.RequestError:
             return await _store(
                 session,
                 org_id,
@@ -334,45 +407,8 @@ async def ingest_url(
                 source="url",
                 storage_key=url[:255],
                 text="",
-                error="That web address did not return a page.",
+                error="We could not reach that web address.",
             )
-
-        if len(response.content) > MAX_URL_BYTES:
-            return await _store(
-                session,
-                org_id,
-                title=title,
-                source="url",
-                storage_key=url[:255],
-                text="",
-                error="That page is too big.",
-            )
-
-        content_type = response.headers.get("content-type", "").lower()
-        if "html" in content_type:
-            text = html_to_text(response.text)
-        elif "text/" in content_type:
-            text = response.text
-        else:
-            return await _store(
-                session,
-                org_id,
-                title=title,
-                source="url",
-                storage_key=url[:255],
-                text="",
-                error="We can read text, Markdown, PDF and Word files.",
-            )
-
-        return await _store(
-            session,
-            org_id,
-            title=title,
-            source="url",
-            storage_key=url[:255],
-            text=text,
-            error="",
-        )
     finally:
         if should_close:
             await _client.aclose()

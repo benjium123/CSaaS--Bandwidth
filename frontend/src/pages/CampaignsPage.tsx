@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import type { ApiClient } from "@/api/client";
 import {
+  useAgentProfiles,
   useCancelOutboundCampaign,
   useCreateOutboundCampaign,
   useLists,
@@ -16,9 +17,24 @@ import {
   type ListOut,
   type OutboundCampaignOut,
 } from "@/api/hooks";
-import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import { Badge, Button, Input, Select, Spinner } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+/** P23b: one place that turns a wire channel into the words a customer reads. `ai_calls`
+ * is "AI calls" on screen - the type list, the campaign list's subtitle and the detail
+ * page all read from here so they cannot drift apart. */
+const CHANNELS = [
+  { value: "sms", label: "SMS" },
+  { value: "voice", label: "Voice" },
+  { value: "ai_calls", label: "AI calls" },
+] as const;
+
+type CampaignChannel = (typeof CHANNELS)[number]["value"];
+
+export function channelLabel(value: string): string {
+  return CHANNELS.find((c) => c.value === value)?.label ?? value;
+}
 
 const DIALER_MODES = [
   { value: "preview", label: "Preview" },
@@ -101,7 +117,9 @@ export function CampaignsPage() {
                   >
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate font-medium">{c.name}</span>
-                      <span className="text-xs text-muted-foreground">{c.channel}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {channelLabel(c.channel)}
+                      </span>
                     </span>
                     <Badge className={campaignStatusBadgeClass(c.status)}>{c.status}</Badge>
                   </button>
@@ -145,10 +163,13 @@ function CampaignForm({
 }) {
   const { data: lists } = useLists(api);
   const { data: numbers } = useNumbers(api);
+  // Same ["agent-profiles"] key as the Assistants builder, so this picker is already warm.
+  const { data: assistants } = useAgentProfiles(api);
   const createCampaign = useCreateOutboundCampaign(api);
 
   const [name, setName] = React.useState("");
-  const [channel, setChannel] = React.useState<"sms" | "voice">("sms");
+  const [channel, setChannel] = React.useState<CampaignChannel>("sms");
+  const [agentProfileId, setAgentProfileId] = React.useState("");
   const [listId, setListId] = React.useState("");
   const [body, setBody] = React.useState("");
   const [fromNumbers, setFromNumbers] = React.useState<string[]>([]);
@@ -188,6 +209,9 @@ function CampaignForm({
       vars.dialer_mode = dialerMode;
       vars.parallel_lines = parallelLines;
       vars.local_presence = localPresence;
+      // An AI-calls campaign is a dialer campaign that hands each answered call to an
+      // assistant; every other dialer setting means exactly what it means for Voice.
+      if (channel === "ai_calls") vars.agent_profile_id = agentProfileId;
     }
     try {
       const created = await createCampaign.mutateAsync(vars);
@@ -198,7 +222,10 @@ function CampaignForm({
   }
 
   const canSubmit =
-    name.trim().length > 0 && listId.length > 0 && (channel === "sms" || dialerMode.length > 0);
+    name.trim().length > 0 &&
+    listId.length > 0 &&
+    (channel === "sms" || dialerMode.length > 0) &&
+    (channel !== "ai_calls" || agentProfileId.length > 0);
 
   return (
     <form className="max-w-xl space-y-4 p-6" onSubmit={submit}>
@@ -241,19 +268,19 @@ function CampaignForm({
       <div className="space-y-1">
         <span className="block text-xs text-muted-foreground">Channel</span>
         <div className="flex gap-1" role="radiogroup" aria-label="Channel">
-          {(["sms", "voice"] as const).map((c) => (
+          {CHANNELS.map((c) => (
             <button
-              key={c}
+              key={c.value}
               type="button"
               role="radio"
-              aria-checked={channel === c}
-              onClick={() => setChannel(c)}
+              aria-checked={channel === c.value}
+              onClick={() => setChannel(c.value)}
               className={cn(
                 "rounded-md border border-border px-3 py-1.5 text-sm",
-                channel === c ? "bg-muted font-medium" : "hover:bg-muted",
+                channel === c.value ? "bg-muted font-medium" : "hover:bg-muted",
               )}
             >
-              {c === "sms" ? "SMS" : "Voice"}
+              {c.label}
             </button>
           ))}
         </div>
@@ -365,7 +392,36 @@ function CampaignForm({
         </fieldset>
       ) : (
         <fieldset className="space-y-3 rounded-md border border-border p-3">
-          <legend className="px-1 text-xs font-medium text-muted-foreground">Voice</legend>
+          <legend className="px-1 text-xs font-medium text-muted-foreground">
+            {channelLabel(channel)}
+          </legend>
+
+          {channel === "ai_calls" && (
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground" htmlFor="campaign-assistant">
+                Assistant
+              </label>
+              <Select
+                id="campaign-assistant"
+                aria-label="Assistant"
+                value={agentProfileId}
+                onChange={(e) => setAgentProfileId(e.target.value)}
+                required
+              >
+                <option value="">Select an assistant…</option>
+                {(assistants ?? []).map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {(assistants ?? []).length === 0
+                  ? "You have no assistants yet. Create one in Settings, then come back here."
+                  : "Your assistant handles every call this campaign places."}
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1">
             <label className="block text-xs text-muted-foreground" htmlFor="campaign-dialer-mode">
@@ -436,6 +492,7 @@ function CampaignForm({
 function CampaignDetail({ api, campaignId }: { api: ApiClient; campaignId: string }) {
   const { data: campaign, isLoading } = useOutboundCampaign(api, campaignId);
   const { data: progress } = useOutboundCampaignProgress(api, campaignId);
+  const { data: assistants } = useAgentProfiles(api);
   const startCampaign = useStartOutboundCampaign(api);
   const pauseCampaign = usePauseOutboundCampaign(api);
   const cancelCampaign = useCancelOutboundCampaign(api);
@@ -466,7 +523,7 @@ function CampaignDetail({ api, campaignId }: { api: ApiClient; campaignId: strin
         <h2 className="text-base font-semibold">{campaign.name}</h2>
         <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <dt>Channel</dt>
-          <dd>{campaign.channel}</dd>
+          <dd>{channelLabel(campaign.channel)}</dd>
           <dt>Status</dt>
           <dd>
             <Badge className={campaignStatusBadgeClass(campaign.status)}>{campaign.status}</Badge>
@@ -484,6 +541,21 @@ function CampaignDetail({ api, campaignId }: { api: ApiClient; campaignId: strin
             </>
           ) : (
             <>
+              {campaign.channel === "ai_calls" && (
+                <>
+                  <dt>Assistant</dt>
+                  <dd>
+                    {/* `agent_profile_id` is newer than the generated schema snapshot, so it
+                        is read off the campaign defensively rather than by widening a
+                        generated type from here. */}
+                    {(assistants ?? []).find(
+                      (a) =>
+                        a.id ===
+                        (campaign as { agent_profile_id?: string | null }).agent_profile_id,
+                    )?.name ?? "—"}
+                  </dd>
+                </>
+              )}
               <dt>Dialer mode</dt>
               <dd>{campaign.dialer_mode ?? "—"}</dd>
               <dt>Parallel lines</dt>

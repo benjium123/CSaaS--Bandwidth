@@ -18,10 +18,14 @@ from app.errors import (
     NotFoundError,
     ValidationFailedError,
 )
-from app.models import Inbox, OrgNumber, ProviderAccount
+from app.models import AgentProfile, Inbox, OrgNumber, ProviderAccount
+from app.models.callflow import CallFlow
 from app.models.numbers import Campaign
 from app.providers import numbers as numbers_api
 from app.providers import registry_org
+from app.services import agent as agent_svc
+from app.services import audit as audit_svc
+from app.services import flows as flows_svc
 from app.services import provider_accounts as provider_accounts_svc
 from app.services import reputation as reputation_svc
 
@@ -48,6 +52,12 @@ class NumberIn(BaseModel):
     number_type: str = "local"
 
 
+class AnsweredByOut(BaseModel):
+    mode: str = "human"
+    profile_id: uuid.UUID | None = None
+    profile_name: str | None = None
+
+
 class NumberOut(BaseModel):
     id: uuid.UUID
     e164: str
@@ -72,6 +82,10 @@ class NumberOut(BaseModel):
     purchased_at: datetime | None = None
     #: Last provider order status/error (async orders are polled by the sweeper).
     order_detail: str | None = None
+    #: P23b derived fields: "assistant" when this number is bound to an assistant flow.
+    #: Who picks this number up. Derived from the bound flow, never stored: a one-node
+    #: ASSISTANT flow means an assistant answers, anything else means a person does.
+    answered_by: AnsweredByOut = AnsweredByOut()
 
 
 @router.post("", response_model=NumberOut, status_code=201)
@@ -178,12 +192,51 @@ async def list_numbers(
         ctx.session, {n.provider_account_id for n in rows if n.provider_account_id is not None}
     )
     inbox_names = await _inbox_names(ctx.session, {n.id for n in rows})
+
+    # P23b: same batching convention as account labels and inbox names - fetch every
+    # bound flow in ONE query, then pass the exact row into _out so list_numbers does
+    # not become an N+1 on flow lookups.
+    flow_ids = {n.call_flow_id for n in rows if n.call_flow_id is not None}
+    flows_by_id: dict[uuid.UUID, CallFlow] = {}
+    if flow_ids:
+        flows_by_id = {
+            f.id: f
+            for f in (
+                await ctx.session.execute(
+                    sa.select(CallFlow).where(CallFlow.id.in_(flow_ids))
+                )
+            ).scalars().all()
+        }
+
+    # ... and every assistant name those flows point at, also in ONE query.
+    assistant_ids: set[uuid.UUID] = set()
+    for flow in flows_by_id.values():
+        for raw_id in flows_svc.assistant_profile_ids(flow.definition):
+            try:
+                assistant_ids.add(uuid.UUID(raw_id))
+            except (ValueError, TypeError):
+                continue
+    profile_names: dict[uuid.UUID, str] = {}
+    if assistant_ids:
+        profile_names = dict(
+            (
+                await ctx.session.execute(
+                    sa.select(AgentProfile.id, AgentProfile.name).where(
+                        AgentProfile.org_id == ctx.org.id,
+                        AgentProfile.id.in_(assistant_ids),
+                    )
+                )
+            ).all()
+        )
+
     return [
         await _out(
             ctx.session,
             n,
             account_label=labels.get(n.provider_account_id) if n.provider_account_id else None,
             inbox_name=inbox_names.get(n.id),
+            flow=flows_by_id.get(n.call_flow_id),
+            profile_names=profile_names,
         )
         for n in rows
     ]
@@ -196,6 +249,7 @@ _TOLLFREE_PREFIXES = frozenset({"+1800", "+1833", "+1844", "+1855", "+1866", "+1
 #: meaningful value (no provider_account_id, or an account with a blank label).
 _LABEL_UNSET = object()
 _INBOX_UNSET = object()
+_FLOW_UNSET = object()
 
 
 async def _provider_account_labels(session, account_ids: set[uuid.UUID]) -> dict:
@@ -223,7 +277,13 @@ async def _inbox_names(session, number_ids: set[uuid.UUID]) -> dict:
 
 
 async def _out(
-    session, n: OrgNumber, *, account_label=_LABEL_UNSET, inbox_name=_INBOX_UNSET
+    session,
+    n: OrgNumber,
+    *,
+    account_label=_LABEL_UNSET,
+    inbox_name=_INBOX_UNSET,
+    flow=_FLOW_UNSET,
+    profile_names: dict | None = None,
 ) -> NumberOut:
     state = await registration.registration_state(session, n)
     if account_label is _LABEL_UNSET:
@@ -244,6 +304,45 @@ async def _out(
                 sa.select(Inbox.name).where(Inbox.number_id == n.id)
             )
         ).scalar_one_or_none()
+    if flow is _FLOW_UNSET:
+        flow = await session.get(CallFlow, n.call_flow_id) if n.call_flow_id is not None else None
+
+    answered_by = AnsweredByOut()
+    assistant_profile_id: uuid.UUID | None = None
+    if flow is not None:
+        profile_ids = flows_svc.assistant_profile_ids(flow.definition)
+        entry = flow.definition.get("entry")
+        nodes = flow.definition.get("nodes")
+        entry_node = nodes.get(entry) if isinstance(nodes, dict) else None
+        if (
+            profile_ids
+            and isinstance(entry_node, dict)
+            and entry_node.get("type") == "assistant"
+        ):
+            try:
+                assistant_profile_id = uuid.UUID(profile_ids[0])
+            except (ValueError, TypeError):
+                assistant_profile_id = None
+            if assistant_profile_id is not None:
+                if profile_names is not None:
+                    profile_name = profile_names.get(assistant_profile_id)
+                else:
+                    # Single-row callers only ever build one NumberOut; list_numbers
+                    # batches this the same way it batches labels and inbox names.
+                    profile_name = (
+                        await session.execute(
+                            sa.select(AgentProfile.name).where(
+                                AgentProfile.org_id == n.org_id,
+                                AgentProfile.id == assistant_profile_id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                answered_by = AnsweredByOut(
+                    mode="assistant",
+                    profile_id=assistant_profile_id,
+                    profile_name=profile_name,
+                )
+
     return NumberOut(
         id=n.id,
         e164=n.e164,
@@ -262,6 +361,7 @@ async def _out(
         monthly_cost_cents=n.monthly_cost_cents,
         purchased_at=n.purchased_at,
         order_detail=n.order_detail,
+        answered_by=answered_by,
     )
 
 
@@ -491,6 +591,87 @@ async def assign_campaign(
         if campaign is None:
             raise NotFoundError("Campaign not found")
     number.campaign_id = payload.campaign_id
+    await ctx.session.commit()
+    return await _out(ctx.session, number)
+
+
+class AnsweredByIn(BaseModel):
+    mode: str
+    profile_id: uuid.UUID | None = None
+
+
+@router.patch("/{number_id}/answered-by", response_model=NumberOut)
+async def set_answered_by(
+    number_id: uuid.UUID,
+    payload: AnsweredByIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> NumberOut:
+    number = await ctx.session.get(OrgNumber, number_id)
+    if number is None or number.org_id != ctx.org.id:
+        raise NotFoundError("Number not found")
+
+    if payload.mode not in ("human", "assistant"):
+        raise ValidationFailedError("Choose who answers this number: a person or an assistant.")
+
+    profile_id: uuid.UUID | None = None
+    if payload.mode == "assistant":
+        if payload.profile_id is None:
+            raise ValidationFailedError("Pick which assistant should answer.")
+        profile = await agent_svc.get_profile(ctx.session, ctx.org.id, payload.profile_id)
+        readiness = await agent_svc.go_live_readiness(
+            ctx.session, request.app.state.settings, org=ctx.org, profile=profile
+        )
+        if not readiness["ready"]:
+            raise ValidationFailedError(
+                f"{profile.name} is not ready to answer calls yet. Finish setting it up first."
+            )
+
+        definition = {
+            "entry": "assistant",
+            "nodes": {
+                "assistant": {
+                    "type": "assistant",
+                    "profile_id": str(profile.id),
+                }
+            },
+        }
+        flow = await flows_svc.upsert_single_node_flow(
+            ctx.session,
+            ctx.org.id,
+            name=f"Answered by an assistant ({number.e164})",
+            definition=definition,
+        )
+        await flows_svc.bind_number(ctx.session, ctx.org.id, number.id, flow.id)
+        profile_id = profile.id
+    else:
+        # Restore the seeded default ring flow. A NULL binding is the pre-P12 "ring
+        # normally" behaviour and is still valid when the org has no active Default row.
+        default_flow_id = (
+            await ctx.session.execute(
+                sa.select(CallFlow.id).where(
+                    CallFlow.org_id == ctx.org.id,
+                    CallFlow.name == "Default",
+                    CallFlow.status == "active",
+                )
+            )
+        ).scalar_one_or_none()
+        await flows_svc.bind_number(ctx.session, ctx.org.id, number.id, default_flow_id)
+
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key is not None else None,
+        action="number.answered_by",
+        target_type="org_number",
+        target_id=str(number.id),
+        detail={
+            "e164": number.e164,
+            "mode": payload.mode,
+            "profile_id": str(profile_id) if profile_id is not None else None,
+        },
+    )
     await ctx.session.commit()
     return await _out(ctx.session, number)
 

@@ -714,8 +714,12 @@ export function useOutboundCampaign(api: ApiClient, campaignId: string | null) {
 
 export type CreateOutboundCampaignVars = {
   name: string;
-  channel: "sms" | "voice";
+  // P23b adds "ai_calls": the same dialer, placing each call through an assistant instead
+  // of ringing a person. `agent_profile_id` is required for that channel and meaningless
+  // for the other two.
+  channel: "sms" | "voice" | "ai_calls";
   list_id: string;
+  agent_profile_id?: string | null;
   body?: string | null;
   from_numbers?: string[];
   rate_per_minute?: number;

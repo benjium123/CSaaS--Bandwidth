@@ -255,20 +255,20 @@ async def delete_account(session: AsyncSession, account: AiProviderAccount) -> N
 
 
 async def active_account_for(
-    session: AsyncSession, org_id: uuid.UUID, kind: str
+    session: AsyncSession, org_id: uuid.UUID, kind: str, provider: str = ""
 ) -> AiProviderAccount | None:
-    return (
-        await session.execute(
-            sa.select(AiProviderAccount)
-            .where(
-                AiProviderAccount.org_id == org_id,
-                AiProviderAccount.kind == kind,
-                AiProviderAccount.status == "active",
-            )
-            .order_by(AiProviderAccount.created_at, AiProviderAccount.id)
-            .limit(1)
+    stmt = (
+        sa.select(AiProviderAccount)
+        .where(
+            AiProviderAccount.org_id == org_id,
+            AiProviderAccount.kind == kind,
+            AiProviderAccount.status == "active",
         )
-    ).scalar_one_or_none()
+    )
+    if provider:
+        stmt = stmt.where(AiProviderAccount.provider == provider)
+    stmt = stmt.order_by(AiProviderAccount.created_at, AiProviderAccount.id).limit(1)
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def byok_completeness(session: AsyncSession, org_id: uuid.UUID) -> tuple[bool, list[str]]:
@@ -318,9 +318,7 @@ async def resolve_call_config(
     for kind in AI_PROVIDER_KINDS:
         explicit = (getattr(profile, f"{kind}_provider", "") or "").strip()
         if mode == "byok":
-            account = await active_account_for(session, org.id, kind)
-            if explicit and (account is None or account.provider != explicit):
-                account = None
+            account = await active_account_for(session, org.id, kind, provider=explicit or "")
             byok_accounts[kind] = account
             providers[kind] = explicit or (account.provider if account is not None else "")
         else:

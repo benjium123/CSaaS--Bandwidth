@@ -19,6 +19,7 @@ import {
 } from "@/api/hooks";
 import { Button, Input, Spinner } from "@/components/ui/primitives";
 import { SpendTile } from "@/components/spend/SpendCard";
+import { AssistantAnalyticsStrip } from "@/components/assistants/AssistantAnalytics";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -314,6 +315,14 @@ export function DashboardPage() {
           <DeliveryRateChart data={data.messages} />
           <CallsChart data={data.calls} />
           <AiChart data={data.ai} />
+          <div className="md:col-span-2">
+            {/* Shares the page's own range buttons rather than carrying a second set - two
+                range controls on one screen is how a dashboard starts lying to you. */}
+            <div className="rounded-md border border-border p-4">
+              <h2 className="mb-3 text-sm font-medium">Assistant activity</h2>
+              <AssistantAnalyticsStrip days={days} />
+            </div>
+          </div>
           <div className="md:col-span-2">
             <SpendTile />
           </div>

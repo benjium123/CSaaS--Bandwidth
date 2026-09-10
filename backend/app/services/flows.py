@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ConflictError, NotFoundError, ValidationFailedError
+from app.models.agent import AgentProfile
 from app.models.callflow import BusinessHours, CallFlow, CallQueue, RingGroupDef
 from app.models.messaging import OrgNumber
 from app.services import flow_engine
@@ -70,6 +71,10 @@ async def _validate_cross_refs(
             ref = node.get("business_hours_id")
             if isinstance(ref, str) and not await _exists(session, BusinessHours, org_id, ref):
                 errors.append(f"node '{node_id}' references unknown business_hours '{ref}'")
+        elif ntype == "assistant":
+            ref = node.get("profile_id")
+            if isinstance(ref, str) and not await _exists(session, AgentProfile, org_id, ref):
+                errors.append(f"node '{node_id}' references unknown assistant '{ref}'")
         # "transfer" is deliberately NOT checked here: its `to` field is a phone number,
         # not an object reference, and flow_engine.validate_flow already validates its
         # shape (item 11 ruling).
@@ -84,6 +89,66 @@ async def _exists(session: AsyncSession, model, org_id: uuid.UUID, raw_id: str) 
         return False
     stmt = sa.select(model.id).where(model.id == obj_id, model.org_id == org_id)
     return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+
+def assistant_profile_ids(definition: dict) -> list[str]:
+    """Every assistant node's profile_id in this flow definition, in node-id order."""
+    if not isinstance(definition, dict):
+        return []
+    nodes = definition.get("nodes")
+    if not isinstance(nodes, dict):
+        return []
+
+    ids: list[str] = []
+    for node in nodes.values():
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") == "assistant":
+            profile_id = node.get("profile_id")
+            if isinstance(profile_id, str):
+                ids.append(profile_id)
+    return ids
+
+
+async def upsert_single_node_flow(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    name: str,
+    definition: dict,
+    created_by: uuid.UUID | None = None,
+) -> CallFlow:
+    """Create (or add a version to) the flow called `name` for this org and ACTIVATE it.
+
+    Used by the Numbers "answered by" shortcut, which owns one managed flow per number.
+    Returns the active CallFlow row."""
+    existing = (
+        await session.execute(
+            sa.select(CallFlow)
+            .where(CallFlow.org_id == org_id, CallFlow.name == name)
+            .order_by(CallFlow.version.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if existing is None:
+        row = await create_flow(
+            session,
+            org_id,
+            name=name,
+            definition=definition,
+            created_by=created_by,
+        )
+    else:
+        row = await create_version(
+            session,
+            org_id,
+            flow_id=existing.id,
+            definition=definition,
+            created_by=created_by,
+        )
+
+    return await activate_flow(session, org_id, row.id)
 
 
 # --------------------------------------------------------------------------------------

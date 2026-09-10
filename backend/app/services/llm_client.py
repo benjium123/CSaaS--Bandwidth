@@ -12,13 +12,33 @@ from typing import Any
 
 import httpx
 
+# Keep these default model names in sync with app.services.ai_providers.DEFAULT_MODELS.
+# The SMS agent and call scorer both resolve through chat(), so a drift here causes an
+# unknown-provider LLMError even though the DB profile is valid.
 _DEFAULT_MODELS = {
     "anthropic": "claude-haiku-4-5",
     "openai": "gpt-4o-mini",
+    "deepseek": "deepseek-chat",
+    "groq": "llama-3.3-70b-versatile",
+    "google": "gemini-1.5-flash",
 }
 
 _ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 _OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+_DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+_GOOGLE_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+# OpenAI-compatible endpoints all use the same message/tool shape, but they do NOT all
+# accept the same token-limit parameter name. OpenAI's Chat Completions rejects
+# `max_tokens` outright on o-series/gpt-5-class models, so the original branch uses
+# `max_completion_tokens`. DeepSeek, however, accepts only `max_tokens`; Groq accepts
+# `max_completion_tokens`. A wrong name is a hard 400 from the vendor, not a warning.
+_OPENAI_COMPATIBLE_TOKEN_PARAM = {
+    "openai": "max_completion_tokens",
+    "deepseek": "max_tokens",
+    "groq": "max_completion_tokens",
+}
 
 
 class LLMError(RuntimeError):
@@ -282,6 +302,105 @@ def _parse_openai_response(data: dict[str, Any]) -> ChatResult:
     )
 
 
+def _gemini_contents(turns: list[ChatTurn]) -> list[dict[str, Any]]:
+    """Map chat history to Gemini `contents` entries.
+
+    Gemini role names are `user` and `model`. Tool results and assistant tool calls have
+    no direct equivalent, so they are encoded as `functionResponse` and `functionCall`
+    parts (the Gemini function-calling wire format). A turn with no parts would be
+    rejected, so it is dropped.
+    """
+    contents: list[dict[str, Any]] = []
+    for turn in turns:
+        if turn.role == "tool":
+            contents.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": turn.tool_name,
+                                "response": {"result": turn.content},
+                            }
+                        }
+                    ],
+                }
+            )
+            continue
+
+        if turn.role == "assistant" and turn.tool_calls:
+            parts: list[dict[str, Any]] = []
+            if turn.content:
+                parts.append({"text": turn.content})
+            for call in turn.tool_calls:
+                parts.append(
+                    {"functionCall": {"name": call.name, "args": call.arguments or {}}}
+                )
+            contents.append({"role": "model", "parts": parts})
+            continue
+
+        if not turn.content:
+            continue
+
+        if turn.role == "assistant":
+            contents.append({"role": "model", "parts": [{"text": turn.content}]})
+        else:
+            contents.append({"role": "user", "parts": [{"text": turn.content}]})
+    return contents
+
+
+def _parse_gemini_response(data: dict[str, Any]) -> ChatResult:
+    if not isinstance(data, dict):
+        raise LLMError("provider returned a non-object body")
+    candidates = data.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise LLMError("provider returned no completion")
+    candidate = candidates[0]
+    if not isinstance(candidate, dict):
+        raise LLMError("provider returned no completion")
+    content = candidate.get("content")
+    if not isinstance(content, dict):
+        raise LLMError("provider returned no completion")
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+        raise LLMError("provider returned no completion")
+
+    text_parts: list[str] = []
+    tool_calls: list[ToolCall] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        if "text" in part and part.get("text") is not None:
+            text_parts.append(str(part.get("text")))
+        if "functionCall" in part:
+            fc = part.get("functionCall")
+            if not isinstance(fc, dict):
+                continue
+            arguments = fc.get("args") or {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+            tool_calls.append(
+                ToolCall(
+                    # Gemini does not return a tool-call id on the wire. Callers that
+                    # correlate tool results by id must not assume Gemini gives one.
+                    id="",
+                    name=fc.get("name") or "",
+                    arguments=arguments,
+                )
+            )
+
+    text = "".join(text_parts)
+    if not text and not tool_calls:
+        raise LLMError("provider returned no completion")
+    usage = data.get("usageMetadata") if isinstance(data.get("usageMetadata"), dict) else {}
+    return ChatResult(
+        text=text,
+        tool_calls=tuple(tool_calls),
+        tokens_in=int(usage.get("promptTokenCount") or 0),
+        tokens_out=int(usage.get("candidatesTokenCount") or 0),
+    )
+
+
 async def chat(
     client,
     *,
@@ -324,19 +443,45 @@ async def chat(
                 }
                 for tool in tools
             ]
+    elif provider == "google":
+        url = _GOOGLE_URL_TEMPLATE.format(model=resolved_model)
+        headers = {
+            "x-goog-api-key": api_key,
+            "content-type": "application/json",
+        }
+        payload = {
+            "contents": _gemini_contents(turns),
+            "generationConfig": {"maxOutputTokens": max_tokens},
+        }
+        if system:
+            payload["systemInstruction"] = {"parts": [{"text": system}]}
+        if tools:
+            payload["tools"] = [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters,
+                        }
+                        for tool in tools
+                    ]
+                }
+            ]
     else:
-        url = _OPENAI_URL
+        if provider == "deepseek":
+            url = _DEEPSEEK_URL
+        elif provider == "groq":
+            url = _GROQ_URL
+        else:
+            url = _OPENAI_URL
         headers = {
             "Authorization": f"Bearer {api_key}",
             "content-type": "application/json",
         }
         payload = {
             "model": resolved_model,
-            # NOT max_tokens: Chat Completions rejects it outright on o-series/gpt-5-class
-            # models ("Unsupported parameter"), and `llm_model` is operator free text we
-            # cannot sniff in advance. max_completion_tokens is accepted by every model
-            # currently served on this endpoint, including the older ones.
-            "max_completion_tokens": max_tokens,
+            _OPENAI_COMPATIBLE_TOKEN_PARAM[provider]: max_tokens,
             "messages": _openai_messages(system, turns),
         }
         if tools:
@@ -379,4 +524,6 @@ async def chat(
 
     if provider == "anthropic":
         return _parse_anthropic_response(data)
+    if provider == "google":
+        return _parse_gemini_response(data)
     return _parse_openai_response(data)

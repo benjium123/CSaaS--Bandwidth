@@ -12,6 +12,7 @@ import {
   useNumbers,
   useQueues,
   useRingGroups,
+  useAgentProfiles,
   type FlowOut,
 } from "@/api/hooks";
 import {
@@ -43,7 +44,10 @@ type NodeType =
   | "voicemail"
   | "speak"
   | "hangup"
-  | "transfer";
+  | "transfer"
+  // P23b: hands the call to an assistant. Terminal from the editor's point of view - the
+  // assistant owns the rest of the call, exactly as "queue" hands it to a queue.
+  | "assistant";
 
 const NODE_TYPES: NodeType[] = [
   "menu",
@@ -54,6 +58,7 @@ const NODE_TYPES: NodeType[] = [
   "speak",
   "hangup",
   "transfer",
+  "assistant",
 ];
 
 type MenuOptionRow = { digit: string; target: string };
@@ -76,7 +81,10 @@ type DraftNode =
   // Item 6: matches backend/app/services/flow_engine.py's "transfer" node - a required
   // `to` phone number, no outgoing edge (terminal="transferred", same shape class as
   // "queue"'s single required id field).
-  | { type: "transfer"; to: string };
+  | { type: "transfer"; to: string }
+  // P23B_HANDOFF.md: the wire node is `{type: "assistant", profile_id}` - one required id,
+  // same shape class as "queue".
+  | { type: "assistant"; profile_id: string };
 
 type NodeDraft = { id: string; node: DraftNode };
 
@@ -98,6 +106,8 @@ function defaultNode(type: NodeType): DraftNode {
       return { type };
     case "transfer":
       return { type, to: "" };
+    case "assistant":
+      return { type, profile_id: "" };
   }
 }
 
@@ -154,6 +164,8 @@ function fromWireDefinition(definition: unknown): { entry: string; nodes: NodeDr
         return { id, node: { type: "speak", text: str(raw.text), next: str(raw.next) } };
       case "transfer":
         return { id, node: { type: "transfer", to: str(raw.to) } };
+      case "assistant":
+        return { id, node: { type: "assistant", profile_id: str(raw.profile_id) } };
       case "hangup":
       default:
         return { id, node: { type: "hangup" } };
@@ -215,6 +227,9 @@ function toWireDefinition(entry: string, drafts: NodeDraft[]): { entry: string; 
         break;
       case "transfer":
         nodes[id] = { type: "transfer", to: node.to };
+        break;
+      case "assistant":
+        nodes[id] = { type: "assistant", profile_id: node.profile_id };
         break;
     }
   }
@@ -447,6 +462,9 @@ function FlowEditor({
   const { data: businessHours } = useBusinessHours(api);
   const { data: ringGroups } = useRingGroups(api);
   const { data: queues } = useQueues(api);
+  // Same query key as the Assistants builder (["agent-profiles"]), so the picker is already
+  // warm whenever the customer has just been on Settings -> AI.
+  const { data: assistants } = useAgentProfiles(api);
   const createFlow = useCreateFlow(api);
   const createVersion = useCreateFlowVersion(api);
 
@@ -609,6 +627,7 @@ function FlowEditor({
               businessHours={businessHours ?? []}
               ringGroups={ringGroups ?? []}
               queues={queues ?? []}
+              assistants={assistants ?? []}
               errors={[
                 ...(fieldErrors[draft.id] ?? []),
                 ...(renameCollision?.id === draft.id
@@ -642,6 +661,7 @@ function NodeCard({
   businessHours,
   ringGroups,
   queues,
+  assistants,
   errors,
   onRename,
   onChange,
@@ -652,6 +672,7 @@ function NodeCard({
   businessHours: { id: string; name: string }[];
   ringGroups: { id: string; name: string }[];
   queues: { id: string; name: string }[];
+  assistants: { id: string; name: string }[];
   errors: string[];
   onRename: (newId: string) => void;
   onChange: (node: DraftNode) => void;
@@ -935,6 +956,36 @@ function NodeCard({
               </option>
             ))}
           </Select>
+        </div>
+      )}
+
+      {node.type === "assistant" && (
+        <div className="space-y-1">
+          <label className="block text-xs text-muted-foreground" htmlFor={`assistant-${id}`}>
+            Assistant <span aria-hidden="true">*</span>
+          </label>
+          <Select
+            id={`assistant-${id}`}
+            aria-label={`Assistant for ${id}`}
+            className="h-8 w-full px-2 text-sm"
+            value={node.profile_id}
+            onChange={(e) => onChange({ ...node, profile_id: e.target.value })}
+          >
+            <option value="">Select…</option>
+            {assistants.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+          {assistants.length === 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              You have no assistants yet. Create one in Settings, then come back here.
+            </p>
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            The assistant answers and handles the call from this point on.
+          </p>
         </div>
       )}
 

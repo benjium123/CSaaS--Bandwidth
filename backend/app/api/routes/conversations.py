@@ -18,9 +18,12 @@ from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
 from app.errors import NotFoundError, ValidationFailedError
 from app.models import (
+    AgentProfile,
     Call,
     CallLeg,
     CallRecording,
+    CallScore,
+    CallTranscriptSegment,
     Contact,
     ContactPhone,
     Inbox,
@@ -152,6 +155,15 @@ class CallRecordingOut(BaseModel):
     duration_seconds: int | None
 
 
+class AssistantCallOut(BaseModel):
+    #: The assistant that handled the call, when the outcome row named one.
+    name: str | None = None
+    summary: str | None
+    disposition: str | None
+    sentiment: str | None
+    has_transcript: bool
+
+
 class CallTimelineEvent(BaseModel):
     kind: Literal["call"] = "call"
     id: uuid.UUID
@@ -165,6 +177,7 @@ class CallTimelineEvent(BaseModel):
     recording: CallRecordingOut | None
     has_voicemail: bool
     route_reason: str | None = None
+    assistant: AssistantCallOut | None = None
 
 
 class VoicemailTimelineEvent(BaseModel):
@@ -1290,6 +1303,45 @@ async def conversation_timeline(
     has_voicemail_by_call = {vm.call_id for vm in all_call_voicemails}
     note_names = await _resolve_note_names(ctx.session, notes)
 
+    scores_by_call: dict[uuid.UUID, CallScore] = {}
+    transcript_call_ids: set[uuid.UUID] = set()
+    assistant_names: dict[uuid.UUID, str] = {}
+    if call_ids:
+        score_rows = (
+            await ctx.session.execute(
+                sa.select(CallScore).where(CallScore.call_id.in_(call_ids))
+            )
+        ).scalars().all()
+        scores_by_call = {score.call_id: score for score in score_rows}
+        transcript_call_ids = set(
+            (
+                await ctx.session.execute(
+                    sa.select(CallTranscriptSegment.call_id)
+                    .where(CallTranscriptSegment.call_id.in_(call_ids))
+                    .distinct()
+                )
+            ).scalars().all()
+        )
+        # One more batched query for the assistant NAMES those outcome rows point at -
+        # never one lookup per call.
+        profile_ids = {
+            score.profile_id
+            for score in scores_by_call.values()
+            if score.profile_id is not None
+        }
+        if profile_ids:
+            assistant_names = dict(
+                (
+                    await ctx.session.execute(
+                        sa.select(AgentProfile.id, AgentProfile.name).where(
+                            AgentProfile.id.in_(profile_ids)
+                        )
+                    )
+                ).all()
+            )
+
+    note_names = await _resolve_note_names(ctx.session, notes)
+
     timeline_items: list[dict[str, Any]] = []
 
     for msg in messages:
@@ -1309,6 +1361,9 @@ async def conversation_timeline(
 
     for call in calls:
         recording = _latest_recording(recordings, call.id)
+        # A call with no call_scores row has no assistant block at all - which is what
+        # every plain human call is, and always was.
+        score = scores_by_call.get(call.id)
         timeline_items.append(
             {
                 "kind": "call",
@@ -1335,6 +1390,17 @@ async def conversation_timeline(
                 # Stored sentence for provider-API calls; derived trunk sentence for LiveKit
                 # room calls (same rule as GET /calls, see routes/calls.py).
                 "route_reason": call.route_reason or _livekit_route_reason(call),
+                "assistant": {
+                    "name": assistant_names.get(score.profile_id)
+                    if score is not None and score.profile_id is not None
+                    else None,
+                    "summary": score.summary,
+                    "disposition": score.disposition,
+                    "sentiment": score.sentiment,
+                    "has_transcript": call.id in transcript_call_ids,
+                }
+                if score is not None
+                else None,
             }
         )
 

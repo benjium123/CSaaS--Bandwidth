@@ -6,12 +6,15 @@ metrics surface in the API.
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.auth.deps import OrgContext, require_permission
+from app.errors import ValidationFailedError
 from app.services import analytics as analytics_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services import search as search_svc
@@ -62,12 +65,55 @@ class OverviewOut(BaseModel):
     spend_usd_month_to_date: float
 
 
+class AssistantAnalyticsOut(BaseModel):
+    calls: int
+    minutes: float
+    answer_rate: float | None
+    handoff_rate: float | None
+    booked: int
+    avg_duration_seconds: float | None
+    cost_micros: None
+    range: OverviewRangeOut
+
+
 @router.get("/analytics/overview", response_model=OverviewOut)
 async def analytics_overview(
     ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
     days: int = Query(14, ge=1, le=90),
 ) -> OverviewOut:
     return OverviewOut(**await analytics_svc.overview(ctx.session, ctx.org.id, days))
+
+
+@router.get("/analytics/assistant", response_model=AssistantAnalyticsOut)
+async def analytics_assistant(
+    ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
+    from_: str = Query("", alias="from"),
+    to: str = Query("", alias="to"),
+    profile_id: uuid.UUID | None = Query(None),
+) -> AssistantAnalyticsOut:
+    if not from_ and not to:
+        start, end = analytics_svc._day_bounds(30)
+    else:
+        if not from_ or not to:
+            raise ValidationFailedError("Give the dates as YYYY-MM-DD.")
+        try:
+            start = datetime.strptime(from_, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end = datetime.strptime(to, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError as exc:
+            raise ValidationFailedError("Give the dates as YYYY-MM-DD.") from exc
+        end = end + timedelta(days=1)
+        if end <= start:
+            raise ValidationFailedError("The end date must be after the start date.")
+
+    summary = await analytics_svc.assistant_summary(
+        ctx.session, ctx.org.id, start=start, end=end, profile_id=profile_id
+    )
+    range_out = OverviewRangeOut(
+        start=start.date().isoformat(),
+        end=(end - timedelta(days=1)).date().isoformat(),
+        days=(end - start).days,
+    )
+    return AssistantAnalyticsOut(**summary, range=range_out)
 
 
 # ==================================================================================
