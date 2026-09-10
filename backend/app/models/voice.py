@@ -65,6 +65,9 @@ class Call(Base, TenantScoped, TimestampMixin):
     carrier: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     # P21 smart routing: why this provider/trunk was chosen (plain sentence).
     route_reason: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    # P29: outcome a human picks after the call (configurable list in Settings → Calling).
+    disposition: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
+    disposition_note: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="queued")
     #: Populated on the first terminal transition; a terminal status never changes, so
     #: neither does this.
@@ -153,6 +156,10 @@ class CallRecording(Base, TenantScoped, TimestampMixin):
     __tablename__ = "call_recordings"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    # P29: 'mixed' (one file) | 'dual' (agent/customer tracks stitched at finalize).
+    channel_layout: Mapped[str] = mapped_column(
+        sa.String(8), nullable=False, default="mixed", server_default="mixed"
+    )
     call_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), sa.ForeignKey("calls.id", ondelete="CASCADE"), nullable=False, index=True
     )

@@ -53,5 +53,12 @@ class Org(Base, TimestampMixin):
     ip_allowlist: Mapped[list | None] = mapped_column(PortableJSON(), nullable=True)
     sso: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
 
+    # P29: play a consent line before connecting (inbound via the flow engine, outbound via
+    # the dialer). Text NULL = the platform default sentence.
+    recording_announcement: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    recording_announcement_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+
     def __repr__(self) -> str:
         return f"<Org {self.slug}>"
