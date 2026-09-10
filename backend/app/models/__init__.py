@@ -55,6 +55,7 @@ from app.models.contacts import (
     Tag,
     ThreadLabel,
 )
+from app.models.identity import LOGIN_OUTCOMES, LoginEvent, Session
 from app.models.inboxes import (
     GRANTEE_TYPES,
     INBOX_GRANT_ROLES,
@@ -184,6 +185,9 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "LOGIN_OUTCOMES",
+    "LoginEvent",
+    "Session",
     "AI_USAGE_KINDS",
     "AI_USAGE_METRICS",
     "AI_USAGE_SOURCES",

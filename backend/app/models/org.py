@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -39,6 +40,18 @@ class Org(Base, TimestampMixin):
         sa.BigInteger, nullable=True
     )
     credit_auto_recharge: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
+
+    # P25 security policy. require_2fa: members without 2FA get a setup interstitial after
+    # require_2fa_grace_until; ip_allowlist: list of CIDR strings or NULL; sso:
+    # {issuer, client_id, client_secret_encrypted, domain, enforce} or NULL.
+    require_2fa: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    require_2fa_grace_until: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    ip_allowlist: Mapped[list | None] = mapped_column(PortableJSON(), nullable=True)
+    sso: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
 
     def __repr__(self) -> str:
         return f"<Org {self.slug}>"
