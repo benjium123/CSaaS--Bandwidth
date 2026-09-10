@@ -7,6 +7,7 @@ import { CampaignsPage } from "@/pages/CampaignsPage";
 import { CallsPage } from "@/pages/CallsPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { SsoCallbackPage } from "@/pages/SsoCallbackPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SettingsIndexRedirect } from "@/pages/SettingsIndexRedirect";
@@ -65,6 +66,7 @@ export function App() {
     return (
       <Routes>
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
+        <Route path="/auth/sso/callback" element={<SsoCallbackPage />} />
         <Route path="*" element={<LoginPage />} />
       </Routes>
     );
@@ -91,6 +93,8 @@ export function App() {
         <Route path="/settings/:section" element={<SettingsPage />} />
 
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
+
+        <Route path="/auth/sso/callback" element={<SsoCallbackPage />} />
 
         <Route path="/dashboard" element={<Navigate to="/settings/billing?tab=dashboard" replace />} />
         <Route path="/lists" element={<Navigate to="/contacts?tab=lists" replace />} />

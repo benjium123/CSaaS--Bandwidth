@@ -7,6 +7,9 @@ import {
   type ContactVisibility,
 } from "@/api/contacts";
 import { Button, Input, Spinner } from "@/components/ui/primitives";
+import { SessionsCard } from "@/components/settings/SessionsCard";
+import { LoginHistoryCard } from "@/components/settings/LoginHistoryCard";
+import { OrgSecurityPolicyCard } from "@/components/settings/OrgSecurityPolicyCard";
 
 const VISIBILITY_OPTIONS: {
   value: ContactVisibility;
@@ -124,7 +127,7 @@ export function SettingsSecurityPage() {
   }
 
   return (
-    <div className="mx-auto max-w-xl space-y-4 p-6">
+    <div className="mx-auto max-w-3xl space-y-4 p-6">
       <h1 className="text-lg font-semibold">Security</h1>
 
       {message && <p className="text-sm">{message}</p>}
@@ -209,6 +212,22 @@ export function SettingsSecurityPage() {
           </div>
         </div>
       )}
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <SessionsCard />
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <LoginHistoryCard scope="me" />
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <OrgSecurityPolicyCard />
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <LoginHistoryCard scope="org" />
+      </section>
 
       <section className="space-y-3 rounded-md border border-border p-4">
         <fieldset>

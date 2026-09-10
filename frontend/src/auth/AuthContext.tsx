@@ -49,6 +49,7 @@ type AuthValue = {
   ready: boolean;
   login(email: string, password: string): Promise<LoginResult>;
   verify2fa(pendingToken: string, code: string): Promise<LoginResult>;
+  completeSso(accessToken: string, orgId: string): Promise<LoginResult>;
   selectOrg(orgId: string): void;
   logout(): void;
 };
@@ -156,6 +157,27 @@ export function AuthProvider({
     [api, loadMe],
   );
 
+  const completeSso = React.useCallback(
+    async (accessToken: string, orgId: string): Promise<LoginResult> => {
+      try {
+        // WHY: the SSO callback returns the token as JSON rather than redirecting, so
+        // the console completes the login itself; setting the org here as well means
+        // an SSO user lands straight in their workspace instead of the org picker.
+        api.setAuth({ token: accessToken, orgId });
+        setOrgId(orgId);
+        const next = await loadMe();
+        if (!next) {
+          logout();
+          return { kind: "error", message: "Signed in, but we could not load your account." };
+        }
+        return { kind: "ok" };
+      } catch (err) {
+        return { kind: "error", message: (err as Error).message };
+      }
+    },
+    [api, loadMe, logout],
+  );
+
   const selectOrg = React.useCallback(
     (next: string) => {
       api.setAuth({ orgId: next });
@@ -165,6 +187,16 @@ export function AuthProvider({
     [api, queryClient],
   );
 
-  const value: AuthValue = { api, me, orgId, ready, login, verify2fa, selectOrg, logout };
+  const value: AuthValue = {
+    api,
+    me,
+    orgId,
+    ready,
+    login,
+    verify2fa,
+    completeSso,
+    selectOrg,
+    logout,
+  };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

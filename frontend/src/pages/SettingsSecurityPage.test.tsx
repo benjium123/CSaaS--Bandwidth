@@ -8,6 +8,25 @@ import { makeStubClient, renderWithProviders, type RouteStub } from "@/test/harn
 
 const ORG_SETTINGS = { contact_visibility: "everyone" };
 
+// P25 mounted Sessions / Login history / Workspace security into this page. The stub client
+// THROWS on an unstubbed path, and each of those failures renders its own role="alert" - which
+// makes the singular findByRole("alert") assertions below ambiguous. Stubbing them empty keeps
+// this file testing what it is about (2FA + contact visibility) and nothing else. `permissions:
+// []` is what keeps the two admin-only panels from rendering at all.
+const IDENTITY_STUBS = {
+  "/api/v1/me/capabilities": {
+    permissions: [],
+    org: {
+      has_provider: false,
+      has_number: false,
+      member_count: 1,
+      registration_state: "none",
+    },
+  },
+  "/api/v1/me/sessions": [],
+  "/api/v1/me/login-events": [],
+};
+
 const ME_2FA_ON: Me = {
   id: "u1",
   email: "a@example.com",
@@ -34,6 +53,7 @@ const ME_NO_SETTINGS_WRITE: Me = {
 describe("SettingsSecurityPage", () => {
   it("renders the provisioning URI as a link and a copyable field after enrolling", async () => {
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_OFF,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
       "/api/v1/auth/2fa/enroll": {
@@ -64,6 +84,7 @@ describe("SettingsSecurityPage", () => {
     Object.assign(navigator, { clipboard: { writeText } });
 
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_OFF,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
       "/api/v1/auth/2fa/enroll": {
@@ -88,6 +109,7 @@ describe("SettingsSecurityPage", () => {
 
   it("hides the disable-2FA panel when totp_enabled is false or missing", async () => {
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_OFF,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
     });
@@ -108,6 +130,7 @@ describe("SettingsSecurityPage", () => {
       memberships: ME_2FA_ON.memberships,
     };
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": meWithoutField,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
     });
@@ -121,6 +144,7 @@ describe("SettingsSecurityPage", () => {
 
   it("disables 2FA with just a code when the user leaves the password field blank", async () => {
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_ON,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
       "/api/v1/auth/2fa/disable": {},
@@ -140,6 +164,7 @@ describe("SettingsSecurityPage", () => {
   it("sends the password when the user fills it in, and surfaces a 422 error otherwise", async () => {
     let attempt = 0;
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_ON,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
       "/api/v1/auth/2fa/disable": () => {
@@ -178,6 +203,7 @@ describe("SettingsSecurityPage", () => {
   it("disables the disable-2FA button and its inputs while the request is pending", async () => {
     let rejectRequest: ((err: Error) => void) | undefined;
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_ON,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
       "/api/v1/auth/2fa/disable": () =>
@@ -202,6 +228,7 @@ describe("SettingsSecurityPage", () => {
 
   it("renders the three contact visibility options with consequence sentences", async () => {
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_OFF,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
     });
@@ -222,6 +249,7 @@ describe("SettingsSecurityPage", () => {
 
   it("saves a contact visibility change immediately", async () => {
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_OFF,
       "/api/v1/orgs/current/settings": ((_path, init) => {
         if (init.method === "PATCH") {
@@ -247,6 +275,7 @@ describe("SettingsSecurityPage", () => {
 
   it("reverts the visual selection after a failed visibility update", async () => {
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_2FA_OFF,
       "/api/v1/orgs/current/settings": ((_path, init) => {
         if (init.method === "PATCH") {
@@ -269,6 +298,7 @@ describe("SettingsSecurityPage", () => {
 
   it("disables visibility radios without settings:write", async () => {
     const client = makeStubClient({
+      ...IDENTITY_STUBS,
       "/api/v1/auth/me": ME_NO_SETTINGS_WRITE,
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
     });
