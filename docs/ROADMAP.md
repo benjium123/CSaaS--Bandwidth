@@ -17,7 +17,7 @@ least as much UI as it adds.
 | 6 | P24 AI metering, credits, Stripe (Fable owns ledger) | docs/PLAN_P22_P25.md | 0026 (schema + ledger service committed fb03825) | queued behind P23b |
 | 7 | P25 Enterprise identity: sessions, 2FA policy, IP allowlist, OIDC | docs/PLAN_P22_P25.md | 0027 (schema committed 4f2ef3b) | queued |
 | 8 | P26 Inbox pro: notes, mentions, "/" quick replies, snooze, SLA | docs/PLAN_P26_P36.md | 0028 | integrating (backend + frontend staged) |
-| 9 | P27 Contacts pro: export, merge, saved views, retention, erasure | docs/PLAN_P26_P36.md | 0029 | queued |
+| 9 | P27 Contacts pro: export, merge, saved views, retention, erasure | docs/PLAN_P26_P36.md | 0029 (schema committed a521370) | queued |
 | 10 | P28 Messaging: MMS, send-later, link tracking, plain failure reasons | docs/PLAN_P26_P36.md | 0030 | queued |
 | 11 | P29 Voice: coaching enforcement, dual recording, consent, failover, dispositions | docs/PLAN_P26_P36.md | 0031 | queued |
 | 12 | P30 Reports: team, SLA, campaigns, assistant; export; email; wallboard | docs/PLAN_P26_P36.md | 0032 | queued |
