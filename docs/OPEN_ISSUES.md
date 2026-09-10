@@ -120,3 +120,9 @@
 | D58 | The SSO callback returns the minted token as JSON (`{access_token, token_type, org_id}`), not a redirect — deliberate (a token in a query string lands in logs/Referer/browser history), but the frontend phase must complete the flow by reading that JSON rather than expecting a redirect. | P25 Opus supervisor | P25 frontend (not yet started): build the SSO landing page around the JSON response; also wire the `two_factor_required_for_actor` and `ip_allowlist_would_lock_you_out` 422 error codes to inline Security-tab messages. |
 
 Two deliberate deviations from the P25 handoff, both reviewed and accepted: OIDC is built on `PyJWT` + `httpx` (already runtime deps) instead of the handoff-approved `authlib`, since the standing no-new-dependencies rule takes precedence and authlib was never actually installed by the prior attempt (its vendored `pylibs/` hack was deleted, not shipped); the 60s revocation cache is in-process by default and upgrades to Redis automatically when `REDIS_URL` is set, rather than requiring Redis outright — with more than one API worker and no Redis, a revocation is instant on the worker that performed it and up to 60s late on the others, which matches the handoff's stated tolerance either way.
+
+## Discovered during a live production test call, 2026-09-11 (fixed same day)
+
+| ID | Issue | Found | Recipe |
+|---|---|---|---|
+| D60 | `voice_plane/livekit_api.py::admin_token()` never carried a `sip` grant — LiveKit's SIP twirp service (`CreateSIPParticipant`, the actual dial-out step) authorizes off that grant independently of `video`/roomAdmin, which RoomService honors. Every "via: room" outbound call created its LiveKit room successfully (200) then 401'd on the SIP dial-out, surfacing to the caller as "unauthenticated / permissions denied" with no ring at all. | Live test call, 2026-09-11 | ✅ Fixed in commit 6ea0866 — `sip_grants={"admin": True, "call": True}` added to the admin token. Deployed same day. |

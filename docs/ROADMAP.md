@@ -19,7 +19,7 @@ least as much UI as it adds.
 | 8 | P26 Inbox pro: notes, mentions, "/" quick replies, snooze, SLA | docs/PLAN_P26_P36.md | 0028 | DEPLOYED 2026-09-11 |
 | 9 | P27 Contacts pro: export, merge, saved views, retention, erasure | docs/PLAN_P26_P36.md | 0029 (schema committed a521370) | DEPLOYED 2026-09-10 (3e174a0 backend, e3f667e frontend) |
 | 10 | P28 Messaging: MMS, send-later, link tracking, plain failure reasons (closes D43) | docs/PLAN_P26_P36.md | 0030 (schema committed) | DEPLOYED 2026-09-11 (6d6d76c backend, 359e091 frontend) |
-| 11 | P29 Voice: coaching enforcement, dual recording, consent, failover, dispositions | docs/PLAN_P26_P36.md | 0031 (schema committed) | backend drafting |
+| 11 | P29 Voice: coaching enforcement, dual recording, consent, failover, dispositions | docs/PLAN_P26_P36.md | 0031 (schema committed), 0040 (orgs.calling_settings) | DEPLOYED 2026-09-11 (6ea0866, no frontend yet) |
 | 12 | P30 Reports: team, SLA, campaigns, assistant; export; email; wallboard | docs/PLAN_P26_P36.md | 0032 (schema committed) | queued |
 | 13 | P31 Notifications, PWA, mobile | docs/PLAN_P26_P36.md | 0033 (schema committed) | queued |
 | 14 | P32 Plans, traffic billing, invoices (Fable owns money) | docs/PLAN_P26_P36.md | 0034 (schema committed) | queued |
