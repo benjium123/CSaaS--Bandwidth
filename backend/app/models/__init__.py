@@ -67,6 +67,13 @@ from app.models.inboxes import (
     Inbox,
     InboxGrant,
 )
+from app.models.integrations import (
+    INTEGRATION_KINDS,
+    INTEGRATION_STATUSES,
+    SYNC_DIRECTIONS,
+    Integration,
+    IntegrationSyncLog,
+)
 from app.models.invites import Invite
 from app.models.links import LinkClick, ShortLink
 from app.models.messaging import (
@@ -204,6 +211,11 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "INTEGRATION_KINDS",
+    "INTEGRATION_STATUSES",
+    "SYNC_DIRECTIONS",
+    "Integration",
+    "IntegrationSyncLog",
     "DOMAIN_STATUSES",
     "OrgBranding",
     "INVOICE_STATUSES",
