@@ -14,10 +14,10 @@ least as much UI as it adds.
 | 3 | P21 Smart routing | docs/phase-21-plan.md | 0039 | DEPLOYED 2026-09-10 (b0f02d3; D43 campaign routing → P28) |
 | 4 | P23a AI assistant: providers + builder + simulate | docs/PLAN_P22_P25.md | 0025 | DEPLOYED 2026-09-11 (6fa42a7) |
 | 5 | P23b AI assistant: inbound/outbound wiring + outcomes | docs/PLAN_P22_P25.md | 0025 | DEPLOYED 2026-09-10 (4fd3eb8) |
-| 6 | P24 AI metering, credits, Stripe (Fable owns ledger) | docs/PLAN_P22_P25.md | 0026 (schema + ledger service committed fb03825) | backend committed (578bf9e); frontend integrating; not yet deployed |
-| 7 | P25 Enterprise identity: sessions, 2FA policy, IP allowlist, OIDC | docs/PLAN_P22_P25.md | 0027 (schema committed 4f2ef3b) | backend drafting |
+| 6 | P24 AI metering, credits, Stripe (Fable owns ledger) | docs/PLAN_P22_P25.md | 0026 (schema + ledger service committed fb03825) | DEPLOYED 2026-09-10 (578bf9e backend, e3f667e frontend) |
+| 7 | P25 Enterprise identity: sessions, 2FA policy, IP allowlist, OIDC | docs/PLAN_P22_P25.md | 0027 (schema committed 4f2ef3b) | backend integrated, verifying; frontend not started |
 | 8 | P26 Inbox pro: notes, mentions, "/" quick replies, snooze, SLA | docs/PLAN_P26_P36.md | 0028 | DEPLOYED 2026-09-11 |
-| 9 | P27 Contacts pro: export, merge, saved views, retention, erasure | docs/PLAN_P26_P36.md | 0029 (schema committed a521370) | backend committed (3e174a0); frontend drafting; not yet deployed |
+| 9 | P27 Contacts pro: export, merge, saved views, retention, erasure | docs/PLAN_P26_P36.md | 0029 (schema committed a521370) | DEPLOYED 2026-09-10 (3e174a0 backend, e3f667e frontend) |
 | 10 | P28 Messaging: MMS, send-later, link tracking, plain failure reasons | docs/PLAN_P26_P36.md | 0030 (schema committed) | queued |
 | 11 | P29 Voice: coaching enforcement, dual recording, consent, failover, dispositions | docs/PLAN_P26_P36.md | 0031 (schema committed) | queued |
 | 12 | P30 Reports: team, SLA, campaigns, assistant; export; email; wallboard | docs/PLAN_P26_P36.md | 0032 (schema committed) | queued |
