@@ -63,6 +63,12 @@ class ProviderRate(Base, TenantScoped, TimestampMixin):
     #: Cost per unit in millionths of a dollar (1_000_000 = $1.00).
     unit_cost_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     currency: Mapped[str] = mapped_column(sa.String(3), nullable=False, default="USD")
+    # P24: what the CUSTOMER pays per unit; NULL = derive from unit_cost_micros x markup.
+    price_micros: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+    # P24: 'traffic' (P19 carrier spend) | 'ai' (AI providers). Widens the provider domain.
+    scope: Mapped[str] = mapped_column(
+        sa.String(8), nullable=False, default="traffic", server_default="traffic"
+    )
 
 
 class ProviderSpendDaily(Base, TenantScoped, TimestampMixin):

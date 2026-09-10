@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
-from app.db.types import GUID
+from app.db.types import GUID, PortableJSON
 
 
 class Org(Base, TimestampMixin):
@@ -30,6 +30,15 @@ class Org(Base, TimestampMixin):
     ai_key_mode: Mapped[str] = mapped_column(
         sa.String(8), nullable=False, default="platform", server_default="platform"
     )
+
+    # P24 billing knobs. ai_markup_bps NULL = platform default (billing.DEFAULT_AI_MARKUP_BPS);
+    # ai_platform_fee_per_minute_micros applies to BYOK voice; credit_auto_recharge =
+    # {threshold_micros, amount_micros, payment_method_id} or NULL.
+    ai_markup_bps: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    ai_platform_fee_per_minute_micros: Mapped[int | None] = mapped_column(
+        sa.BigInteger, nullable=True
+    )
+    credit_auto_recharge: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
 
     def __repr__(self) -> str:
         return f"<Org {self.slug}>"

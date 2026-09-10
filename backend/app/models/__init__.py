@@ -7,6 +7,17 @@ from app.models.ai_providers import (
     AI_PROVIDERS_BY_KIND,
     AiProviderAccount,
 )
+from app.models.billing import (
+    AI_USAGE_KINDS,
+    AI_USAGE_METRICS,
+    AI_USAGE_SOURCES,
+    DEFAULT_AI_MARKUP_BPS,
+    LEDGER_ENTRY_TYPES,
+    RATE_SCOPES,
+    AiUsageEvent,
+    CreditLedgerEntry,
+    PaymentMethod,
+)
 from app.models.callflow import (
     FLOW_STATUSES,
     QUEUE_ENTRY_STATES,
@@ -173,6 +184,15 @@ __all__ = [
     "Appointment",
     "KbChunk",
     "KbDocument",
+    "AI_USAGE_KINDS",
+    "AI_USAGE_METRICS",
+    "AI_USAGE_SOURCES",
+    "DEFAULT_AI_MARKUP_BPS",
+    "LEDGER_ENTRY_TYPES",
+    "RATE_SCOPES",
+    "AiUsageEvent",
+    "CreditLedgerEntry",
+    "PaymentMethod",
     "AI_KEY_MODES",
     "AI_PROVIDER_ACCOUNT_STATUSES",
     "AI_PROVIDER_CREDENTIAL_FIELDS",

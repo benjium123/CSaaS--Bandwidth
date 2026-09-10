@@ -40,6 +40,9 @@ USAGE_METRICS = (
     "ai_tokens",
     "storage_bytes",
 )
+# P24: fine-grained AI metering lives in ai_usage_events (models/billing.py::AI_USAGE_METRICS),
+# NOT in this catalogue - the daily rollup writes one row per entry here and computes each
+# from messages/calls/turns; AI events are already per-unit and priced at write time.
 #: Delivery retry backoff schedule in seconds (DR-5); after the last, status = dead.
 DELIVERY_BACKOFF_SECONDS = (60, 300, 1800, 7200, 43200)
 
