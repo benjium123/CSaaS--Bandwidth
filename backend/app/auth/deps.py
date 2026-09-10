@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, Annotated
+from typing import Annotated
 
 import sqlalchemy as sa
 from fastapi import Depends, Header, Request
@@ -28,8 +29,21 @@ from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import credentials as credential_svc
+from app.services import identity as identity_svc
+from app.services import session_cache
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+#: Paths a 2FA-locked human user may still reach, kept as NARROW as possible: enough to
+#: enrol a second factor and to inspect/ revoke their own sessions, and nothing else.
+#: /api/v1/me/ as a whole is deliberately NOT exempt - /api/v1/me/capabilities serves org
+#: data and is exactly the kind of route the policy exists to gate. Nor is
+#: /api/v1/orgs/current/security: the org cannot switch the policy off from inside a
+#: locked-out session (see the enable-time guard in api/routes/identity.py, which is what
+#: makes that safe rather than a lockout).
+_2FA_EXEMPT_PATH_PREFIXES = frozenset(
+    {"/api/v1/auth/", "/api/v1/me/sessions", "/api/v1/me/login-events"}
+)
 
 
 def get_settings(request: Request) -> Settings:
@@ -44,7 +58,20 @@ async def get_current_user(
     if creds is None or not creds.credentials:
         raise UnauthenticatedError("Missing bearer token")
     settings: Settings = request.app.state.settings
-    user_id = decode_access_token(creds.credentials, settings.jwt_secret.get_secret_value())
+    user_id, sid = decode_access_token(creds.credentials, settings.jwt_secret.get_secret_value())
+
+    if sid is not None:
+        request.state.session_id = sid
+        cached_revoked = await session_cache.is_revoked(settings, sid)
+        if cached_revoked is True:
+            raise UnauthenticatedError("Invalid or expired token")
+        if cached_revoked is None:
+            live = await identity_svc.get_live_session(session, sid)
+            if live is None:
+                await session_cache.remember(settings, sid, True)
+                raise UnauthenticatedError("Invalid or expired token")
+            await session_cache.remember(settings, sid, False)
+
     user = await users_repo.get_by_id(session, user_id)
     if user is None:
         raise UnauthenticatedError("Invalid or expired token")
@@ -139,6 +166,9 @@ async def get_current_org(
 ) -> AsyncIterator[OrgContext]:
     # P13 DR-11: an API key authenticates against the SAME org-scoped routes. The key is
     # org-bound, so X-Org-Id is optional — but when present it must agree.
+    #: Bound only on the human path; stays None for an API key. Declared up front so the
+    #: P25 enforcement block below never reads a conditionally-bound name.
+    user: User | None = None
     if creds is not None and creds.credentials.startswith(f"{API_KEY_TOKEN_PREFIX}_"):
         ctx = await _org_context_from_api_key(creds.credentials, session, request)
         if x_org_id and x_org_id != str(ctx.org.id):
@@ -164,6 +194,49 @@ async def get_current_org(
 
         set_org_context(session, org.id)
         ctx = OrgContext(org=org, membership=membership, role=role, session=session)
+
+    # P25 IP allowlist: an org that sets ip_allowlist opts into a network restriction for
+    # BOTH human and API-key auth. Fail closed when the client IP cannot be determined.
+    if ctx.org.ip_allowlist:
+        if not identity_svc.ip_in_allowlist(
+            identity_svc.client_ip(request), ctx.org.ip_allowlist
+        ):
+            if user is None:
+                event_email = ""
+                detail = "api_key"
+            else:
+                event_email = user.email
+                detail = None
+
+            identity_svc.record_login_event(
+                session,
+                email=event_email,
+                outcome="blocked_ip",
+                user_id=ctx.actor_user_id,
+                org_id=ctx.org.id,
+                request=request,
+                detail=detail,
+            )
+            await session.commit()
+            raise PermissionDeniedError(
+                "Access from this network is not allowed", code="ip_not_allowed"
+            )
+
+    # P25 2FA enforcement is human-path only: an API key has no TOTP enrollments and its
+    # scope (not step-up auth) is the security boundary. The exempt list is deliberately
+    # narrow (see _2FA_EXEMPT_PATH_PREFIXES): enough to enrol a factor and manage your own
+    # sessions, and nothing that serves org data.
+    if (
+        user is not None
+        and identity_svc.two_factor_required(ctx.org, user)
+        and not any(
+            request.url.path.startswith(prefix) for prefix in _2FA_EXEMPT_PATH_PREFIXES
+        )
+    ):
+        raise PermissionDeniedError(
+            "Two-factor authentication is required by this organization",
+            code="two_factor_required",
+        )
 
     # P17: give the carrier registry proxy (app/providers/registry_org.py) an org to
     # resolve for the lifetime of this request, so app.state.carriers picks DB-configured

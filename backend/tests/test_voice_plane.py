@@ -447,7 +447,7 @@ async def test_softphone_token_for_known_room_returns_room_scoped_token(app_with
     body = r.json()
     assert body["room"] == room
     assert body["url"] == "ws://127.0.0.1:7880"
-    user_id = decode_access_token(token, TEST_JWT_SECRET)
+    user_id, _sid = decode_access_token(token, TEST_JWT_SECRET)
     claims = jwt.decode(body["token"], LK_SECRET, algorithms=["HS256"])
     assert claims["video"]["room"] == room
     assert claims["sub"] == f"user-{user_id}"
@@ -538,7 +538,7 @@ async def test_answer_call_returns_room_scoped_token_for_inbound_room_call(
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["room"] == "call-sip-xyz"
-    user_id = decode_access_token(token, TEST_JWT_SECRET)
+    user_id, _sid = decode_access_token(token, TEST_JWT_SECRET)
     claims = jwt.decode(body["token"], LK_SECRET, algorithms=["HS256"])
     assert claims["video"]["room"] == "call-sip-xyz"
     assert claims["sub"] == f"user-{user_id}"

@@ -23,6 +23,7 @@ from app.api.routes import conversations as conversation_routes
 from app.api.routes import departments as department_routes
 from app.api.routes import flows as flow_routes
 from app.api.routes import health as health_routes
+from app.api.routes import identity as identity_routes
 from app.api.routes import inbox as inbox_routes
 from app.api.routes import inboxes as inboxes_routes
 from app.api.routes import me as me_routes
@@ -39,6 +40,7 @@ from app.api.routes import routing as routing_routes
 from app.api.routes import scheduling as scheduling_routes
 from app.api.routes import softphone as softphone_routes
 from app.api.routes import spend as spend_routes
+from app.api.routes import sso as sso_routes
 from app.api.routes import status as status_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
@@ -214,8 +216,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(billing_routes.router)
     app.include_router(org_routes.router)
     app.include_router(me_routes.router)
+    # P25 enterprise identity. me_router shares the /api/v1/me prefix with me_routes
+    # (distinct paths); org_router hangs off /api/v1/orgs/current alongside org_routes.
+    app.include_router(identity_routes.me_router)
+    app.include_router(identity_routes.org_router)
     app.include_router(roles_routes.router)
     app.include_router(twofa_routes.router)
+    app.include_router(sso_routes.router)
     app.include_router(number_routes.router)
     app.include_router(contact_routes.router)
     app.include_router(inbox_routes.router)

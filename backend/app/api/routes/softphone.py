@@ -27,6 +27,7 @@ from app.models import Call, CallLeg, MessageThread, User
 from app.models.voice import TERMINAL_CALL_STATUSES
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
+from app.services import identity as identity_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services.inbox_access import InboxAccess
 from app.voice_plane.livekit_api import mint_access_token
@@ -152,8 +153,17 @@ async def resolve_ws_org(
         return None
 
     try:
-        user_id = decode_access_token(token, settings.jwt_secret.get_secret_value())
+        # P25: the decoder now returns (user_id, sid). The WS handshake deliberately does
+        # NOT consult the revocation cache - resolve_ws_org is sync-with-the-DB already,
+        # and a revoked sid is caught by get_live_session below, which is the same answer
+        # the HTTP path gives without the extra cache round-trip on a one-shot handshake.
+        user_id, sid = decode_access_token(token, settings.jwt_secret.get_secret_value())
     except UnauthenticatedError:
+        return None
+
+    # A revoked or expired session must not be able to open an events socket and keep it
+    # open indefinitely - that would outlive "sign out everywhere" entirely.
+    if sid is not None and await identity_svc.get_live_session(session, sid) is None:
         return None
 
     user = await users_repo.get_by_id(session, user_id)

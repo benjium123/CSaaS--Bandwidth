@@ -25,10 +25,11 @@ from app.errors import (
     UnauthenticatedError,
     ValidationFailedError,
 )
-from app.models import OrgMembership, PERMISSIONS, User
+from app.models import PERMISSIONS, Org, OrgMembership, Role, User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
+from app.services import identity as identity_svc
 from app.services import invites as invites_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -69,6 +70,54 @@ class MeOut(BaseModel):
     totp_enabled: bool = False
     permissions: list[str]
     memberships: list[MembershipOut]
+
+
+async def _log_and_fail(
+    session: AsyncSession, error: Exception, **event: object
+) -> None:
+    """Record a failed sign-in, COMMIT it, then raise ``error``.
+
+    The event is committed even though the request fails - a failed sign-in is precisely
+    what a security review wants to see, and it must survive the rollback the error
+    handler would otherwise perform. Written as a helper rather than try/finally around
+    each raise: a ``raise`` inside ``finally`` silently swallows any error the commit
+    itself threw, which on an auth path is the last thing anyone wants to debug.
+    """
+    identity_svc.record_login_event(session, **event)  # type: ignore[arg-type]
+    await session.commit()
+    raise error
+
+
+async def _sso_enforced_for(session: AsyncSession, user: User, email: str) -> bool:
+    """Return True when an SSO-enforcing org owns the email domain and the user lacks owner."""
+    domain = email.partition("@")[2].strip().lower()
+    if not domain:
+        return False
+
+    # JUSTIFIED allow_unscoped: pre-tenant-resolution during login — no X-Org-Id exists
+    # yet, and SSO policy must be looked up by email domain across all of the user's orgs.
+    rows = (
+        await session.execute(
+            sa.select(Org, OrgMembership, Role)
+            .join(OrgMembership, OrgMembership.org_id == Org.id)
+            .join(Role, Role.id == OrgMembership.role_id)
+            .where(OrgMembership.user_id == user.id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+
+    for org, _membership, role in rows:
+        sso = org.sso or {}
+        if not sso.get("enforce"):
+            continue
+        sso_domain = sso.get("domain")
+        if not sso_domain or sso_domain.lower() != domain:
+            continue
+        if "*" in (role.permissions or []):
+            return False
+        return True
+
+    return False
 
 
 @router.post("/register", response_model=MeOut, status_code=201)
@@ -133,17 +182,56 @@ async def login(
     # used to enumerate which emails have accounts.
     if user is None:
         hash_password(payload.password)
-        raise UnauthenticatedError("Incorrect email or password")
-    if not verify_password(payload.password, user.hashed_password):
-        raise UnauthenticatedError("Incorrect email or password")
-    if not user.is_active:
-        raise UnauthenticatedError("Incorrect email or password")
+        await _log_and_fail(
+            session,
+            UnauthenticatedError("Incorrect email or password"),
+            email=payload.email,
+            outcome="bad_password",
+            request=request,
+        )
 
-    if needs_rehash(user.hashed_password):
+    if not verify_password(payload.password, user.hashed_password):
+        await _log_and_fail(
+            session,
+            UnauthenticatedError("Incorrect email or password"),
+            email=user.email,
+            outcome="bad_password",
+            user_id=user.id,
+            request=request,
+        )
+
+    if not user.is_active:
+        await _log_and_fail(
+            session,
+            UnauthenticatedError("Incorrect email or password"),
+            email=user.email,
+            outcome="locked",
+            user_id=user.id,
+            request=request,
+        )
+
+    if await _sso_enforced_for(session, user, user.email):
+        await _log_and_fail(
+            session,
+            PermissionDeniedError(
+                "Your organization requires single sign-on", code="sso_required"
+            ),
+            email=user.email,
+            outcome="locked",
+            user_id=user.id,
+            request=request,
+            detail="sso_required",
+        )
+
+    rehash = needs_rehash(user.hashed_password)
+    if rehash:
         user.hashed_password = hash_password(payload.password)
-        await session.commit()
 
     if user.totp_enabled:
+        # Do not log an ok event and do not create a Session: the pending token is NOT a
+        # login yet. twofa.verify creates the session and emits the successful event.
+        if rehash:
+            await session.commit()
         return TokenOut(
             requires_2fa=True,
             pending_token=create_pending_2fa_token(
@@ -151,11 +239,30 @@ async def login(
             ),
         )
 
+    identity_session = await identity_svc.create_session(
+        session,
+        user_id=user.id,
+        org_id=None,
+        request=request,
+        expire_hours=settings.jwt_expire_hours,
+    )
+    await session.flush()
+
     token = create_access_token(
         user.id,
         settings.jwt_secret.get_secret_value(),
         expire_hours=settings.jwt_expire_hours,
+        sid=identity_session.id,
     )
+    identity_svc.record_login_event(
+        session,
+        email=user.email,
+        outcome="ok",
+        user_id=user.id,
+        org_id=None,
+        request=request,
+    )
+    await session.commit()
     return TokenOut(access_token=token)
 
 

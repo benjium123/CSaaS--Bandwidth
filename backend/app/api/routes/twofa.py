@@ -36,6 +36,7 @@ from app.errors import (
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
+from app.services import identity as identity_svc
 
 router = APIRouter(prefix="/api/v1/auth/2fa", tags=["auth"])
 
@@ -140,7 +141,12 @@ async def verify(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
-    """Exchange a pending-2FA token + code for a real access token."""
+    """Exchange a pending-2FA token + code for a real access token.
+
+    P25: THIS is where a 2FA login becomes a login - routes/auth.py deliberately creates
+    no Session and logs no ``ok`` event for a TOTP-enabled user, because the pending
+    token is not yet a sign-in. The Session row and the login event are minted here.
+    """
     settings: Settings = request.app.state.settings
     await enforce_rate_limit(request, f"totp:{payload.pending_token}")
     key = _fernet_key(settings)
@@ -153,13 +159,42 @@ async def verify(
         raise UnauthenticatedError("Invalid verification session")
 
     secret = decrypt_credential(user.totp_secret, key)
-    step = _check_code(user, secret, payload.code)
+    try:
+        step = _check_code(user, secret, payload.code)
+    except UnauthenticatedError as exc:
+        # A wrong or replayed second factor is a security event in its own right, and it
+        # is committed even though the request fails.
+        identity_svc.record_login_event(
+            session,
+            email=user.email,
+            outcome="bad_2fa",
+            user_id=user.id,
+            request=request,
+        )
+        await session.commit()
+        raise exc
+
     user.totp_last_used_step = step
-    await session.commit()
+
+    identity_session = await identity_svc.create_session(
+        session,
+        user_id=user.id,
+        org_id=None,
+        request=request,
+        expire_hours=settings.jwt_expire_hours,
+    )
+    await session.flush()
 
     token = create_access_token(
-        user.id, settings.jwt_secret.get_secret_value(), expire_hours=settings.jwt_expire_hours
+        user.id,
+        settings.jwt_secret.get_secret_value(),
+        expire_hours=settings.jwt_expire_hours,
+        sid=identity_session.id,
     )
+    identity_svc.record_login_event(
+        session, email=user.email, outcome="ok", user_id=user.id, request=request
+    )
+    await session.commit()
     return {"access_token": token, "token_type": "bearer"}
 
 

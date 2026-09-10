@@ -79,6 +79,12 @@ def make_settings(**overrides) -> Settings:
         # Individual platform-ops-token regression tests override this explicitly
         # (including to "" to exercise the unset -> 503 path).
         "platform_ops_token": TEST_PLATFORM_OPS_TOKEN,
+        # Blank regardless of the developer's root .env (which points at a real Redis for
+        # deployment) - P25's session/SSO-state caches correctly fall back to an
+        # in-process store when this is empty, and no test here opts into exercising the
+        # live-Redis path, so leaking a real-looking URL in would just make every test
+        # depend on a Redis server nobody is running locally.
+        "redis_url": "",
         # Tests create many users and must keep exercising the REAL registration
         # endpoint. Production refuses this flag outright (config.validate), so it can
         # never be why a live instance is open; invite tests override it to False.

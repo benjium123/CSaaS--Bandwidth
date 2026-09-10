@@ -75,18 +75,33 @@ def parse_api_key_prefix(full_key: str) -> str | None:
     return parts[1]
 
 
-def create_access_token(user_id: uuid.UUID, secret: str, *, expire_hours: int = 24) -> str:
+def create_access_token(
+    user_id: uuid.UUID,
+    secret: str,
+    *,
+    expire_hours: int = 24,
+    sid: uuid.UUID | None = None,
+) -> str:
+    """Mint an access token. ``sid`` is omitted when no session exists, so tokens minted
+    without one are byte-identical to the pre-P25 format."""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(hours=expire_hours)).timestamp()),
     }
+    if sid is not None:
+        payload["sid"] = str(sid)
     return jwt.encode(payload, secret, algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str, secret: str) -> uuid.UUID:
-    """Return the subject, or raise UnauthenticatedError. Never leaks why.
+def decode_access_token(token: str, secret: str) -> tuple[uuid.UUID, uuid.UUID | None]:
+    """Return ``(user_id, sid)`` or raise UnauthenticatedError. Never leaks why.
+
+    ``sid`` is None for pre-P25 tokens (minted without a session row); those tokens stay
+    valid until their embedded expiry and cannot be checked for revocation. A malformed
+    ``sid`` claim is treated as a bad token — silently downgrading it to None would let an
+    attacker strip revocation by corrupting the claim.
 
     A token carrying ANY ``scope`` claim is rejected outright: scoped tokens (currently the
     5-minute 2FA-pending token) are not access tokens, and letting one through here would
@@ -96,8 +111,13 @@ def decode_access_token(token: str, secret: str) -> uuid.UUID:
         payload = jwt.decode(token, secret, algorithms=[ALGORITHM])
         if payload.get("scope"):
             raise ValueError("scoped token is not an access token")
-        return uuid.UUID(payload["sub"])
-    except Exception as exc:  # expired, bad signature, malformed sub — all the same to callers
+        user_id = uuid.UUID(payload["sub"])
+        sid_raw = payload.get("sid")
+        if sid_raw is None:
+            return user_id, None
+        sid = uuid.UUID(str(sid_raw))
+        return user_id, sid
+    except Exception as exc:  # expired, bad signature, bad sub/sid - all one to callers
         raise UnauthenticatedError("Invalid or expired token") from exc
 
 
