@@ -11,6 +11,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchAuthedBlob, type ApiClient } from "@/api/client";
 import { cancelScheduledMessage } from "@/api/messaging";
+import { isTerminalCallStatus, useCalls } from "@/api/hooks";
+import { dispositionOf, type CallDisposition } from "@/api/calls";
+import { DispositionPicker } from "@/components/calls/DispositionPicker";
 import { AiCallCard } from "@/components/conversations/AiCallCard";
 import {
   fetchConversationTimeline,
@@ -228,7 +231,19 @@ function CallRecordingPlayer({
 /** P23b: a call an assistant took reads nothing like a human call - it has a summary, an
  * outcome and a transcript worth opening - so it gets its own card. The plain call card
  * below is untouched, and the human call path is unchanged. */
-function CallTimelineItemView({ item, api }: { item: CallTimelineItem; api: ApiClient }) {
+function CallTimelineItemView({
+  item,
+  api,
+  ourE164,
+  saved,
+}: {
+  item: CallTimelineItem;
+  api: ApiClient;
+  ourE164: string | null;
+  /** P29: this call's saved result, from the calls list (the timeline payload has none).
+   * Undefined until that list has loaded - no picker is offered on a guess. */
+  saved: CallDisposition | undefined;
+}) {
   if (item.assistant) return <AiCallCard item={{ ...item, assistant: item.assistant }} api={api} />;
 
   const failed = Boolean(item.failure_detail) || item.status === "failed";
@@ -271,6 +286,17 @@ function CallTimelineItemView({ item, api }: { item: CallTimelineItem; api: ApiC
             recordingId={item.recording.id}
             status={item.recording.status}
           />
+        )}
+        {ourE164 && saved && isTerminalCallStatus(item.status) && (
+          <div className="text-foreground">
+            <DispositionPicker
+              api={api}
+              callId={item.id}
+              ourE164={ourE164}
+              disposition={saved.disposition}
+              note={saved.disposition_note}
+            />
+          </div>
         )}
       </div>
       <span className="ml-auto shrink-0 self-start text-[11px] text-muted-foreground">
@@ -384,6 +410,31 @@ export function Timeline({
     [query.data],
   );
 
+  // P29: the timeline payload does not carry a call's saved result, so ONE calls-list read
+  // for this contact supplies it - and only once there is an ended human call to label.
+  const hasEndedHumanCall = React.useMemo(
+    () =>
+      items.some(
+        (item) => item.kind === "call" && !item.assistant && isTerminalCallStatus(item.status),
+      ),
+    [items],
+  );
+  const savedResults = useCalls(
+    api,
+    { contact_e164: contactE164 ?? undefined, limit: 200 },
+    enabled && hasEndedHumanCall,
+  );
+  const savedById = React.useMemo(() => {
+    const map = new Map<string, CallDisposition>();
+    const rows: unknown = savedResults.data;
+    if (Array.isArray(rows)) {
+      rows.forEach((row: { id?: unknown }) => {
+        if (typeof row?.id === "string") map.set(row.id, dispositionOf(row));
+      });
+    }
+    return map;
+  }, [savedResults.data]);
+
   // F6: key the auto-scroll on the newest item's identity, not the item COUNT - "Load
   // older" grows `items.length` too, and scrolling to the bottom on that would yank the
   // view away from the older messages the user just asked to see.
@@ -463,7 +514,15 @@ export function Timeline({
                 case "message":
                   return <MessageTimelineItemView key={item.id} item={item} api={api} />;
                 case "call":
-                  return <CallTimelineItemView key={item.id} item={item} api={api} />;
+                  return (
+                    <CallTimelineItemView
+                      key={item.id}
+                      item={item}
+                      api={api}
+                      ourE164={ourE164}
+                      saved={savedById.get(item.id)}
+                    />
+                  );
                 case "voicemail":
                   return <VoicemailTimelineItemView key={item.id} item={item} api={api} />;
                 case "note":

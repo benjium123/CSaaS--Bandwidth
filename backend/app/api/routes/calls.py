@@ -584,6 +584,22 @@ async def _access_or_404(
         raise NotFoundError(message)
 
 
+class CallDispositionsOut(BaseModel):
+    dispositions: list[str]
+
+
+# Declared before /calls/{call_id}: that route would otherwise capture "dispositions" and
+# 422 it as a malformed call id.
+@router.get("/calls/dispositions", response_model=CallDispositionsOut)
+async def list_call_dispositions(
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
+) -> CallDispositionsOut:
+    """The org's call-result list for whoever records call results. The full calling
+    settings stay behind settings:read, but the agent role has only calls:read and must
+    still be able to pick the results PATCH /calls/{id}/disposition validates against."""
+    return CallDispositionsOut(dispositions=calling_settings_svc.dispositions_for(ctx.org))
+
+
 @router.get("/calls/{call_id}", response_model=CallDetailOut)
 async def get_call(
     call_id: uuid.UUID,

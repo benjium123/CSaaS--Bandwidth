@@ -1072,3 +1072,31 @@ async def test_bandwidth_numbers_api_uses_basic_auth_even_under_oauth2():
     assert decoded == "api_user:api_pass"
     assert "Bearer" not in authorization
     assert results[0].e164 == "+12145550100"
+
+
+async def test_agents_can_read_the_call_result_list(p29_app, session):
+    """An agent (calls:read, no settings:read) records call results, so it must be able
+    to read the list PATCH /calls/{id}/disposition validates against - without being
+    handed the rest of the calling settings."""
+    client, _fake, _app = p29_app
+    token, _org_row, org_id = await _org(client, "dispositions-agent-read")
+    agent_token = await _register_member(
+        client, session, org_id, "p29-agent-list@example.com", "agent"
+    )
+
+    r = await client.get("/api/v1/calls/dispositions", headers=auth_headers(agent_token, org_id))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"dispositions": list(calling_settings_svc.DEFAULT_DISPOSITIONS)}
+
+    r = await client.get("/api/v1/orgs/current/calling", headers=auth_headers(agent_token, org_id))
+    assert r.status_code == 403, r.text
+
+    r = await client.patch(
+        "/api/v1/orgs/current/calling",
+        json={"dispositions": ["Booked", "Not now"]},
+        headers=auth_headers(token, org_id),
+    )
+    assert r.status_code == 200, r.text
+    r = await client.get("/api/v1/calls/dispositions", headers=auth_headers(agent_token, org_id))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"dispositions": ["Booked", "Not now"]}

@@ -143,7 +143,7 @@ describe("CallsPage", () => {
     renderWithProviders(<CallsPage />, client);
 
     await selectCallRow("(972) 555-0199");
-    await screen.findByText("Legs");
+    await screen.findByText("Recordings");
     expect(screen.queryByLabelText("Transcript")).not.toBeInTheDocument();
   });
 
@@ -315,5 +315,103 @@ describe("CallsPage", () => {
     await userEvent.click(trigger);
 
     expect(screen.getByText("Select a call to see details.")).toBeInTheDocument();
+  });
+
+  it("P29: shows a completed call's saved result", async () => {
+    const detail = {
+      ...NEW_CALL_DETAIL,
+      id: "call-1",
+      status: "completed",
+      disposition: "Hot lead",
+      disposition_note: "Call back Tuesday",
+    };
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [CALL_1] : detail,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+
+    const group = await screen.findByRole("group", { name: "Call result" });
+    expect(within(group).getByText("Hot lead")).toBeInTheDocument();
+    expect(within(group).getByText("Call back Tuesday")).toBeInTheDocument();
+  });
+
+  it("P29: offers no call result on a call still in progress", async () => {
+    const detail = { ...NEW_CALL_DETAIL, id: "call-1", status: "bridged", disposition: "Hot lead" };
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [{ ...CALL_1, status: "bridged" }] : detail,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+    await screen.findByRole("button", { name: "Hang up" });
+    expect(screen.queryByRole("group", { name: "Call result" })).not.toBeInTheDocument();
+  });
+
+  it("P29: a two-sided recording offers both sides and each side; a single file offers one download", async () => {
+    const base = "https://app.test/api/v1/calls/call-1/recordings";
+    const detail = {
+      ...NEW_CALL_DETAIL,
+      id: "call-1",
+      status: "completed",
+      recordings: [
+        {
+          id: "r1",
+          status: "stored",
+          content_type: "audio/wav",
+          duration_seconds: 12,
+          size_bytes: 100,
+          url: `${base}/r1`,
+          channel_layout: "dual",
+          files: [
+            { layout: "mixed", url: `${base}/r1?layout=mixed` },
+            { layout: "agent", url: `${base}/r1?layout=agent` },
+            { layout: "customer", url: `${base}/r1?layout=customer` },
+          ],
+        },
+        {
+          id: "r2",
+          status: "stored",
+          content_type: "audio/wav",
+          duration_seconds: 5,
+          size_bytes: 50,
+          url: `${base}/r2`,
+          channel_layout: "mixed",
+          files: [{ layout: "mixed", url: `${base}/r2?layout=mixed` }],
+        },
+      ],
+    };
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [CALL_1] : detail,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+
+    expect(await screen.findByRole("button", { name: "Download both sides" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download your side" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download their side" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Download" })).toHaveLength(1);
+  });
+
+  it("P29: the per-leg technical table is gone", async () => {
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [CALL_1] : NEW_CALL_DETAIL,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+    await screen.findByText("Recordings");
+    expect(screen.queryByText("Legs")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Hangup cause/i)).not.toBeInTheDocument();
   });
 });

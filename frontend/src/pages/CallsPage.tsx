@@ -17,6 +17,9 @@ import {
   type RecordingOut,
 } from "@/api/hooks";
 import { fetchInboxes } from "@/api/conversations";
+import { dispositionOf } from "@/api/calls";
+import { DispositionPicker } from "@/components/calls/DispositionPicker";
+import { RecordingDownloads } from "@/components/calls/RecordingDownloads";
 import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
 import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { formatPhone } from "@/lib/format";
@@ -267,6 +270,7 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [agentNotice, setAgentNotice] = React.useState<string | null>(null);
   const terminal = isTerminalCallStatus(call.status);
+  const saved = dispositionOf(call);
 
   // Item 42: viewer-role inboxes can see a call's detail but not act on it (transfer,
   // hang up, or dispatch an AI agent) - the same "viewer" gate ConversationsPage
@@ -348,6 +352,19 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
         </dl>
       </div>
 
+      {/* P29: the call result is picked once the call is over. The picker applies the
+          same number-grant rule as the buttons below, plus the catalogue read. */}
+      {terminal && (
+        <DispositionPicker
+          key={call.id}
+          api={api}
+          callId={call.id}
+          ourE164={call.our_e164}
+          disposition={saved.disposition}
+          note={saved.disposition_note}
+        />
+      )}
+
       {actionError && (
         <p role="alert" className="text-sm text-destructive">
           {actionError}
@@ -420,38 +437,6 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
           </ul>
         </div>
       )}
-
-      <div>
-        <h3 className="text-sm font-medium">Legs</h3>
-        {call.legs.length === 0 ? (
-          <p className="mt-1 text-xs text-muted-foreground">No legs yet.</p>
-        ) : (
-          <table className="mt-2 w-full text-xs" aria-label="Legs">
-            <thead>
-              <tr className="text-left text-muted-foreground">
-                <th className="px-2 py-1 font-medium">From → To</th>
-                <th className="px-2 py-1 font-medium">Status</th>
-                <th className="px-2 py-1 font-medium">Reason</th>
-                <th className="px-2 py-1 font-medium">AMD</th>
-                <th className="px-2 py-1 font-medium">Hangup cause</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {call.legs.map((leg) => (
-                <tr key={leg.id}>
-                  <td className="px-2 py-1">
-                    {formatPhone(leg.from_e164)} → {formatPhone(leg.to_e164)}
-                  </td>
-                  <td className="px-2 py-1">{leg.status}</td>
-                  <td className="px-2 py-1">{leg.reason || "—"}</td>
-                  <td className="px-2 py-1">{leg.amd_result ?? "—"}</td>
-                  <td className="px-2 py-1">{leg.hangup_cause ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
 
       <div>
         <h3 className="text-sm font-medium">Recordings</h3>
@@ -528,6 +513,7 @@ function RecordingRow({
       </span>
       <span className="text-muted-foreground">{recording.status}</span>
       {audioUrl && <audio ref={audioRef} src={audioUrl} controls className="h-8" />}
+      <RecordingDownloads api={api} callId={callId} recording={recording} />
       {error && (
         <span role="alert" className="text-destructive">
           {error}

@@ -193,8 +193,8 @@ describe("App routes and legacy redirects", () => {
     const redirects = [
       { path: "/numbers", expected: "Settings page numbers" },
       { path: "/providers", expected: "Settings page providers" },
-      { path: "/flows", expected: "Settings page calling" },
-      { path: "/queues", expected: "Settings page calling" },
+      { path: "/flows", expected: "Settings page calling tab=flows" },
+      { path: "/queues", expected: "Settings page calling tab=queues" },
       { path: "/agent", expected: "Settings page ai" },
       { path: "/appointments", expected: "Settings page ai" },
       { path: "/platform", expected: "Settings page developers" },

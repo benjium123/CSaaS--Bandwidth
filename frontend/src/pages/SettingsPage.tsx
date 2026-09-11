@@ -29,6 +29,7 @@ import { NumbersPage } from "@/pages/NumbersPage";
 import { ProvidersPage } from "@/pages/ProvidersPage";
 import { FlowsPage } from "@/pages/FlowsPage";
 import { QueuesPage } from "@/pages/QueuesPage";
+import { SettingsCallingPage } from "@/pages/SettingsCallingPage";
 import { AgentPage } from "@/pages/AgentPage";
 import { AppointmentsPage } from "@/pages/AppointmentsPage";
 import { PlatformPage } from "@/pages/PlatformPage";
@@ -126,11 +127,14 @@ function TeamSettingsSection() {
 }
 
 function CallingSettingsSection() {
+  // P29: what every call does (recording, the announcement, the call results list) comes
+  // first; the per-number routing editors stay one tab over.
   const tabs = [
+    { id: "general", label: "Recording & results" },
     { id: "flows", label: "Call flows" },
     { id: "queues", label: "Queues" },
   ];
-  const { value, onChange } = useSettingsTab(tabs, "flows");
+  const { value, onChange } = useSettingsTab(tabs, "general");
 
   return (
     <SettingsTabs
@@ -140,7 +144,13 @@ function CallingSettingsSection() {
       onChange={onChange}
       ariaLabel="Calling settings"
     >
-      {value === "flows" ? <FlowsPage /> : <QueuesPage />}
+      {value === "general" ? (
+        <SettingsCallingPage />
+      ) : value === "flows" ? (
+        <FlowsPage />
+      ) : (
+        <QueuesPage />
+      )}
     </SettingsTabs>
   );
 }

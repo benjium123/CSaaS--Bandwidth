@@ -100,8 +100,8 @@ export function App() {
         <Route path="/lists" element={<Navigate to="/contacts?tab=lists" replace />} />
         <Route path="/agent" element={<Navigate to="/settings/ai" replace />} />
         <Route path="/appointments" element={<Navigate to="/settings/ai" replace />} />
-        <Route path="/flows" element={<Navigate to="/settings/calling" replace />} />
-        <Route path="/queues" element={<Navigate to="/settings/calling" replace />} />
+        <Route path="/flows" element={<Navigate to="/settings/calling?tab=flows" replace />} />
+        <Route path="/queues" element={<Navigate to="/settings/calling?tab=queues" replace />} />
         <Route path="/numbers" element={<Navigate to="/settings/numbers" replace />} />
         <Route path="/providers" element={<Navigate to="/settings/providers" replace />} />
         <Route path="/security" element={<Navigate to="/settings/team?tab=security" replace />} />
