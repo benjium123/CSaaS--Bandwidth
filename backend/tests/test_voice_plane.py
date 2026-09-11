@@ -832,3 +832,50 @@ async def test_gather_room_call_is_409(app_with_room_calls):
     assert r.status_code == 409
 
     await voice_service.wait_for_pending_dial_tasks()
+
+
+# ==================================================================================
+# D61: room-scoped admin RPCs
+# ==================================================================================
+async def test_room_scoped_admin_rpcs_carry_a_token_for_that_exact_room():
+    """LiveKit matches roomAdmin against the token's EXACT room - "*" is not a wildcard -
+    so RemoveParticipant 401'd live on 2026-09-11. Every room-scoped RPC must mint its
+    admin token for the room it acts on; room creation stays room-agnostic."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        api = LiveKitApi(
+            url="ws://127.0.0.1:7880", api_key=LK_KEY, api_secret=LK_SECRET, client=http
+        )
+        await api.remove_participant("call-a", "sip-a")
+        await api.list_participants("call-b")
+        await api.update_subscriptions(
+            room="call-c", identity="sip-c", track_sids=["TR_1"], subscribe=False
+        )
+        await api.create_agent_dispatch(room="call-d", agent_name="ai-agent")
+        await api.transfer_sip_participant(
+            room="call-e", identity="sip-e", transfer_to="tel:+19725550100"
+        )
+        await api.create_room("call-f")
+
+    def claims_of(request: httpx.Request) -> dict:
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        return jwt.decode(token, LK_SECRET, algorithms=["HS256"])
+
+    by_method = {r.url.path.rsplit("/", 1)[-1]: claims_of(r) for r in seen}
+    for method, room in [
+        ("RemoveParticipant", "call-a"),
+        ("ListParticipants", "call-b"),
+        ("UpdateSubscriptions", "call-c"),
+        ("CreateDispatch", "call-d"),
+        ("TransferSIPParticipant", "call-e"),
+    ]:
+        assert by_method[method]["video"]["roomAdmin"] is True, method
+        assert by_method[method]["video"]["room"] == room, method
+    assert by_method["CreateRoom"]["video"]["roomCreate"] is True
+    assert by_method["CreateRoom"]["video"]["room"] == ""
+    assert by_method["TransferSIPParticipant"]["sip"] == {"admin": True, "call": True}

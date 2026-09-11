@@ -74,12 +74,15 @@ def mint_access_token(
     return jwt.encode(claims, api_secret, algorithm="HS256")
 
 
-def admin_token(api_key: str, api_secret: str) -> str:
+def admin_token(api_key: str, api_secret: str, *, room: str = "") -> str:
     grants = {
         "roomCreate": True,
         "roomList": True,
         "roomAdmin": True,
-        "room": "*",
+        # D61: LiveKit checks roomAdmin against this EXACT room name - "*" is not a
+        # wildcard, so every room-scoped RPC 401'd. Room-scoped callers pass their room;
+        # CreateRoom/DeleteRoom/ListRooms only check roomCreate/roomList.
+        "room": room,
         "roomJoin": False,
     }
     return mint_access_token(
@@ -129,10 +132,10 @@ class LiveKitApi:
             await self._client.aclose()
             self._client = None
 
-    async def _twirp(self, service: str, method: str, body: dict) -> dict:
+    async def _twirp(self, service: str, method: str, body: dict, *, room: str = "") -> dict:
         url = f"{self.http_url}/twirp/livekit.{service}/{method}"
         headers = {
-            "Authorization": f"Bearer {admin_token(self.api_key, self.api_secret)}",
+            "Authorization": f"Bearer {admin_token(self.api_key, self.api_secret, room=room)}",
             "Content-Type": "application/json",
         }
         client = await self._get_client()
@@ -173,10 +176,11 @@ class LiveKitApi:
             "RoomService",
             "RemoveParticipant",
             {"room": room, "identity": identity},
+            room=room,
         )
 
     async def list_participants(self, room: str) -> list[dict]:
-        data = await self._twirp("RoomService", "ListParticipants", {"room": room})
+        data = await self._twirp("RoomService", "ListParticipants", {"room": room}, room=room)
         return data.get("participants", [])
 
     # NOTE (P12 B7 adjudication, verified against the LIVE server 2026-08-29):
@@ -201,6 +205,7 @@ class LiveKitApi:
                 "track_sids": track_sids,
                 "subscribe": subscribe,
             },
+            room=room,
         )
 
     async def create_sip_participant(
@@ -239,6 +244,7 @@ class LiveKitApi:
             "AgentDispatchService",
             "CreateDispatch",
             {"room": room, "agent_name": agent_name, "metadata": metadata},
+            room=room,
         )
 
     async def start_track_egress(self, *, room: str, track_id: str, filepath: str) -> dict:
@@ -282,6 +288,7 @@ class LiveKitApi:
                 "participant_identity": identity,
                 "transfer_to": transfer_to,
             },
+            room=room,
         )
 
 
