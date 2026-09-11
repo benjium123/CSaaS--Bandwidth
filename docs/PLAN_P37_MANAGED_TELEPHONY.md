@@ -1,6 +1,89 @@
 # P37 — Managed telephony (reseller): numbers, SMS and calling for every new company
 
-Fable 2026-09-11. Status: **PLAN — awaiting operator approval.** No code until approved.
+Fable 2026-09-11. Status: **APPROVED 2026-09-11** ("please complete it"). Building.
+
+## Decision 2 (operator, 2026-09-11): prepaid hard gate per organisation
+Every org can be put on **prepaid texting and calling**: outbound SMS/MMS, outbound calls and
+number orders draw from the P24 credit balance (top-ups) and are refused (402) when it cannot
+cover them; inbound SMS and inbound minutes are charged but never refused; a running outbound
+call is hung up when its hold can no longer be extended; number rental is charged monthly from
+the balance. Built FIRST, ahead of P37a, because it applies to every org (bring-your-own too).
+Switched per org by platform ops (`orgs.telephony_prepaid`, migration 0041); managed orgs will
+start with it on. This also settles operator decision 2 below: **overage is prepaid credits**.
+Service: `backend/app/services/telephony_billing.py`; tests: `tests/test_prepaid_telephony.py`.
+
+## Decision 3 (operator, 2026-09-11): we sell our own packages; every price clears Telnyx + Stripe
+We define our own SMS and calling packages with allotted texts, minutes and numbers, and we
+charge more than Telnyx charges us because Stripe takes its fee on every top-up as well.
+Shape is decided here; the actual prices and allowances are operator inputs (see the table
+at the end of this section). Built in **P37c** on the P32 schema already committed in 0034.
+
+### What a package is
+One row in `plans` (P32): `monthly_price_micros`, `included = {"sms_segments", "voice_minutes",
+"numbers", "seats"}`, `overage_rates = {"sms_out", "mms_out", "voice_min_out", "voice_min_in",
+"number_mrc"}` (customer price per unit past the allowance). An org has one `plan_code`; the
+cycle starts on `plan_started_at` and resets on its monthly anniversary. Unused allowance does
+not roll over (assumption; say so if you want rollover).
+
+### The rigorous check - how an org can never use more than it paid for
+1. **One meter, one writer.** Every outbound segment, every call minute (both directions),
+   every MMS and every number-month goes through `services/telephony_billing.py`, which is the
+   only code that decides what a unit costs the customer, and `services/credits.py`, the only
+   code that writes the ledger. The gate hooks already sit in the four places traffic can
+   originate (`messaging.py`, `calls.py`, `voice_plane/service.py`, `routes/numbers.py`); a
+   test asserts nothing else imports the carrier senders.
+2. **Allowance counters** (migration 0043, Fable-only): `plan_allowances(org_id, period_start,
+   metric, used_units)`. A unit is taken with one atomic
+   `UPDATE ... SET used = used + n WHERE used + n <= included RETURNING`, so two concurrent
+   sends cannot both take the last text. The counter row and the ledger entry are written in
+   the same transaction as the send/dial.
+3. **Decision at the moment of use, per unit.** Allowance left -> the unit is covered (price 0,
+   still recorded as a usage event marked `covered_by_plan`). Allowance gone -> the unit is
+   overage at the plan's `overage_rates` (fallback: rate card x markup) and the prepaid hard
+   gate (Decision 2) applies: not enough credits -> 402 *before* the text is sent or the call is
+   dialled; a live call reserves 5 minutes, the sweeper extends the hold every pass, and the
+   call is hung up when the hold can no longer be extended. Inbound texts and minutes count
+   against the allowance and are charged past it, but are never refused.
+4. **Minutes are whole minutes, rounded up per call leg.** Telnyx bills in finer increments,
+   so rounding is always in our favour.
+5. **Numbers.** The included count nets against the monthly rental; each extra number charges
+   `number_mrc` monthly from credits (`renew_number_rentals`, already built). No number order
+   without the balance to cover the first month (already built).
+6. **Reconciliation, nightly (P37c cost ingestion).** Pull Telnyx message and call detail
+   records per sub-account (idempotent on the Telnyx record id) with `cost_micros`. Compare
+   Telnyx's counted segments and minutes with our meter per org per day; drift beyond 2% raises
+   an ops alert - that is how a path that bypasses the meter would be caught. Monthly per-org
+   margin report: plan fee + overage + rentals - Telnyx cost - Stripe fee. Customers see
+   "used 412 of 1,000 texts this cycle" and their balance; never cost or margin.
+
+### Stripe's fee and the price floor
+A top-up credits exactly what the customer paid (`amount_received x 10_000` in
+`routes/webhooks.py`); Stripe's 2.9% + $0.30 comes out of our side. So the fee is carried by the
+markup on every price, not by a surcharge on the top-up:
+- **Unit floor:** customer price >= Telnyx cost x (1 + `MIN_MARGIN_BPS`), where the floor
+  covers Stripe (~3%) plus the target margin; the current default markup is 30%
+  (`DEFAULT_TRAFFIC_MARKUP_BPS`). The ops rate editor and the plan editor refuse to save a
+  price below the floor ("price is below cost plus processing"), and the nightly margin report
+  asserts it again against the live rate card.
+- **Plan floor:** `monthly_price >= (included_sms x sms cost + included_minutes x minute cost +
+  included_numbers x number cost) x (1 + MIN_MARGIN_BPS)`. Ops shows the floor at current
+  Telnyx rates when editing a plan and refuses below it.
+- **Minimum top-up $25** (presets 25/50/100) keeps the $0.30 fixed fee at <= 1.2%.
+- Put the 10DLC carrier pass-through (about $0.003-0.005 per segment on T-Mobile/AT&T) into the
+  `sms_out` cost on the rate card, so the floor includes it.
+
+### Draft packages (operator to confirm prices; Telnyx default costs: text $0.004, minute
+$0.007 out / $0.0035 in, number $1.00 per month)
+| Package | Monthly | Texts | Minutes | Numbers | Telnyx cost if fully used | After Stripe (2.9% + $0.30) |
+|---|---|---|---|---|---|---|
+| Starter | $19 | 500 | 300 | 1 | $5.10 | ~$13.05 margin |
+| Growth | $49 | 2,000 | 1,000 | 3 | $18.00 | ~$29.28 margin |
+| Scale | $99 | 5,000 | 3,000 | 10 | $51.00 | ~$44.83 margin |
+Overage (draft): $0.02 per text segment, $0.05 per MMS, $0.03 per minute, $2.00 per extra
+number per month. Seats are not metered until P33.
+
+**Operator inputs still needed:** package names, monthly prices, included texts / minutes /
+numbers / seats, overage prices, rollover yes/no, and `MIN_MARGIN_BPS`.
 
 ## Decision (operator, 2026-09-11)
 Reseller model, like OpenPhone / MightyCall. When a company signs up, OUR Telnyx master account
@@ -103,7 +186,7 @@ step with a plain-English reason, e.g. "Could not create your texting profile: �
 For managed orgs this replaces the current "Connect a provider" step. Bring-your-own stays available only
 to platform operators and the legacy org.
 
-## Schema (Fable-only) — migration `0041_managed_telephony`
+## Schema (Fable-only) — migration `0042_managed_telephony` (0041 is the prepaid gate)
 - `telephony_accounts`: one row per org.
   - `managed_account_id`
   - `status`: provisioning | active | suspended | failed
@@ -126,7 +209,7 @@ to platform operators and the legacy org.
 |---|---|---|
 | **P37a** | Provisioning engine steps 1–2 plus number order and assignment (SMS only) | A brand-new test org texts both ways with zero portal clicks |
 | **P37b** | Steps 3–6: per-org SIP connection, LiveKit trunks, and dispatch; `start_room_call` uses the org's own trunk | The new org calls both ways; org isolation tests pass |
-| **P37c** | Billing: cost ingestion, P32 plan and invoice services, number rental, card-on-file gate, dunning and suspension | A month of usage produces a correct invoice and ledger; a suspended org cannot send or dial |
+| **P37c** | Billing: packages (Decision 3: plan rows, `plan_allowances` 0043, allowance-first metering, price floor), cost ingestion + reconciliation, P32 invoice services, card-on-file gate, dunning and suspension | A month of usage produces a correct invoice and ledger; a suspended org cannot send or dial |
 | **P37d** | 10DLC as ISV, the onboarding UI (plan, card, number search, progress checklist, Repair setup), then flip the flag | A new signup goes live end-to-end in the UI |
 
 Moving your existing test org onto a sub-account is optional and later. Moving numbers between
@@ -148,9 +231,9 @@ Telnyx accounts is a support-assisted port.
 - **Manual (P37b):** a two-way-audio call from a freshly provisioned org, both inbound and outbound.
 
 ## Operator decisions needed before P37c (not needed to start P37a/b)
-1. **Pricing:** plan tiers and monthly prices, what each plan includes (SMS segments, minutes, numbers,
-   seats), per-number rental price, and overage rates.
-2. **Overage collection:** prepaid credits (top-up) or post-paid on the monthly invoice.
+1. **Pricing:** shape decided (Decision 3: our own packages, allowance-first metering, price floor
+   over Telnyx + Stripe). Still needed: the numbers in Decision 3's table.
+2. ~~**Overage collection:**~~ **Decided: prepaid credits** (the per-org hard gate above).
 3. **10DLC shape:** one brand plus campaign per customer (recommended; isolates compliance and throughput),
    or a shared platform campaign for small senders.
 4. **Grace periods:** dunning days before soft suspend (N), and days before numbers are released (M).

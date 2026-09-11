@@ -28,6 +28,7 @@ from app.services import audit as audit_svc
 from app.services import flows as flows_svc
 from app.services import provider_accounts as provider_accounts_svc
 from app.services import reputation as reputation_svc
+from app.services import telephony_billing
 
 router = APIRouter(prefix="/api/v1/numbers", tags=["numbers"])
 
@@ -469,6 +470,8 @@ async def order(
     if existing is not None:
         raise ConflictError(f"{normalized} is already registered")
 
+    # Prepaid hard gate: never buy a number the balance cannot pay the first month of.
+    await telephony_billing.require_number_credit(ctx.session, ctx.org.id, carrier_obj.name)
     result = await provider.order_number(normalized)
 
     # P18: only attribute the purchase to a provider_accounts row when THIS carrier
@@ -535,6 +538,8 @@ async def order(
         except Exception:
             pass
         raise ConflictError(f"{result.e164} is already registered") from exc
+    await telephony_billing.charge_new_number(ctx.session, ctx.org.id, number)
+    await ctx.session.commit()
     return await _out(ctx.session, number)
 
 

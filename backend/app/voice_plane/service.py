@@ -41,6 +41,7 @@ from app.models import OrgNumber
 from app.models.voice import TERMINAL_LEG_STATUSES, Call, CallLeg
 from app.models.voice import VoiceEvent as VoiceEventRow
 from app.services import calls as calls_svc
+from app.services import telephony_billing
 from app.voice_plane.livekit_api import (
     LiveKitApi,
     LiveKitApiError,
@@ -148,6 +149,9 @@ async def start_room_call(
         status="queued",
         tag=tag or None,
     )
+    # Prepaid hard gate: refuse (402) before any row, room or dial exists, and hold the
+    # first minutes. The hold rides this function's commit below.
+    await telephony_billing.require_call_credit(session, org_id, call)
     room = room_name_for_call(call.id)
     call.extra = {"via": "livekit", "room": room}
     sip_identity = f"{SIP_IDENTITY_PREFIX}{call.id}"

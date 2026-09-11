@@ -73,6 +73,10 @@ class Call(Base, TenantScoped, TimestampMixin):
     #: neither does this.
     ended_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     answered_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    #: Set once this call's minutes are charged to the prepaid balance (migration 0041).
+    billed_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
     #: Sum of leg talk time is NOT call duration (legs overlap during a transfer); this is
     #: wall-clock answered→ended, computed once at the terminal transition.
     duration_seconds: Mapped[int | None] = mapped_column(sa.Integer)
@@ -80,7 +84,10 @@ class Call(Base, TenantScoped, TimestampMixin):
     tag: Mapped[str | None] = mapped_column(sa.String(128))
     extra: Mapped[dict] = mapped_column(PortableJSON(), nullable=False, default=dict)
 
-    __table_args__ = (sa.Index("ix_calls_org_created", "org_id", "created_at"),)
+    __table_args__ = (
+        sa.Index("ix_calls_org_created", "org_id", "created_at"),
+        sa.Index("ix_calls_billing", "billed_at", "ended_at"),
+    )
 
 
 class CallLeg(Base, TenantScoped, TimestampMixin):

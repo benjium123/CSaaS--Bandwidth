@@ -44,7 +44,7 @@ from app.providers.voice import Speak as SpeakCommand
 from app.providers.voice import Transfer as TransferCommand
 from app.providers.voice import VoiceEvent, as_voice_carrier
 from app.services import recordings as recordings_svc
-from app.services import smart_routing
+from app.services import smart_routing, telephony_billing
 
 log = structlog.get_logger("calls")
 
@@ -307,6 +307,9 @@ async def create_outbound_call(
         status="created",
         reason="original",
     )
+    # Prepaid hard gate: refuse (402) before the rows or the dial exist, and hold the
+    # first minutes (committed with the rows just below).
+    await telephony_billing.require_call_credit(session, org_id, call)
     session.add(call)
     session.add(leg)
     # 3.19: make the queued rows durable BEFORE carrier I/O - a crash mid-dial must

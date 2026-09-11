@@ -38,6 +38,8 @@ export interface OpsOrg {
   ai_markup_bps: number | null;
   ai_platform_fee_per_minute_micros: number | null;
   balance_micros: number;
+  telephony_prepaid?: boolean;
+  telephony_prepaid_since?: string | null;
 }
 
 export interface MarginDay {
@@ -221,6 +223,19 @@ export function PlatformBillingOps() {
     onSuccess: (org) => {
       void queryClient.invalidateQueries({ queryKey: ["platform-billing"], exact: false });
       setOrgDraft({ margin: orgMarginBase(org), fee: orgFeeBase(org) });
+    },
+  });
+
+  // The per-workspace prepaid hard gate: when on, texting, outbound calling and number
+  // orders draw from this balance and stop when it cannot cover them.
+  const prepaidMutation = useMutation({
+    mutationFn: (input: { orgId: string; telephony_prepaid: boolean }) =>
+      opsRequest<OpsOrg>(api, token, `${OPS_ORGS_PATH}/${input.orgId}`, {
+        method: "PATCH",
+        json: { telephony_prepaid: input.telephony_prepaid },
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["platform-billing"], exact: false });
     },
   });
 
@@ -475,6 +490,32 @@ export function PlatformBillingOps() {
                       <div className="text-sm">
                         <span className="text-muted-foreground">Balance: </span>
                         {formatCredits(orgQuery.data.balance_micros)}
+                      </div>
+                      <div className="space-y-1">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            aria-label="Prepaid telephony"
+                            checked={Boolean(orgQuery.data.telephony_prepaid)}
+                            disabled={prepaidMutation.isPending}
+                            onChange={(e) =>
+                              prepaidMutation.mutate({
+                                orgId: lookupOrgId,
+                                telephony_prepaid: e.target.checked,
+                              })
+                            }
+                          />
+                          Prepaid texting and calling
+                        </label>
+                        <p className="text-xs text-muted-foreground">
+                          When on, texts, outbound calls and new numbers draw from this
+                          balance and stop when it runs out. Inbound is still charged.
+                        </p>
+                        <MutationStatus
+                          pending={prepaidMutation.isPending}
+                          error={prepaidMutation.error}
+                          success={prepaidMutation.isSuccess ? "Saved" : undefined}
+                        />
                       </div>
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div className="space-y-1">

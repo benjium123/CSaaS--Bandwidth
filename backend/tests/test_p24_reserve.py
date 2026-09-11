@@ -354,7 +354,9 @@ async def test_an_empty_balance_pauses_the_running_campaigns(session):
     await credits.charge_usage(session, org.id, 10_000_000, reference="spend-empty")
     await session.commit()
 
-    totals = await ai_usage.credits_tick(session, settings=make_settings())
+    totals = await ai_usage.credits_tick(
+        session, settings=make_settings(ai_billing_enforce=True)
+    )
 
     assert totals["campaigns_paused"] == 1
 
@@ -370,6 +372,24 @@ async def test_an_empty_balance_pauses_the_running_campaigns(session):
         )
     ).scalar_one()
     assert audit_count == 1
+
+
+async def test_shadow_mode_never_pauses_campaigns_on_an_empty_balance(session):
+    org = await _make_org(session, "Shadow Workspace")
+    contact_list = await _make_contact_list(session, org.id)
+    campaign = await _make_campaign(session, org.id, contact_list.id, status="running")
+
+    await credits.topup(session, org.id, 10_000_000, reference="pi-shadow")
+    await session.commit()
+    await credits.charge_usage(session, org.id, 10_000_000, reference="spend-shadow")
+    await session.commit()
+
+    totals = await ai_usage.credits_tick(session, settings=make_settings())
+
+    assert totals["campaigns_paused"] == 0
+    set_org_context(session, org.id)
+    await session.refresh(campaign)
+    assert campaign.status == "running"
 
 
 async def test_the_sweeper_pass_is_scoped_per_workspace(session):
@@ -395,7 +415,9 @@ async def test_the_sweeper_pass_is_scoped_per_workspace(session):
     await credits.topup(session, rich_org.id, 10_000_000, reference="pi-rich")
     await session.commit()
 
-    totals = await ai_usage.credits_tick(session, settings=make_settings())
+    totals = await ai_usage.credits_tick(
+        session, settings=make_settings(ai_billing_enforce=True)
+    )
 
     assert totals["campaigns_paused"] == 1
 

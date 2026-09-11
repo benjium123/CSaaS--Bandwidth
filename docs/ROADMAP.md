@@ -22,11 +22,14 @@ least as much UI as it adds.
 | 11 | P29 Voice: coaching enforcement, dual recording, consent, failover, dispositions | docs/PLAN_P26_P36.md | 0031 (schema committed), 0040 (orgs.calling_settings) | DEPLOYED 2026-09-11 (6ea0866 backend, 2f82054 frontend) |
 | 12 | P30 Reports: team, SLA, campaigns, assistant; export; email; wallboard | docs/PLAN_P26_P36.md | 0032 (schema committed) | queued |
 | 13 | P31 Notifications, PWA, mobile | docs/PLAN_P26_P36.md | 0033 (schema committed) | queued |
-| 14 | P32 Plans, traffic billing, invoices (Fable owns money) | docs/PLAN_P26_P36.md | 0034 (schema committed) | queued |
+| 14 | P32 Plans, traffic billing, invoices (Fable owns money) | docs/PLAN_P26_P36.md | 0034 (schema committed) | queued; package shape decided 2026-09-11 (P37 plan, Decision 3) - built as P37c |
 | 15 | P33 Agencies: sub-accounts, white-label, custom domain | docs/PLAN_P26_P36.md | 0035 (schema committed) | queued |
 | 16 | P34 Developers and integrations: API docs, Zapier, HubSpot, Salesforce | docs/PLAN_P26_P36.md | 0036 (schema committed) | queued |
 | 17 | P35 Channels: email, WhatsApp, web chat | docs/PLAN_P26_P36.md | 0037 (schema committed) | queued |
 | 18 | P36 Trust: PII encryption at rest, status history, i18n | docs/PLAN_P26_P36.md | 0038 (schema committed) | queued |
+
+| 19 | P37-gate Prepaid telephony hard gate (per org; SMS/MMS, calls, number rental) | docs/PLAN_P37_MANAGED_TELEPHONY.md | 0041 | built + tested, deploying 2026-09-11 |
+| 20 | P37a-d Managed telephony (Telnyx sub-accounts, reseller) | docs/PLAN_P37_MANAGED_TELEPHONY.md | 0042 (schema) | approved; P37a next |
 
 External inputs still owed by the operator: valid Bandwidth API credentials + application
 callbacks (see session notes 2026-09-09), Bandwidth account upgrade (trial 402), Stripe keys

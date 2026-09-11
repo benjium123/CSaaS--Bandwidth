@@ -42,6 +42,33 @@ describe("LowBalanceBanner", () => {
     ).toBeInTheDocument();
   });
 
+  it("tells a prepaid workspace at empty that texting and calling are paused", async () => {
+    const client = makeStubClient({
+      "/api/v1/me/capabilities": CAPABILITIES,
+      "/api/v1/billing/summary": { ...summary("empty"), telephony_prepaid: true },
+    });
+    renderWithProviders(<LowBalanceBanner />, client);
+
+    expect(await screen.findByText("You are out of credits")).toBeInTheDocument();
+    expect(
+      screen.getByText("Texting and outbound calling are paused until you add credits."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the assistant copy at empty when texting and calling are not prepaid", async () => {
+    const client = makeStubClient({
+      "/api/v1/me/capabilities": CAPABILITIES,
+      "/api/v1/billing/summary": { ...summary("empty"), telephony_prepaid: false },
+    });
+    renderWithProviders(<LowBalanceBanner />, client);
+
+    expect(
+      await screen.findByText(
+        "Your assistant is not answering and campaigns are paused until you add credits.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("renders nothing when warning is null", async () => {
     const client = makeStubClient({
       "/api/v1/me/capabilities": CAPABILITIES,

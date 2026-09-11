@@ -64,6 +64,16 @@ class Org(Base, TimestampMixin):
     # {"channel_layout": "mixed"|"dual", "dispositions": ["Interested", ...]}.
     # NULL = platform defaults (services/calling_settings.py).
     calling_settings: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
+    # Prepaid telephony hard gate (migration 0041). When true, outbound SMS/MMS, outbound
+    # calls and number orders draw from the prepaid credit balance and are refused when
+    # it cannot cover them; inbound traffic and number rental are charged.
+    telephony_prepaid: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    #: When the gate was last switched on - calls that started before it are never billed.
+    telephony_prepaid_since: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
     # P32 plans + invoicing (money: Fable-owned). plan_code NULL = no plan (prepaid credits only).
     plan_code: Mapped[str | None] = mapped_column(

@@ -32,6 +32,8 @@ export interface BillingSummary {
   warning: BalanceWarning | null;
   auto_recharge: AutoRecharge | null;
   last_topup: number | LastTopup | null;
+  /** True when texting and outbound calling draw from this balance and stop when it is empty. */
+  telephony_prepaid?: boolean;
 }
 
 export interface LedgerEntry {
@@ -200,6 +202,13 @@ export const WARNING_COPY: Record<BalanceWarning, { title: string; body: string 
     title: "You are out of credits",
     body: "Your assistant is not answering and campaigns are paused until you add credits.",
   },
+};
+
+/** Shown instead of WARNING_COPY.empty when the workspace's texting and calling are
+ * prepaid - that is what actually stopped, not just the assistant. */
+export const PREPAID_EMPTY_COPY = {
+  title: "You are out of credits",
+  body: "Texting and outbound calling are paused until you add credits.",
 };
 
 export const TOPUP_PRESETS_MICROS = [25_000_000, 50_000_000, 100_000_000] as const;

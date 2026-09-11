@@ -32,7 +32,7 @@ from app.models import (
     PaymentMethod,
     PlatformEvent,
 )
-from app.services import credits, outbox, spend
+from app.services import credits, spend
 
 logger = structlog.get_logger(__name__)
 
@@ -522,7 +522,13 @@ async def credits_tick(
                 # auto-recharge on should be topped up, not paused.
                 await maybe_auto_recharge(session, org_row, settings=settings)
 
-            if level == "empty":
+            # Only where a prepaid gate is actually on: an org in shadow mode must never
+            # have its campaigns stopped by a balance nobody is charging against.
+            gated = org_row is not None and (
+                bool(getattr(settings, "ai_billing_enforce", False))
+                or bool(getattr(org_row, "telephony_prepaid", False))
+            )
+            if level == "empty" and gated:
                 totals["campaigns_paused"] += (
                     await pause_campaigns_for_empty_balance(session, org_id)
                 )

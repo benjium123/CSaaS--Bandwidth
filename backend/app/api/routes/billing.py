@@ -19,11 +19,9 @@ from pydantic import BaseModel
 from app.auth.deps import OrgContext, require_permission
 from app.errors import NotFoundError, ValidationFailedError
 from app.models import Call, CreditLedgerEntry, PaymentMethod
-from app.services import ai_usage
+from app.services import ai_usage, credits, stripe_client
 from app.services import audit as audit_svc
-from app.services import credits
 from app.services import spend as spend_svc
-from app.services import stripe_client
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
@@ -127,6 +125,8 @@ async def get_summary(
             int(last_topup.amount_micros) if last_topup is not None else 0,
         ),
         "auto_recharge": ctx.org.credit_auto_recharge,
+        # True when texting/calling draw from this balance and stop when it is empty.
+        "telephony_prepaid": bool(ctx.org.telephony_prepaid),
         "last_topup": last_topup_dict,
         "fallback": ai_usage.credit_fallback(ctx.org),
     }

@@ -159,11 +159,14 @@ from app.models.spend import (
     ProviderRate,
     ProviderSpendDaily,
 )
+from app.models.telephony import TELEPHONY_ACCOUNT_STATUSES, TelephonyAccount
 from app.models.trust import STATUS_COMPONENTS, STATUS_SEVERITIES, OrgDataKey, StatusIncident
 from app.models.user import User
 from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
 __all__ = [
+    "TELEPHONY_ACCOUNT_STATUSES",
+    "TelephonyAccount",
     "Brand",
     "CAMPAIGN_CHANNELS",
     "CAMPAIGN_STATUSES",

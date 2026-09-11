@@ -3,7 +3,12 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/primitives";
 import { useGate } from "@/api/capabilities";
 import { useAuth } from "@/auth/AuthContext";
-import { WARNING_COPY, useBillingSummary, type BalanceWarning } from "@/api/billing";
+import {
+  PREPAID_EMPTY_COPY,
+  WARNING_COPY,
+  useBillingSummary,
+  type BalanceWarning,
+} from "@/api/billing";
 
 const STORAGE_KEY = "csaas.billing.banner.dismissed";
 
@@ -43,7 +48,10 @@ export function LowBalanceBanner() {
   if (!warning) return null;
   if (dismissed && WARNING_ORDER[warning] <= WARNING_ORDER[dismissed]) return null;
 
-  const copy = WARNING_COPY[warning];
+  const copy =
+    warning === "empty" && summaryQ.data.telephony_prepaid
+      ? PREPAID_EMPTY_COPY
+      : WARNING_COPY[warning];
 
   return (
     <div role="status" className="border-b border-border bg-muted px-4 py-3">

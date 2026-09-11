@@ -8,7 +8,7 @@ because no org could be resolved.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -99,6 +99,13 @@ class OrgNumber(Base, TenantScoped, TimestampMixin):
     #: Uncapped polling meant an order permanently stuck at the carrier (never COMPLETE,
     #: never FAILED) would be retried forever; services/number_orders.py caps this.
     order_poll_attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    #: Monthly rental paid through this date (prepaid telephony, migration 0041).
+    rental_paid_through: Mapped[date | None] = mapped_column(sa.Date, nullable=True)
+    #: P37 per-number assignment state (messaging profile, voice connection, LiveKit
+    #: trunk, 10DLC campaign) - migration 0042.
+    provisioning: Mapped[dict] = mapped_column(
+        PortableJSON(), nullable=False, default=dict, server_default="{}"
+    )
 
 
 class MessageThread(Base, TenantScoped, TimestampMixin):

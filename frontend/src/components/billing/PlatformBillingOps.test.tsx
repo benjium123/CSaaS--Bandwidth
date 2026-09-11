@@ -25,6 +25,7 @@ const ORG_1 = {
   ai_markup_bps: null,
   ai_platform_fee_per_minute_micros: null,
   balance_micros: 123_456_000,
+  telephony_prepaid: false,
 };
 
 const MARGIN_REPORT = {
@@ -156,6 +157,24 @@ describe("PlatformBillingOps", () => {
       );
       expect(patch).toBeDefined();
       expect(patch?.init.json).toEqual(expect.objectContaining({ ai_markup_bps: 2500 }));
+    });
+  });
+
+  it("turns prepaid texting and calling on for the loaded workspace", async () => {
+    const client = makeStubClient(baseRoutes());
+    await loadWorkspace(client);
+
+    const toggle = await screen.findByLabelText("Prepaid telephony");
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+
+    await waitFor(() => {
+      const patch = client.calls.find(
+        (call) =>
+          call.path === "/api/v1/platform/billing/orgs/org-1" &&
+          (call.init.method ?? "GET") === "PATCH",
+      );
+      expect(patch?.init.json).toEqual({ telephony_prepaid: true });
     });
   });
 

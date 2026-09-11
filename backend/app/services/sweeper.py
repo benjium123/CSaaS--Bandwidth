@@ -349,6 +349,40 @@ async def _run_once_locked(app) -> dict[str, int]:
     except Exception:
         log.exception("sweeper_usage_rollup_failed")
 
+    # Prepaid telephony: bill finished calls, keep running outbound calls funded (hang up
+    # when they cannot be), renew number rentals. Only touches orgs with the gate on.
+    from app.services import calls as calls_svc
+    from app.services import telephony_billing as telephony_billing_svc
+    from app.voice_plane import service as voice_service
+
+    async def _hangup_for_credits(session, call) -> None:  # noqa: ANN001
+        if (call.extra or {}).get("via") == "livekit":
+            await voice_service.hangup_room_call(
+                session, getattr(app.state, "livekit", None), app.state.event_bus, call
+            )
+        else:
+            await calls_svc.hangup_active_leg(session, registry, call)
+
+    try:
+        async with get_sessionmaker()() as session:
+            results.update(
+                await telephony_billing_svc.telephony_tick(session, hangup=_hangup_for_credits)
+            )
+    except Exception:
+        log.exception("sweeper_telephony_billing_failed")
+
+    # P24 credits sweeper (stale holds, low-balance warnings, auto-recharge, pausing
+    # campaigns when empty). D69: it existed but was never called from here.
+    from app.services import ai_usage as ai_usage_svc
+
+    try:
+        async with get_sessionmaker()() as session:
+            credit_counts = await ai_usage_svc.credits_tick(session, settings=app.state.settings)
+        results["credit_holds_released"] = credit_counts.get("reserves_released", 0)
+        results["credit_campaigns_paused"] = credit_counts.get("campaigns_paused", 0)
+    except Exception:
+        log.exception("sweeper_credits_tick_failed")
+
     # P19: derived provider spend rollup (today + yesterday, every org) - same hourly
     # gate discipline as reputation below: reserve the slot BEFORE running so a
     # persistent failure cannot turn this into an every-tick retry storm.

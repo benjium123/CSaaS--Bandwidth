@@ -52,7 +52,7 @@ from app.providers.domain import (
     UnknownEvent,
 )
 from app.providers.segments import estimate
-from app.services import contact_visibility, messaging_errors
+from app.services import contact_visibility, messaging_errors, telephony_billing
 from app.services import credentials as credential_svc
 from app.services import links as links_svc
 from app.services.contacts import resolve_or_create_contact
@@ -280,6 +280,16 @@ async def send_message(
         _check_media_size(carrier, assets)
 
     est = estimate(body)
+    # Prepaid hard gate: refuse before anything is written or sent. Priced on the
+    # carrier the plan will try first (the dispatch-time re-check covers failover).
+    await telephony_billing.require_sms_credit(
+        session,
+        org_id,
+        carrier=getattr(getattr(plan, "primary", None), "carrier", None)
+        or getattr(carrier, "name", CARRIER_DEFAULT),
+        segments=est.segments,
+        is_mms=bool(media_ids or media_urls),
+    )
     thread = await upsert_thread(session, org_id, from_e164, to_e164)
     thread.last_message_at = _now()
     if thread.contact_id is None:
@@ -555,6 +565,21 @@ async def _dispatch_to_carrier(
     Factored out so release_held_messages shares the accepted/rejected handling verbatim -
     a held message must behave exactly like an immediate one once it is released.
     """
+    # Prepaid hard gate, re-checked at the moment of sending: held, scheduled and
+    # campaign messages reach here without passing send_message's early check, and the
+    # balance may have run out since. Refused as data (like a carrier rejection),
+    # without ever calling the carrier.
+    if not await telephony_billing.can_send_sms(session, org_id, message):
+        set_org_context(session, org_id)
+        message = await session.get(Message, message.id)
+        message.last_carrier_error = None
+        message.status = "rejected"
+        message.hold_until = None
+        message.error_code = "insufficient_credits"
+        message.error_detail = "Prepaid balance too low"
+        message.failure_reason_public = "Not sent - add credits to keep texting."
+        await session.commit()
+        return message
     result = await carrier.send_message(
         OutboundMessage(
             to=message.to_e164,
@@ -582,6 +607,8 @@ async def _dispatch_to_carrier(
         # failure, so it must survive the acceptance that follows it.
         if message.failure_reason_public != messaging_errors.MMS_FALLBACK_REASON:
             message.failure_reason_public = None
+        # Charged once, on acceptance (idempotent on the message id).
+        await telephony_billing.charge_sms(session, org_id, message)
     else:
         # Carrier rejection is DATA, not an HTTP error (DR-7). The client reads one uniform
         # resource whether the carrier accepted, refused, or was unreachable.
@@ -995,6 +1022,9 @@ async def _ingest_inbound(
                 "body": event.text,
             },
         )
+        # Inbound is charged but never refused. Inside the same transaction as the
+        # message, so a replayed webhook's dedupe rollback takes the charge with it.
+        await telephony_billing.charge_sms(session, org_id, message)
         await session.commit()
         # FRONTEND-SUPPORT: publish on the REAL-TIME org event bus (the same in-process
         # bus routes/softphone.py's console WS forwards call.status/call.ring/etc from -
@@ -1115,6 +1145,8 @@ async def _ingest_dlr(
 
     prior_status = message.status
     _apply_dlr_to_message(message, event)
+    # The carrier's segment count can exceed the estimate an SMS was charged for.
+    await telephony_billing.charge_segment_correction(session, org_id, message)
     if message.status != prior_status and message.status in ("delivered", "failed"):
         # P13 DR-4: the message reached its carrier-terminal outcome in THIS transaction.
         record_platform_event(

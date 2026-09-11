@@ -20,7 +20,6 @@ from typing import Annotated
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, Field
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import OrgContext, require_permission
@@ -34,10 +33,9 @@ from app.errors import (
 )
 from app.models import ApiKey, Org, UsageRecord, WebhookDelivery, WebhookEndpoint
 from app.models.billing import DEFAULT_AI_MARKUP_BPS
+from app.services import ai_usage, credits
 from app.services import apikeys as apikeys_svc
-from app.services import ai_usage
 from app.services import audit as audit_svc
-from app.services import credits
 from app.services import spend as spend_svc
 from app.services import usage as usage_svc
 from app.services import webhooks_out as webhooks_out_svc
@@ -455,6 +453,8 @@ async def require_platform_operator(
 class PlatformBillingPatch(BaseModel):
     ai_markup_bps: int | None = None
     ai_platform_fee_per_minute_micros: int | None = None
+    #: Prepaid telephony hard gate for this org.
+    telephony_prepaid: bool | None = None
 
 
 class PlatformAdjustmentIn(BaseModel):
@@ -484,6 +484,10 @@ def _platform_billing_shape(org, *, balance_micros: int, reserved_micros: int) -
         ),
         "ai_platform_fee_per_minute_micros": org.ai_platform_fee_per_minute_micros,
         "ai_key_mode": org.ai_key_mode,
+        "telephony_prepaid": bool(org.telephony_prepaid),
+        "telephony_prepaid_since": (
+            org.telephony_prepaid_since.isoformat() if org.telephony_prepaid_since else None
+        ),
     }
 
 
@@ -531,6 +535,15 @@ async def patch_platform_billing_org(
             raise ValidationFailedError("Fee must not be negative.")
         org.ai_platform_fee_per_minute_micros = payload.ai_platform_fee_per_minute_micros
 
+    if payload.telephony_prepaid is not None and payload.telephony_prepaid != bool(
+        org.telephony_prepaid
+    ):
+        org.telephony_prepaid = payload.telephony_prepaid
+        if payload.telephony_prepaid:
+            # Re-stamped on every switch-on: traffic from an "off" stretch is never
+            # billed retroactively.
+            org.telephony_prepaid_since = datetime.now(timezone.utc)
+
     audit_svc.record(
         session,
         org_id,
@@ -540,6 +553,7 @@ async def patch_platform_billing_org(
         detail={
             "ai_markup_bps": payload.ai_markup_bps,
             "ai_platform_fee_per_minute_micros": payload.ai_platform_fee_per_minute_micros,
+            "telephony_prepaid": payload.telephony_prepaid,
         },
     )
     await session.commit()
