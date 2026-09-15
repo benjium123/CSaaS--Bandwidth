@@ -451,6 +451,80 @@ class OrderIn(BaseModel):
     setup_cost_cents: int | None = Field(default=None, ge=0, le=100_000_000)
 
 
+async def persist_ordered_number(
+    session,
+    org_id: uuid.UUID,
+    carrier_obj,
+    result,
+    *,
+    provider_account_id: uuid.UUID | None = None,
+    campaign_id: uuid.UUID | None = None,
+    monthly_cost_cents: int | None = None,
+    setup_cost_cents: int | None = None,
+    provisioning: dict | None = None,
+) -> OrgNumber:
+    """Turn ONE accepted carrier order into the OrgNumber + Inbox pair, or release it.
+
+    P37a: factored out of ``order()`` below so the managed-telephony engine
+    (services/telephony_provisioning.py) reuses the exact same rules - report the
+    carrier's own status rather than assuming "active", every number gets its Inbox in
+    the SAME transaction, and a number that cannot be stored is released at the carrier
+    instead of being orphaned and billed forever - rather than growing a second,
+    drifting copy of them. Deliberately NOT a route: it takes a session and an org id, so
+    it is callable from a service. Commits.
+    """
+    number = OrgNumber(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        e164=result.e164,
+        carrier=carrier_obj.name,
+        provider_ref=result.provider_ref or None,
+        # Whatever the carrier SAID. Recording a pending order as active means inbound is
+        # dropped with no trace until somebody thinks to ask why - EXCEPT when this
+        # carrier has no order_status to ever resolve a non-active result later: for
+        # those (pre-P18 behaviour), a pending/unknown status still starts routable
+        # rather than being permanently stranded with no polling path to fix it.
+        status=result.status,
+        is_active=result.status == "active" or not hasattr(carrier_obj, "order_status"),
+        capabilities=result.capabilities or {},
+        number_type="tollfree" if result.e164[:5] in _TOLLFREE_PREFIXES else "local",
+        campaign_id=campaign_id,
+        provider_account_id=provider_account_id,
+        # The carrier's own reported cost always wins; the caller's search-time
+        # selection is only a fallback for a carrier that doesn't echo cost on the
+        # order response at all.
+        purchase_cost_cents=(
+            result.setup_cost_cents if result.setup_cost_cents is not None else setup_cost_cents
+        ),
+        monthly_cost_cents=(
+            result.monthly_cost_cents
+            if result.monthly_cost_cents is not None
+            else monthly_cost_cents
+        ),
+        purchased_at=datetime.now(timezone.utc),
+        order_detail=result.status if result.status != "active" else None,
+        provisioning=provisioning or {},
+    )
+    session.add(number)
+    try:
+        # P15: every number gets its Inbox in the SAME transaction it's created in - see
+        # the matching comment in add_number() for why the flush must come first.
+        await session.flush()
+        session.add(Inbox(id=uuid.uuid4(), org_id=org_id, name=result.e164, number_id=number.id))
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        # 4.8: the number was purchased at the carrier (a race lost the pre-check) but
+        # could not be stored - release it there so it is not orphaned and billed
+        # forever. The conflict still wins the response either way.
+        try:
+            await carrier_obj.release_number(result.e164, result.provider_ref)
+        except Exception:
+            pass
+        raise ConflictError(f"{result.e164} is already registered") from exc
+    return number
+
+
 @router.post("/order", response_model=NumberOut, status_code=201)
 async def order(
     payload: OrderIn,
@@ -486,58 +560,16 @@ async def order(
         if account is not None:
             provider_account_id = account.id
 
-    number = OrgNumber(
-        id=uuid.uuid4(),
-        org_id=ctx.org.id,
-        e164=result.e164,
-        carrier=carrier_obj.name,
-        provider_ref=result.provider_ref or None,
-        # Whatever the carrier SAID. Recording a pending order as active means inbound is
-        # dropped with no trace until somebody thinks to ask why - EXCEPT when this
-        # carrier has no order_status to ever resolve a non-active result later: for
-        # those (pre-P18 behaviour), a pending/unknown status still starts routable
-        # rather than being permanently stranded with no polling path to fix it.
-        status=result.status,
-        is_active=result.status == "active" or not hasattr(carrier_obj, "order_status"),
-        capabilities=result.capabilities or {},
-        number_type="tollfree" if result.e164[:5] in _TOLLFREE_PREFIXES else "local",
-        campaign_id=payload.campaign_id,
+    number = await persist_ordered_number(
+        ctx.session,
+        ctx.org.id,
+        carrier_obj,
+        result,
         provider_account_id=provider_account_id,
-        # The carrier's own reported cost always wins; the client's search-time
-        # selection (payload.*_cost_cents) is only a fallback for a carrier that
-        # doesn't echo cost on the order response at all.
-        purchase_cost_cents=(
-            result.setup_cost_cents
-            if result.setup_cost_cents is not None
-            else payload.setup_cost_cents
-        ),
-        monthly_cost_cents=(
-            result.monthly_cost_cents
-            if result.monthly_cost_cents is not None
-            else payload.monthly_cost_cents
-        ),
-        purchased_at=datetime.now(timezone.utc),
-        order_detail=result.status if result.status != "active" else None,
+        campaign_id=payload.campaign_id,
+        monthly_cost_cents=payload.monthly_cost_cents,
+        setup_cost_cents=payload.setup_cost_cents,
     )
-    ctx.session.add(number)
-    try:
-        # P15: every number gets its Inbox in the SAME transaction it's created in - see
-        # the matching comment in add_number() for why the flush must come first.
-        await ctx.session.flush()
-        ctx.session.add(
-            Inbox(id=uuid.uuid4(), org_id=ctx.org.id, name=result.e164, number_id=number.id)
-        )
-        await ctx.session.commit()
-    except IntegrityError as exc:
-        await ctx.session.rollback()
-        # 4.8: the number was purchased at the carrier (a race lost the pre-check above)
-        # but could not be stored - release it there so it is not orphaned and billed
-        # forever. The conflict still wins the response either way.
-        try:
-            await carrier_obj.release_number(result.e164, result.provider_ref)
-        except Exception:
-            pass
-        raise ConflictError(f"{result.e164} is already registered") from exc
     await telephony_billing.charge_new_number(ctx.session, ctx.org.id, number)
     await ctx.session.commit()
     return await _out(ctx.session, number)

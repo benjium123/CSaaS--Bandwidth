@@ -133,6 +133,15 @@ class Settings(BaseSettings):
     telnyx_voice_connection_id: str = ""
     telnyx_default_number: str = ""
 
+    # ---- P37 managed telephony (one Telnyx managed sub-account per org) ---------------
+    #: Dark by default: every /api/v1/telephony route answers 503 while this is false, so
+    #: the feature ships unreachable until the operator flips it after Telnyx approves
+    #: Managed Accounts on the platform's master account.
+    telephony_managed_enabled: bool = False
+    #: The PLATFORM master account's API key - the one that owns every managed
+    #: sub-account. Never per org, never logged, never returned by any route.
+    telnyx_master_api_key: SecretStr = SecretStr("")
+
     # ---- LiveKit media plane (D17: one media plane for softphone + AI agent) ----------
     #: e.g. ws://127.0.0.1:7880 self-hosted; the browser needs the wss:// public form.
     livekit_url: str = ""

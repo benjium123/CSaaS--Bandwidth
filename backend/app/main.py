@@ -43,6 +43,7 @@ from app.api.routes import softphone as softphone_routes
 from app.api.routes import spend as spend_routes
 from app.api.routes import sso as sso_routes
 from app.api.routes import status as status_routes
+from app.api.routes import telephony as telephony_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
 from app.api.routes import webhooks as webhook_routes
@@ -225,6 +226,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(twofa_routes.router)
     app.include_router(sso_routes.router)
     app.include_router(number_routes.router)
+    app.include_router(telephony_routes.router)
     app.include_router(contact_routes.router)
     app.include_router(inbox_routes.router)
     app.include_router(inboxes_routes.router)
