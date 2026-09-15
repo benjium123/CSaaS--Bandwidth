@@ -22,6 +22,7 @@ from app.providers.domain import (
 )
 from app.providers.signalwire import webhooks
 from app.providers.signalwire.numbers import SignalWireNumberProviderMixin
+from app.providers.signalwire.voice import SignalWireVoiceMixin
 
 log = structlog.get_logger("carrier.signalwire")
 
@@ -62,7 +63,7 @@ def classify(status_code: int, body: object) -> CarrierError:
     return CarrierError("carrier_transient", code, retryable=True, detail=detail)
 
 
-class SignalWireMessagingCarrier(SignalWireNumberProviderMixin):
+class SignalWireMessagingCarrier(SignalWireVoiceMixin, SignalWireNumberProviderMixin):
     name = "signalwire"
 
     capabilities = CarrierCapabilities(

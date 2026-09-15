@@ -25,6 +25,17 @@ One row in `plans` (P32): `monthly_price_micros`, `included = {"sms_segments", "
 cycle starts on `plan_started_at` and resets on its monthly anniversary. Unused allowance does
 not roll over (assumption; say so if you want rollover).
 
+### BUILT 2026-09-15 (allowance engine; prices still the operator's to set)
+`services/plans.py` + migration `0043_plan_allowances` + `tests/test_p37c_plans.py` (30).
+Allowance is taken FIRST and only the remainder is charged, in `telephony_billing`:
+outbound/inbound texts (`sms_segments`) and finished call minutes (`voice_minutes`). An org
+with texts left on its plan now sends even on an empty prepaid balance - those texts were
+already paid for. **Inert until ops seeds `plans` rows and sets an org's `plan_code`**: with
+no plan the allowance path returns 0 everywhere and billing behaves exactly as before.
+Still to do in P37c: the `numbers` allowance (nets monthly against rental, not per order),
+metering for orgs that are NOT on the prepaid gate, the ops plan editor with the price floor,
+the customer usage panel, nightly Telnyx reconciliation, and invoices.
+
 ### The rigorous check - how an org can never use more than it paid for
 1. **One meter, one writer.** Every outbound segment, every call minute (both directions),
    every MMS and every number-month goes through `services/telephony_billing.py`, which is the

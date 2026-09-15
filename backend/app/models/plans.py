@@ -36,6 +36,39 @@ class Plan(Base, TimestampMixin):
     )
 
 
+class PlanAllowance(Base, TenantScoped, TimestampMixin):
+    """What one org's package includes this billing period, and how much of it is spent.
+
+    Usage takes from here FIRST; whatever does not fit is overage, priced from the plan's
+    ``overage_rates`` and charged against prepaid credits by ``services/telephony_billing``.
+    The unique constraint is load-bearing: the take is a single bounded UPDATE against this
+    row, so two concurrent sends can never both take the last included text.
+
+    ``included_units`` is snapshotted when the period opens rather than read live from
+    ``plans.included`` - editing a plan must never retroactively change what an org was
+    already given this month.
+    """
+
+    __tablename__ = "plan_allowances"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "org_id", "period_start", "metric", name="uq_plan_allowances_org_period_metric"
+        ),
+        sa.Index("ix_plan_allowances_org_period", "org_id", "period_start"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    #: The org's plan_started_at anniversary, not the calendar month.
+    period_start: Mapped[date] = mapped_column(sa.Date, nullable=False)
+    metric: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    included_units: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=0, server_default="0"
+    )
+    used_units: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=0, server_default="0"
+    )
+
+
 class Invoice(Base, TenantScoped, TimestampMixin):
     __tablename__ = "invoices"
     __table_args__ = (

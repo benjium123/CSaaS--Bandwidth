@@ -83,6 +83,23 @@ class CarrierRegistry:
         ]
 
 
+def _wire_signalwire_voice(carrier: object, public_base_url: str) -> None:
+    """Point the SignalWire adapter's voice callbacks at us.
+
+    All three URLs are the SAME endpoint on purpose: SignalWire signs the URL it called and
+    `verify_voice_webhook` checks against the configured signing URL, so document requests,
+    status callbacks and the signature all have to agree on one bare URL. Left empty when the
+    deployment has no public base URL - an adapter that dials with nowhere to call back is
+    worse than one that refuses.
+    """
+    if not public_base_url:
+        return
+    url = public_base_url.rstrip("/") + "/api/v1/webhooks/signalwire/voice"
+    carrier.voice_webhook_url = url
+    carrier.voice_status_callback_url = url
+    carrier.voice_signing_url = url
+
+
 def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
     """Build every carrier the environment actually has credentials for.
 
@@ -177,6 +194,7 @@ def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
             space_url=settings.signalwire_space_url,
             webhook_url=settings.signalwire_webhook_url,
         )
+        _wire_signalwire_voice(carriers["signalwire"], settings.public_base_url)
 
     # Preference order when an org has expressed none. Bandwidth first is the user's
     # stated default, not a technical claim.

@@ -118,6 +118,7 @@ from app.models.plans import (
     Invoice,
     InvoiceLine,
     Plan,
+    PlanAllowance,
 )
 from app.models.platform import (
     API_KEY_STATUSES,
@@ -243,6 +244,7 @@ __all__ = [
     "Invoice",
     "InvoiceLine",
     "Plan",
+    "PlanAllowance",
     "DEFAULT_NOTIFICATION_PREFS",
     "NOTIFICATION_PREF_KEYS",
     "PushSubscription",

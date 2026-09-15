@@ -40,7 +40,7 @@ from app.errors import InsufficientCreditsError
 from app.models import Call, CreditLedgerEntry, Message, Org, OrgNumber
 from app.models.spend import ProviderRate
 from app.services import audit as audit_svc
-from app.services import credits, spend
+from app.services import credits, plans, spend
 
 log = structlog.get_logger("telephony_billing")
 
@@ -120,6 +120,31 @@ async def _require_balance(session: AsyncSession, org_id: uuid.UUID, price: int)
 # ------------------------------------------------------------------------------------
 # SMS / MMS
 # ------------------------------------------------------------------------------------
+#: Every text and picture message, in or out, counts against the same package allowance -
+#: that is the unit customers were sold ("1,000 texts"), not one bucket per direction.
+SMS_ALLOWANCE_METRIC = "sms_segments"
+VOICE_ALLOWANCE_METRIC = "voice_minutes"
+
+
+async def _plan_covers(session: AsyncSession, org: Org, metric: str, units: int) -> int:
+    """Take `units` off the org's package allowance and report what it covered.
+
+    Returns 0 for an org on no package, which is every org today - the allowance path is
+    inert until platform ops seeds plans and puts an org on one.
+    """
+    if org.plan_code is None or units <= 0:
+        return 0
+    return await plans.take(session, org.id, metric, units)
+
+
+async def _plan_headroom(session: AsyncSession, org: Org, metric: str) -> int:
+    """What the package would still cover, without taking it - for the pre-send gate, which
+    must never write."""
+    if org.plan_code is None:
+        return 0
+    return await plans.remaining(session, org.id, metric)
+
+
 def _sms_metric(*, is_mms: bool, outbound: bool) -> str:
     return f"{'mms' if is_mms else 'sms'}_{'out' if outbound else 'in'}"
 
@@ -140,10 +165,14 @@ async def sms_price(
     segments: int | None,
     is_mms: bool,
     outbound: bool = True,
+    #: Bill only this many units instead of the message's own count - what the package
+    #: allowance did NOT cover.
+    units: int | None = None,
 ) -> int:
     metric = _sms_metric(is_mms=is_mms, outbound=outbound)
     per_unit = await unit_price(session, org_id, carrier, metric)
-    return per_unit * _sms_units(segments, is_mms=is_mms)
+    billable = _sms_units(segments, is_mms=is_mms) if units is None else max(int(units), 0)
+    return per_unit * billable
 
 
 async def require_sms_credit(
@@ -154,17 +183,34 @@ async def require_sms_credit(
     segments: int | None,
     is_mms: bool,
 ) -> None:
-    """Refuse an outbound SMS/MMS the balance cannot cover. No-op when not prepaid."""
-    if not await is_prepaid(session, org_id):
+    """Refuse an outbound SMS/MMS the balance cannot cover. No-op when not prepaid.
+
+    The package allowance is checked FIRST: an org with texts left on its plan must go out
+    even on an empty balance, because those texts are already paid for. Only the units the
+    plan cannot cover have to be covered by credits.
+    """
+    org = await _org(session, org_id)
+    if org is None or not org.telephony_prepaid:
         return
-    price = await sms_price(session, org_id, carrier=carrier, segments=segments, is_mms=is_mms)
+    units = _sms_units(segments, is_mms=is_mms)
+    uncovered = max(units - await _plan_headroom(session, org, SMS_ALLOWANCE_METRIC), 0)
+    if uncovered <= 0:
+        return
+    price = await sms_price(
+        session, org_id, carrier=carrier, segments=segments, is_mms=is_mms, units=uncovered
+    )
     await _require_balance(session, org_id, price)
 
 
 async def can_send_sms(session: AsyncSession, org_id: uuid.UUID, message: Message) -> bool:
     """Dispatch-time re-check (held, scheduled and campaign sends reach the carrier without
     passing through send_message's early check). True when not prepaid."""
-    if not await is_prepaid(session, org_id):
+    org = await _org(session, org_id)
+    if org is None or not org.telephony_prepaid:
+        return True
+    units = _sms_units(message.segment_count_est, is_mms=_is_mms(message))
+    uncovered = max(units - await _plan_headroom(session, org, SMS_ALLOWANCE_METRIC), 0)
+    if uncovered <= 0:
         return True
     price = await sms_price(
         session,
@@ -172,6 +218,7 @@ async def can_send_sms(session: AsyncSession, org_id: uuid.UUID, message: Messag
         carrier=message.carrier,
         segments=message.segment_count_est,
         is_mms=_is_mms(message),
+        units=uncovered,
     )
     return await credits.balance(session, org_id) >= max(price, 1)
 
@@ -184,6 +231,13 @@ async def charge_sms(session: AsyncSession, org_id: uuid.UUID, message: Message)
         return
     outbound = message.direction == "outbound"
     segments = message.segment_count_carrier or message.segment_count_est
+    units = _sms_units(segments, is_mms=_is_mms(message))
+    # The package allowance is spent first and only the remainder is charged. The take rides
+    # this same transaction, so a send that rolls back does not silently eat the customer's
+    # included texts.
+    billable = units - await _plan_covers(session, org, SMS_ALLOWANCE_METRIC, units)
+    if billable <= 0:
+        return
     price = await sms_price(
         session,
         org_id,
@@ -191,6 +245,7 @@ async def charge_sms(session: AsyncSession, org_id: uuid.UUID, message: Message)
         segments=segments,
         is_mms=_is_mms(message),
         outbound=outbound,
+        units=billable,
     )
     if price <= 0:
         return
@@ -219,29 +274,36 @@ async def charge_segment_correction(
     if org is None or not org.telephony_prepaid:
         return
     set_org_context(session, org_id)
-    charged = (
-        await session.execute(
-            sa.select(CreditLedgerEntry.id)
-            .where(
-                CreditLedgerEntry.entry_type == "usage",
-                CreditLedgerEntry.reference == f"sms:{message.id}",
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if charged is None:
-        # The original send was never charged (prepaid switched on after it) - nothing to
-        # correct.
+
+    # "Was the original send in scope?" asked directly, as the module's own rule states it:
+    # only traffic after telephony_prepaid_since is billed. This used to be inferred from the
+    # presence of a usage ledger row, which stopped being a sound proxy the moment a package
+    # could cover a text outright and leave no row behind.
+    # Skipped only on POSITIVE evidence the send predates the gate. An unsaved message has no
+    # created_at yet, and defaulting that to "out of scope" would silently drop corrections
+    # for the ordinary in-flight case this is called from.
+    since = org.telephony_prepaid_since
+    created = message.created_at
+    if since is not None and created is not None and _as_utc(created) < _as_utc(since):
+        return
+
+    # Only now does the package meter the extra segments. A text the plan covered in full has
+    # no ledger entry at all, so this deliberately does not ask "was it charged?" - that
+    # question would silently drop the correction and let every under-estimated segment on a
+    # covered text go unmetered.
+    extra = carrier_count - estimated
+    billable = extra - await _plan_covers(session, org, SMS_ALLOWANCE_METRIC, extra)
+    if billable <= 0:
         return
     per_segment = await unit_price(session, org_id, message.carrier, "sms_out")
-    delta = (carrier_count - estimated) * per_segment
+    delta = billable * per_segment
     if delta > 0:
         await credits.charge_usage(
             session,
             org_id,
             delta,
             reference=f"sms:{message.id}:segments",
-            note=f"{carrier_count - estimated} extra segment(s) reported by the carrier",
+            note=f"{billable} extra segment(s) reported by the carrier",
         )
 
 
@@ -353,7 +415,15 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
             if call is None or call.billed_at is not None:
                 continue
             minutes = spend._ceil_minutes(call.duration_seconds)
-            price = minutes * await unit_price(
+            # Whole minutes, rounded up per leg, netted against the package's included
+            # minutes before a single credit is spent.
+            org_row = await _org(session, org_id)
+            covered = (
+                await _plan_covers(session, org_row, VOICE_ALLOWANCE_METRIC, minutes)
+                if org_row is not None
+                else 0
+            )
+            price = (minutes - covered) * await unit_price(
                 session, org_id, call.carrier, _call_metric(call.direction)
             )
             if price > 0:

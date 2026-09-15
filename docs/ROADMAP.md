@@ -29,7 +29,7 @@ least as much UI as it adds.
 | 18 | P36 Trust: PII encryption at rest, status history, i18n | docs/PLAN_P26_P36.md | 0038 (schema committed) | queued |
 
 | 19 | P37-gate Prepaid telephony hard gate (per org; SMS/MMS, calls, number rental) | docs/PLAN_P37_MANAGED_TELEPHONY.md | 0041 | built + tested, deploying 2026-09-11 |
-| 20 | P37a-d Managed telephony (Telnyx sub-accounts, reseller) | docs/PLAN_P37_MANAGED_TELEPHONY.md | 0042 (schema) | P37a built 2026-09-11 (dark: TELEPHONY_MANAGED_ENABLED=false); P37b next |
+| 20 | P37a-d Managed telephony (Telnyx sub-accounts, reseller) | docs/PLAN_P37_MANAGED_TELEPHONY.md | 0042, 0043 | P37a built 2026-09-11; P37c allowance engine built 2026-09-15 (inert until plans are seeded); P37b next |
 
 External inputs still owed by the operator: valid Bandwidth API credentials + application
 callbacks (see session notes 2026-09-09), Bandwidth account upgrade (trial 402), Stripe keys

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.models.provider_accounts import PROVIDER_NAMES, ProviderAccount
 from app.providers.base import MessagingCarrier
-from app.providers.registry import CarrierRegistry, build_registry
+from app.providers.registry import CarrierRegistry, _wire_signalwire_voice, build_registry
 from app.services.provider_accounts import current_version, settings_like_for
 
 CURRENT_ORG_ID: ContextVar[uuid.UUID | None] = ContextVar("org_id", default=None)
@@ -157,12 +157,14 @@ def _construct_provider(name: str, src: Any, base: Settings) -> MessagingCarrier
     if name == "signalwire" and src.carrier_live("signalwire"):
         from app.providers.signalwire.adapter import SignalWireMessagingCarrier
 
-        return SignalWireMessagingCarrier(
+        carrier = SignalWireMessagingCarrier(
             project_id=getattr(src, "signalwire_project_id", ""),
             api_token=getattr(src, "signalwire_api_token").get_secret_value(),
             space_url=getattr(src, "signalwire_space_url", ""),
             webhook_url=base.signalwire_webhook_url,
         )
+        _wire_signalwire_voice(carrier, base.public_base_url)
+        return carrier
 
     return None
 
