@@ -342,6 +342,37 @@ service/venv on the box (the `agents/` code is shipped; nothing runs it yet).
 
 ---
 
+## SignalWire go-live (P39)
+
+Order matters. Steps 1 and 2 are SignalWire dashboard work; the rest is on the box.
+
+1. Rotate the SignalWire API token in the dashboard first. The current one has been pasted into chat and shown in a screenshot. Use the new token in step 3.
+2. Confirm 10DLC: Messaging → Campaign Registry → the campaign is *approved* and BOTH numbers are assigned to it. Without this SignalWire rejects outbound texts (inbound still works). Capability icons are not the campaign.
+3. `/opt/csaas/.env`:
+```bash
+SIGNALWIRE_PROJECT_ID=9c2ec6d5-b851-4091-8b4b-c7ce0a845f87
+SIGNALWIRE_API_TOKEN=<new token>
+SIGNALWIRE_SPACE_URL=sabine.signalwire.com
+SIGNALWIRE_WEBHOOK_URL=https://csaas.sabinepropertygroup.net/api/v1/webhooks/signalwire/messaging
+```
+Bare host for the space, no scheme, no trailing slash; the SSRF guard rejects anything else. `SIGNALWIRE_ENABLED` can stay unset, the credentials enable it.
+4. `bash deploy/deploy.sh` (ships migrations 0041-0043, the voice adapter, and this phase).
+5. `bash deploy/signalwire_number_webhooks.sh 08ede4ed-ab9a-40bc-a94b-45fe39459a0c b724ed20-2ba7-4e34-aaee-44a97ecbf169` on the box. Then check each number's page: "Handle messages using" / "Handle calls using" must read "LaML Webhooks".
+6. Numbers page → Add number → `+16824231003`, then `+14692103654`. Each should appear with carrier **signalwire** and get its inbox.
+
+Checks:
+- Text the 682 number from a phone → thread appears in the inbox within seconds; `docker logs csaas-api-1` shows a verified webhook, no `signature_mismatch`.
+- Send from the 682 number to the operator's phone → received, and shows **delivered** within ~10 s, not just sent.
+- Repeat both for 469.
+- Call the 682 number → the "not yet configured for inbound calls" announcement, webhook verified. Expected.
+
+### What calls do on these numbers today
+A call arriving on either SignalWire number gets the platform's existing "not yet configured for inbound calls" announcement and hangs up (`routes/webhooks.py:130-134`). SignalWire has no trunk into LiveKit, and whether it can place outbound calls from an external SIP server is undocumented; the trunk spike is P40. Setting the voice webhook now is still right: the call is logged and verified.
+
+Rollback: unset the four `SIGNALWIRE_*` values and redeploy. Delete the numbers from the Numbers page. The code changes are additive and inert without credentials.
+
+---
+
 ## Incident quick-checks
 
 No `journalctl` here - everything runs in Docker, so:

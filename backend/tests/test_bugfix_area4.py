@@ -571,3 +571,80 @@ async def test_4_16_voice_spend_buckets_by_ended_at_not_created_at(session):
     ).scalars().all()
     assert rows_prev == []
     assert len(rows_day) == 1
+
+
+# ----------------------------------------------------------------------------------
+# P39: with no carrier named, add_number asks every provisioning-capable carrier which
+# one actually holds the number.
+# ----------------------------------------------------------------------------------
+async def _app_with_two_providers(engine, settings, first_owns, second_owns):
+    from app.main import create_app
+    from app.providers.registry import CarrierRegistry
+
+    first = FakeNumberProvider(lookup_result=first_owns)
+    first.name = "bandwidth"
+    second = FakeNumberProvider(lookup_result=second_owns)
+    second.name = "signalwire"
+    application = create_app(settings)
+    application.state.carriers = CarrierRegistry(
+        {first.name: first, second.name: second}, primary=first.name
+    )
+    application.state.carrier = first
+    transport = httpx.ASGITransport(app=application)
+    client = httpx.AsyncClient(transport=transport, base_url="http://test")
+    return client, first, second, application
+
+
+async def test_add_number_detects_the_owning_carrier(engine, settings):
+    client, first, second, _ = await _app_with_two_providers(engine, settings, False, True)
+    async with client:
+        token = await register_and_login(client, "owner-detected@example.com")
+        org = await create_org(client, token, "Owner Detected Org")
+        r = await client.post(
+            "/api/v1/numbers",
+            json={"e164": "+16824231003"},
+            headers=auth_headers(token, org["id"]),
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["carrier"] == "signalwire"
+        assert "+16824231003" in first.lookup_calls
+        assert "+16824231003" in second.lookup_calls
+
+
+async def test_add_number_refuses_a_number_nobody_owns(engine, settings):
+    client, _, _, _ = await _app_with_two_providers(engine, settings, False, False)
+    async with client:
+        token = await register_and_login(client, "nobody-owns@example.com")
+        org = await create_org(client, token, "Nobody Owns Org")
+        r = await client.post(
+            "/api/v1/numbers",
+            json={"e164": "+16824231003"},
+            headers=auth_headers(token, org["id"]),
+        )
+        assert r.status_code == 422, r.text
+
+
+async def test_add_number_refuses_an_ambiguous_number(engine, settings):
+    client, _, _, _ = await _app_with_two_providers(engine, settings, True, True)
+    async with client:
+        token = await register_and_login(client, "ambiguous@example.com")
+        org = await create_org(client, token, "Ambiguous Org")
+        r = await client.post(
+            "/api/v1/numbers",
+            json={"e164": "+16824231003"},
+            headers=auth_headers(token, org["id"]),
+        )
+        assert r.status_code == 422, r.text
+
+
+async def test_add_number_with_a_named_carrier_is_unchanged(engine, settings):
+    client, _, _, _ = await _app_with_two_providers(engine, settings, False, True)
+    async with client:
+        token = await register_and_login(client, "named-carrier@example.com")
+        org = await create_org(client, token, "Named Carrier Org")
+        r = await client.post(
+            "/api/v1/numbers",
+            json={"e164": "+16824231003", "carrier": "bandwidth"},
+            headers=auth_headers(token, org["id"]),
+        )
+        assert r.status_code == 422, r.text

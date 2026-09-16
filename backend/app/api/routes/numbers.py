@@ -99,7 +99,36 @@ async def add_number(
     hand so P1 can send from something."""
     normalized = to_e164(payload.e164)
     registry = getattr(request.app.state, "carriers", None)
-    carrier_name = payload.carrier or (registry.primary_name if registry else "") or "bandwidth"
+    if payload.carrier is None:
+        # P39/WHY: the UI sends only the e164, and recording a number against a carrier
+        # that does not host it makes it unroutable with the error surfacing far away -
+        # so ask every provisioning-capable carrier who actually holds it.
+        carrier_name = (registry.primary_name if registry else "") or "bandwidth"
+        if registry is not None:
+            providers = [
+                (name, provider)
+                for name, provider in ((n, registry.get(n)) for n in registry.names())
+                if isinstance(provider, numbers_api.NumberProvider)
+            ]
+            if providers:
+                outcomes = []
+                for name, provider in providers:
+                    try:
+                        owned = await provider.lookup_owned_number(normalized)
+                    except Exception:
+                        owned = None
+                    outcomes.append((name, owned))
+                true_names = [name for name, owned in outcomes if owned is True]
+                if len(true_names) > 1:
+                    raise ValidationFailedError(
+                        "more than one provider claims this number; name the carrier"
+                    )
+                if true_names:
+                    carrier_name = true_names[0]
+                elif all(owned is False for _, owned in outcomes):
+                    raise ValidationFailedError("number is not owned by any configured provider")
+    else:
+        carrier_name = payload.carrier or (registry.primary_name if registry else "") or "bandwidth"
 
     # 4.5: a toll-free prefix always gates toll-free verification, regardless of a
     # manually supplied (possibly wrong) number_type - TFV vs 10DLC is not a matter of

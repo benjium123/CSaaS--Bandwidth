@@ -110,6 +110,11 @@ class SignalWireMessagingCarrier(SignalWireVoiceMixin, SignalWireNumberProviderM
             ("To", msg.to),
             ("Body", msg.text),
         ]
+        # WHY: the webhook parser already maps MessageStatus delivered/undelivered/failed,
+        # but without this field SignalWire never sends them, so a text showed "sent"
+        # forever. No query string: the signature covers the URL exactly as configured.
+        if self._webhook_url:
+            form.append(("StatusCallback", self._webhook_url))
         # MediaUrl repeats; it is not a JSON array.
         form.extend(("MediaUrl", url) for url in msg.media)
 
