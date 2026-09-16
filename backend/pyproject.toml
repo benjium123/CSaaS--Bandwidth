@@ -28,6 +28,10 @@ dependencies = [
     # zoneinfo has no tz database on Windows or slim containers; without this,
     # ZoneInfo("America/Chicago") raises and quiet hours cannot be evaluated.
     "tzdata>=2024.2",
+    # P41/P42 authentication: passkeys (WebAuthn), login country/network lookup, SAML SSO.
+    "webauthn>=3.0",
+    "maxminddb>=2.6",
+    "signxml>=5.1",
 ]
 
 [project.optional-dependencies]
