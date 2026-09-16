@@ -48,6 +48,11 @@ class User(Base, TimestampMixin):
     password_changed_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    #: P42: first time this account was seen with owner/admin/billing/operator power; the
+    #: passkey grace period counts from here (services/passkey_policy.py).
+    passkey_required_since: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
     @property
     def has_second_factor(self) -> bool:

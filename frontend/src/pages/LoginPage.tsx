@@ -1,9 +1,13 @@
 import * as React from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
+import { rememberPendingForRecovery } from "@/pages/RecoverAccountPage";
 import { Button, Input } from "@/components/ui/primitives";
 
 export function LoginPage() {
-  const { login, verify2fa, verifyPasskey } = useAuth();
+  const { login, verify2fa, verifyPasskey, recoverWithCode } = useAuth();
+  const navigate = useNavigate();
+  const [useRecoveryCode, setUseRecoveryCode] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [code, setCode] = React.useState("");
@@ -19,7 +23,9 @@ export function LoginPage() {
     setError(null);
     setBusy(true);
     const res = pendingToken
-      ? await verify2fa(pendingToken, code)
+      ? useRecoveryCode
+        ? await recoverWithCode(pendingToken, code)
+        : await verify2fa(pendingToken, code)
       : await login(email, password);
     setBusy(false);
 
@@ -40,8 +46,8 @@ export function LoginPage() {
     if (res.kind === "error") setError(res.message);
   }
 
-  const totpAllowed = !pendingToken || methods.includes("totp");
-  const passkeyAllowed = Boolean(pendingToken) && methods.includes("passkey");
+  const totpAllowed = !pendingToken || methods.includes("totp") || useRecoveryCode;
+  const passkeyAllowed = Boolean(pendingToken) && methods.includes("passkey") && !useRecoveryCode;
 
   return (
     <div className="flex min-h-full items-center justify-center p-6">
@@ -66,10 +72,12 @@ export function LoginPage() {
               )}
               {totpAllowed && (
                 <label className="block space-y-1">
-                  <span className="text-sm text-muted-foreground">Authenticator code</span>
+                  <span className="text-sm text-muted-foreground">
+                    {useRecoveryCode ? "Recovery code" : "Authenticator code"}
+                  </span>
                   <Input
-                    aria-label="Authenticator code"
-                    inputMode="numeric"
+                    aria-label={useRecoveryCode ? "Recovery code" : "Authenticator code"}
+                    inputMode={useRecoveryCode ? "text" : "numeric"}
                     autoComplete="one-time-code"
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
@@ -112,6 +120,35 @@ export function LoginPage() {
             <Button type="submit" disabled={busy} className="w-full">
               {busy ? "Working..." : pendingToken ? "Verify" : "Sign in"}
             </Button>
+          )}
+
+          {pendingToken ? (
+            <div className="space-y-1 text-sm">
+              <button
+                type="button"
+                className="block underline"
+                onClick={() => {
+                  setUseRecoveryCode((v) => !v);
+                  setCode("");
+                }}
+              >
+                {useRecoveryCode ? "Use my passkey or authenticator app" : "Use a recovery code"}
+              </button>
+              <button
+                type="button"
+                className="block underline"
+                onClick={() => {
+                  rememberPendingForRecovery(pendingToken);
+                  navigate("/recover");
+                }}
+              >
+                Lost access to your passkey and authenticator app
+              </button>
+            </div>
+          ) : (
+            <Link to="/forgot-password" className="block text-sm underline">
+              Forgot your password?
+            </Link>
           )}
         </form>
 

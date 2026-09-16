@@ -25,6 +25,10 @@ const IDENTITY_STUBS = {
   },
   "/api/v1/me/sessions": [],
   "/api/v1/me/login-events": [],
+  // P42 account security cards
+  "/api/v1/auth/activity": [],
+  "/api/v1/auth/recovery-codes": { remaining: 0 },
+  "/api/v1/auth/passkeys": [],
 };
 
 const ME_2FA_ON: Me = {

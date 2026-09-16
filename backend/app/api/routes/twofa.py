@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 import pyotp
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +36,7 @@ from app.errors import (
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
-from app.services import account_security, lockout, login_flow
+from app.services import account_security, lockout, login_flow, session_tokens
 
 router = APIRouter(prefix="/api/v1/auth/2fa", tags=["auth"])
 
@@ -149,6 +149,7 @@ async def activate(
 async def verify(
     payload: VerifyIn,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     """Exchange a pending-2FA token + code for a real access token.
@@ -179,7 +180,15 @@ async def verify(
 
     user.totp_last_used_step = step
 
-    token = await login_flow.complete_login(session, settings, request, user, second_factor=True)
+    token = await login_flow.complete_login(
+        session,
+        settings,
+        request,
+        user,
+        second_factor=True,
+        response=response,
+        auth_method="password_totp",
+    )
     return {"access_token": token, "token_type": "bearer"}
 
 
@@ -187,6 +196,7 @@ async def verify(
 async def step_up(
     payload: CodeIn,
     request: Request,
+    response: Response,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
@@ -203,6 +213,7 @@ async def step_up(
     step = _check_code(user, secret, payload.code)
     user.totp_last_used_step = step
     row.second_factor_at = datetime.now(timezone.utc)
+    session_tokens.rotate(response, settings, row)
     await session.commit()
     return {"ok": True}
 

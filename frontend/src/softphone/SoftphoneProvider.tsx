@@ -521,8 +521,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   // Realtime events websocket: rings the org for inbound room calls, and tells us when
   // the active call's status moves off the room (answered elsewhere, hung up, failed).
   React.useEffect(() => {
+    // P42: the socket authenticates with the session cookie; a bearer token is only
+    // appended for old deployments running in compatibility mode.
     const token = api.auth.token;
-    if (!me || !orgId || !token) return;
+    if (!me || !orgId) return;
 
     let cancelled = false;
     // Item 27: only a RECONNECT (not the very first connect) should refetch the calls
@@ -538,9 +540,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     function connect() {
       if (cancelled) return;
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const url = `${proto}//${window.location.host}/api/v1/events/ws?token=${encodeURIComponent(
-        token ?? "",
-      )}&org_id=${encodeURIComponent(orgId ?? "")}`;
+      const tokenParam = token ? `token=${encodeURIComponent(token)}&` : "";
+      const url = `${proto}//${window.location.host}/api/v1/events/ws?${tokenParam}org_id=${encodeURIComponent(
+        orgId ?? "",
+      )}`;
       const ws = new WebSocket(url);
       wsRef.current = ws;
 

@@ -9,6 +9,12 @@ import {
 import { Button, Input, Spinner } from "@/components/ui/primitives";
 import { SessionsCard } from "@/components/settings/SessionsCard";
 import { PasskeysCard } from "@/components/settings/PasskeysCard";
+import {
+  AccountActivityCard,
+  ChangePasswordCard,
+  RecoveryCodesCard,
+  SessionPolicyCard,
+} from "@/components/settings/AccountSecurityCards";
 import { LoginHistoryCard } from "@/components/settings/LoginHistoryCard";
 import { OrgSecurityPolicyCard } from "@/components/settings/OrgSecurityPolicyCard";
 
@@ -216,6 +222,22 @@ export function SettingsSecurityPage() {
 
       <section className="space-y-3 rounded-md border border-border p-4">
         <PasskeysCard />
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <RecoveryCodesCard />
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <ChangePasswordCard />
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <AccountActivityCard />
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <SessionPolicyCard />
       </section>
 
       <section className="space-y-3 rounded-md border border-border p-4">

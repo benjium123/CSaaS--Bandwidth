@@ -96,6 +96,10 @@ def make_settings(**overrides) -> Settings:
         # P42: no network in tests; pre-P42 tests register 10-character passwords.
         "hibp_enabled": False,
         "password_min_length": 10,
+        # P42: pre-P42 tests authenticate with bearer JWTs and expect 24 h sessions.
+        "auth_bearer_compat": True,
+        "session_max_hours": 24,
+        "require_passkey_for_privileged": False,
     }
     base.update(overrides)
     return Settings(**base)

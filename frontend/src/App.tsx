@@ -23,6 +23,9 @@ import { VerificationBanner } from "@/components/kyc/VerificationBanner";
 import { StepUpDialog } from "@/components/security/StepUpDialog";
 import { SecureAccountPage } from "@/pages/SecureAccountPage";
 import { OpsPage } from "@/pages/OpsPage";
+import { ForgotPasswordPage, ResetPasswordPage } from "@/pages/PasswordResetPages";
+import { RecoverAccountPage } from "@/pages/RecoverAccountPage";
+import { PasskeyGraceBanner } from "@/components/security/PasskeyGraceBanner";
 
 /**
  * Legacy routes kept as redirects so saved links still land somewhere useful:
@@ -50,6 +53,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="dark flex h-full bg-background text-foreground">
         <Sidebar />
         <main className="min-h-0 flex-1 pb-14 sm:pb-0">
+          <PasskeyGraceBanner />
           <VerificationBanner />
           <LowBalanceBanner />
           <ErrorBoundary>{children}</ErrorBoundary>
@@ -73,6 +77,9 @@ export function App() {
       <Routes>
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
         <Route path="/auth/sso/callback" element={<SsoCallbackPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/recover" element={<RecoverAccountPage />} />
         <Route path="*" element={<LoginPage />} />
       </Routes>
     );

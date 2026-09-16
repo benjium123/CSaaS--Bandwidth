@@ -57,6 +57,11 @@ class Session(Base, TimestampMixin):
     second_factor_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    # --- P42 cookie sessions -----------------------------------------------------------
+    #: SHA-256 of the session secret held in the HttpOnly cookie (NULL = bearer-only row).
+    token_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    #: password | password_totp | passkey | recovery_code | identity_recovery | sso
+    auth_method: Mapped[str | None] = mapped_column(sa.String(24), nullable=True)
 
 
 class LoginEvent(Base, TimestampMixin):

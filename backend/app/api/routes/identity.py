@@ -67,6 +67,10 @@ class SecurityPolicyOut(BaseModel):
     require_2fa_grace_until: datetime | None
     ip_allowlist: list[str] | None
     sso: SsoOut | None
+    #: P42: stricter session timeouts for this workspace (None = platform default).
+    session_idle_minutes: int | None = None
+    session_max_hours: int | None = None
+    trust_idp_mfa: bool = False
 
 
 class SsoIn(BaseModel):
@@ -82,6 +86,9 @@ class SecurityPolicyIn(BaseModel):
     require_2fa: bool | None = None
     ip_allowlist: list[str] | None = None
     sso: SsoIn | None = None
+    session_idle_minutes: int | None = None
+    session_max_hours: int | None = None
+    trust_idp_mfa: bool | None = None
 
 
 def _request_session_id(request: Request) -> uuid.UUID | None:
@@ -137,6 +144,9 @@ def _security_policy_out(org: Org) -> SecurityPolicyOut:
         require_2fa_grace_until=org.require_2fa_grace_until,
         ip_allowlist=org.ip_allowlist,
         sso=_sso_out(org),
+        session_idle_minutes=org.session_idle_minutes,
+        session_max_hours=org.session_max_hours,
+        trust_idp_mfa=org.trust_idp_mfa,
     )
 
 
@@ -335,7 +345,7 @@ async def update_security_policy(
                 if ctx.actor_user_id is not None
                 else None
             )
-            if actor is None or not actor.totp_enabled:
+            if actor is None or not actor.has_second_factor:
                 raise ValidationFailedError(
                     "Set up two-factor authentication on your own account before "
                     "requiring it for everyone",
@@ -350,6 +360,26 @@ async def update_security_policy(
         # Re-enabling must not hand out a fresh grace period.
         ctx.org.require_2fa = bool(require_2fa)
         changed_fields.append("require_2fa")
+
+    settings = request.app.state.settings
+    for field, platform_value, lowest in (
+        ("session_idle_minutes", settings.session_idle_minutes, 5),
+        ("session_max_hours", settings.session_max_hours, 1),
+    ):
+        if field not in updates:
+            continue
+        value = updates[field]
+        if value is not None and not lowest <= value <= platform_value:
+            raise ValidationFailedError(
+                f"{field.replace('_', ' ')} must be between {lowest} and the platform "
+                f"maximum of {platform_value}"
+            )
+        setattr(ctx.org, field, value)
+        changed_fields.append(field)
+
+    if updates.get("trust_idp_mfa") is not None:
+        ctx.org.trust_idp_mfa = bool(updates["trust_idp_mfa"])
+        changed_fields.append("trust_idp_mfa")
 
     if "ip_allowlist" in updates:
         raw = updates["ip_allowlist"]

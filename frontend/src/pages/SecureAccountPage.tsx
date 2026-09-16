@@ -52,7 +52,7 @@ export function SecureAccountPage() {
           <h1 className="text-lg font-semibold">Secure your account</h1>
           <p className="text-sm text-muted-foreground">
             Every account needs a second way to prove it is you. Add a passkey (recommended) or
-            an authenticator app to continue{me?.email ? ` as ${me.email}` : ""}.
+            an authenticator app to continue{me?.email ? ` as ${me.email}` : ""}. Afterwards, create recovery codes in Settings, Team, Security so a lost phone never locks you out.
           </p>
         </div>
 

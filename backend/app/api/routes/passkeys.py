@@ -22,7 +22,7 @@ from app.errors import UnauthenticatedError
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
-from app.services import account_security, lockout, login_flow
+from app.services import account_security, lockout, login_flow, session_tokens
 from app.services import passkeys as passkeys_svc
 
 router = APIRouter(prefix="/api/v1/auth/passkeys", tags=["auth"])
@@ -170,6 +170,7 @@ async def login_options(
 async def login_verify(
     payload: LoginVerifyIn,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     """Second factor by passkey: exchange the pending token + assertion for a session."""
@@ -188,7 +189,15 @@ async def login_verify(
         )
     except UnauthenticatedError as exc:
         await lockout.fail(session, settings, request, user, outcome="bad_2fa", error=exc)
-    token = await login_flow.complete_login(session, settings, request, user, second_factor=True)
+    token = await login_flow.complete_login(
+        session,
+        settings,
+        request,
+        user,
+        second_factor=True,
+        response=response,
+        auth_method="passkey",
+    )
     return {"access_token": token, "token_type": "bearer"}
 
 
@@ -210,6 +219,7 @@ async def step_up_options(
 async def step_up_verify(
     payload: StepUpVerifyIn,
     request: Request,
+    response: Response,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
@@ -231,5 +241,9 @@ async def step_up_verify(
         await session.commit()
         raise
     live.second_factor_at = datetime.now(timezone.utc)
+    # P42: proving a passkey inside the session makes it a passkey session (what privileged
+    # roles need), without signing out.
+    live.auth_method = "passkey"
+    session_tokens.rotate(response, settings, live)
     await session.commit()
     return {"ok": True}

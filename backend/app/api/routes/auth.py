@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +31,7 @@ from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import identity as identity_svc
 from app.services import invites as invites_svc
-from app.services import lockout, login_flow, password_policy
+from app.services import lockout, login_flow, passkey_policy, password_policy
 from app.services import operators as operators_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -77,6 +78,9 @@ class MeOut(BaseModel):
     is_platform_operator: bool = False
     #: P41: true while this account must still add an authenticator app or passkey.
     second_factor_required: bool = False
+    #: P42: privileged account that must use passkeys; grace end while it may still not.
+    passkey_required: bool = False
+    passkey_grace_until: datetime | None = None
     permissions: list[str]
     memberships: list[MembershipOut]
 
@@ -181,6 +185,7 @@ async def register(
 async def login(
     payload: LoginIn,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TokenOut:
     settings: Settings = request.app.state.settings
@@ -256,7 +261,7 @@ async def login(
         )
 
     token = await login_flow.complete_login(
-        session, settings, request, user, second_factor=False
+        session, settings, request, user, second_factor=False, response=response
     )
     # P41: with REQUIRE_2FA_ALL_USERS on, this token only reaches enrolment routes until a
     # factor exists (auth/deps.py gate); the flag tells the console to go straight there.
@@ -308,6 +313,11 @@ async def me(
         second_factor_required=bool(
             request.app.state.settings.require_2fa_all_users and not user.has_second_factor
         ),
+        passkey_required=bool(
+            request.app.state.settings.require_passkey_for_privileged
+            and user.passkey_required_since is not None
+        ),
+        passkey_grace_until=passkey_policy.grace_until(request.app.state.settings, user),
         permissions=permissions,
         memberships=[
             MembershipOut(

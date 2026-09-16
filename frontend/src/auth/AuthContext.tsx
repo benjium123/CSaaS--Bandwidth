@@ -40,6 +40,9 @@ export type Me = {
   is_platform_operator?: boolean;
   /** P41: must add an authenticator app or passkey before anything else works. */
   second_factor_required?: boolean;
+  /** P42: owner/admin/billing/operator - passkey sign-in required after the grace date. */
+  passkey_required?: boolean;
+  passkey_grace_until?: string | null;
 };
 
 type LoginResult =
@@ -55,8 +58,9 @@ type AuthValue = {
   login(email: string, password: string): Promise<LoginResult>;
   verify2fa(pendingToken: string, code: string): Promise<LoginResult>;
   verifyPasskey(pendingToken: string): Promise<LoginResult>;
+  recoverWithCode(pendingToken: string, code: string): Promise<LoginResult>;
   refreshMe(): Promise<Me | null>;
-  completeSso(accessToken: string, orgId: string): Promise<LoginResult>;
+  completeSso(accessToken: string | null, orgId: string): Promise<LoginResult>;
   selectOrg(orgId: string): void;
   logout(): void;
 };
@@ -87,19 +91,27 @@ export function AuthProvider({
   // user's or another org's stale cached data for a beat (or permanently, for a query
   // whose key doesn't vary by org).
   const logout = React.useCallback(() => {
+    // P42: end the server session (clears the HttpOnly cookie); never block the UI on it.
+    void api.request("/api/v1/auth/logout", { method: "POST" }).catch(() => undefined);
     api.setAuth({ token: null, orgId: null });
     setMe(null);
     setOrgId(null);
     queryClient.clear();
   }, [api, queryClient]);
 
-  // Item 1: onUnauthorized (fired on both a REST 401 and a WS 4401 close) must fully log
-  // out - identical to a manual logout() - so it also drops the stored API token/orgId,
-  // not just the in-memory me/orgId/query-cache. Reusing `logout` keeps both paths from
-  // ever drifting apart again.
+  // Item 1 / P42: onUnauthorized (a REST 401 or a WS 4401 close) means the server already
+  // ended the session, so there is nothing to tell it - forget everything locally, exactly
+  // like logout() minus the server call (the next person on this browser starts clean).
+  const forget = React.useCallback(() => {
+    api.setAuth({ token: null, orgId: null });
+    setMe(null);
+    setOrgId(null);
+    queryClient.clear();
+  }, [api, queryClient]);
+
   React.useEffect(() => {
-    api.onUnauthorized = logout;
-  }, [api, logout]);
+    api.onUnauthorized = forget;
+  }, [api, forget]);
 
   const loadMe = React.useCallback(async () => {
     try {
@@ -119,7 +131,8 @@ export function AuthProvider({
 
   React.useEffect(() => {
     (async () => {
-      if (api.auth.token) await loadMe();
+      // P42: the session cookie is invisible to scripts, so always ask the server.
+      await loadMe();
       setReady(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -142,7 +155,7 @@ export function AuthProvider({
             methods: res.methods ?? ["totp"],
           };
         }
-        api.setAuth({ token: res.access_token });
+        if (res.access_token) api.setAuth({ token: res.access_token });
         await loadMe();
         return { kind: "ok" };
       } catch (err) {
@@ -155,11 +168,11 @@ export function AuthProvider({
   const verify2fa = React.useCallback(
     async (pendingToken: string, code: string): Promise<LoginResult> => {
       try {
-        const res = await api.request<{ access_token: string }>("/api/v1/auth/2fa/verify", {
+        const res = await api.request<{ access_token: string | null }>("/api/v1/auth/2fa/verify", {
           method: "POST",
           json: { pending_token: pendingToken, code },
         });
-        api.setAuth({ token: res.access_token });
+        if (res.access_token) api.setAuth({ token: res.access_token });
         await loadMe();
         return { kind: "ok" };
       } catch (err) {
@@ -178,14 +191,31 @@ export function AuthProvider({
           { method: "POST", json: { pending_token: pendingToken } },
         );
         const credential = await getPasskeyAssertion(opts.options);
-        const res = await api.request<{ access_token: string }>(
+        const res = await api.request<{ access_token: string | null }>(
           "/api/v1/auth/passkeys/login/verify",
           {
             method: "POST",
             json: { pending_token: pendingToken, challenge_id: opts.challenge_id, credential },
           },
         );
-        api.setAuth({ token: res.access_token });
+        if (res.access_token) api.setAuth({ token: res.access_token });
+        await loadMe();
+        return { kind: "ok" };
+      } catch (err) {
+        return { kind: "error", message: (err as Error).message };
+      }
+    },
+    [api, loadMe],
+  );
+
+  const recoverWithCode = React.useCallback(
+    async (pendingToken: string, code: string): Promise<LoginResult> => {
+      try {
+        const res = await api.request<{ access_token: string | null }>(
+          "/api/v1/auth/2fa/recovery",
+          { method: "POST", json: { pending_token: pendingToken, code } },
+        );
+        if (res.access_token) api.setAuth({ token: res.access_token });
         await loadMe();
         return { kind: "ok" };
       } catch (err) {
@@ -196,12 +226,13 @@ export function AuthProvider({
   );
 
   const completeSso = React.useCallback(
-    async (accessToken: string, orgId: string): Promise<LoginResult> => {
+    async (accessToken: string | null, orgId: string): Promise<LoginResult> => {
       try {
         // WHY: the SSO callback returns the token as JSON rather than redirecting, so
         // the console completes the login itself; setting the org here as well means
         // an SSO user lands straight in their workspace instead of the org picker.
         api.setAuth({ token: accessToken, orgId });
+        // P42: the SSO callback also set the session cookie; accessToken is null then.
         setOrgId(orgId);
         const next = await loadMe();
         if (!next) {
@@ -234,6 +265,7 @@ export function AuthProvider({
     verify2fa,
     verifyPasskey,
     refreshMe: loadMe,
+    recoverWithCode,
     completeSso,
     selectOrg,
     logout,

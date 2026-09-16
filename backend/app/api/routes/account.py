@@ -65,6 +65,7 @@ class PasswordChangeIn(BaseModel):
 async def change_password(
     payload: PasswordChangeIn,
     request: Request,
+    response: Response,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
@@ -91,6 +92,10 @@ async def change_password(
         request=request,
         detail={"sessions_ended": len(revoked)},
     )
+    if live is not None:
+        from app.services import session_tokens
+
+        session_tokens.rotate(response, settings, live)
     await session.commit()
     await account_security.mark_revoked(settings, revoked)
     await account_security.notify_now(
@@ -99,7 +104,8 @@ async def change_password(
         "Your password was changed",
         "The password for your account was just changed. Other signed-in devices were signed out.",
     )
-    return Response(status_code=204)
+    response.status_code = 204
+    return response
 
 
 # --------------------------------------------------------------------------------------
@@ -242,6 +248,7 @@ async def generate_recovery_codes(
 async def login_with_recovery_code(
     payload: RecoveryLoginIn,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     settings: Settings = request.app.state.settings
@@ -281,7 +288,14 @@ async def login_with_recovery_code(
         )
     )
     token = await login_flow.complete_login(
-        session, settings, request, user, second_factor=True, extra_flags=["recovery_code"]
+        session,
+        settings,
+        request,
+        user,
+        second_factor=True,
+        extra_flags=["recovery_code"],
+        response=response,
+        auth_method="recovery_code",
     )
     await account_security.notify_now(
         settings,
@@ -344,6 +358,7 @@ async def start_identity_recovery(
 async def complete_identity_recovery(
     payload: IdentityCompleteIn,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     settings: Settings = request.app.state.settings
@@ -391,7 +406,14 @@ async def complete_identity_recovery(
     await session.flush()
     await account_security.mark_revoked(settings, revoked)
     token = await login_flow.complete_login(
-        session, settings, request, user, second_factor=False, extra_flags=["identity_recovery"]
+        session,
+        settings,
+        request,
+        user,
+        second_factor=False,
+        extra_flags=["identity_recovery"],
+        response=response,
+        auth_method="identity_recovery",
     )
     recipients = await login_flow.owner_emails_for_user(session, user)
     await account_security.notify_now(
@@ -436,3 +458,37 @@ async def account_activity(
         }
         for r in rows
     ]
+
+
+# --------------------------------------------------------------------------------------
+# Sign out (P42 cookie sessions)
+# --------------------------------------------------------------------------------------
+@router.post("/logout", status_code=204)
+async def logout(
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    """Ends the current browser session and clears its cookies. Works even when the session
+    has already expired, so the console can always get back to a clean signed-out state."""
+    from app.models import Session as IdentitySession
+    from app.services import session_cache, session_tokens
+
+    settings: Settings = request.app.state.settings
+    cookie = request.cookies.get(session_tokens.session_cookie_name(settings))
+    parsed = session_tokens.parse(cookie)
+    if parsed is not None:
+        sid, secret = parsed
+        row = await session.get(IdentitySession, sid)
+        if (
+            row is not None
+            and row.revoked_at is None
+            and session_tokens.secret_matches(row, secret)
+        ):
+            row.revoked_at = _now()
+            row.revoked_by = row.user_id
+            await session.commit()
+            await session_cache.mark_revoked(settings, sid)
+    session_tokens.clear_cookies(response, settings)
+    response.status_code = 204
+    return response

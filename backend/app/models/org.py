@@ -19,6 +19,14 @@ class Org(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     slug: Mapped[str] = mapped_column(sa.String(63), nullable=False, unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    #: P42: stricter-than-platform session timeouts for this workspace (NULL = platform).
+    session_idle_minutes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    session_max_hours: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    #: P42: accept this workspace's SSO sessions as phishing-resistant for privileged roles
+    #: (the identity provider enforces MFA).
+    trust_idp_mfa: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
     # P22: who may see a contact record. 'everyone' (default; pre-P22 behaviour),
     # 'department' (own + my departments' contacts), 'owner' (own + teams I lead).
     # contacts:read_all bypasses all three. Enforced by services/contact_visibility.py.

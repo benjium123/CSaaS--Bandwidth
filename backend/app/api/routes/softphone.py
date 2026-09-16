@@ -131,6 +131,44 @@ async def softphone_token(
 # --------------------------------------------------------------------------------------
 # Realtime events websocket
 # --------------------------------------------------------------------------------------
+async def _ws_org_from_cookie(
+    session: AsyncSession, settings: Settings, cookie: str, org_id: uuid.UUID
+) -> tuple[uuid.UUID, uuid.UUID, list[str]] | None:
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import Session as IdentitySession
+    from app.services import session_tokens
+
+    def aware(value):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+    parsed = session_tokens.parse(cookie)
+    if parsed is None:
+        return None
+    sid, secret = parsed
+    row = await session.get(IdentitySession, sid)
+    now = datetime.now(timezone.utc)
+    if row is None or row.revoked_at is not None or not session_tokens.secret_matches(row, secret):
+        return None
+    seen = aware(row.last_seen_at or row.created_at)
+    if aware(row.expires_at) <= now or now - seen > timedelta(
+        minutes=settings.session_idle_minutes
+    ):
+        return None
+    user = await users_repo.get_by_id(session, row.user_id)
+    if user is None or not user.is_active:
+        return None
+    if settings.require_2fa_all_users and not user.has_second_factor:
+        return None
+    found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
+    if found is None:
+        return None
+    org, _membership, role = found
+    if not org.is_active:
+        return None
+    return org_id, user.id, list(role.permissions or [])
+
+
 async def resolve_ws_org(
     websocket: WebSocket, session: AsyncSession, settings: Settings
 ) -> tuple[uuid.UUID, uuid.UUID, list[str]] | None:
@@ -145,11 +183,28 @@ async def resolve_ws_org(
     """
     token = websocket.query_params.get("token")
     org_id_raw = websocket.query_params.get("org_id")
-    if not token or not org_id_raw:
+    if not org_id_raw:
         return None
     try:
         org_id = uuid.UUID(org_id_raw)
     except ValueError:
+        return None
+
+    # P42: browsers authenticate the socket with the HttpOnly session cookie. The Origin
+    # must be our own console, so another site cannot ride the cookie into the socket.
+    from app.services import session_tokens
+
+    cookie = (getattr(websocket, "cookies", None) or {}).get(
+        session_tokens.session_cookie_name(settings)
+    )
+    if cookie:
+        origin = (websocket.headers.get("origin") or "").rstrip("/")
+        allowed = {o.rstrip("/") for o in settings.cors_origin_list}
+        allowed.add(settings.public_web_url.rstrip("/"))
+        if origin not in allowed:
+            return None
+        return await _ws_org_from_cookie(session, settings, cookie, org_id)
+    if not token or not settings.auth_bearer_compat:
         return None
 
     try:

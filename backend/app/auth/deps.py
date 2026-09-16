@@ -63,9 +63,20 @@ async def get_current_user(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> User:
-    if creds is None or not creds.credentials:
-        raise UnauthenticatedError("Missing bearer token")
     settings: Settings = request.app.state.settings
+    from app.services import session_tokens
+
+    cookie = request.cookies.get(session_tokens.session_cookie_name(settings))
+    # An explicit Authorization header wins over an ambient cookie: a cross-site page cannot
+    # attach one, so this cannot be used to dodge the cookie path's CSRF check.
+    if cookie and (creds is None or not creds.credentials):
+        user_id = await _authenticate_cookie(request, session, settings, cookie)
+        return await _finish_user(request, session, settings, user_id)
+
+    if creds is None or not creds.credentials:
+        raise UnauthenticatedError("Sign in to continue")
+    if not settings.auth_bearer_compat:
+        raise UnauthenticatedError("Sign in to continue")
     user_id, sid = decode_access_token(creds.credentials, settings.jwt_secret.get_secret_value())
 
     if sid is not None:
@@ -80,6 +91,54 @@ async def get_current_user(
                 raise UnauthenticatedError("Invalid or expired token")
             await session_cache.remember(settings, sid, False)
 
+    return await _finish_user(request, session, settings, user_id)
+
+
+async def _authenticate_cookie(
+    request: Request, session: AsyncSession, settings: Settings, cookie: str
+) -> uuid.UUID:
+    """P42: validate the session cookie; enforce absolute + idle timeouts and CSRF."""
+    from app.models import Session as IdentitySession
+    from app.services import session_tokens
+
+    parsed = session_tokens.parse(cookie)
+    if parsed is None:
+        raise UnauthenticatedError("Sign in to continue")
+    sid, secret = parsed
+    row = await session.get(IdentitySession, sid)
+    now = datetime.now(timezone.utc)
+    if (
+        row is None
+        or row.revoked_at is not None
+        or not session_tokens.secret_matches(row, secret)
+        or _aware(row.expires_at) <= now
+    ):
+        raise UnauthenticatedError("Your session has ended. Sign in again.", code="session_expired")
+    last_seen = _aware(row.last_seen_at) or _aware(row.created_at) or now
+    if now - last_seen > timedelta(minutes=settings.session_idle_minutes):
+        row.revoked_at = now
+        await session.commit()
+        raise UnauthenticatedError(
+            "You were signed out after a period of inactivity.", code="session_expired"
+        )
+    if request.method.upper() not in session_tokens.SAFE_METHODS:
+        sent = request.headers.get(session_tokens.CSRF_HEADER, "")
+        if not sent or not hmac.compare_digest(sent, session_tokens.csrf_token(settings, sid)):
+            raise PermissionDeniedError(
+                "Security check failed. Reload the page.", code="csrf_failed"
+            )
+    request.state.session_id = sid
+    request.state.session_last_seen = last_seen
+    request.state.session_created = _aware(row.created_at)
+    if now - last_seen >= timedelta(seconds=60):
+        row.last_seen_at = now
+        await session.commit()
+    return row.user_id
+
+
+async def _finish_user(
+    request: Request, session: AsyncSession, settings: Settings, user_id: uuid.UUID
+) -> User:
     user = await users_repo.get_by_id(session, user_id)
     if user is None:
         raise UnauthenticatedError("Invalid or expired token")
@@ -98,6 +157,24 @@ async def get_current_user(
             code="two_factor_required",
         )
     return user
+
+
+def _enforce_org_session_policy(request: Request, org: Org) -> None:
+    """P42: a workspace may demand shorter sessions than the platform default. Only cookie
+    sessions carry the timestamps this needs (bearer-compat sessions keep platform rules)."""
+    last_seen = getattr(request.state, "session_last_seen", None)
+    created = getattr(request.state, "session_created", None)
+    if last_seen is None or created is None:
+        return
+    now = datetime.now(timezone.utc)
+    if org.session_idle_minutes and now - last_seen > timedelta(minutes=org.session_idle_minutes):
+        raise UnauthenticatedError(
+            "This workspace signs you out after a period of inactivity.", code="session_expired"
+        )
+    if org.session_max_hours and now - created > timedelta(hours=org.session_max_hours):
+        raise UnauthenticatedError(
+            "This workspace requires you to sign in again.", code="session_expired"
+        )
 
 
 def _path_exempt_from_2fa(path: str) -> bool:
@@ -215,16 +292,26 @@ async def get_current_org(
         org, membership, role = found
         if not org.is_active:
             raise PermissionDeniedError("This organization is disabled")
+        _enforce_org_session_policy(request, org)
 
         set_org_context(session, org.id)
         ctx = OrgContext(org=org, membership=membership, role=role, session=session)
+        from app.services import passkey_policy
+
+        await passkey_policy.enforce(
+            request,
+            session,
+            request.app.state.settings,
+            user,
+            org=org,
+            privileged=passkey_policy.is_privileged_role(role),
+        )
+        set_org_context(session, org.id)
 
     # P25 IP allowlist: an org that sets ip_allowlist opts into a network restriction for
     # BOTH human and API-key auth. Fail closed when the client IP cannot be determined.
     if ctx.org.ip_allowlist:
-        if not identity_svc.ip_in_allowlist(
-            identity_svc.client_ip(request), ctx.org.ip_allowlist
-        ):
+        if not identity_svc.ip_in_allowlist(identity_svc.client_ip(request), ctx.org.ip_allowlist):
             if user is None:
                 event_email = ""
                 detail = "api_key"
@@ -253,9 +340,7 @@ async def get_current_org(
     if (
         user is not None
         and identity_svc.two_factor_required(ctx.org, user)
-        and not any(
-            request.url.path.startswith(prefix) for prefix in _2FA_EXEMPT_PATH_PREFIXES
-        )
+        and not any(request.url.path.startswith(prefix) for prefix in _2FA_EXEMPT_PATH_PREFIXES)
     ):
         raise PermissionDeniedError(
             "Two-factor authentication is required by this organization",
@@ -467,6 +552,11 @@ async def _operator_check(
             "Operators must have an authenticator app or passkey",
             code="two_factor_required",
         )
+    from app.services import passkey_policy
+
+    await passkey_policy.enforce(
+        request, session, request.app.state.settings, user, org=None, privileged=True
+    )
     row = await current_identity_session(request, session)
     if row is None or row.second_factor_at is None:
         # Signed in with a password alone (possible only before the account had a

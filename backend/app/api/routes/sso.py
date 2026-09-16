@@ -5,7 +5,7 @@ import uuid
 from urllib.parse import urlencode
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +23,7 @@ from app.models import Org, OrgMembership, Role, User
 from app.rate_limit import enforce_rate_limit
 from app.services import credentials as credentials_svc
 from app.services import identity as identity_svc
-from app.services import oidc
+from app.services import oidc, session_tokens
 
 router = APIRouter(prefix="/api/v1/auth/sso", tags=["auth"])
 
@@ -152,6 +152,7 @@ async def sso_start(
 @router.get("/callback")
 async def sso_callback(
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_session),
     code: str | None = None,
     state: str | None = None,
@@ -280,8 +281,11 @@ async def sso_callback(
         user_id=user.id,
         org_id=org.id,
         request=request,
-        expire_hours=settings.jwt_expire_hours,
+        expire_hours=settings.session_max_hours,
     )
+    # P42: SSO sessions are cookie sessions like every other sign-in.
+    identity_session.auth_method = "sso"
+    cookie_value = session_tokens.issue_secret(identity_session)
     await session.flush()
 
     access_token = create_access_token(
@@ -301,6 +305,7 @@ async def sso_callback(
     )
 
     await session.commit()
+    session_tokens.set_cookies(response, settings, identity_session, cookie_value)
 
     # Return JSON, not a 302. A token in a query string lands in logs, Referer headers,
     # and browser history; the console is expected to complete the flow from this JSON.

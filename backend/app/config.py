@@ -139,6 +139,18 @@ class Settings(BaseSettings):
     #: After recovering an account by ID + selfie, step-up actions stay blocked this long.
     recovery_cooldown_hours: int = 24
     recovery_code_count: int = 10
+    #: Browser sessions: signed out after this much inactivity, and after this long in total.
+    #: A workspace can set stricter values in its security settings.
+    session_idle_minutes: int = 30
+    session_max_hours: int = 12
+    #: None = Secure cookies whenever production or PUBLIC_WEB_URL is https.
+    session_cookie_secure: bool | None = None
+    #: Accept ``Authorization: Bearer <JWT>`` for people (pre-cookie clients). API keys are
+    #: unaffected. Off by default: browsers use HttpOnly session cookies.
+    auth_bearer_compat: bool = False
+    #: Owners, admins, billing members and operators must use a passkey session.
+    require_passkey_for_privileged: bool = True
+    passkey_grace_days: int = 14
     #: Reverse proxies in front of the app that append to X-Forwarded-For (nginx = 1).
     #: 0 = trust no header and use the socket peer address.
     trusted_proxy_count: int = 1

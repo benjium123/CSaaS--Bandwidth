@@ -17,6 +17,10 @@ export const ACTION_LABELS: Record<string, string> = {
   suspend: "suspend an account",
   unsuspend: "lift a suspension",
   ban: "change the ban list",
+  password_change: "change your password",
+  recovery_codes: "create recovery codes",
+  member_reset: "reset a member's sign-in methods",
+  user_support: "change a customer's account",
 };
 
 /**
@@ -110,6 +114,29 @@ export function StepUpDialog() {
 
         {done ? (
           <p className="text-sm text-muted-foreground">Go ahead and try that again.</p>
+        ) : pending.kind === "passkey_session" ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Admin and billing features need a passkey sign-in.{" "}
+              {me?.has_passkey ? "Confirm with your passkey to continue." : "Add a passkey first."}
+            </p>
+            {me?.has_passkey && passkeysSupported() ? (
+              <Button type="button" onClick={confirmWithPasskey} disabled={busy} className="w-full">
+                Use your passkey
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                className="w-full"
+                onClick={() => {
+                  setPending(null);
+                  window.location.assign("/settings/team?tab=security");
+                }}
+              >
+                Add a passkey
+              </Button>
+            )}
+          </>
         ) : pending.kind === "recent_selfie" ? (
           <>
             <p className="text-sm text-muted-foreground">

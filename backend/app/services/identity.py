@@ -207,7 +207,7 @@ def ip_in_allowlist(ip: str | None, allowlist: list | None) -> bool:
 def two_factor_required(
     org: Org, user: User, *, now: datetime | None = None
 ) -> bool:
-    if not org.require_2fa or user.totp_enabled:
+    if not org.require_2fa or user.has_second_factor:
         return False
 
     grace_until = org.require_2fa_grace_until

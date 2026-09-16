@@ -34,7 +34,7 @@ export function SsoCallbackPage() {
 
       try {
         const data = await api.request<{
-          access_token: string;
+          access_token: string | null;
           token_type: string;
           org_id: string;
         }>(

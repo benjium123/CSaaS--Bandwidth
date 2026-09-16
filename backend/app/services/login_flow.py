@@ -8,10 +8,11 @@ and the owner email cannot drift apart between the three paths.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
-from fastapi import Request
+from fastapi import Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import create_access_token
@@ -19,7 +20,7 @@ from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY
 from app.models import OrgMembership, Role, User
 from app.services import identity as identity_svc
-from app.services import login_risk, mailer
+from app.services import login_risk, mailer, session_tokens
 
 #: Strong refs for fire-and-forget alert emails (a bare create_task can be GC'd mid-flight).
 _pending_emails: set[asyncio.Task] = set()
@@ -72,8 +73,15 @@ async def complete_login(
     *,
     second_factor: bool,
     extra_flags: list[str] | None = None,
-) -> str:
-    """Create the Session, record the event, handle risk. Commits. Returns the access token."""
+    response: Response | None = None,
+    auth_method: str = "password",
+    org_id: uuid.UUID | None = None,
+    event_outcome: str = "ok",
+) -> str | None:
+    """Create the Session, record the event, handle risk. Commits.
+
+    P42: the session lives in an HttpOnly cookie set on ``response``. A bearer JWT is only
+    minted (and returned) while AUTH_BEARER_COMPAT is on."""
     risk = await login_risk.assess(session, settings, request, user)
     # P42: recovery sign-ins are always flagged, whatever the network looks like.
     for flag in extra_flags or []:
@@ -84,10 +92,12 @@ async def complete_login(
     identity_session = await identity_svc.create_session(
         session,
         user_id=user.id,
-        org_id=None,
+        org_id=org_id,
         request=request,
-        expire_hours=settings.jwt_expire_hours,
+        expire_hours=settings.session_max_hours,
     )
+    identity_session.auth_method = auth_method
+    cookie_value = session_tokens.issue_secret(identity_session)
     identity_session.risk_flags = list(risk.flags)
     identity_session.country = risk.country
     identity_session.second_factor_at = now if second_factor else None
@@ -99,8 +109,9 @@ async def complete_login(
     identity_svc.record_login_event(
         session,
         email=user.email,
-        outcome="ok",
+        outcome=event_outcome,
         user_id=user.id,
+        org_id=org_id,
         request=request,
         detail=("risk:" + ",".join(risk.flags)) if risk.flagged else None,
     )
@@ -109,13 +120,19 @@ async def complete_login(
         login_risk.open_alert(session, user, risk, request)
         recipients = await owner_emails_for_user(session, user)
 
-    token = create_access_token(
-        user.id,
-        settings.jwt_secret.get_secret_value(),
-        expire_hours=settings.jwt_expire_hours,
-        sid=identity_session.id,
+    token = (
+        create_access_token(
+            user.id,
+            settings.jwt_secret.get_secret_value(),
+            expire_hours=settings.jwt_expire_hours,
+            sid=identity_session.id,
+        )
+        if settings.auth_bearer_compat
+        else None
     )
     await session.commit()
+    if response is not None:
+        session_tokens.set_cookies(response, settings, identity_session, cookie_value)
 
     if recipients:
         task = asyncio.create_task(
