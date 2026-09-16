@@ -40,9 +40,9 @@ CSAAS_REDIS_PASSWORD=whatever-your-.env-has envsubst '${CSAAS_REDIS_PASSWORD}' \
 ### 3. Firewall (ufw)
 ```bash
 ufw allow 7881/tcp
-ufw allow 50700:51199/udp
-ufw allow 5060/udp        # tighten to Telnyx signaling ranges once verified
-ufw allow 10000:10499/udp
+ufw allow 50700:52699/udp   # LiveKit RTC (widened 2026-09-16, P38)
+ufw allow 5060/udp          # tighten to Telnyx signaling ranges once verified
+ufw allow 10000:11999/udp   # SIP RTP (widened 2026-09-16, P38)
 ufw deny in on <public-iface> to any port 7880 proto tcp
 ```
 D11: 7880 does **not** stay loopback — `livekit` runs `network_mode: host` (see the
@@ -54,6 +54,22 @@ nginx's `proxy_pass` to 127.0.0.1:7880 is unaffected by a deny rule scoped to th
 interface. If the softphone needs to reach LiveKit publicly, add the `wss://…/livekit`
 location block to `deploy/nginx-csaas.conf` and repoint `LIVEKIT_PUBLIC_URL` to that
 `wss://` URL **before** applying the deny rule above — see docs/RUNBOOK.md.
+
+On an EXISTING deployment the two widened ranges are *added*, not edited — the old rules
+stay in place:
+
+```bash
+ufw allow 51200:52699/udp comment 'csaas livekit rtp (P38 widen)'
+ufw allow 10500:11999/udp comment 'csaas sip rtp (P38 widen)'
+```
+
+Then restart the two media services so the new ranges take effect (brief drop of any live
+call — do it off-hours):
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml \
+               -f deploy/livekit/docker-compose.livekit.yml restart livekit livekit-sip
+```
 
 ### 4. Start
 ```bash
@@ -73,6 +89,33 @@ lk sip outbound create ... '{"name":"telnyx-out","address":"sip.telnyx.com","num
 # → put the returned trunk id into .env as LIVEKIT_SIP_OUTBOUND_TRUNK_ID
 ```
 
+### 5b. AI worker
+
+The `agent` service in `docker-compose.livekit.yml` runs the LiveKit voice worker
+(`agents/`) from `deploy/Dockerfile.agent`. It is built and started by the same
+`docker compose … up -d --build` that `deploy/deploy.sh` already runs. It needs these
+values in `/root/csaas/.env` — the worker starts without them but every call fails:
+
+- `DEEPGRAM_API_KEY` — STT
+- `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` — TTS
+- `ANTHROPIC_API_KEY` — the default LLM path (`claude-haiku-4-5`)
+- `OPENAI_API_KEY` — only with `LLM_PROVIDER=openai`
+
+`AI_AGENT_NAME` is optional. Both sides default to `ai-agent` (backend
+`services/assistant_dispatch.py`, worker `agents/worker_config.py`); if you set it, set it
+for **both** — a worker registered under a name the backend does not dispatch to simply
+never receives a job, with no error on either side.
+
+Sanity check:
+
+```bash
+docker logs csaas-agent-1 | grep 'registering as agent_name='
+# → agent worker registering as agent_name=ai-agent
+```
+
+Capacity: roughly 10-25 concurrent AI calls per 4 cores / 8 GB (the cap this service runs
+under). When that is exceeded, add a second worker box — not a bigger LiveKit.
+
 ## Sanity checks
 - `docker logs csaas-livekit-1` shows `starting LiveKit server` with the key loaded.
 - `lk room list` (same key/secret) answers.
@@ -83,3 +126,4 @@ lk sip outbound create ... '{"name":"telnyx-out","address":"sip.telnyx.com","num
 - `livekit-sip` must stay `network_mode: host`. Docker bridge NAT rewrites SDP wrong
   and produces one-way audio.
 - Do not widen the RTP ranges casually — this VPS runs other tenants.
+- Do not run the worker without the cpu/mem cap on this shared box.

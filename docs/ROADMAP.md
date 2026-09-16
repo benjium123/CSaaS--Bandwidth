@@ -31,6 +31,7 @@ least as much UI as it adds.
 | 19 | P37-gate Prepaid telephony hard gate (per org; SMS/MMS, calls, number rental) | docs/PLAN_P37_MANAGED_TELEPHONY.md | 0041 | built + tested, deploying 2026-09-11 |
 | 20 | P37a-d Managed telephony (Telnyx sub-accounts, reseller) | docs/PLAN_P37_MANAGED_TELEPHONY.md | 0042, 0043 | P37a built 2026-09-11; P37c allowance engine built 2026-09-15 (inert until plans are seeded); P37b next |
 | 21 | P39 SignalWire numbers live (texting) | docs/PLAN_P39_SIGNALWIRE_LIVE.md | none | built 2026-09-16, awaiting operator go-live steps |
+| 22 | P38 AI worker deployed + port ranges widened | docs/PLAN_P38_AGENT_WORKER.md | none | built 2026-09-16, awaiting operator keys + ufw + deploy |
 
 External inputs still owed by the operator: valid Bandwidth API credentials + application
 callbacks (see session notes 2026-09-09), Bandwidth account upgrade (trial 402), Stripe keys

@@ -1,0 +1,35 @@
+# P38: the LiveKit voice worker (agents/) as its own image. Separate from deploy/Dockerfile
+# ON PURPOSE (phase-7-plan): livekit-agents is heavy and must never enter the API image's
+# dependency tree. Build context is the REPO ROOT (compose passes `context: ..`), so every
+# COPY path below starts with `agents/`.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Requirements first so the (slow) dependency layer is cached independently of agent code.
+COPY agents/requirements.txt /app/agents/requirements.txt
+RUN pip install --no-cache-dir -r /app/agents/requirements.txt \
+    && apt-get purge -y build-essential && apt-get autoremove -y
+
+# Module path is agents.ai_agent.
+COPY agents /app/agents
+
+RUN useradd --create-home --uid 10001 csaas && chown -R csaas:csaas /app
+USER csaas
+
+# Bake the Silero VAD + turn-detector weights into the image. Without this the FIRST call on
+# every fresh container stalls while the models download. Run AFTER `USER csaas`: the files
+# land in the runtime user's home cache, and a root-owned cache is unreadable to the loader.
+RUN python -m agents.ai_agent download-files
+
+# No EXPOSE: the worker is outbound-only (it dials LiveKit, nothing dials it).
+# `start` not `dev` - `dev` is the laptop mode (hot reload, verbose).
+CMD ["python", "-m", "agents.ai_agent", "start"]

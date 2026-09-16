@@ -5,7 +5,8 @@ bind_addresses:
   - ""
 rtc:
   port_range_start: 50700
-  port_range_end: 51199
+  # Widened 2026-09-16 (P38); range verified unused on the box; needs a `livekit` restart.
+  port_range_end: 52699
   tcp_port: 7881
   # The VPS has a static public IP; advertising it directly beats STUN round-trips.
   use_external_ip: true

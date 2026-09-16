@@ -14,7 +14,8 @@ redis:
 sip_port: 5060
 rtp_port:
   start: 10000
-  end: 10499
+  # Widened 2026-09-16 (P38); range verified unused on the box; needs a `livekit-sip` restart.
+  end: 11999
 logging:
   level: info
   json: true

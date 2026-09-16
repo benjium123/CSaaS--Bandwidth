@@ -13,14 +13,14 @@
 #
 # UNLIKE the api/db services, the media plane MUST bind public interfaces: Telnyx has to
 # reach SIP signaling (5060/udp) and the SFU has to reach browsers over UDP. Every port
-# here is chosen to avoid the other tenants on this VPS; the RTP range is deliberately
-# narrow (500 ports) because this box shares CPU with other businesses.
+# here is chosen to avoid the other tenants on this VPS; the RTP ranges were 500 ports
+# until P38 widened them to 2,000 each (both ranges verified unused on the box).
 #
 # Firewall (ufw) additions required:
 #   7881/tcp   ICE/TCP fallback
-#   50700-51199/udp  WebRTC RTP
+#   50700-52699/udp  WebRTC RTP (widened 2026-09-16, P38)
 #   5060/udp   SIP signaling (restrict to Telnyx signaling IPs in ufw where possible)
-#   10000-10499/udp  SIP RTP
+#   10000-11999/udp  SIP RTP (widened 2026-09-16, P38)
 #
 # `livekit` runs with network_mode: host (addendum to 8.16 - the 500-port UDP RTP range
 # was previously published one-by-one through docker-proxy, a userspace process PER
@@ -76,4 +76,40 @@ services:
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?}
     network_mode: host   # SIP + RTP need the real host address in SDP; NAT rewriting inside
                          # docker bridge networks is exactly the one-way-audio machine.
+    logging: *default-logging
+  # P38 AI worker: the LiveKit voice worker (agents/). It is part of the media plane by
+  # D17, which is why it lives in this file and not in docker-compose.prod.yml. It had
+  # never been deployed before P38; the backend dispatches jobs to an agent name and a
+  # worker that registers under a different one simply never gets a job - no error
+  # anywhere, the AI just never answers. Hence AI_AGENT_NAME below.
+  agent:
+    build:
+      # `context: ..` resolves against the FIRST -f file's directory (deploy/), per the
+      # D16 note at the top of this file - NOT against deploy/livekit/. So `..` is the
+      # repo root, the same context the api image is built with.
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+    restart: unless-stopped
+    # LIVEKIT_API_SECRET and the AI provider keys (Deepgram/ElevenLabs/Anthropic) come
+    # from .env untouched.
+    env_file: [../.env]
+    environment:
+      # Host networking (below) means the compose DNS names ("livekit", "api") do not
+      # resolve in this container, and .env's LIVEKIT_URL=ws://livekit:7880 would fail.
+      # Loopback reaches both: livekit is host-networked and api publishes
+      # 127.0.0.1:8080. `environment:` overrides `env_file:` for the same key in Compose,
+      # which is what makes these loopback URLs win over .env.
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      # Key id is the FIXED string "csaas-media"; only the secret is secret.
+      LIVEKIT_API_KEY: csaas-media
+      BACKEND_URL: http://127.0.0.1:8080
+      # MUST match the backend's dispatch name: same env var, same default, both sides
+      # (backend services/assistant_dispatch.py, worker agents/worker_config.py).
+      AI_AGENT_NAME: ${AI_AGENT_NAME:-ai-agent}
+    network_mode: host
+    # The box is shared with other businesses. A worker under load is CPU-bound (STT/TTS
+    # streaming, VAD); cap it so a burst of AI calls degrades AI calls, not the CRM.
+    cpus: "4"
+    mem_limit: 8g
+    depends_on: [livekit]
     logging: *default-logging

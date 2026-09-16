@@ -25,6 +25,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from .backend_client import BackendClient, format_handoff_summary
 from .beep_detector import BeepDetector, VoicemailHeuristic
 from .transcript_buffer import TranscriptBuffer, assemble_instructions
+from .worker_config import resolve_agent_name
 
 logger = logging.getLogger(__name__)
 
@@ -928,10 +929,12 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 def main() -> None:
+    agent_name = resolve_agent_name()
+    logger.info("agent worker registering as agent_name=%s", agent_name)
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name="ai",
+            agent_name=agent_name,
         )
     )
 

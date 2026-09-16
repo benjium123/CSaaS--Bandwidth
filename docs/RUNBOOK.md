@@ -337,8 +337,43 @@ signaling hosts, not `sip.telnyx.com`.
 Residual items as of the last time this ran (check `docs/PROGRESS.md` for current state):
 nginx needs a `wss` proxy location for port 7880 before the browser softphone can connect
 (additive change to the shared csaas nginx site - get authorization before touching a
-config file nginx shares with other tenants), and the AI agent needs its own worker
-service/venv on the box (the `agents/` code is shipped; nothing runs it yet).
+config file nginx shares with other tenants). The AI worker item is DONE in P38: see
+"AI worker + media-plane headroom (P38)" below.
+
+---
+
+## AI worker + media-plane headroom (P38)
+
+The AI agent no longer needs its own separate worker service or venv: it is now the `agent` service in `deploy/livekit/docker-compose.livekit.yml`.
+
+Operator steps, in order:
+
+1. Put the AI keys into `/opt/csaas/.env`: `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ANTHROPIC_API_KEY`. Add `OPENAI_API_KEY` only if `LLM_PROVIDER=openai` is wanted. The operator writes `.env`, not us.
+2. Add the two firewall rules (re-check with `ss -lun` first):
+   ```bash
+   ufw allow 51200:52699/udp comment 'csaas livekit rtp (P38 widen)'
+   ufw allow 10500:11999/udp comment 'csaas sip rtp (P38 widen)'
+   ```
+3. Read the Telnyx SIP connection concurrent-channel limit in the portal (Voice, SIP Trunking, the FQDN connection, Inbound/Outbound settings). Record the value here. If it is under about 50, raise it there.
+4. `bash deploy/deploy.sh`
+5. Off-hours only, restart the media services so the widened ranges take effect. Live calls drop:
+   ```bash
+   docker compose -f deploy/docker-compose.prod.yml -f deploy/livekit/docker-compose.livekit.yml restart livekit livekit-sip
+   ```
+
+Checks:
+- `docker logs csaas-agent-1` shows the worker registering as `agent_name=ai-agent`.
+- One outbound AI call to your own phone via the API: the call answers, the AI speaks within about 2 seconds, and hangup writes the `/agent/outcome` row.
+- Run the conversation-replay gate: `agents/replay_harness.py` (see the README). Want rt at or above 0.97, zero underruns, `tail_energy_ratio` at or above 0.5.
+- During a test call, `ss -lun` shows RTP binding inside the new ranges (10000-11999 and 50700-52699).
+- `docker stats` shows the worker under its 4-core cap and the other tenants' containers unaffected.
+
+Capacity: expect roughly 10-25 concurrent AI calls per 4 cores on this shared box. When AI calls pass about 10, the next step is a second worker VPS, not a bigger LiveKit.
+
+Rollback:
+1. Remove the `agent` service and run `compose up -d`; the worker is gone and nothing else changed.
+2. Revert `livekit.yaml.tpl` `port_range_end` to 51199 and `sip.yaml.tpl` `rtp_port.end` to 10499.
+3. Off-hours, restart `livekit` and `livekit-sip`.
 
 ---
 

@@ -45,9 +45,10 @@ Production AI calling works end to end on the existing box, and the media plane 
   Verified free on 2026-09-16 - re-check with `ss -lun` right before adding.
 
 ## Allowed files (implementer may read and write)
-- `agents/ai_agent.py` — ONE change: `agent_name=os.getenv("AI_AGENT_NAME", "ai-agent")`
-  so the default matches the backend's `AI_AGENT_NAME_DEFAULT` and one env var sets both.
-- `agents/tests/test_ai_agent_sdk.py` — tests for the name resolution.
+- `agents/worker_config.py` — NEW, pure Python (no livekit import): `resolve_agent_name()`
+  reads `AI_AGENT_NAME`, default `"ai-agent"` = the backend's `AI_AGENT_NAME_DEFAULT`.
+- `agents/ai_agent.py` — ONE change in `main()`: use that resolver and log the name once.
+- `agents/tests/test_worker_config.py` — NEW; runs in ANY venv, so the pin is never skipped.
 - `deploy/Dockerfile.agent` — NEW. Worker image.
 - `deploy/livekit/docker-compose.livekit.yml` — add the `agent` service (media plane file,
   the worker is part of the media plane by D17).
@@ -56,7 +57,7 @@ Production AI calling works end to end on the existing box, and the media plane 
 - `deploy/livekit/README.md` — firewall block + a "5. AI worker" section.
 - `deploy/deploy.sh` — only if it does not already `--build` every service in both compose
   files; verify first, change nothing if it does.
-- `docs/RUNBOOK.md`, `docs/ROADMAP.md` (row 21), `docs/OPEN_ISSUES.md` (D82 below).
+- `docs/RUNBOOK.md`, `docs/ROADMAP.md` (row 22), `docs/OPEN_ISSUES.md` (D84 below).
 
 ## Forbidden
 - `backend/**` (no API change is needed; the dispatch name is fixed on the worker side)
@@ -107,7 +108,7 @@ loopback URLs win over `.env`'s `ws://livekit:7880`. `LIVEKIT_API_SECRET` comes 
 untouched (the worker reads `LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET`, `agents/ai_agent.py:51`).
 
 ### Name fix (`agents/ai_agent.py`)
-`agent_name="ai"` → `agent_name=os.getenv("AI_AGENT_NAME", "ai-agent")`. Log the resolved
+`agent_name="ai"` → `agent_name=worker_config.resolve_agent_name()`. Log the resolved
 name once at startup so a mismatch is visible in `docker logs` instead of manifesting as
 "AI never answers".
 
@@ -119,15 +120,16 @@ drop of any live call, so restart off-hours. Update the README firewall block to
 ### What this phase deliberately does NOT do
 - Not a second worker box (next phase, when concurrent AI calls pass ~10).
 - Not recording (`egress` is not deployed; separate slice).
-- Not the SignalWire second trunk (P39: per-carrier trunk id in `voice_plane`).
+- Not the SignalWire second trunk (P40 spike, then per-carrier trunk id in `voice_plane`).
 - Not per-org AI keys (`AI_PER_ORG_KEYS` stays off; env keys are the path today).
 
 ## Test spec
-Unit (offline, `agents` venv, `pytest agents/tests`):
-- [ ] `test_agent_name_defaults_to_the_backends_dispatch_name` → with `AI_AGENT_NAME` unset,
-      the WorkerOptions agent_name is the literal `"ai-agent"` (the agents package cannot
-      import the backend; pin the literal and say why in the test).
-- [ ] `test_agent_name_env_override` → `AI_AGENT_NAME=foo` → `"foo"`.
+Unit (`agents/tests/test_worker_config.py` runs in the backend venv too - no skip):
+- [ ] `test_the_default_matches_the_backends_dispatch_name` → `resolve_agent_name({})` is the
+      literal `"ai-agent"` (the agents package cannot import the backend; the literal is
+      pinned and the test says why).
+- [ ] `test_the_env_var_overrides_the_default` → `AI_AGENT_NAME=foo` → `"foo"`; a blank value
+      falls back to the default.
 - [ ] every existing `agents/tests/*` still green.
 
 Build:
@@ -164,7 +166,7 @@ Rollback: remove the `agent` service and `compose up -d` (worker gone, nothing e
 changed); revert the two `.tpl` ranges and restart the two media services.
 
 ## Open issue to log
-- **D82** — worker `agent_name="ai"` vs backend `"ai-agent"`: the AI worker could never
+- **D84** — worker `agent_name="ai"` vs backend `"ai-agent"`: the AI worker could never
   have received a dispatch. Found 2026-09-16 while planning P38; fixed here.
 
 ## Cost reference (for the operator, from the 2026-09-16 pricing pull)
