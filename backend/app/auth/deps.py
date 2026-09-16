@@ -233,6 +233,12 @@ async def _org_context_from_api_key(
             await enforce_rate_limit(request, f"apikey:{prefix}")
             raise UnauthenticatedError("This API key has expired")
 
+    # P42: a key restricted to certain networks is useless anywhere else.
+    caller_ip = identity_svc.client_ip(request)
+    if row.allowed_cidrs and not identity_svc.ip_in_allowlist(caller_ip, row.allowed_cidrs):
+        await enforce_rate_limit(request, f"apikey:{prefix}")
+        raise UnauthenticatedError("This API key cannot be used from this network")
+
     set_org_context(session, row.org_id)
     org = await session.get(Org, row.org_id)
     if org is None or not org.is_active:
@@ -247,7 +253,10 @@ async def _org_context_from_api_key(
     if last is not None and last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
     row.last_used_at = now
-    if last is None or (now - last) >= timedelta(hours=1):
+    ip_changed = caller_ip is not None and row.last_used_ip != caller_ip
+    if ip_changed:
+        row.last_used_ip = caller_ip
+    if last is None or (now - last) >= timedelta(hours=1) or ip_changed:
         await session.commit()
         set_org_context(session, row.org_id)
         row = await session.get(ApiKey, row.id)

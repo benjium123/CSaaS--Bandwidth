@@ -91,6 +91,20 @@ class NumberOut(BaseModel):
     answered_by: AnsweredByOut = AnsweredByOut()
 
 
+def _audit_number(ctx: OrgContext, action: str, number: OrgNumber) -> None:
+    """P42: who added, bought or released each number - the trail a fraud review needs."""
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action=action,
+        target_type="org_number",
+        target_id=str(number.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={"e164": number.e164, "carrier": number.carrier},
+    )
+
+
 async def _bulk_order_step_up(request: Request, ctx: OrgContext) -> None:
     """P41: ordering many numbers quickly is a classic sign of a spam operation setting up.
     Past BULK_NUMBER_ORDER_THRESHOLD orders in 24 hours, a fresh selfie is required (one
@@ -234,6 +248,7 @@ async def add_number(
         ctx.session.add(
             Inbox(id=uuid.uuid4(), org_id=ctx.org.id, name=normalized, number_id=number.id)
         )
+        _audit_number(ctx, "number.added", number)
         await ctx.session.commit()
     except IntegrityError as exc:
         await ctx.session.rollback()
@@ -634,6 +649,7 @@ async def order(
         setup_cost_cents=payload.setup_cost_cents,
     )
     await telephony_billing.charge_new_number(ctx.session, ctx.org.id, number)
+    _audit_number(ctx, "number.ordered", number)
     await ctx.session.commit()
     return await _out(ctx.session, number)
 
@@ -664,6 +680,7 @@ async def release(
     number.status = "released"
     number.is_active = False
     number.released_at = datetime.now(timezone.utc)
+    _audit_number(ctx, "number.released", number)
     await ctx.session.commit()
     return await _out(ctx.session, number)
 

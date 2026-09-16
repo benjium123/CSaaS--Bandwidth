@@ -287,9 +287,12 @@ async def list_org_login_events(
     if format_ not in ("json", "csv"):
         raise ValidationFailedError("format must be 'json' or 'csv'")
 
+    # P42: password / passkey sign-ins happen before a workspace is chosen, so they carry
+    # no org_id - an admin must still see their members' sign-ins (and failures).
+    members = sa.select(OrgMembership.user_id).where(OrgMembership.org_id == ctx.org.id)
     stmt = (
         sa.select(LoginEvent)
-        .where(LoginEvent.org_id == ctx.org.id)
+        .where(sa.or_(LoginEvent.org_id == ctx.org.id, LoginEvent.user_id.in_(members)))
         .order_by(LoginEvent.at.desc())
         .limit(limit)
     )

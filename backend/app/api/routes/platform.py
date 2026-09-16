@@ -57,6 +57,8 @@ class ApiKeyIn(BaseModel):
     name: str = Field(min_length=1, max_length=127)
     scopes: list[str] = Field(min_length=1)
     expires_at: datetime | None = None
+    #: P42: optional CIDRs this key may be used from.
+    allowed_cidrs: list[str] | None = None
 
 
 class ApiKeyOut(BaseModel):
@@ -68,6 +70,8 @@ class ApiKeyOut(BaseModel):
     expires_at: datetime | None
     last_used_at: datetime | None
     created_at: datetime
+    allowed_cidrs: list[str] | None = None
+    last_used_ip: str | None = None
 
 
 class ApiKeyCreatedOut(ApiKeyOut):
@@ -84,6 +88,8 @@ def _key_out(row: ApiKey) -> ApiKeyOut:
         expires_at=row.expires_at,
         last_used_at=row.last_used_at,
         created_at=row.created_at,
+        allowed_cidrs=row.allowed_cidrs,
+        last_used_ip=row.last_used_ip,
     )
 
 
@@ -109,6 +115,8 @@ async def create_api_key(
         name=payload.name,
         scopes=payload.scopes,
         expires_at=payload.expires_at,
+        allowed_cidrs=payload.allowed_cidrs,
+        max_days=request.app.state.settings.api_key_max_days,
         created_by=actor_user_id,
         actor_user_id=actor_user_id,
         actor_api_key_id=actor_api_key_id,
@@ -144,12 +152,17 @@ async def rotate_api_key(
     key_id: uuid.UUID,
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    overlap_hours: Annotated[int, Query(ge=0, le=24)] = 0,
 ) -> ApiKeyCreatedOut:
     await check_org_selfie_step_up(request, ctx, action="api_key_create")
     row = await _get_key(ctx, key_id)
     actor_user_id, actor_api_key_id = _actor(ctx)
     new_row, full_key = await apikeys_svc.rotate(
-        ctx.session, row, actor_user_id=actor_user_id, actor_api_key_id=actor_api_key_id
+        ctx.session,
+        row,
+        actor_user_id=actor_user_id,
+        actor_api_key_id=actor_api_key_id,
+        overlap_hours=overlap_hours,
     )
     return ApiKeyCreatedOut(**_key_out(new_row).model_dump(), key=full_key)
 

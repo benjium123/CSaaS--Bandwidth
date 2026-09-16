@@ -100,6 +100,7 @@ def make_settings(**overrides) -> Settings:
         "auth_bearer_compat": True,
         "session_max_hours": 24,
         "require_passkey_for_privileged": False,
+        "api_key_max_days": 0,
     }
     base.update(overrides)
     return Settings(**base)

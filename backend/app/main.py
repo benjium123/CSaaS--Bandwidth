@@ -171,6 +171,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             raise
         response.headers["X-Request-Id"] = request_id
+        # P42: API responses are data, never pages: nothing may frame, sniff or embed them,
+        # and authentication responses are never cached.
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+        )
+        if request.url.path.startswith(("/api/v1/auth/", "/api/v1/kyc/", "/api/v1/ops/")):
+            response.headers["Cache-Control"] = "no-store"
+        if settings.is_production:
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+            )
         structlog.get_logger("http").info(
             "request",
             status=response.status_code,

@@ -29,6 +29,7 @@ from app.models import PERMISSIONS, Org, OrgMembership, Role, User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
+from app.services import audit as audit_svc
 from app.services import identity as identity_svc
 from app.services import invites as invites_svc
 from app.services import lockout, login_flow, passkey_policy, password_policy
@@ -354,5 +355,15 @@ async def accept_invite(
         raise ConflictError("You are already a member of that organisation")
 
     await invites_svc.redeem(session, invite, user.id)
+    set_org_context(session, invite.org_id)
+    audit_svc.record(
+        session,
+        invite.org_id,
+        action="invite.accepted",
+        target_type="invite",
+        target_id=str(invite.id),
+        actor_user_id=user.id,
+        detail={"role_name": invite.role_name},
+    )
     await session.commit()
     return {"org_id": str(invite.org_id), "role_name": invite.role_name}

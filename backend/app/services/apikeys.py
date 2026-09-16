@@ -9,7 +9,7 @@ the new key, at rotation). Scopes are a SUBSET of the RBAC permission catalogue;
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +38,8 @@ async def create(
     name: str,
     scopes: list[str],
     expires_at: datetime | None = None,
+    allowed_cidrs: list[str] | None = None,
+    max_days: int = 0,
     created_by: uuid.UUID | None = None,
     actor_user_id: uuid.UUID | None = None,
     actor_api_key_id: uuid.UUID | None = None,
@@ -63,9 +65,7 @@ async def create(
             )
         ).first()
         if found is None:
-            raise ValidationFailedError(
-                "API-key creator is not a member of this organisation"
-            )
+            raise ValidationFailedError("API-key creator is not a member of this organisation")
         _, actor_role = found
         if WILDCARD not in (actor_role.permissions or []):
             effective = set(actor_role.permissions or [])
@@ -80,9 +80,7 @@ async def create(
         # new key with scopes exceeding its own. Gate on the authenticating key's own
         # scopes instead.
         if actor_key_scopes is None:
-            raise ValidationFailedError(
-                "Cannot resolve the authenticating API key's scopes"
-            )
+            raise ValidationFailedError("Cannot resolve the authenticating API key's scopes")
         exceeding = sorted(set(scopes) - set(actor_key_scopes))
         if exceeding:
             raise ValidationFailedError(
@@ -92,6 +90,21 @@ async def create(
         # C2: no actor could be resolved at all (neither a user nor an API key) -
         # refuse rather than silently create the key with no scope validation.
         raise ValidationFailedError("Cannot resolve an actor to validate scopes against")
+
+    # P42: keys are never immortal - a forgotten key in an old script is a standing risk.
+    if max_days:
+        latest = datetime.now(timezone.utc) + timedelta(days=max_days)
+        if expires_at is None:
+            expires_at = latest
+        elif (
+            expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+        ) > latest:
+            raise ValidationFailedError(f"API keys can last at most {max_days} days")
+    cidrs = None
+    if allowed_cidrs:
+        from app.services import identity as identity_svc
+
+        cidrs = identity_svc.parse_cidrs(allowed_cidrs)
 
     full_key, prefix, key_hash = generate_api_key()
     row = ApiKey(
@@ -103,6 +116,7 @@ async def create(
         scopes=list(scopes),
         status="active",
         expires_at=expires_at,
+        allowed_cidrs=cidrs,
         created_by=created_by,
     )
     session.add(row)
@@ -156,10 +170,16 @@ async def rotate(
     *,
     actor_user_id: uuid.UUID | None = None,
     actor_api_key_id: uuid.UUID | None = None,
+    overlap_hours: int = 0,
 ) -> tuple[ApiKey, str]:
-    """Create-new + revoke-old, atomically - one commit for both halves."""
+    """Create-new + retire-old, atomically - one commit for both halves.
+
+    P42: ``overlap_hours`` (0-24) keeps the old key working that long so a deployment can
+    switch keys without downtime; 0 revokes it immediately."""
     if key.status != "active":
         raise ValidationFailedError("Only an active key can be rotated")
+    if not 0 <= overlap_hours <= 24:
+        raise ValidationFailedError("Overlap must be between 0 and 24 hours")
     full_key, prefix, key_hash = generate_api_key()
     new_row = ApiKey(
         id=uuid.uuid4(),
@@ -170,10 +190,14 @@ async def rotate(
         scopes=list(key.scopes or []),
         status="active",
         expires_at=key.expires_at,
+        allowed_cidrs=key.allowed_cidrs,
         created_by=key.created_by,
     )
     session.add(new_row)
-    key.status = "revoked"
+    if overlap_hours:
+        key.expires_at = datetime.now(timezone.utc) + timedelta(hours=overlap_hours)
+    else:
+        key.status = "revoked"
     await session.flush()
     audit_svc.record(
         session,

@@ -148,6 +148,8 @@ class Settings(BaseSettings):
     #: Accept ``Authorization: Bearer <JWT>`` for people (pre-cookie clients). API keys are
     #: unaffected. Off by default: browsers use HttpOnly session cookies.
     auth_bearer_compat: bool = False
+    #: API keys expire after at most this many days (0 = no maximum).
+    api_key_max_days: int = 365
     #: Owners, admins, billing members and operators must use a passkey session.
     require_passkey_for_privileged: bool = True
     passkey_grace_days: int = 14

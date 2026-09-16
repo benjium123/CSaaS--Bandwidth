@@ -60,6 +60,10 @@ class ApiKey(Base, TenantScoped, TimestampMixin):
     scopes: Mapped[list] = mapped_column(PortableJSON(), nullable=False, default=list)
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="active")
     expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    #: P42: optional networks this key may be used from (CIDRs); NULL = anywhere the org
+    #: allowlist permits.
+    allowed_cidrs: Mapped[list | None] = mapped_column(PortableJSON(), nullable=True)
+    last_used_ip: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )

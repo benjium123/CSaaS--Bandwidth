@@ -545,12 +545,35 @@ async def create_invite(
         role_name=payload.role_name,
         created_by=ctx.actor_user_id,
     )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="invite.created",
+        target_type="invite",
+        target_id=str(invite.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={"email": payload.email, "role_name": payload.role_name},
+    )
     await ctx.session.commit()
-    base = (getattr(request.app.state.settings, "public_base_url", "") or "").rstrip("/")
+    settings = request.app.state.settings
+    base = (settings.public_web_url or settings.public_base_url or "").rstrip("/")
+    accept_url = f"{base}/accept-invite?token={raw}"
+    # P42: the invitation goes straight to the invited address, so the link never has to
+    # pass through chat or a shared inbox.
+    from app.services import mailer
+
+    await mailer.send(
+        settings,
+        [payload.email],
+        f"You're invited to {ctx.org.name} on {settings.app_name}",
+        f"You were invited to join {ctx.org.name} as {payload.role_name}.\n\n"
+        f"Accept the invitation (the link works once and expires in 7 days):\n{accept_url}",
+    )
     return InviteCreatedOut(
         **_invite_out(invite).model_dump(),
         token=raw,
-        accept_url=f"{base}/accept-invite?token={raw}",
+        accept_url=accept_url,
     )
 
 
@@ -566,6 +589,15 @@ async def revoke_invite(
         raise ConflictError("That invitation has already been used")
     if invite.revoked_at is None:
         invite.revoked_at = datetime.now(timezone.utc)
+        audit_svc.record(
+            ctx.session,
+            ctx.org.id,
+            action="invite.revoked",
+            target_type="invite",
+            target_id=str(invite.id),
+            actor_user_id=ctx.actor_user_id,
+            actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        )
         await ctx.session.commit()
     return _invite_out(invite)
 

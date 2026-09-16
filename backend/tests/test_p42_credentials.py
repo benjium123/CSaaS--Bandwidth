@@ -177,7 +177,7 @@ async def test_password_reset_never_bypasses_2fa(client42, session, outbox):
     )
     assert unknown.status_code == 202 and unknown.json() == r.json()
 
-    body = outbox[-1].get_content()
+    body = outbox[-1].get_body(preferencelist=("plain",)).get_content()
     token = re.search(r"token=([A-Za-z0-9_\-]+)", body).group(1)
     r = await client42.post(
         "/api/v1/auth/password/reset", json={"token": token, "new_password": NEW_PASSWORD}
@@ -204,7 +204,10 @@ async def test_password_reset_never_bypasses_2fa(client42, session, outbox):
 async def test_expired_reset_token_is_refused(client42, session, outbox):
     await _signup_with_passkey(client42, "expired@example.com")
     await client42.post("/api/v1/auth/password/forgot", json={"email": "expired@example.com"})
-    token = re.search(r"token=([A-Za-z0-9_\-]+)", outbox[-1].get_content()).group(1)
+    token = re.search(
+        r"token=([A-Za-z0-9_\-]+)",
+        outbox[-1].get_body(preferencelist=("plain",)).get_content(),
+    ).group(1)
     row = (await session.execute(sa.select(PasswordResetToken))).scalar_one()
     row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     await session.commit()
