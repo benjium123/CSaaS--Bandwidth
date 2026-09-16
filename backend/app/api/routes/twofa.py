@@ -11,6 +11,7 @@ of that key. There is **no plaintext fallback branch**: without the key, enrollm
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Annotated
 
 import pyotp
@@ -18,9 +19,8 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import get_current_user
+from app.auth.deps import current_identity_session, get_current_user
 from app.auth.security import (
-    create_access_token,
     decode_pending_2fa_token,
     decrypt_credential,
     encrypt_credential,
@@ -37,6 +37,7 @@ from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
 from app.services import identity as identity_svc
+from app.services import login_flow
 
 router = APIRouter(prefix="/api/v1/auth/2fa", tags=["auth"])
 
@@ -131,6 +132,11 @@ async def activate(
     step = _check_code(user, secret, payload.code)
     user.totp_enabled = True
     user.totp_last_used_step = step
+    # P41: activating proves possession of the factor, so the enrolling session counts as
+    # second-factor-verified from here on.
+    row = await current_identity_session(request, session)
+    if row is not None:
+        row.second_factor_at = datetime.now(timezone.utc)
     await session.commit()
     return {"totp_enabled": True}
 
@@ -176,26 +182,34 @@ async def verify(
 
     user.totp_last_used_step = step
 
-    identity_session = await identity_svc.create_session(
-        session,
-        user_id=user.id,
-        org_id=None,
-        request=request,
-        expire_hours=settings.jwt_expire_hours,
+    token = await login_flow.complete_login(
+        session, settings, request, user, second_factor=True
     )
-    await session.flush()
-
-    token = create_access_token(
-        user.id,
-        settings.jwt_secret.get_secret_value(),
-        expire_hours=settings.jwt_expire_hours,
-        sid=identity_session.id,
-    )
-    identity_svc.record_login_event(
-        session, email=user.email, outcome="ok", user_id=user.id, request=request
-    )
-    await session.commit()
     return {"access_token": token, "token_type": "bearer"}
+
+
+@router.post("/step-up")
+async def step_up(
+    payload: CodeIn,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """P41: re-prove the authenticator app inside an existing session (step-up)."""
+    settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"totp-step-up:{user.id}")
+    key = _fernet_key(settings)
+    if not user.totp_enabled or not user.totp_secret:
+        raise ValidationFailedError("Two-factor auth is not enabled")
+    row = await current_identity_session(request, session)
+    if row is None:
+        raise UnauthenticatedError("Sign in again to continue")
+    secret = decrypt_credential(user.totp_secret, key)
+    step = _check_code(user, secret, payload.code)
+    user.totp_last_used_step = step
+    row.second_factor_at = datetime.now(timezone.utc)
+    await session.commit()
+    return {"ok": True}
 
 
 @router.post("/disable")
@@ -211,6 +225,13 @@ async def disable(
     key = _fernet_key(settings)
     if not user.totp_enabled or not user.totp_secret:
         raise ValidationFailedError("Two-factor auth is not enabled")
+
+    if settings.require_2fa_all_users and not user.has_passkey:
+        raise ValidationFailedError(
+            "Every account needs a second factor. Add a passkey before turning off the "
+            "authenticator app.",
+            code="last_second_factor",
+        )
 
     secret = decrypt_credential(user.totp_secret, key)
     _check_code(user, secret, payload.code)

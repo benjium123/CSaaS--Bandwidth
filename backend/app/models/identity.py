@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
-from app.db.types import GUID
+from app.db.types import GUID, PortableJSON
 
 LOGIN_OUTCOMES: tuple[str, ...] = (
     "ok",
@@ -47,6 +47,15 @@ class Session(Base, TimestampMixin):
     revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
     revoked_by: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # --- P41 login risk + step-up -----------------------------------------------------
+    #: services/login_risk.py flags raised when this session was issued ([] = clean).
+    risk_flags: Mapped[list | None] = mapped_column(PortableJSON(), nullable=True)
+    country: Mapped[str | None] = mapped_column(sa.String(2), nullable=True)
+    #: Last time this session proved a second factor (login counts). auth/deps.py
+    #: require_step_up("recent_2fa") reads it.
+    second_factor_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
     )
 
 

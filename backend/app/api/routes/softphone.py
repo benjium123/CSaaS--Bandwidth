@@ -169,6 +169,9 @@ async def resolve_ws_org(
     user = await users_repo.get_by_id(session, user_id)
     if user is None or not user.is_active:
         return None
+    # P41: the same mandatory-second-factor rule the HTTP path enforces in auth/deps.py.
+    if settings.require_2fa_all_users and not user.has_second_factor:
+        return None
 
     found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
     if found is None:

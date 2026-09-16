@@ -33,6 +33,15 @@ class User(Base, TimestampMixin):
     totp_enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
     # Blocks replay of a code that was just accepted.
     totp_last_used_step: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+    #: P41: denormalised "has at least one passkey" so the per-request 2FA gate in
+    #: auth/deps.py never needs a query. Maintained only by services/passkeys.py.
+    has_passkey: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+
+    @property
+    def has_second_factor(self) -> bool:
+        return bool(self.totp_enabled or self.has_passkey)
     # P31: {mention, assignment, new_inbound, missed_call, sla_breach, digest: bool}; NULL =
     # every toggle on (models/push.py::DEFAULT_NOTIFICATION_PREFS).
     notification_prefs: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)

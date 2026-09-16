@@ -89,6 +89,10 @@ def make_settings(**overrides) -> Settings:
         # endpoint. Production refuses this flag outright (config.validate), so it can
         # never be why a live instance is open; invite tests override it to False.
         "allow_open_registration": True,
+        # P41: pre-P41 tests log in with a password only and send/dial from orgs that
+        # never went through business verification. P41 tests opt back in explicitly.
+        "require_2fa_all_users": False,
+        "kyc_enforced": False,
     }
     base.update(overrides)
     return Settings(**base)

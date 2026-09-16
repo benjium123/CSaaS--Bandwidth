@@ -33,6 +33,7 @@ from app.api.routes import messages as message_routes
 from app.api.routes import numbers as number_routes
 from app.api.routes import orgs as org_routes
 from app.api.routes import outbound as outbound_routes
+from app.api.routes import passkeys as passkey_routes
 from app.api.routes import platform as platform_routes
 from app.api.routes import provider_accounts as provider_accounts_routes
 from app.api.routes import registration as registration_routes
@@ -188,11 +189,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         retry_after = getattr(exc, "retry_after", None)
         if retry_after is not None:
             headers["Retry-After"] = str(int(retry_after))
+        body = {"code": exc.code, "message": exc.message, "request_id": request_id}
+        # P41: a step-up refusal tells the console WHICH proof to ask for and for what.
+        for extra in ("kind", "action"):
+            value = getattr(exc, extra, None)
+            if isinstance(value, str):
+                body[extra] = value
         return JSONResponse(
             status_code=exc.http_status,
-            content={
-                "error": {"code": exc.code, "message": exc.message, "request_id": request_id}
-            },
+            content={"error": body},
             headers=headers,
         )
 
@@ -224,6 +229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(identity_routes.org_router)
     app.include_router(roles_routes.router)
     app.include_router(twofa_routes.router)
+    app.include_router(passkey_routes.router)
     app.include_router(sso_routes.router)
     app.include_router(number_routes.router)
     app.include_router(telephony_routes.router)

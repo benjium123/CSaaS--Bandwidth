@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
 from app.auth.security import (
-    create_access_token,
     create_pending_2fa_token,
     hash_password,
     needs_rehash,
@@ -31,6 +30,8 @@ from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import identity as identity_svc
 from app.services import invites as invites_svc
+from app.services import login_flow
+from app.services import operators as operators_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -54,6 +55,10 @@ class TokenOut(BaseModel):
     # When 2FA is enabled the password step alone is NOT a login.
     requires_2fa: bool = False
     pending_token: str | None = None
+    #: P41: which second factors the pending login accepts ("totp", "passkey").
+    methods: list[str] = []
+    #: P41: signed in, but must add an authenticator app or passkey before anything else.
+    requires_2fa_enrollment: bool = False
 
 
 class MembershipOut(BaseModel):
@@ -68,6 +73,8 @@ class MeOut(BaseModel):
     email: str
     full_name: str
     totp_enabled: bool = False
+    has_passkey: bool = False
+    is_platform_operator: bool = False
     permissions: list[str]
     memberships: list[MembershipOut]
 
@@ -227,9 +234,11 @@ async def login(
     if rehash:
         user.hashed_password = hash_password(payload.password)
 
-    if user.totp_enabled:
+    methods = login_flow.second_factor_methods(user)
+    if methods:
         # Do not log an ok event and do not create a Session: the pending token is NOT a
-        # login yet. twofa.verify creates the session and emits the successful event.
+        # login yet. twofa.verify / passkeys login_verify create the session (P41: via
+        # services/login_flow.py, which also runs the risk checks).
         if rehash:
             await session.commit()
         return TokenOut(
@@ -237,33 +246,18 @@ async def login(
             pending_token=create_pending_2fa_token(
                 user.id, settings.jwt_secret.get_secret_value()
             ),
+            methods=methods,
         )
 
-    identity_session = await identity_svc.create_session(
-        session,
-        user_id=user.id,
-        org_id=None,
-        request=request,
-        expire_hours=settings.jwt_expire_hours,
+    token = await login_flow.complete_login(
+        session, settings, request, user, second_factor=False
     )
-    await session.flush()
-
-    token = create_access_token(
-        user.id,
-        settings.jwt_secret.get_secret_value(),
-        expire_hours=settings.jwt_expire_hours,
-        sid=identity_session.id,
+    # P41: with REQUIRE_2FA_ALL_USERS on, this token only reaches enrolment routes until a
+    # factor exists (auth/deps.py gate); the flag tells the console to go straight there.
+    return TokenOut(
+        access_token=token,
+        requires_2fa_enrollment=settings.require_2fa_all_users,
     )
-    identity_svc.record_login_event(
-        session,
-        email=user.email,
-        outcome="ok",
-        user_id=user.id,
-        org_id=None,
-        request=request,
-    )
-    await session.commit()
-    return TokenOut(access_token=token)
 
 
 @router.get("/me", response_model=MeOut)
@@ -302,6 +296,8 @@ async def me(
         email=user.email,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
+        has_passkey=user.has_passkey,
+        is_platform_operator=await operators_svc.is_operator(session, user.id),
         permissions=permissions,
         memberships=[
             MembershipOut(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -22,8 +23,14 @@ from app.auth.security import (
 from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_session
-from app.errors import PermissionDeniedError, UnauthenticatedError, ValidationFailedError
-from app.models import ApiKey, Org, OrgMembership, Role, User
+from app.errors import (
+    FeatureUnavailableError,
+    PermissionDeniedError,
+    StepUpRequiredError,
+    UnauthenticatedError,
+    ValidationFailedError,
+)
+from app.models import ApiKey, Org, OrgMembership, PlatformOperator, Role, User
 from app.providers import registry_org
 from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
@@ -77,7 +84,23 @@ async def get_current_user(
         raise UnauthenticatedError("Invalid or expired token")
     if not user.is_active:
         raise UnauthenticatedError("Invalid or expired token")
+
+    # P41: platform-wide mandatory second factor. Same narrow exempt list as the P25 org
+    # policy - enough to enrol a factor and see/revoke your own sessions, nothing else.
+    if (
+        settings.require_2fa_all_users
+        and not user.has_second_factor
+        and not _path_exempt_from_2fa(request.url.path)
+    ):
+        raise PermissionDeniedError(
+            "Set up an authenticator app or a passkey to continue",
+            code="two_factor_required",
+        )
     return user
+
+
+def _path_exempt_from_2fa(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in _2FA_EXEMPT_PATH_PREFIXES)
 
 
 @dataclass
@@ -269,3 +292,157 @@ def require_permission(permission: str):
         return ctx
 
     return _check
+
+
+# --------------------------------------------------------------------------------------
+# P41 step-up: "prove it again" before a sensitive action
+# --------------------------------------------------------------------------------------
+STEP_UP_KINDS = ("recent_2fa", "recent_selfie")
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+async def current_identity_session(request: Request, session: AsyncSession):
+    """The live Session row behind this request, or None for a pre-P25 token / API key."""
+    sid = getattr(request.state, "session_id", None)
+    if sid is None:
+        return None
+    return await identity_svc.get_live_session(session, sid)
+
+
+async def check_step_up(
+    request: Request, session: AsyncSession, user: User, *, kind: str, action: str
+) -> None:
+    """Raise StepUpRequiredError unless ``user`` holds fresh proof of ``kind``.
+
+    ``recent_2fa``: this session proved a second factor within STEP_UP_2FA_MINUTES.
+    ``recent_selfie``: the signed-in person passed a Stripe Identity selfie check for
+    ``action`` within STEP_UP_SELFIE_MINUTES (services/kyc_step_up.py).
+
+    Callable directly for CONDITIONAL step-ups (e.g. only above a bulk-order threshold).
+    """
+    if kind not in STEP_UP_KINDS:
+        raise ValueError(f"Unknown step-up kind: {kind}")
+    settings: Settings = request.app.state.settings
+    now = datetime.now(timezone.utc)
+    if kind == "recent_2fa":
+        row = await current_identity_session(request, session)
+        proven = _aware(row.second_factor_at) if row is not None else None
+        if proven is None or now - proven > timedelta(minutes=settings.step_up_2fa_minutes):
+            raise StepUpRequiredError(kind=kind, action=action)
+        return
+
+    from app.services import kyc_step_up
+
+    if not await kyc_step_up.has_fresh_selfie(session, settings, user, action=action, now=now):
+        raise StepUpRequiredError(kind=kind, action=action)
+
+
+def require_step_up(kind: str, action: str):
+    """Dependency form of check_step_up for human routes.
+
+    API keys can never satisfy a step-up: the actions behind one are exactly the ones a
+    leaked key must not be able to perform, so a key-authenticated call is refused.
+    """
+    if kind not in STEP_UP_KINDS:
+        raise ValueError(f"Unknown step-up kind: {kind}")
+
+    async def _check(
+        request: Request,
+        user: Annotated[User, Depends(get_current_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> User:
+        await check_step_up(request, session, user, kind=kind, action=action)
+        return user
+
+    return _check
+
+
+# --------------------------------------------------------------------------------------
+# P41 platform operators
+# --------------------------------------------------------------------------------------
+@dataclass
+class OperatorContext:
+    user: User
+    operator: PlatformOperator
+    session: AsyncSession
+
+
+async def _operator_check(
+    request: Request, session: AsyncSession, user: User, role: str
+) -> PlatformOperator:
+    from app.services import operators as operators_svc
+
+    operator = await operators_svc.get_active(session, user.id)
+    if operator is None or not operators_svc.role_satisfies(operator.role, role):
+        raise PermissionDeniedError("Platform operator access required")
+    if not user.has_second_factor:
+        raise PermissionDeniedError(
+            "Operators must have an authenticator app or passkey",
+            code="two_factor_required",
+        )
+    row = await current_identity_session(request, session)
+    if row is None or row.second_factor_at is None:
+        # Signed in with a password alone (possible only before the account had a
+        # factor): the operator console always needs a session that proved one.
+        raise StepUpRequiredError(kind="recent_2fa", action="operator_console")
+    return operator
+
+
+def require_operator(role: str = "reviewer"):
+    """A NAMED operator: a signed-in user with an active platform_operators row, a second
+    factor on the account (regardless of REQUIRE_2FA_ALL_USERS) and a session that proved
+    it. The shared ops token is never accepted here - these routes read identity data and
+    decide who may use the platform, so every action needs a person attached."""
+
+    async def _check(
+        request: Request,
+        user: Annotated[User, Depends(get_current_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> OperatorContext:
+        operator = await _operator_check(request, session, user, role)
+        return OperatorContext(user=user, operator=operator, session=session)
+
+    return _check
+
+
+async def require_platform_operator(
+    request: Request,
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    x_platform_ops_token: Annotated[str | None, Header(alias="X-Platform-Ops-Token")] = None,
+) -> None:
+    """Legacy ops routes (billing knobs, registration status callbacks): the shared token
+    for scripts, OR an admin operator's session. P41 merged the two identical copies that
+    lived in routes/platform.py and routes/registration.py into this one."""
+    configured = request.app.state.settings.platform_ops_token.get_secret_value().strip()
+    if x_platform_ops_token:
+        if not configured:
+            raise FeatureUnavailableError(
+                "Platform operator token is not configured; status callbacks are disabled"
+            )
+        # C6: constant-time compare - a naive != leaks timing information an attacker can
+        # use to recover the token byte-by-byte.
+        if not hmac.compare_digest(x_platform_ops_token, configured):
+            raise PermissionDeniedError("Invalid platform operator token")
+        return
+    if (
+        creds is not None
+        and creds.credentials
+        and not creds.credentials.startswith(f"{API_KEY_TOKEN_PREFIX}_")
+    ):
+        from app.services import operators as operators_svc
+
+        user = await get_current_user(request, creds, session)
+        if await operators_svc.get_active(session, user.id) is not None:
+            await _operator_check(request, session, user, "admin")
+            return
+    if not configured:
+        raise FeatureUnavailableError(
+            "Platform operator token is not configured; status callbacks are disabled"
+        )
+    raise PermissionDeniedError("Invalid platform operator token")

@@ -153,6 +153,18 @@ from app.models.reports import (
 )
 from app.models.routing import RoutingPolicy
 from app.models.scheduling import Appointment, KbChunk, KbDocument
+from app.models.security import (
+    LOGIN_RISK_FLAGS,
+    OPERATOR_ROLES,
+    SECURITY_ALERT_KINDS,
+    SECURITY_ALERT_STATUSES,
+    WEBAUTHN_PURPOSES,
+    LoginDevice,
+    PlatformOperator,
+    SecurityAlert,
+    UserPasskey,
+    WebauthnChallenge,
+)
 from app.models.spend import (
     DEFAULT_RATES_MICROS,
     SPEND_METRICS,
@@ -166,6 +178,16 @@ from app.models.user import User
 from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
 __all__ = [
+    "LOGIN_RISK_FLAGS",
+    "OPERATOR_ROLES",
+    "SECURITY_ALERT_KINDS",
+    "SECURITY_ALERT_STATUSES",
+    "WEBAUTHN_PURPOSES",
+    "LoginDevice",
+    "PlatformOperator",
+    "SecurityAlert",
+    "UserPasskey",
+    "WebauthnChallenge",
     "TELEPHONY_ACCOUNT_STATUSES",
     "TelephonyAccount",
     "Brand",

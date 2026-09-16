@@ -88,6 +88,42 @@ class Settings(BaseSettings):
     # public_web_url.
     stripe_cancel_url: str = ""
 
+    # ---------------- P41 trust & safety ----------------
+    #: Every human user must hold a second factor (authenticator app or passkey) before any
+    #: route other than enrolment answers. Production refuses false (validator below);
+    #: the test suite turns it off so pre-P41 tests keep exercising plain password login.
+    require_2fa_all_users: bool = True
+    #: Telephony (texting, calling, number orders) is refused for an org whose business
+    #: verification is not approved. Tests turn it off; see services/telephony_access.py.
+    kyc_enforced: bool = True
+    #: ISO-3166 alpha-2 countries businesses may verify from, and logins are expected from.
+    kyc_countries: str = "US,CA,GB"
+    #: WebAuthn relying party. Empty rp_id derives from PUBLIC_WEB_URL's host; the expected
+    #: origin is always PUBLIC_WEB_URL.
+    webauthn_rp_id: str = ""
+    #: Directory holding GeoLite2-Country.mmdb and GeoLite2-ASN.mmdb. Empty = country and
+    #: datacenter checks are skipped (device checks still run).
+    geolite2_dir: str = ""
+    #: Tor exit list, refreshed by the sweeper into var/security/tor_exits.txt.
+    tor_exit_list_url: str = "https://check.torproject.org/torbulkexitlist"
+    security_data_dir: str = "var/security"
+    #: A second factor proven this recently satisfies require_step_up("recent_2fa").
+    step_up_2fa_minutes: int = 10
+    #: A Stripe Identity selfie check this recent satisfies require_step_up("recent_selfie").
+    step_up_selfie_minutes: int = 15
+    #: Ordering more numbers than this in one request needs a fresh selfie.
+    bulk_number_order_threshold: int = 5
+    #: Optional separate signing secret when Stripe Identity events go to their own
+    #: webhook endpoint; empty = STRIPE_WEBHOOK_SECRET verifies them.
+    stripe_identity_webhook_secret: SecretStr = SecretStr("")
+    #: UK Companies House public data API key (free). Empty = UK registry check is manual.
+    companies_house_api_key: SecretStr = SecretStr("")
+    #: Business documents: max upload size.
+    kyc_document_max_bytes: int = 10_000_000
+    #: Approved businesses re-verify on this cadence.
+    kyc_reverify_days: int = 365
+    kyc_reverify_grace_days: int = 14
+
     # ---------------- rate limiting ----------------
     rate_limit_enabled: bool = True
     rate_limit_max_requests: int = 20
@@ -249,11 +285,18 @@ class Settings(BaseSettings):
     smtp_host: str = ""
     smtp_username: str = ""
     smtp_password: SecretStr = SecretStr("")
+    smtp_port: int = 587
+    #: From address for security alerts and verification emails.
+    smtp_from: str = ""
 
     # ------------------------------------------------------------------
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
+
+    @property
+    def kyc_country_list(self) -> list[str]:
+        return [c.strip().upper() for c in self.kyc_countries.split(",") if c.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -302,6 +345,11 @@ class Settings(BaseSettings):
                 problems.append(
                     "ALLOW_OPEN_REGISTRATION must be false in production - it disables "
                     "invite-only signup and lets anyone on the internet create an account"
+                )
+            if not self.require_2fa_all_users:
+                problems.append(
+                    "REQUIRE_2FA_ALL_USERS must be true in production - every account "
+                    "needs an authenticator app or passkey"
                 )
             if self.loopback_carrier_enabled:
                 problems.append(
@@ -459,6 +507,12 @@ class Settings(BaseSettings):
                 "S3_SECRET_ACCESS_KEY": self.s3_secret_access_key,
             },
         )
+        keyed("stripe", {"STRIPE_SECRET_KEY": self.stripe_secret_key,
+                         "STRIPE_WEBHOOK_SECRET": self.stripe_webhook_secret})
+        keyed("companies_house", {"COMPANIES_HOUSE_API_KEY": self.companies_house_api_key},
+              note=" (UK registry checks fall back to manual)")
+        keyed("geolite2", {"GEOLITE2_DIR": self.geolite2_dir},
+              note=" (login country/datacenter checks are skipped)")
         keyed("redis", {"REDIS_URL": self.redis_url})
         keyed("smtp", {"SMTP_HOST": self.smtp_host})
         keyed("sentry", {"SENTRY_DSN": self.sentry_dsn})
