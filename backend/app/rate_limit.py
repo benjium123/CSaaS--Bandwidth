@@ -64,20 +64,55 @@ _limiter = SlidingWindowLimiter()
 
 
 def _client_ip(request: Request) -> str:
-    """C3: under `--forwarded-allow-ips "*"` (Dockerfile, unchanged here),
-    ``request.client.host`` is whatever Starlette/Uvicorn parsed from
-    X-Forwarded-For - the LEFTMOST entry - and that header is entirely
-    caller-controlled, so trusting it as the rate-limit key lets any client rotate a
-    fake leftmost value to dodge the limiter. nginx appends the real client address as
-    the RIGHTMOST entry; prefer that when the header is present, falling back to
-    request.client.host only when there is no X-Forwarded-For at all.
-    """
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        parts = [p.strip() for p in xff.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
-    return request.client.host if request.client else "unknown"
+    """C3/P42: one trusted-proxy-aware rule for every IP decision (app/net.py)."""
+    from app.net import client_ip
+
+    return client_ip(request) or "unknown"
+
+
+_REDIS_WINDOW_SCRIPT = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+local count = redis.call('ZCARD', key)
+if count >= limit then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  return math.ceil(window - (now - tonumber(oldest[2])))
+end
+redis.call('ZADD', key, now, member)
+redis.call('EXPIRE', key, window)
+return 0
+"""
+
+
+async def _redis_allow(
+    settings: Settings, key: str, max_requests: int, window: int
+) -> float | None:
+    """P42: the same sliding window, shared by every worker through Redis. Returns None when
+    Redis is not configured or fails, so the caller falls back to the in-process limiter."""
+    from app.services.session_cache import _redis_client
+
+    client = _redis_client(settings)
+    if client is None:
+        return None
+    try:
+        import uuid as _uuid
+
+        result = await client.eval(
+            _REDIS_WINDOW_SCRIPT,
+            1,
+            f"rl:{key}",
+            f"{time.time():.6f}",
+            str(window),
+            str(max_requests),
+            _uuid.uuid4().hex,
+        )
+        return max(1.0, float(result)) if result else 0.0
+    except Exception:  # noqa: BLE001 - a Redis outage must not take login down
+        return None
 
 
 async def enforce_rate_limit(request: Request, identifier: str) -> None:
@@ -91,8 +126,15 @@ async def enforce_rate_limit(request: Request, identifier: str) -> None:
 
     retry_after = 0.0
     for key in keys:
-        retry_after = _limiter.allow(
-            key, settings.rate_limit_max_requests, settings.rate_limit_window_seconds
+        shared = await _redis_allow(
+            settings, key, settings.rate_limit_max_requests, settings.rate_limit_window_seconds
+        )
+        retry_after = (
+            shared
+            if shared is not None
+            else _limiter.allow(
+                key, settings.rate_limit_max_requests, settings.rate_limit_window_seconds
+            )
         )
         if retry_after:
             break

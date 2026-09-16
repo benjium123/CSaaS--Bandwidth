@@ -23,18 +23,11 @@ from app.models import Session as IdentitySession
 
 
 def client_ip(request: Request) -> str | None:
-    """First hop of X-Forwarded-For, otherwise the socket peer address."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        first = forwarded.split(",", 1)[0].strip()
-        if first:
-            return first[:64]
+    """P42: delegates to app.net.client_ip (trusted-proxy aware). Kept here because many
+    call sites import it from this module."""
+    from app.net import client_ip as _client_ip
 
-    client = request.client
-    if client is not None and client.host:
-        return client.host[:64]
-
-    return None
+    return _client_ip(request)
 
 
 def client_user_agent(request: Request) -> str | None:

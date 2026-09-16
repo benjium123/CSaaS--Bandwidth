@@ -476,6 +476,7 @@ async def test_http_to_non_localhost_is_rejected():
 async def test_http_to_localhost_is_rejected_in_production():
     prod_settings = Settings(
         app_env="production",
+        redis_url="redis://localhost:6379/0",
         jwt_secret="x" * 32,
         session_secret="x" * 32,
         credential_encryption_key=FERNET_KEY,
@@ -492,6 +493,7 @@ async def test_http_to_localhost_is_rejected_in_production():
 async def test_private_ip_target_rejected_in_production(monkeypatch):
     prod_settings = Settings(
         app_env="production",
+        redis_url="redis://localhost:6379/0",
         jwt_secret="x" * 32,
         session_secret="x" * 32,
         credential_encryption_key=FERNET_KEY,
@@ -513,6 +515,7 @@ async def test_private_ip_target_rejected_in_production(monkeypatch):
 async def test_public_ip_target_allowed_in_production(monkeypatch):
     prod_settings = Settings(
         app_env="production",
+        redis_url="redis://localhost:6379/0",
         jwt_secret="x" * 32,
         session_secret="x" * 32,
         credential_encryption_key=FERNET_KEY,

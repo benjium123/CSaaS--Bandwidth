@@ -139,6 +139,9 @@ class Settings(BaseSettings):
     #: After recovering an account by ID + selfie, step-up actions stay blocked this long.
     recovery_cooldown_hours: int = 24
     recovery_code_count: int = 10
+    #: Reverse proxies in front of the app that append to X-Forwarded-For (nginx = 1).
+    #: 0 = trust no header and use the socket peer address.
+    trusted_proxy_count: int = 1
 
     # ---------------- rate limiting ----------------
     rate_limit_enabled: bool = True
@@ -361,6 +364,11 @@ class Settings(BaseSettings):
                 problems.append(
                     "ALLOW_OPEN_REGISTRATION must be false in production - it disables "
                     "invite-only signup and lets anyone on the internet create an account"
+                )
+            if not self.redis_url.strip():
+                problems.append(
+                    "REDIS_URL is required in production - rate limits and session revocation "
+                    "must be shared by every worker"
                 )
             if not self.require_2fa_all_users:
                 problems.append(

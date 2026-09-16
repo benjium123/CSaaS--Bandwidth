@@ -50,6 +50,8 @@ async def _attach_member(
 def _valid_prod_settings(**overrides) -> Settings:
     values = dict(
         app_env="production",
+        # P42: production requires Redis (shared rate limits / session revocation).
+        redis_url="redis://localhost:6379/0",
         jwt_secret=TEST_JWT_SECRET,
         session_secret="test-session-secret",
         credential_encryption_key=Fernet.generate_key().decode(),
