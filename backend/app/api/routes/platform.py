@@ -36,6 +36,7 @@ from app.models.billing import DEFAULT_AI_MARKUP_BPS
 from app.services import ai_usage, credits
 from app.services import apikeys as apikeys_svc
 from app.services import audit as audit_svc
+from app.services import messaging_health as messaging_health_svc
 from app.services import spend as spend_svc
 from app.services import usage as usage_svc
 from app.services import webhooks_out as webhooks_out_svc
@@ -710,3 +711,60 @@ async def get_platform_billing_margin(
         start=start_dt,
         end=end_dt,
     )
+
+
+# ==================================================================================
+# P41 messaging health, ops side: every workspace on one screen, and proof that each
+# carrier's delivery receipts actually reach this deployment.
+# ==================================================================================
+class PlatformMessagingHealthRowOut(BaseModel):
+    org_id: uuid.UUID
+    org_name: str
+    level: str
+    volume: int
+    delivery_rate: float | None
+    spam_block_rate: float | None
+    opt_out_rate: float | None
+    first_breached_at: datetime | None
+
+
+class PlatformMessagingHealthOut(BaseModel):
+    rows: list[PlatformMessagingHealthRowOut]
+
+
+class ReceiptsCheckRowOut(BaseModel):
+    carrier: str
+    last_receipt_at: datetime | None
+    receipts_24h: int
+
+
+@router.get("/platform/messaging/health", response_model=PlatformMessagingHealthOut)
+async def platform_messaging_health(
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    session: AsyncSession = Depends(get_session),
+) -> PlatformMessagingHealthOut:
+    rows = await messaging_health_svc.platform_rows(session)
+    return PlatformMessagingHealthOut(
+        rows=[
+            PlatformMessagingHealthRowOut(
+                org_id=row["org_id"],
+                org_name=row["org_name"],
+                level=row["level"],
+                volume=row["volume"],
+                delivery_rate=row["delivery_rate"],
+                spam_block_rate=row["spam_block_rate"],
+                opt_out_rate=row["opt_out_rate"],
+                first_breached_at=row["first_breached_at"],
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.get("/platform/messaging/receipts-check", response_model=list[ReceiptsCheckRowOut])
+async def platform_messaging_receipts_check(
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    session: AsyncSession = Depends(get_session),
+) -> list[ReceiptsCheckRowOut]:
+    rows = await messaging_health_svc.receipts_check(session)
+    return [ReceiptsCheckRowOut(**row) for row in rows]

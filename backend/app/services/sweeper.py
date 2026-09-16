@@ -93,6 +93,7 @@ async def _run_once_locked(app) -> dict[str, int]:
     from app.services import inbox_sla as inbox_sla_svc
     from app.services import media as media_svc
     from app.services import messaging as messaging_svc
+    from app.services import messaging_health as messaging_health_svc
     from app.services import notifications as notifications_svc
     from app.services import number_orders
     from app.services import outbound as outbound_svc
@@ -417,6 +418,25 @@ async def _run_once_locked(app) -> dict[str, int]:
             results["reputation_alerts"] = reputation_counts.get("alerts", 0)
         except Exception:
             log.exception("sweeper_reputation_tick_failed")
+
+    # P41: derived per-workspace messaging health - today's and yesterday's rollup rows,
+    # then the owner/admin warnings. Same hourly gate discipline as reputation above:
+    # reserve the slot BEFORE running so a persistent failure cannot turn this into an
+    # every-tick retry storm.
+    last_messaging_health_run = getattr(app.state, "_messaging_health_last_run", None)
+    now_monotonic = time.monotonic()
+    if (
+        last_messaging_health_run is None
+        or now_monotonic - last_messaging_health_run
+        >= messaging_health_svc.ROLLUP_TICK_INTERVAL_SECONDS
+    ):
+        app.state._messaging_health_last_run = now_monotonic
+        try:
+            async with get_sessionmaker()() as session:
+                health_counts = await messaging_health_svc.rollup_tick(session)
+            results["messaging_health_rows"] = health_counts.get("rows", 0)
+        except Exception:
+            log.exception("sweeper_messaging_health_failed")
 
     settings = app.state.settings
     if settings.anthropic_api_key.get_secret_value() or settings.openai_api_key.get_secret_value():

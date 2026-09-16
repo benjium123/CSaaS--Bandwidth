@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import { PlatformBillingOps } from "@/components/billing/PlatformBillingOps";
+import { PlatformMessagingHealth } from "@/components/billing/PlatformMessagingHealth";
 
 function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
@@ -819,6 +820,7 @@ export function PlatformPage() {
       <AuditSection />
       <UsageSection />
       <PlatformBillingOps />
+      <PlatformMessagingHealth />
     </div>
   );
 }

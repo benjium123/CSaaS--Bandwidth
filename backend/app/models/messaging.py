@@ -204,6 +204,10 @@ class Message(Base, TenantScoped, TimestampMixin):
     segment_count_carrier: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    # P41: the carrier's raw error_code placed into ONE vocabulary shared by every carrier
+    # (models/messaging_health.py FAILURE_CLASSES). Stored, not derived at read time, so a
+    # later change to the classification never rewrites what a past day looked like.
+    failure_class: Mapped[str | None] = mapped_column(sa.String(24), nullable=True)
     # P21 smart routing: one plain sentence saying why this route was chosen
     # ("Sent via Telnyx - cheapest healthy route"). Set by services/smart_routing.py.
     route_reason: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)

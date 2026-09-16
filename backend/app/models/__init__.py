@@ -94,6 +94,7 @@ from app.models.messaging import (
     OrgNumber,
     WebhookDeadLetter,
 )
+from app.models.messaging_health import FAILURE_CLASSES, OrgMessagingDaily
 from app.models.numbers import Brand, Campaign, TollFreeVerification
 from app.models.org import Org
 from app.models.outbound import (
@@ -328,6 +329,8 @@ __all__ = [
     "TRAFFIC_SCOPE",
     "ProviderRate",
     "ProviderSpendDaily",
+    "OrgMessagingDaily",
+    "FAILURE_CLASSES",
     "User",
     "WebhookDeadLetter",
 ]

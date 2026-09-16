@@ -1277,3 +1277,56 @@ export function useTranscriptSearch(api: ApiClient, q: string, enabled: boolean)
     enabled: enabled && q.trim().length > 0,
   });
 }
+
+// P41 messaging health. Declared by hand rather than pulled from types.gen.ts: the
+// backend routes land in the same phase, so the generated schema catches up later.
+export type MessagingHealthLevel = "ok" | "warn" | "critical" | "no_data";
+
+export type MessagingHealthOut = {
+  window_start: string;
+  window_end: string;
+  volume: number;
+  delivery_rate: number | null;
+  spam_block_rate: number | null;
+  opt_out_rate: number | null;
+  failed_by_class: {
+    spam_blocked: number;
+    carrier_rejected: number;
+    invalid_destination: number;
+    opted_out: number;
+    unknown: number;
+  };
+  level: MessagingHealthLevel;
+  reasons: string[];
+  thresholds: {
+    delivery_warn: number;
+    delivery_critical: number;
+    spam_warn: number;
+    spam_critical: number;
+    opt_out_warn: number;
+    opt_out_critical: number;
+    min_volume: number;
+  };
+};
+
+export type PlatformMessagingHealthRow = {
+  org_id: string;
+  org_name: string;
+  level: MessagingHealthLevel;
+  volume: number;
+  delivery_rate: number | null;
+  spam_block_rate: number | null;
+  opt_out_rate: number | null;
+  first_breached_at: string | null;
+};
+
+export type PlatformMessagingHealthOut = {
+  rows: PlatformMessagingHealthRow[];
+};
+
+export function useMessagingHealth(api: ApiClient, days: number) {
+  return useQuery({
+    queryKey: ["messaging-health", days],
+    queryFn: () => api.request<MessagingHealthOut>(`/api/v1/analytics/health?days=${days}`),
+  });
+}

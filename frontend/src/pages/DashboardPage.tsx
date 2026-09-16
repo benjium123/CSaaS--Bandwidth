@@ -20,6 +20,7 @@ import {
 import { Button, Input, Spinner } from "@/components/ui/primitives";
 import { SpendTile } from "@/components/spend/SpendCard";
 import { AssistantAnalyticsStrip } from "@/components/assistants/AssistantAnalytics";
+import { MessagingHealthCard } from "@/components/messaging/MessagingHealthCard";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -325,6 +326,9 @@ export function DashboardPage() {
           </div>
           <div className="md:col-span-2">
             <SpendTile />
+          </div>
+          <div className="md:col-span-2">
+            <MessagingHealthCard days={days} />
           </div>
           <div className="md:col-span-2">
             <CampaignsChart data={data.campaigns} />

@@ -408,6 +408,43 @@ Rollback: unset the four `SIGNALWIRE_*` values and redeploy. Delete the numbers 
 
 ---
 
+## Messaging health (P41)
+
+### Receipts on every carrier
+
+Each carrier's delivery-status webhook URL lives in its dashboard. All of them must point at this deployment:
+
+- Bandwidth: the messaging Application's callback URL.
+- Telnyx: the Messaging Profile's webhook URL.
+- Twilio: the phone number's status callback.
+
+All three go to `https://csaas.sabinepropertygroup.net/api/v1/webhooks/<carrier>/messaging`, with `<carrier>` one of `bandwidth`, `telnyx`, `twilio`. Plivo and SignalWire are different: the code asks for a receipt on every message, so there is nothing to set in those dashboards.
+
+Prove it with data, not a screenshot:
+
+```bash
+curl -s -H "X-Platform-Ops-Token: $OPS_TOKEN" \
+  https://csaas.sabinepropertygroup.net/api/v1/platform/messaging/receipts-check
+```
+
+A healthy answer shows a recent `last_receipt_at` for each carrier. If a carrier is missing, or its timestamp is old, that carrier's URL is wrong or its webhook never fired. Send one test text per carrier and re-run the check.
+
+### Reading the health card and the ops table
+
+The card shows three rates over the trailing 7 days: delivery rate, spam block rate, opt-out rate. The defaults from the plan, and they only apply when the window holds at least 100 texts:
+
+- delivery: warn below 90%, critical below 80%
+- spam block rate: warn above 1%, critical above 3%
+- opt-out rate: warn above 3%, critical above 5%
+
+A warn or critical raises ONE in-app notification per day to the workspace's owners and admins. Nothing is throttled or paused automatically. The ops table lists every workspace, worst first.
+
+### Nothing happened?
+
+The rollup runs hourly from the sweeper for today and yesterday, so a card can be up to an hour behind the first texts. On a sqlite dev box the sweeper has to be running or no rows are written.
+
+---
+
 ## Incident quick-checks
 
 No `journalctl` here - everything runs in Docker, so:

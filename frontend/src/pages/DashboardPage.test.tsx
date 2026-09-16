@@ -168,4 +168,42 @@ describe("DashboardPage", () => {
       screen.getAllByRole("img", { name: /^Spend \d{4}-\d{2}-\d{2}: /}),
     ).toHaveLength(30);
   });
+
+  // P41: the messaging-health card shares the page's range state, so it appears here.
+  it("renders the messaging health card from the API", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/analytics/overview": OVERVIEW,
+        "/api/v1/analytics/health?days=30": {
+          window_start: "2026-08-01",
+          window_end: "2026-08-29",
+          volume: 640,
+          delivery_rate: 0.9449,
+          spam_block_rate: 0.033,
+          opt_out_rate: 0.011,
+          failed_by_class: {
+            spam_blocked: 5,
+            carrier_rejected: 2,
+            invalid_destination: 1,
+            opted_out: 0,
+            unknown: 1,
+          },
+          level: "ok",
+          reasons: [],
+          thresholds: {
+            delivery_warn: 0.95,
+            delivery_critical: 0.9,
+            spam_warn: 0.05,
+            spam_critical: 0.1,
+            opt_out_warn: 0.02,
+            opt_out_critical: 0.05,
+            min_volume: 100,
+          },
+        },
+      }),
+    );
+    renderWithProviders(<DashboardPage />, client);
+
+    expect(await screen.findByText("Healthy")).toBeInTheDocument();
+  });
 });

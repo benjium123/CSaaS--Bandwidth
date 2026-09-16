@@ -43,7 +43,7 @@ from app.models.messaging import (
     OrgNumber,
     WebhookDeadLetter,
 )
-from app.providers import registry_org
+from app.providers import failure_classes, registry_org
 from app.providers.domain import (
     CarrierEvent,
     DeliveryReceipt,
@@ -616,6 +616,9 @@ async def _dispatch_to_carrier(
         message.hold_until = None
         if result.error:
             message.error_code = (result.error.carrier_code or result.error.category)[:32]
+            # P41: one failure vocabulary across carriers, written at the same moment as
+            # the raw code so the daily rollup can count causes without re-parsing.
+            message.failure_class = failure_classes.classify(message.carrier, message.error_code)
             message.error_detail = result.error.detail[:255] or None
         # P28: one plain sentence a person can act on, alongside the raw code the
         # engineers need. Written on EVERY rejection, including the no-error case (which
@@ -1189,6 +1192,9 @@ def _apply_dlr_to_message(message: Message, event: DeliveryReceipt) -> None:
         message.status = new_status
         if new_status == "failed":
             message.error_code = (event.error_code or "unknown")[:32]
+            # P41: same bucket as the send-time rejection above - a late failure receipt
+            # must be countable by cause too.
+            message.failure_class = failure_classes.classify(message.carrier, message.error_code)
             message.error_detail = (event.error_description or "")[:255] or None
             # P28: a delivery failure reported later is exactly as confusing to a person
             # as an immediate rejection, so it gets the same plain sentence.

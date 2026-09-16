@@ -90,6 +90,7 @@ const NUMBERS: NumberOut[] = [
     registration: "approved",
     registration_detail: "",
     campaign_id: null,
+    answered_by: { mode: "human" },
   },
   {
     id: "n2",
@@ -102,6 +103,7 @@ const NUMBERS: NumberOut[] = [
     registration: "approved",
     registration_detail: "",
     campaign_id: null,
+    answered_by: { mode: "human" },
   },
 ];
 

@@ -7,7 +7,7 @@ metrics surface in the API.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -17,6 +17,7 @@ from app.auth.deps import OrgContext, require_permission
 from app.errors import ValidationFailedError
 from app.services import analytics as analytics_svc
 from app.services import inbox_access as inbox_access_svc
+from app.services import messaging_health as messaging_health_svc
 from app.services import search as search_svc
 
 router = APIRouter(prefix="/api/v1", tags=["analytics"])
@@ -149,3 +150,30 @@ async def search_transcripts(
         ctx.session, ctx.org.id, q, limit=limit, allowed_e164s=allowed_e164s
     )
     return [TranscriptSearchResultOut(**r) for r in results]
+
+
+# ==================================================================================
+# P41 messaging health. Same ``reports:read`` key as the overview above - this is one
+# more read-only metrics surface, not a new kind of permission.
+# ==================================================================================
+class MessagingHealthOut(BaseModel):
+    window_start: date
+    window_end: date
+    volume: int
+    delivery_rate: float | None
+    spam_block_rate: float | None
+    opt_out_rate: float | None
+    failed_by_class: dict[str, int]
+    level: str
+    reasons: list[str]
+    thresholds: dict[str, float]
+
+
+@router.get("/analytics/health", response_model=MessagingHealthOut)
+async def analytics_messaging_health(
+    ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
+    days: int = Query(7, ge=1, le=90),
+) -> MessagingHealthOut:
+    return MessagingHealthOut(
+        **await messaging_health_svc.health(ctx.session, ctx.org.id, days=days)
+    )
