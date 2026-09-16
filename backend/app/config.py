@@ -535,3 +535,18 @@ class Settings(BaseSettings):
 
 def load_settings(**overrides) -> Settings:
     return Settings(**overrides)
+
+
+#: P41: the settings the running app was built with. Services deep in call paths that
+#: have no request (sweeper ticks, the dialer, dispatch re-checks) read enforcement flags
+#: from here instead of re-reading the environment. Set by main.create_app.
+_active_settings: Settings | None = None
+
+
+def set_active_settings(settings: Settings) -> None:
+    global _active_settings
+    _active_settings = settings
+
+
+def get_active_settings() -> Settings:
+    return _active_settings if _active_settings is not None else load_settings()

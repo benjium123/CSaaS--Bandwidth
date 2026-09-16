@@ -41,7 +41,7 @@ from app.models import OrgNumber
 from app.models.voice import TERMINAL_LEG_STATUSES, Call, CallLeg
 from app.models.voice import VoiceEvent as VoiceEventRow
 from app.services import calls as calls_svc
-from app.services import telephony_billing
+from app.services import telephony_access, telephony_billing
 from app.voice_plane.livekit_api import (
     LiveKitApi,
     LiveKitApiError,
@@ -151,6 +151,7 @@ async def start_room_call(
     )
     # Prepaid hard gate: refuse (402) before any row, room or dial exists, and hold the
     # first minutes. The hold rides this function's commit below.
+    await telephony_access.require_telephony_allowed(session, org_id, "call")
     await telephony_billing.require_call_credit(session, org_id, call)
     room = room_name_for_call(call.id)
     call.extra = {"via": "livekit", "room": room}
@@ -392,6 +393,7 @@ async def transfer_room_call(
     sip_identity = (leg.extra or {}).get("sip_identity") if leg is not None else None
     if room is None or leg is None or not sip_identity:
         raise ConflictError("This call has no active leg to transfer")
+    await telephony_access.require_telephony_allowed(session, call.org_id, "call")
 
     await api.transfer_sip_participant(room=room, identity=sip_identity, transfer_to=to)
 

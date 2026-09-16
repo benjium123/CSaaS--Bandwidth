@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import phonenumbers
@@ -16,9 +16,11 @@ from app.errors import (
     CarrierNotConfiguredError,
     ConflictError,
     NotFoundError,
+    PermissionDeniedError,
+    StepUpRequiredError,
     ValidationFailedError,
 )
-from app.models import AgentProfile, Inbox, OrgNumber, ProviderAccount
+from app.models import AgentProfile, Inbox, OrgNumber, ProviderAccount, User
 from app.models.callflow import CallFlow
 from app.models.numbers import Campaign
 from app.providers import numbers as numbers_api
@@ -28,7 +30,7 @@ from app.services import audit as audit_svc
 from app.services import flows as flows_svc
 from app.services import provider_accounts as provider_accounts_svc
 from app.services import reputation as reputation_svc
-from app.services import telephony_billing
+from app.services import telephony_access, telephony_billing
 
 router = APIRouter(prefix="/api/v1/numbers", tags=["numbers"])
 
@@ -89,6 +91,34 @@ class NumberOut(BaseModel):
     answered_by: AnsweredByOut = AnsweredByOut()
 
 
+async def _bulk_order_step_up(request: Request, ctx: OrgContext) -> None:
+    """P41: ordering many numbers quickly is a classic sign of a spam operation setting up.
+    Past BULK_NUMBER_ORDER_THRESHOLD orders in 24 hours, a fresh selfie is required (one
+    check covers the next STEP_UP_SELFIE_MINUTES of orders)."""
+    settings = request.app.state.settings
+    if not settings.kyc_enforced:
+        return
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    recent = (
+        await ctx.session.execute(
+            sa.select(sa.func.count(OrgNumber.id)).where(
+                OrgNumber.org_id == ctx.org.id, OrgNumber.created_at >= since
+            )
+        )
+    ).scalar_one()
+    if recent < settings.bulk_number_order_threshold:
+        return
+    if ctx.membership is None:
+        raise PermissionDeniedError("Bulk number orders need a person, not an API key")
+    user = await ctx.session.get(User, ctx.membership.user_id)
+    from app.services import kyc_step_up
+
+    if not await kyc_step_up.has_fresh_selfie(
+        ctx.session, settings, user, action="bulk_number_order", consume=False
+    ):
+        raise StepUpRequiredError(kind="recent_selfie", action="bulk_number_order")
+
+
 @router.post("", response_model=NumberOut, status_code=201)
 async def add_number(
     payload: NumberIn,
@@ -97,6 +127,8 @@ async def add_number(
 ) -> NumberOut:
     """Minimal seed endpoint. P4 owns real search/order/port; here numbers are entered by
     hand so P1 can send from something."""
+    # P41: attaching a number is a telephony capability like ordering one.
+    await telephony_access.require_telephony_allowed(ctx.session, ctx.org.id, "number")
     normalized = to_e164(payload.e164)
     registry = getattr(request.app.state, "carriers", None)
     if payload.carrier is None:
@@ -573,6 +605,8 @@ async def order(
     if existing is not None:
         raise ConflictError(f"{normalized} is already registered")
 
+    await telephony_access.require_telephony_allowed(ctx.session, ctx.org.id, "number")
+    await _bulk_order_step_up(request, ctx)
     # Prepaid hard gate: never buy a number the balance cannot pay the first month of.
     await telephony_billing.require_number_credit(ctx.session, ctx.org.id, carrier_obj.name)
     result = await provider.order_number(normalized)

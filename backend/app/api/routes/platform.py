@@ -21,7 +21,12 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import OrgContext, require_permission, require_platform_operator
+from app.auth.deps import (
+    OrgContext,
+    check_org_selfie_step_up,
+    require_permission,
+    require_platform_operator,
+)
 from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import (
@@ -91,8 +96,12 @@ async def _get_key(ctx: OrgContext, key_id: uuid.UUID) -> ApiKey:
 
 @router.post("/api-keys", response_model=ApiKeyCreatedOut, status_code=201)
 async def create_api_key(
-    payload: ApiKeyIn, ctx: Annotated[OrgContext, Depends(require_permission("org:update"))]
+    payload: ApiKeyIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
 ) -> ApiKeyCreatedOut:
+    # P41: an API key is standing, unattended access - issued only to a proven person.
+    await check_org_selfie_step_up(request, ctx, action="api_key_create")
     actor_user_id, actor_api_key_id = _actor(ctx)
     row, full_key = await apikeys_svc.create(
         ctx.session,
@@ -132,8 +141,11 @@ async def revoke_api_key(
 
 @router.post("/api-keys/{key_id}/rotate", response_model=ApiKeyCreatedOut)
 async def rotate_api_key(
-    key_id: uuid.UUID, ctx: Annotated[OrgContext, Depends(require_permission("org:update"))]
+    key_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
 ) -> ApiKeyCreatedOut:
+    await check_org_selfie_step_up(request, ctx, action="api_key_create")
     row = await _get_key(ctx, key_id)
     actor_user_id, actor_api_key_id = _actor(ctx)
     new_row, full_key = await apikeys_svc.rotate(

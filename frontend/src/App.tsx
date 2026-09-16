@@ -19,6 +19,10 @@ import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { LowBalanceBanner } from "@/components/billing/LowBalanceBanner";
+import { VerificationBanner } from "@/components/kyc/VerificationBanner";
+import { StepUpDialog } from "@/components/security/StepUpDialog";
+import { SecureAccountPage } from "@/pages/SecureAccountPage";
+import { OpsPage } from "@/pages/OpsPage";
 
 /**
  * Legacy routes kept as redirects so saved links still land somewhere useful:
@@ -46,6 +50,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="dark flex h-full bg-background text-foreground">
         <Sidebar />
         <main className="min-h-0 flex-1 pb-14 sm:pb-0">
+          <VerificationBanner />
           <LowBalanceBanner />
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
@@ -53,6 +58,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <MobileTabBar />
       <CommandPalette />
       <SoftphonePanel />
+      <StepUpDialog />
     </SoftphoneProvider>
   );
 }
@@ -72,6 +78,9 @@ export function App() {
     );
   }
 
+  // P41: an account without an authenticator app or passkey can do nothing else yet.
+  if (me.second_factor_required) return <SecureAccountPage />;
+
   if (!orgId) return <OrgPickerPage />;
 
   return (
@@ -88,6 +97,7 @@ export function App() {
         <Route path="/contacts/:contactId" element={<ContactsPage />} />
         <Route path="/calls" element={<CallsPage />} />
         <Route path="/campaigns" element={<CampaignsPage />} />
+        <Route path="/ops" element={<OpsPage />} />
 
         <Route path="/settings" element={<SettingsIndexRedirect />} />
         <Route path="/settings/:section" element={<SettingsPage />} />

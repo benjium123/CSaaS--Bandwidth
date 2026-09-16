@@ -75,6 +75,8 @@ class MeOut(BaseModel):
     totp_enabled: bool = False
     has_passkey: bool = False
     is_platform_operator: bool = False
+    #: P41: true while this account must still add an authenticator app or passkey.
+    second_factor_required: bool = False
     permissions: list[str]
     memberships: list[MembershipOut]
 
@@ -262,6 +264,7 @@ async def login(
 
 @router.get("/me", response_model=MeOut)
 async def me(
+    request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     x_org_id: Annotated[str | None, Header(alias="X-Org-Id")] = None,
@@ -298,6 +301,9 @@ async def me(
         totp_enabled=user.totp_enabled,
         has_passkey=user.has_passkey,
         is_platform_operator=await operators_svc.is_operator(session, user.id),
+        second_factor_required=bool(
+            request.app.state.settings.require_2fa_all_users and not user.has_second_factor
+        ),
         permissions=permissions,
         memberships=[
             MembershipOut(

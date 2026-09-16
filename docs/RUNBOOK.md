@@ -408,6 +408,47 @@ Rollback: unset the four `SIGNALWIRE_*` values and redeploy. Delete the numbers 
 
 ---
 
+## Trust & safety go-live (P41)
+
+Order matters - do these before switching enforcement on.
+
+1. **Stripe Identity.** In the Stripe dashboard enable Identity. Add the webhook events
+   `identity.verification_session.verified`, `.requires_input`, `.processing`, `.canceled`
+   to the existing endpoint `https://<api>/api/v1/webhooks/stripe` (or a separate endpoint,
+   then set `STRIPE_IDENTITY_WEBHOOK_SECRET`). `STRIPE_SECRET_KEY` needs Identity read access
+   with verified outputs.
+2. **Keys.** `CREDENTIALS_MASTER_KEY` must be set (business documents are encrypted with it).
+   Optional: `COMPANIES_HOUSE_API_KEY` (free, UK registry), `GEOLITE2_DIR` (free MaxMind
+   GeoLite2 Country + ASN files), `SMTP_HOST` + `SMTP_FROM` (alert and decision emails).
+3. **Deploy.** `alembic upgrade head` applies 0044 + 0045. 0045 marks every existing org
+   `approved` (reason `grandfathered`), so live traffic keeps flowing.
+4. **Operators.** Each reviewer signs in once, adds a passkey or authenticator app, then:
+   `docker compose exec api python scripts/make_operator.py grant you@company.com admin`
+   (`reviewer` for people who only review). The console is at `/ops` in the web app.
+5. **First sweep.** The sweeper downloads the sanctions lists and Tor exit list within its
+   first pass after start (needs outbound HTTPS). Until then the sanctions check answers
+   `error` and approvals are blocked - that is intended.
+6. **Enforce.** `REQUIRE_2FA_ALL_USERS=true` and `KYC_ENFORCED=true` (both default on).
+   Users without a second factor are sent to "Secure your account" on next sign-in.
+7. **Smoke test.** Create a test workspace, complete verification with Stripe test-mode
+   documents, approve it from `/ops`, send one text, then suspend it and confirm the owner's
+   session ends and texting answers `account_suspended`.
+
+### Reviewing an application
+- Queue: `/ops` > Review queue. High-risk applications show why.
+- US and Canada registry: look the business up (Secretary of State / Corporations Canada),
+  paste the page link, press "Registry: confirmed" or "not found".
+- High risk: hold a short video call with the owner holding their ID, then "Record video call done".
+- Approve is blocked until: every owner's ID is verified, sanctions and ban-list checks
+  pass, registry is recorded, and (high risk) the video call is recorded.
+- Reject with "also ban identifiers" puts the company number, domains, emails, card
+  fingerprints, devices and verified people on the ban list.
+
+### Suspending
+`/ops` > application > reason > "Suspend account now" (admin operators; asks for a fresh
+passkey/authenticator check). Ends sessions, revokes API keys, cancels scheduled texts,
+pauses campaigns, hangs up live calls, emails the owners.
+
 ## Incident quick-checks
 
 No `journalctl` here - everything runs in Docker, so:

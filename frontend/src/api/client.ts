@@ -5,6 +5,8 @@
  * a single "you are logged out" signal so no page has to handle it individually.
  */
 
+import { deviceId } from "@/lib/device";
+
 export type AuthState = {
   token: string | null;
   orgId: string | null;
@@ -30,6 +32,8 @@ export interface ApiClient {
   auth: AuthState;
   setAuth(next: Partial<AuthState>): void;
   onUnauthorized?: () => void;
+  /** P41: fired when the API answers step_up_required - the step-up dialog listens here. */
+  onStepUpRequired?: (details: { kind: string; action: string; message: string }) => void;
 }
 
 const STORAGE_KEY = "csaas.auth";
@@ -74,6 +78,7 @@ export function createClient(baseUrl = ""): ApiClient {
       const headers = new Headers(init.headers);
       if (client.auth.token) headers.set("Authorization", `Bearer ${client.auth.token}`);
       if (client.auth.orgId) headers.set("X-Org-Id", client.auth.orgId);
+      headers.set("X-Device-Id", deviceId());
 
       let body = init.body;
       if (init.json !== undefined) {
@@ -96,6 +101,13 @@ export function createClient(baseUrl = ""): ApiClient {
 
       if (!res.ok) {
         const err = payload?.error;
+        if (err?.code === "step_up_required" && client.onStepUpRequired) {
+          client.onStepUpRequired({
+            kind: String(err.kind ?? "recent_2fa"),
+            action: String(err.action ?? ""),
+            message: String(err.message ?? ""),
+          });
+        }
         throw new ApiError(
           res.status,
           err?.code ?? "http_error",

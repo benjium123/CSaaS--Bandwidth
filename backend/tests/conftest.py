@@ -98,6 +98,19 @@ def make_settings(**overrides) -> Settings:
     return Settings(**base)
 
 
+@pytest.fixture(autouse=True)
+def _active_settings():
+    """P41: services without a request read enforcement flags from the active settings
+    (app.config.get_active_settings). Pin them to the test defaults for every test, so a
+    service called directly - before or without create_app - never falls back to the
+    developer's .env, where KYC_ENFORCED defaults to on."""
+    from app import config
+
+    config.set_active_settings(make_settings())
+    yield
+    config._active_settings = None
+
+
 @pytest.fixture
 def settings() -> Settings:
     return make_settings()

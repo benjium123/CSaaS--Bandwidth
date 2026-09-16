@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from app.auth.deps import OrgContext, require_permission
-from app.errors import NotFoundError, ValidationFailedError
+from app.auth.deps import OrgContext, check_org_selfie_step_up, require_permission
+from app.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import Call, CreditLedgerEntry, PaymentMethod
 from app.services import ai_usage, credits, stripe_client
 from app.services import audit as audit_svc
@@ -422,6 +422,8 @@ async def add_payment_method(
     request: Request,
 ) -> dict:
     settings = request.app.state.settings
+    # P41: changing how the business pays is a classic account-takeover move.
+    await check_org_selfie_step_up(request, ctx, action="payment_method_change")
 
     # The org has no stripe_customer_id column (Fable owns the schema), so the
     # customer id is carried on payment_method rows and re-used from there.
@@ -449,6 +451,25 @@ async def add_payment_method(
 
     is_default = not existing_rows
 
+    # P41: a card that belongs to a banned business is refused and detached again.
+    fingerprint = attached.get("fingerprint")
+    if fingerprint:
+        from app.services import ban_list
+
+        hit = await ban_list.matches(
+            ctx.session, [ban_list.identifier("card_fingerprint", fingerprint)]
+        )
+        if hit:
+            try:
+                await stripe_client.detach_payment_method(
+                    settings, payment_method_id=attached["id"]
+                )
+            except Exception:  # noqa: BLE001 - refusing the card matters more
+                pass
+            raise PermissionDeniedError(
+                "This card cannot be used. Contact support.", code="payment_method_refused"
+            )
+
     pm = PaymentMethod(
         id=uuid.uuid4(),
         org_id=ctx.org.id,
@@ -457,6 +478,7 @@ async def add_payment_method(
         brand=attached.get("brand", ""),
         last4=attached.get("last4", ""),
         is_default=is_default,
+        card_fingerprint=fingerprint,
     )
     ctx.session.add(pm)
 
@@ -487,6 +509,7 @@ async def remove_payment_method(
     ctx: Annotated[OrgContext, Depends(require_permission("org:billing"))],
     request: Request,
 ) -> None:
+    await check_org_selfie_step_up(request, ctx, action="payment_method_change")
     pm = (
         await ctx.session.execute(
             sa.select(PaymentMethod).where(

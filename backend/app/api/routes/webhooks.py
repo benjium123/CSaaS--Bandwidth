@@ -26,14 +26,12 @@ from app.providers import registry_org
 from app.providers.bandwidth import webhooks as bw_webhooks
 from app.providers.telnyx.voice import TelnyxVoiceCommandError
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
-from app.services import assistant_dispatch
+from app.services import assistant_dispatch, credits, stripe_client
 from app.services import calling_settings as calling_settings_svc
 from app.services import calls as calls_svc
-from app.services import credits
 from app.services import credentials as credential_svc
 from app.services import messaging as svc
 from app.services import routing_exec as routing_exec_svc
-from app.services import stripe_client
 from app.services import supervisor as supervisor_svc
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
@@ -666,13 +664,48 @@ async def stripe_webhook(
         )
 
     payload = await request.body()
-    event = stripe_client.verify_webhook(
+    event = stripe_client.verify_webhook_any(
         request.app.state.settings,
         payload,
         stripe_signature,
     )
 
-    if event.get("type") != "payment_intent.succeeded":
+    # P41: durable replay protection. The ledger row commits with whatever the event
+    # changed, so a failed handler leaves no row and Stripe's retry is processed normally.
+    event_id = event.get("id")
+    event_type = str(event.get("type") or "")
+    if event_id:
+        from datetime import datetime, timezone
+
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models import StripeEvent
+
+        if await session.get(StripeEvent, event_id) is not None:
+            return Response(status_code=204)
+        try:
+            async with session.begin_nested():
+                session.add(
+                    StripeEvent(
+                        id=str(event_id)[:255],
+                        type=event_type[:128],
+                        received_at=datetime.now(timezone.utc),
+                    )
+                )
+                await session.flush()
+        except IntegrityError:
+            return Response(status_code=204)
+
+    if event_type.startswith("identity.verification_session."):
+        from app.services import kyc as kyc_svc
+
+        await kyc_svc.handle_identity_event(session, request.app.state.settings, event)
+        await session.commit()
+        return Response(status_code=204)
+
+    if event_type != "payment_intent.succeeded":
+        if event_id:
+            await session.commit()
         return Response(status_code=204)
 
     intent = event.get("data", {}).get("object", {})

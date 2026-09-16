@@ -9,7 +9,13 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import OrgContext, get_current_user, require_permission
+from app.auth.deps import (
+    OrgContext,
+    check_org_selfie_step_up,
+    get_current_user,
+    require_permission,
+)
+from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import WILDCARD, Invite, OrgMembership, Role, User
@@ -19,6 +25,7 @@ from app.services import calling_settings as calling_settings_svc
 from app.services import contact_visibility
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
+from app.services import kyc as kyc_svc
 from app.services import retention as retention_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
@@ -73,14 +80,35 @@ class CallingSettingsIn(BaseModel):
     dispositions: list[str] | None = None
 
 
+def _privileged_grant_action(role: Role) -> str | None:
+    perms = set(role.permissions or [])
+    if WILDCARD in perms:
+        return "ownership_transfer"
+    if perms & {"org:billing", "members:update", "roles:write"}:
+        return "admin_grant"
+    return None
+
+
 @router.post("", response_model=OrgOut, status_code=201)
 async def create_org(
     payload: OrgCreateIn,
+    request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OrgOut:
+    settings = request.app.state.settings
+    # P41: one workspace in verification at a time - applying for many businesses at once
+    # is how a banned operator probes which identity gets through.
+    if settings.kyc_enforced and await kyc_svc.unverified_orgs_owned_by(session, user.id):
+        raise ConflictError(
+            "Finish verifying your current business before creating another workspace",
+            code="kyc_pending_elsewhere",
+        )
     org = await orgs_repo.create_org_with_owner(session, name=payload.name, owner_id=user.id)
     await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
+    # P41: every new workspace starts unverified; telephony waits for approval.
+    set_org_context(session, org.id)
+    await kyc_svc.get_or_create_profile(session, org.id)
     await session.commit()
     return OrgOut(id=org.id, name=org.name, slug=org.slug)
 
@@ -368,6 +396,7 @@ async def remove_member(
 async def update_member(
     user_id: uuid.UUID,
     payload: MemberUpdateIn,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("members:update"))],
 ) -> MemberOut:
     row = (
@@ -397,6 +426,10 @@ async def update_member(
         raise PermissionDeniedError(
             "You cannot assign a role with more permissions than your own"
         )
+    # P41: handing out owner or admin/billing power needs a fresh selfie from the grantor.
+    action = _privileged_grant_action(new_role)
+    if action is not None and new_role.id != current_role.id:
+        await check_org_selfie_step_up(request, ctx, action=action)
 
     if current_role.name == "owner" and new_role.name != "owner":
         owner_count = (
@@ -484,6 +517,13 @@ async def create_invite(
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("members:invite"))],
 ) -> InviteCreatedOut:
+    invited_role = (
+        await ctx.session.execute(
+            sa.select(Role).where(Role.org_id == ctx.org.id, Role.name == payload.role_name)
+        )
+    ).scalar_one_or_none()
+    if invited_role is not None and _privileged_grant_action(invited_role) is not None:
+        await check_org_selfie_step_up(request, ctx, action="admin_grant")
     invite, raw = await invites_svc.create_invite(
         ctx.session,
         org_id=ctx.org.id,

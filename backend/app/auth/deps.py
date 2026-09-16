@@ -31,6 +31,7 @@ from app.errors import (
     ValidationFailedError,
 )
 from app.models import ApiKey, Org, OrgMembership, PlatformOperator, Role, User
+from app.models.rbac import WILDCARD as WILDCARD_PERMISSION
 from app.providers import registry_org
 from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
@@ -286,12 +287,61 @@ async def get_current_org(
 def require_permission(permission: str):
     """Dependency factory. Owner's ``*`` short-circuits every check."""
 
-    async def _check(ctx: Annotated[OrgContext, Depends(get_current_org)]) -> OrgContext:
+    async def _check(
+        request: Request, ctx: Annotated[OrgContext, Depends(get_current_org)]
+    ) -> OrgContext:
         if not ctx.role.grants(permission):
             raise PermissionDeniedError(f"Requires permission: {permission}")
+        if permission in IDENTITY_GATED_PERMISSIONS:
+            await _require_verified_privileged_member(request, ctx)
         return ctx
 
     return _check
+
+
+#: P41: once a business is approved, a NON-owner may only use these powers after their own
+#: ID + selfie check (operator decision: admin and billing roles are verified people).
+IDENTITY_GATED_PERMISSIONS = frozenset(
+    {
+        "org:billing",
+        "members:invite",
+        "members:update",
+        "members:remove",
+        "roles:write",
+        "numbers:manage",
+    }
+)
+
+
+async def _require_verified_privileged_member(request: Request, ctx: OrgContext) -> None:
+    settings: Settings = request.app.state.settings
+    if not settings.kyc_enforced or ctx.membership is None:
+        return
+    if WILDCARD_PERMISSION in (ctx.role.permissions or []):
+        return  # owners are the verified people on the application itself
+    from app.models import KYC_TELEPHONY_STATUSES, KycPerson, KycProfile
+
+    status = (
+        await ctx.session.execute(
+            sa.select(KycProfile.status).where(KycProfile.org_id == ctx.org.id)
+        )
+    ).scalar_one_or_none()
+    if status not in KYC_TELEPHONY_STATUSES:
+        return  # before approval the application itself is the gate
+    verified = (
+        await ctx.session.execute(
+            sa.select(KycPerson.id).where(
+                KycPerson.org_id == ctx.org.id,
+                KycPerson.user_id == ctx.membership.user_id,
+                KycPerson.status == "verified",
+            )
+        )
+    ).first()
+    if verified is None:
+        raise PermissionDeniedError(
+            "Verify your identity (ID + selfie) to use admin and billing features",
+            code="identity_verification_required",
+        )
 
 
 # --------------------------------------------------------------------------------------
@@ -340,6 +390,21 @@ async def check_step_up(
 
     if not await kyc_step_up.has_fresh_selfie(session, settings, user, action=action, now=now):
         raise StepUpRequiredError(kind=kind, action=action)
+
+
+async def check_org_selfie_step_up(request: Request, ctx: OrgContext, *, action: str) -> None:
+    """Selfie step-up for an org-scoped risky action. A no-op while KYC_ENFORCED is off.
+    API keys are refused outright: no key can prove who is holding it."""
+    settings: Settings = request.app.state.settings
+    if not settings.kyc_enforced:
+        return
+    if ctx.membership is None:
+        raise PermissionDeniedError(
+            "This action needs a signed-in person, not an API key", code="step_up_required"
+        )
+    user = await ctx.session.get(User, ctx.membership.user_id)
+    await check_step_up(request, ctx.session, user, kind="recent_selfie", action=action)
+    set_org_context(ctx.session, ctx.org.id)
 
 
 def require_step_up(kind: str, action: str):

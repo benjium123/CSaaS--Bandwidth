@@ -32,6 +32,9 @@ REPUTATION_TICK_INTERVAL_SECONDS = 3600
 #: recompute every org's spend on every ~60s tick - hourly matches the reputation gate
 #: above, same discipline (Opus review B4).
 SPEND_TICK_INTERVAL_SECONDS = 3600
+#: P41: trust & safety housekeeping, and the (large) sanctions/Tor list downloads.
+KYC_TICK_INTERVAL_SECONDS = 3600
+SECURITY_LISTS_INTERVAL_SECONDS = 86400
 
 #: 8.18/4.15/6.19: arbitrary constant lock key, one per "the whole sweeper pass". Any
 #: int works for pg_try_advisory_lock - it just needs to be the SAME constant every call
@@ -370,6 +373,47 @@ async def _run_once_locked(app) -> dict[str, int]:
             )
     except Exception:
         log.exception("sweeper_telephony_billing_failed")
+
+    # P41 trust & safety: hourly re-verification / Stripe reconcile / AI summaries, and a
+    # daily sanctions + Tor list refresh. Same reserve-the-slot-first discipline as spend.
+    from app.services import kyc_tick
+
+    # Only where verification is enforced: a deployment (or test) running without KYC has no
+    # applications to re-verify and must not start downloading government lists.
+    kyc_on = bool(getattr(app.state.settings, "kyc_enforced", False))
+    last_kyc_run = getattr(app.state, "_kyc_last_run", None)
+    if kyc_on and (
+        last_kyc_run is None or time.monotonic() - last_kyc_run >= KYC_TICK_INTERVAL_SECONDS
+    ):
+        app.state._kyc_last_run = time.monotonic()
+        cfg = app.state.settings
+        for label, job in (
+            ("reverification", lambda s: kyc_tick.reverification_tick(s, cfg)),
+            ("identity_reconcile", lambda s: kyc_tick.reconcile_identity_sessions(s, cfg)),
+            ("ai_summaries", lambda s: kyc_tick.ai_summary_tick(s, cfg)),
+            ("webauthn_cleanup", lambda s: kyc_tick.cleanup_challenges(s)),
+        ):
+            try:
+                async with get_sessionmaker()() as session:
+                    outcome = await job(session)
+                if isinstance(outcome, dict):
+                    results.update({f"kyc_{k}": v for k, v in outcome.items()})
+                else:
+                    results[f"kyc_{label}"] = outcome
+            except Exception:
+                log.exception("sweeper_kyc_tick_failed", job=label)
+    last_lists_run = getattr(app.state, "_security_lists_last_run", None)
+    if kyc_on and (
+        last_lists_run is None
+        or time.monotonic() - last_lists_run >= SECURITY_LISTS_INTERVAL_SECONDS
+    ):
+        app.state._security_lists_last_run = time.monotonic()
+        try:
+            async with get_sessionmaker()() as session:
+                lists = await kyc_tick.daily_lists_tick(session, app.state.settings)
+            results["sanctions_hits"] = lists.get("sanctions_hits", 0)
+        except Exception:
+            log.exception("sweeper_security_lists_failed")
 
     # P24 credits sweeper (stale holds, low-balance warnings, auto-recharge, pausing
     # campaigns when empty). D69: it existed but was never called from here.

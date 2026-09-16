@@ -3,11 +3,12 @@ import { useAuth } from "@/auth/AuthContext";
 import { Button, Input } from "@/components/ui/primitives";
 
 export function LoginPage() {
-  const { login, verify2fa } = useAuth();
+  const { login, verify2fa, verifyPasskey } = useAuth();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [code, setCode] = React.useState("");
   const [pendingToken, setPendingToken] = React.useState<string | null>(null);
+  const [methods, setMethods] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [ssoOpen, setSsoOpen] = React.useState(false);
@@ -24,10 +25,23 @@ export function LoginPage() {
 
     if (res.kind === "needs_2fa") {
       setPendingToken(res.pendingToken);
+      setMethods(res.methods);
       return;
     }
     if (res.kind === "error") setError(res.message);
   }
+
+  async function onPasskey() {
+    if (!pendingToken) return;
+    setError(null);
+    setBusy(true);
+    const res = await verifyPasskey(pendingToken);
+    setBusy(false);
+    if (res.kind === "error") setError(res.message);
+  }
+
+  const totpAllowed = !pendingToken || methods.includes("totp");
+  const passkeyAllowed = Boolean(pendingToken) && methods.includes("passkey");
 
   return (
     <div className="flex min-h-full items-center justify-center p-6">
@@ -41,16 +55,28 @@ export function LoginPage() {
           </h1>
 
           {pendingToken ? (
-            <label className="block space-y-1">
-              <span className="text-sm text-muted-foreground">Authenticator code</span>
-              <Input
-                aria-label="Authenticator code"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-              />
-            </label>
+            <>
+              {passkeyAllowed && (
+                <Button type="button" className="w-full" disabled={busy} onClick={onPasskey}>
+                  Use your passkey
+                </Button>
+              )}
+              {passkeyAllowed && totpAllowed && (
+                <p className="text-center text-xs text-muted-foreground">or</p>
+              )}
+              {totpAllowed && (
+                <label className="block space-y-1">
+                  <span className="text-sm text-muted-foreground">Authenticator code</span>
+                  <Input
+                    aria-label="Authenticator code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                  />
+                </label>
+              )}
+            </>
           ) : (
             <>
               <label className="block space-y-1">
@@ -82,9 +108,11 @@ export function LoginPage() {
             </p>
           )}
 
-          <Button type="submit" disabled={busy} className="w-full">
-            {busy ? "Working..." : pendingToken ? "Verify" : "Sign in"}
-          </Button>
+          {totpAllowed && (
+            <Button type="submit" disabled={busy} className="w-full">
+              {busy ? "Working..." : pendingToken ? "Verify" : "Sign in"}
+            </Button>
+          )}
         </form>
 
         {!pendingToken && (

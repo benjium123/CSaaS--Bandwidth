@@ -1,6 +1,6 @@
 import * as React from "react";
 import { NavLink } from "react-router-dom";
-import { Contact, Inbox, LogOut, Megaphone, Phone, Search, Settings } from "lucide-react";
+import { Contact, Inbox, LogOut, Megaphone, Phone, Search, Settings, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useGate } from "@/api/capabilities";
 import { useAuth } from "@/auth/AuthContext";
@@ -138,6 +138,18 @@ export function Sidebar() {
               </Button>
             ))}
           </div>
+        ) : null}
+
+        {me?.is_platform_operator ? (
+          <NavLink
+            to="/ops"
+            title="Trust & safety"
+            aria-label="Trust & safety"
+            className={railLinkClass}
+          >
+            <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+            <span className="sr-only">Trust & safety</span>
+          </NavLink>
         ) : null}
 
         {canSeeSettings ? (

@@ -36,7 +36,7 @@ from app.models.telephony import TelephonyAccount
 from app.providers.telnyx.adapter import DEFAULT_BASE_URL, TelnyxMessagingCarrier
 from app.services import credentials as credential_svc
 from app.services import provider_accounts as provider_accounts_svc
-from app.services import telephony_billing
+from app.services import telephony_access, telephony_billing
 
 log = structlog.get_logger("telephony_provisioning")
 
@@ -224,6 +224,8 @@ async def provision(
     org = await session.get(Org, org_id)
     if org is None:
         raise ValidationFailedError("Unknown workspace")
+    # P41: no carrier sub-account is created for a business that is not verified.
+    await telephony_access.require_telephony_allowed(session, org_id, "number", settings=settings)
 
     account = await get_account(session, org_id)
     if account is None:
@@ -442,6 +444,7 @@ async def order_number(
     if existing is not None:
         raise ConflictError(f"{normalized} is already registered")
 
+    await telephony_access.require_telephony_allowed(session, org_id, "number")
     await telephony_billing.require_number_credit(session, org_id, "telnyx")
 
     carrier = TelnyxMessagingCarrier(

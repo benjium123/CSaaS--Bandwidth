@@ -44,7 +44,7 @@ from app.providers.voice import Speak as SpeakCommand
 from app.providers.voice import Transfer as TransferCommand
 from app.providers.voice import VoiceEvent, as_voice_carrier
 from app.services import recordings as recordings_svc
-from app.services import smart_routing, telephony_billing
+from app.services import smart_routing, telephony_access, telephony_billing
 
 log = structlog.get_logger("calls")
 
@@ -309,6 +309,7 @@ async def create_outbound_call(
     )
     # Prepaid hard gate: refuse (402) before the rows or the dial exist, and hold the
     # first minutes (committed with the rows just below).
+    await telephony_access.require_telephony_allowed(session, org_id, "call")
     await telephony_billing.require_call_credit(session, org_id, call)
     session.add(call)
     session.add(leg)
@@ -682,6 +683,8 @@ async def start_blind_transfer(
     current = active_leg(legs)
     if current is None:
         raise ConflictError("This call has no active leg to transfer")
+    # P41: a transfer dials a new number - the same gate as any outbound call.
+    await telephony_access.require_telephony_allowed(session, call.org_id, "call")
 
     carrier_obj = registry.get(call.carrier) if registry is not None else None
     voice_carrier = as_voice_carrier(carrier_obj)

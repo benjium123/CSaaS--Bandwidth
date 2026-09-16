@@ -26,11 +26,13 @@ from app.api.routes import health as health_routes
 from app.api.routes import identity as identity_routes
 from app.api.routes import inbox as inbox_routes
 from app.api.routes import inboxes as inboxes_routes
+from app.api.routes import kyc as kyc_routes
 from app.api.routes import links as links_routes
 from app.api.routes import me as me_routes
 from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
 from app.api.routes import numbers as number_routes
+from app.api.routes import ops as ops_routes
 from app.api.routes import orgs as org_routes
 from app.api.routes import outbound as outbound_routes
 from app.api.routes import passkeys as passkey_routes
@@ -48,7 +50,7 @@ from app.api.routes import telephony as telephony_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
 from app.api.routes import webhooks as webhook_routes
-from app.config import Settings, load_settings
+from app.config import Settings, load_settings, set_active_settings
 from app.db.session import dispose_engine, init_engine
 from app.errors import CsaasError
 from app.events.bus import EventBus
@@ -75,6 +77,7 @@ def _log_provider_report(settings: Settings) -> None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    set_active_settings(settings)
     configure_logging(env=settings.app_env, level=settings.log_level)
 
     @asynccontextmanager
@@ -230,6 +233,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(roles_routes.router)
     app.include_router(twofa_routes.router)
     app.include_router(passkey_routes.router)
+    app.include_router(kyc_routes.router)
+    app.include_router(ops_routes.router)
     app.include_router(sso_routes.router)
     app.include_router(number_routes.router)
     app.include_router(telephony_routes.router)

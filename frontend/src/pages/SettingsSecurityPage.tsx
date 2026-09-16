@@ -8,6 +8,7 @@ import {
 } from "@/api/contacts";
 import { Button, Input, Spinner } from "@/components/ui/primitives";
 import { SessionsCard } from "@/components/settings/SessionsCard";
+import { PasskeysCard } from "@/components/settings/PasskeysCard";
 import { LoginHistoryCard } from "@/components/settings/LoginHistoryCard";
 import { OrgSecurityPolicyCard } from "@/components/settings/OrgSecurityPolicyCard";
 
@@ -212,6 +213,10 @@ export function SettingsSecurityPage() {
           </div>
         </div>
       )}
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <PasskeysCard />
+      </section>
 
       <section className="space-y-3 rounded-md border border-border p-4">
         <SessionsCard />

@@ -1,6 +1,7 @@
 // Lives apart from SettingsPage.tsx so Sidebar can gate the Settings gear without pulling in every settings page module.
 export type SettingsSectionId =
   | "workspace"
+  | "verification"
   | "team"
   | "inboxes"
   | "numbers"
@@ -17,6 +18,7 @@ export const SETTINGS_SECTIONS: {
   permission: string;
 }[] = [
   { id: "workspace", label: "Workspace", permission: "org:read" },
+  { id: "verification", label: "Business verification", permission: "org:read" },
   { id: "team", label: "Team", permission: "members:read" },
   { id: "inboxes", label: "Departments & inboxes", permission: "inboxes:admin" },
   { id: "numbers", label: "Phone numbers", permission: "numbers:read" },

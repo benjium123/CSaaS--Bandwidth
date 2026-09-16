@@ -34,6 +34,7 @@ import { AgentPage } from "@/pages/AgentPage";
 import { AppointmentsPage } from "@/pages/AppointmentsPage";
 import { PlatformPage } from "@/pages/PlatformPage";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { VerifyBusinessPage } from "@/pages/VerifyBusinessPage";
 import { SETTINGS_SECTIONS, type SettingsSectionId } from "./settingsSections";
 
 export type { SettingsSectionId } from "./settingsSections";
@@ -386,6 +387,8 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
   switch (id) {
     case "workspace":
       return <WorkspaceSection />;
+    case "verification":
+      return <VerifyBusinessPage />;
     case "team":
       return <TeamSettingsSection />;
     case "inboxes":

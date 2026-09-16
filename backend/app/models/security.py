@@ -28,7 +28,7 @@ LOGIN_RISK_FLAGS: tuple[str, ...] = (
 
 WEBAUTHN_PURPOSES: tuple[str, ...] = ("register", "login", "step_up")
 
-SECURITY_ALERT_KINDS: tuple[str, ...] = ("flagged_login",)
+SECURITY_ALERT_KINDS: tuple[str, ...] = ("flagged_login", "limit_request", "sanctions_hit")
 SECURITY_ALERT_STATUSES: tuple[str, ...] = ("open", "reviewed")
 
 #: reviewer = read the KYC queue and decide applications; admin = also suspend orgs,

@@ -35,11 +35,16 @@ export type Me = {
    * working against a backend that doesn't send it yet. Treat undefined as false (2FA
    * not enabled) rather than guessing either way. */
   totp_enabled?: boolean;
+  /** P41 */
+  has_passkey?: boolean;
+  is_platform_operator?: boolean;
+  /** P41: must add an authenticator app or passkey before anything else works. */
+  second_factor_required?: boolean;
 };
 
 type LoginResult =
   | { kind: "ok" }
-  | { kind: "needs_2fa"; pendingToken: string }
+  | { kind: "needs_2fa"; pendingToken: string; methods: string[] }
   | { kind: "error"; message: string };
 
 type AuthValue = {
@@ -49,6 +54,8 @@ type AuthValue = {
   ready: boolean;
   login(email: string, password: string): Promise<LoginResult>;
   verify2fa(pendingToken: string, code: string): Promise<LoginResult>;
+  verifyPasskey(pendingToken: string): Promise<LoginResult>;
+  refreshMe(): Promise<Me | null>;
   completeSso(accessToken: string, orgId: string): Promise<LoginResult>;
   selectOrg(orgId: string): void;
   logout(): void;
@@ -125,10 +132,15 @@ export function AuthProvider({
           access_token: string | null;
           requires_2fa: boolean;
           pending_token: string | null;
+          methods?: string[];
         }>("/api/v1/auth/login", { method: "POST", json: { email, password } });
 
         if (res.requires_2fa && res.pending_token) {
-          return { kind: "needs_2fa", pendingToken: res.pending_token };
+          return {
+            kind: "needs_2fa",
+            pendingToken: res.pending_token,
+            methods: res.methods ?? ["totp"],
+          };
         }
         api.setAuth({ token: res.access_token });
         await loadMe();
@@ -147,6 +159,32 @@ export function AuthProvider({
           method: "POST",
           json: { pending_token: pendingToken, code },
         });
+        api.setAuth({ token: res.access_token });
+        await loadMe();
+        return { kind: "ok" };
+      } catch (err) {
+        return { kind: "error", message: (err as Error).message };
+      }
+    },
+    [api, loadMe],
+  );
+
+  const verifyPasskey = React.useCallback(
+    async (pendingToken: string): Promise<LoginResult> => {
+      try {
+        const { getPasskeyAssertion } = await import("@/lib/webauthn");
+        const opts = await api.request<{ challenge_id: string; options: unknown }>(
+          "/api/v1/auth/passkeys/login/options",
+          { method: "POST", json: { pending_token: pendingToken } },
+        );
+        const credential = await getPasskeyAssertion(opts.options);
+        const res = await api.request<{ access_token: string }>(
+          "/api/v1/auth/passkeys/login/verify",
+          {
+            method: "POST",
+            json: { pending_token: pendingToken, challenge_id: opts.challenge_id, credential },
+          },
+        );
         api.setAuth({ token: res.access_token });
         await loadMe();
         return { kind: "ok" };
@@ -194,6 +232,8 @@ export function AuthProvider({
     ready,
     login,
     verify2fa,
+    verifyPasskey,
+    refreshMe: loadMe,
     completeSso,
     selectOrg,
     logout,

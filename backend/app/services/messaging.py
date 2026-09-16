@@ -52,7 +52,7 @@ from app.providers.domain import (
     UnknownEvent,
 )
 from app.providers.segments import estimate
-from app.services import contact_visibility, messaging_errors, telephony_billing
+from app.services import contact_visibility, messaging_errors, telephony_access, telephony_billing
 from app.services import credentials as credential_svc
 from app.services import links as links_svc
 from app.services.contacts import resolve_or_create_contact
@@ -280,6 +280,8 @@ async def send_message(
         _check_media_size(carrier, assets)
 
     est = estimate(body)
+    # P41: business verification / suspension / daily limits, before the credit gate.
+    await telephony_access.require_telephony_allowed(session, org_id, "sms")
     # Prepaid hard gate: refuse before anything is written or sent. Priced on the
     # carrier the plan will try first (the dispatch-time re-check covers failover).
     await telephony_billing.require_sms_credit(
@@ -569,6 +571,22 @@ async def _dispatch_to_carrier(
     # campaign messages reach here without passing send_message's early check, and the
     # balance may have run out since. Refused as data (like a carrier rejection),
     # without ever calling the carrier.
+    # P41: verification / suspension re-checked at the moment of sending - an account
+    # suspended while messages sat scheduled or held must not send them.
+    refused = await telephony_access.telephony_allowed(session, org_id, "sms_dispatch")
+    if refused is not None:
+        set_org_context(session, org_id)
+        message = await session.get(Message, message.id)
+        message.last_carrier_error = None
+        message.status = "rejected"
+        message.hold_until = None
+        message.error_code = refused
+        message.error_detail = "Account not allowed to send"
+        message.failure_reason_public = telephony_access.REFUSAL_PUBLIC_TEXT.get(
+            refused, "Not sent - this account cannot text right now."
+        )
+        await session.commit()
+        return message
     if not await telephony_billing.can_send_sms(session, org_id, message):
         set_org_context(session, org_id)
         message = await session.get(Message, message.id)
