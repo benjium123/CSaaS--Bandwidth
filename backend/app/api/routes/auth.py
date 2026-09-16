@@ -30,7 +30,7 @@ from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import identity as identity_svc
 from app.services import invites as invites_svc
-from app.services import login_flow
+from app.services import lockout, login_flow, password_policy
 from app.services import operators as operators_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -159,6 +159,7 @@ async def register(
             session, payload.invite_token, payload.email
         )
 
+    await password_policy.check(settings, payload.password, email=payload.email)
     user = await users_repo.create_user(
         session, email=payload.email, password=payload.password, full_name=payload.full_name
     )
@@ -200,14 +201,17 @@ async def login(
         )
 
     if not verify_password(payload.password, user.hashed_password):
-        await _log_and_fail(
+        await lockout.fail(
             session,
-            UnauthenticatedError("Incorrect email or password"),
-            email=user.email,
+            settings,
+            request,
+            user,
             outcome="bad_password",
-            user_id=user.id,
-            request=request,
+            error=UnauthenticatedError("Incorrect email or password"),
         )
+
+    # P42: only someone who knows the password learns the account is locked.
+    await lockout.ensure_not_locked(session, user)
 
     if not user.is_active:
         await _log_and_fail(

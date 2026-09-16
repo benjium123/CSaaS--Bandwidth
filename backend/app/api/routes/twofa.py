@@ -36,8 +36,7 @@ from app.errors import (
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
-from app.services import identity as identity_svc
-from app.services import login_flow
+from app.services import account_security, lockout, login_flow
 
 router = APIRouter(prefix="/api/v1/auth/2fa", tags=["auth"])
 
@@ -70,9 +69,7 @@ class EnrollOut(BaseModel):
 def _fernet_key(settings: Settings) -> str:
     key = settings.credential_encryption_key.get_secret_value().strip()
     if not key:
-        raise FeatureUnavailableError(
-            "Two-factor auth needs CREDENTIAL_ENCRYPTION_KEY to be set"
-        )
+        raise FeatureUnavailableError("Two-factor auth needs CREDENTIAL_ENCRYPTION_KEY to be set")
     return key
 
 
@@ -137,7 +134,14 @@ async def activate(
     row = await current_identity_session(request, session)
     if row is not None:
         row.second_factor_at = datetime.now(timezone.utc)
+    account_security.audit(session, user.id, "totp.enabled", request=request)
     await session.commit()
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "Authenticator app added",
+        "An authenticator app was added to your account.",
+    )
     return {"totp_enabled": True}
 
 
@@ -164,27 +168,18 @@ async def verify(
     if user is None or not user.totp_enabled or not user.totp_secret:
         raise UnauthenticatedError("Invalid verification session")
 
+    await lockout.ensure_not_locked(session, user)
     secret = decrypt_credential(user.totp_secret, key)
     try:
         step = _check_code(user, secret, payload.code)
     except UnauthenticatedError as exc:
         # A wrong or replayed second factor is a security event in its own right, and it
-        # is committed even though the request fails.
-        identity_svc.record_login_event(
-            session,
-            email=user.email,
-            outcome="bad_2fa",
-            user_id=user.id,
-            request=request,
-        )
-        await session.commit()
-        raise exc
+        # is committed even though the request fails. P42: it also counts toward lockout.
+        await lockout.fail(session, settings, request, user, outcome="bad_2fa", error=exc)
 
     user.totp_last_used_step = step
 
-    token = await login_flow.complete_login(
-        session, settings, request, user, second_factor=True
-    )
+    token = await login_flow.complete_login(session, settings, request, user, second_factor=True)
     return {"access_token": token, "token_type": "bearer"}
 
 
@@ -238,5 +233,12 @@ async def disable(
     user.totp_enabled = False
     user.totp_secret = None
     user.totp_last_used_step = None
+    account_security.audit(session, user.id, "totp.disabled", request=request)
     await session.commit()
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "Authenticator app removed",
+        "The authenticator app was removed from your account.",
+    )
     return {"totp_enabled": False}

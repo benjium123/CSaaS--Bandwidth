@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -37,6 +38,15 @@ class User(Base, TimestampMixin):
     #: auth/deps.py never needs a query. Maintained only by services/passkeys.py.
     has_passkey: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+
+    #: P42: after an identity recovery, sensitive (step-up) actions stay blocked until this
+    #: time - a stolen account recovered by an attacker cannot immediately be emptied.
+    step_up_blocked_until: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
     )
 
     @property

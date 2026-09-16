@@ -42,6 +42,8 @@ FLAG_LABELS: dict[str, str] = {
     "datacenter": "signed in through a VPN, proxy or hosting network",
     "new_device": "signed in from a new device",
     "country_changed": "signed in from a different country than last time",
+    "recovery_code": "signed in with a one-time recovery code",
+    "identity_recovery": "recovered the account with an ID and selfie check",
 }
 
 #: Substrings of ASN organisation names that mean hosting, cloud or commercial VPN rather

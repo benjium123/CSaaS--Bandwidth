@@ -124,6 +124,22 @@ class Settings(BaseSettings):
     kyc_reverify_days: int = 365
     kyc_reverify_grace_days: int = 14
 
+    # ---------------- P42 enterprise auth ----------------
+    password_min_length: int = 12
+    #: Reject passwords found in known breaches (Have I Been Pwned range API; only a
+    #: 5-character hash prefix is sent). Tests turn this off.
+    hibp_enabled: bool = True
+    hibp_api_url: str = "https://api.pwnedpasswords.com/range"
+    password_reset_ttl_minutes: int = 30
+    #: Failed password / second-factor attempts per account before a temporary lock.
+    lockout_threshold: int = 10
+    lockout_window_minutes: int = 15
+    #: First lock length; doubles on each repeat within 24 h, capped at 24 h.
+    lockout_base_minutes: int = 15
+    #: After recovering an account by ID + selfie, step-up actions stay blocked this long.
+    recovery_cooldown_hours: int = 24
+    recovery_code_count: int = 10
+
     # ---------------- rate limiting ----------------
     rate_limit_enabled: bool = True
     rate_limit_max_requests: int = 20

@@ -20,9 +20,9 @@ from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import WILDCARD, Invite, OrgMembership, Role, User
 from app.repositories import orgs as orgs_repo
+from app.services import account_security, contact_visibility
 from app.services import audit as audit_svc
 from app.services import calling_settings as calling_settings_svc
-from app.services import contact_visibility
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
 from app.services import kyc as kyc_svc
@@ -349,6 +349,7 @@ def _role_assignable_by(actor_role: Role, target_role: Role) -> bool:
 @router.delete("/current/members/{user_id}", status_code=204)
 async def remove_member(
     user_id: uuid.UUID,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("members:remove"))],
 ) -> Response:
     row = (
@@ -388,7 +389,13 @@ async def remove_member(
         target_id=str(user_id),
         detail={"user_id": str(user_id)},
     )
+    # P42: leaving a workspace ends every session - a removed person must not keep a live
+    # login (which could still reach other workspaces' data they are about to lose too).
+    revoked = await account_security.revoke_sessions(
+        ctx.session, request.app.state.settings, user_id, revoked_by=ctx.actor_user_id or user_id
+    )
     await ctx.session.commit()
+    await account_security.mark_revoked(request.app.state.settings, revoked)
     return Response(status_code=204)
 
 
@@ -457,7 +464,14 @@ async def update_member(
         target_id=str(user_id),
         detail={"user_id": str(user_id), "role_name": new_role.name},
     )
+    # P42: a role change takes effect on a fresh sign-in, never on a session minted under
+    # the old role.
+    revoked = await account_security.revoke_sessions(
+        ctx.session, request.app.state.settings, user_id, revoked_by=ctx.actor_user_id or user_id
+    )
     await ctx.session.commit()
+    await account_security.mark_revoked(request.app.state.settings, revoked)
+    set_org_context(ctx.session, ctx.org.id)
     return MemberOut(
         user_id=user.id, email=user.email, full_name=user.full_name, role_name=new_role.name
     )
@@ -554,3 +568,99 @@ async def revoke_invite(
         invite.revoked_at = datetime.now(timezone.utc)
         await ctx.session.commit()
     return _invite_out(invite)
+
+
+# ----------------------------------------------------------------------------------
+# P42: admin reset of a member's sign-in factors, and deactivation
+# ----------------------------------------------------------------------------------
+PRIVILEGED_PERMISSIONS = {"org:billing", "members:update", "roles:write"}
+
+
+def _is_privileged(role: Role) -> bool:
+    perms = set(role.permissions or [])
+    return WILDCARD in perms or bool(perms & PRIVILEGED_PERMISSIONS)
+
+
+async def _resettable_member(ctx: OrgContext, user_id: uuid.UUID) -> User:
+    """A member whose factors this workspace may reset: not privileged, not an operator, and
+    a member of THIS workspace only. An account is global, so resetting someone who also
+    works elsewhere would let one workspace weaken another's security."""
+    from app.db.base import ALLOW_UNSCOPED_KEY
+    from app.services import operators as operators_svc
+
+    if ctx.membership is None:
+        raise PermissionDeniedError("A signed-in person must do this")
+    if user_id == ctx.membership.user_id:
+        raise PermissionDeniedError("Use account recovery for your own account")
+    # JUSTIFIED allow_unscoped: must see the target's memberships in EVERY workspace.
+    rows = (
+        await ctx.session.execute(
+            sa.select(OrgMembership, Role)
+            .join(Role, Role.id == OrgMembership.role_id)
+            .where(OrgMembership.user_id == user_id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    set_org_context(ctx.session, ctx.org.id)
+    if not any(m.org_id == ctx.org.id for m, _ in rows):
+        raise NotFoundError("Member not found")
+    if len(rows) > 1:
+        raise PermissionDeniedError(
+            "This person also belongs to another workspace. Ask them to use account recovery.",
+            code="member_in_other_workspace",
+        )
+    if _is_privileged(rows[0][1]):
+        raise PermissionDeniedError(
+            "Owners, admins and billing members recover their own account with an ID check.",
+            code="privileged_member",
+        )
+    if await operators_svc.is_operator(ctx.session, user_id):
+        raise PermissionDeniedError("Platform operators cannot be reset from a workspace")
+    target = await ctx.session.get(User, user_id)
+    if target is None:
+        raise NotFoundError("Member not found")
+    return target
+
+
+@router.post("/current/members/{user_id}/reset-2fa", status_code=204)
+async def reset_member_factors(
+    user_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("members:update"))],
+) -> Response:
+    from app.auth.deps import check_step_up
+
+    settings = request.app.state.settings
+    actor = await ctx.session.get(User, ctx.membership.user_id) if ctx.membership else None
+    if actor is None:
+        raise PermissionDeniedError("A signed-in person must do this")
+    await check_step_up(request, ctx.session, actor, kind="recent_2fa", action="member_reset")
+    set_org_context(ctx.session, ctx.org.id)
+    target = await _resettable_member(ctx, user_id)
+    cleared = await account_security.clear_second_factors(ctx.session, target)
+    revoked = await account_security.revoke_sessions(
+        ctx.session, settings, target.id, revoked_by=actor.id
+    )
+    account_security.audit(
+        ctx.session, target.id, "factors.reset_by_admin", actor_user_id=actor.id, request=request,
+        detail={**cleared, "org_id": str(ctx.org.id)},
+    )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="member.factors_reset",
+        target_type="user",
+        target_id=str(target.id),
+        actor_user_id=actor.id,
+        detail=cleared,
+    )
+    await ctx.session.commit()
+    await account_security.mark_revoked(settings, revoked)
+    await account_security.notify_now(
+        settings,
+        target.email,
+        "Your sign-in methods were reset",
+        f"An admin of {ctx.org.name} reset your passkeys and authenticator app. Sign in with "
+        "your password and set up a new passkey or authenticator app.",
+    )
+    return Response(status_code=204)

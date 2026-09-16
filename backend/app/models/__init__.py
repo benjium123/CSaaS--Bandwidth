@@ -64,6 +64,13 @@ from app.models.contacts import (
     ThreadLabel,
 )
 from app.models.contacts_pro import ERASURE_STATUSES, ErasureRequest, RetentionPolicy, SavedView
+from app.models.credentials import (
+    ACCOUNT_AUDIT_ACTIONS,
+    AccountAuditEntry,
+    AccountLockout,
+    PasswordResetToken,
+    RecoveryCode,
+)
 from app.models.identity import LOGIN_OUTCOMES, LoginEvent, Session
 from app.models.inbox_pro import NOTIFICATION_KINDS, Notification, ThreadNote
 from app.models.inboxes import (
@@ -200,6 +207,11 @@ from app.models.user import User
 from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
 __all__ = [
+    "ACCOUNT_AUDIT_ACTIONS",
+    "AccountAuditEntry",
+    "AccountLockout",
+    "PasswordResetToken",
+    "RecoveryCode",
     "FRAUD_IDENTIFIER_KINDS",
     "KYC_CHECK_KINDS",
     "KYC_CHECK_RESULTS",

@@ -379,6 +379,7 @@ async def check_step_up(
         raise ValueError(f"Unknown step-up kind: {kind}")
     settings: Settings = request.app.state.settings
     now = datetime.now(timezone.utc)
+    _refuse_during_recovery_cooldown(user, now)
     if kind == "recent_2fa":
         row = await current_identity_session(request, session)
         proven = _aware(row.second_factor_at) if row is not None else None
@@ -392,10 +393,26 @@ async def check_step_up(
         raise StepUpRequiredError(kind=kind, action=action)
 
 
+def _refuse_during_recovery_cooldown(user: User, now: datetime) -> None:
+    """P42: right after an ID-based account recovery, sensitive actions wait out a cool-down."""
+    blocked = _aware(user.step_up_blocked_until)
+    if blocked is not None and blocked > now:
+        raise PermissionDeniedError(
+            "This account was recently recovered. Sensitive changes unlock "
+            f"{blocked.strftime('%Y-%m-%d %H:%M UTC')}.",
+            code="recovery_cooldown",
+        )
+
+
 async def check_org_selfie_step_up(request: Request, ctx: OrgContext, *, action: str) -> None:
     """Selfie step-up for an org-scoped risky action. A no-op while KYC_ENFORCED is off.
     API keys are refused outright: no key can prove who is holding it."""
     settings: Settings = request.app.state.settings
+    if ctx.membership is not None:
+        user = await ctx.session.get(User, ctx.membership.user_id)
+        if user is not None:
+            _refuse_during_recovery_cooldown(user, datetime.now(timezone.utc))
+            set_org_context(ctx.session, ctx.org.id)
     if not settings.kyc_enforced:
         return
     if ctx.membership is None:

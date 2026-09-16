@@ -24,11 +24,20 @@ LOGIN_RISK_FLAGS: tuple[str, ...] = (
     "datacenter",
     "new_device",
     "country_changed",
+    "recovery_code",
+    "identity_recovery",
 )
 
 WEBAUTHN_PURPOSES: tuple[str, ...] = ("register", "login", "step_up")
 
-SECURITY_ALERT_KINDS: tuple[str, ...] = ("flagged_login", "limit_request", "sanctions_hit")
+SECURITY_ALERT_KINDS: tuple[str, ...] = (
+    "flagged_login",
+    "limit_request",
+    "sanctions_hit",
+    "account_recovery",
+    "recovery_code_used",
+    "account_locked",
+)
 SECURITY_ALERT_STATUSES: tuple[str, ...] = ("open", "reviewed")
 
 #: reviewer = read the KYC queue and decide applications; admin = also suspend orgs,

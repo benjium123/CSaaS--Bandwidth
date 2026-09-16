@@ -93,6 +93,9 @@ def make_settings(**overrides) -> Settings:
         # never went through business verification. P41 tests opt back in explicitly.
         "require_2fa_all_users": False,
         "kyc_enforced": False,
+        # P42: no network in tests; pre-P42 tests register 10-character passwords.
+        "hibp_enabled": False,
+        "password_min_length": 10,
     }
     base.update(overrides)
     return Settings(**base)

@@ -9,7 +9,7 @@ list, and those destructive actions need a second factor proven in the last few 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -525,5 +525,138 @@ async def remove_ban(identifier_id: uuid.UUID, request: Request, op: Admin) -> R
     if row is None:
         raise NotFoundError("Not on the ban list")
     row.is_active = False
+    await op.session.commit()
+    return Response(status_code=204)
+
+
+# --------------------------------------------------------------------------------------
+# P42 account support: find, unlock, reset sign-in methods, deactivate
+# --------------------------------------------------------------------------------------
+class ReasonIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.get("/users")
+async def find_user(op: Reviewer, email: str = Query(min_length=3)) -> dict:
+    from app.repositories import users as users_repo
+    from app.services import lockout, recovery_codes
+
+    user = await users_repo.get_by_email(op.session, email)
+    if user is None:
+        raise NotFoundError("No account with that email")
+    until = await lockout.locked_until(op.session, user.id)
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "is_active": user.is_active,
+        "totp_enabled": user.totp_enabled,
+        "has_passkey": user.has_passkey,
+        "recovery_codes_remaining": await recovery_codes.remaining(op.session, user.id),
+        "locked_until": _iso(until),
+        "step_up_blocked_until": _iso(user.step_up_blocked_until),
+    }
+
+
+async def _target_user(op: OperatorContext, user_id: uuid.UUID) -> User:
+    user = await op.session.get(User, user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    if user.id == op.user.id:
+        raise ValidationFailedError("Operators cannot change their own account here")
+    return user
+
+
+@router.post("/users/{user_id}/unlock", status_code=204)
+async def unlock_user(user_id: uuid.UUID, request: Request, op: Admin) -> Response:
+    from app.services import lockout
+
+    await check_step_up(request, op.session, op.user, kind="recent_2fa", action="user_support")
+    user = await _target_user(op, user_id)
+    await lockout.unlock(op.session, user.id, actor_user_id=op.user.id, request=request)
+    await op.session.commit()
+    return Response(status_code=204)
+
+
+@router.post("/users/{user_id}/reset-2fa", status_code=204)
+async def operator_reset_factors(
+    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Admin
+) -> Response:
+    """Last resort, after verifying the person out of band (e.g. a video call with ID)."""
+    from app.services import account_security
+
+    await check_step_up(request, op.session, op.user, kind="recent_2fa", action="user_support")
+    settings = request.app.state.settings
+    user = await _target_user(op, user_id)
+    cleared = await account_security.clear_second_factors(op.session, user)
+    user.step_up_blocked_until = datetime.now(timezone.utc) + timedelta(
+        hours=settings.recovery_cooldown_hours
+    )
+    revoked = await account_security.revoke_sessions(
+        op.session, settings, user.id, revoked_by=op.user.id
+    )
+    account_security.audit(
+        op.session,
+        user.id,
+        "factors.reset_by_operator",
+        actor_user_id=op.user.id,
+        request=request,
+        detail={**cleared, "reason": payload.reason},
+    )
+    await op.session.commit()
+    await account_security.mark_revoked(settings, revoked)
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "Your sign-in methods were reset by support",
+        "Our support team reset your passkeys and authenticator app. Sign in with your "
+        "password and set up a new passkey.",
+    )
+    return Response(status_code=204)
+
+
+@router.post("/users/{user_id}/deactivate", status_code=204)
+async def deactivate_user(
+    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Admin
+) -> Response:
+    from app.services import account_security
+
+    await check_step_up(request, op.session, op.user, kind="recent_2fa", action="user_support")
+    settings = request.app.state.settings
+    user = await _target_user(op, user_id)
+    user.is_active = False
+    revoked = await account_security.revoke_sessions(
+        op.session, settings, user.id, revoked_by=op.user.id
+    )
+    account_security.audit(
+        op.session,
+        user.id,
+        "account.deactivated",
+        actor_user_id=op.user.id,
+        request=request,
+        detail={"reason": payload.reason},
+    )
+    await op.session.commit()
+    await account_security.mark_revoked(settings, revoked)
+    return Response(status_code=204)
+
+
+@router.post("/users/{user_id}/reactivate", status_code=204)
+async def reactivate_user(
+    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Admin
+) -> Response:
+    from app.services import account_security
+
+    await check_step_up(request, op.session, op.user, kind="recent_2fa", action="user_support")
+    user = await _target_user(op, user_id)
+    user.is_active = True
+    account_security.audit(
+        op.session,
+        user.id,
+        "account.reactivated",
+        actor_user_id=op.user.id,
+        request=request,
+        detail={"reason": payload.reason},
+    )
     await op.session.commit()
     return Response(status_code=204)

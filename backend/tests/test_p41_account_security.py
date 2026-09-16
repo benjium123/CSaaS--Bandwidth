@@ -314,8 +314,9 @@ async def test_foreign_country_new_device_and_vpn_are_flagged(sec_client, sessio
         )
     ).scalar_one()
     assert "country_not_allowed" in live.risk_flags
-    assert len(mailer.outbox) == 1
-    assert "traveller@example.com" in mailer.outbox[0]["To"]
+    alerts = [m for m in mailer.outbox if "unusual sign-in" in m["Subject"]]
+    assert len(alerts) == 1
+    assert "traveller@example.com" in alerts[0]["To"]
 
 
 async def test_org_owner_is_emailed_about_a_members_flagged_login(sec_client, session, monkeypatch):
@@ -382,6 +383,7 @@ async def test_recent_2fa_step_up(sec_client, session, sec_settings):
         )
     ).scalar_one()
     user = await session.get(User, live.user_id)
+    user_id = user.id
 
     app_stub = SimpleNamespace(state=SimpleNamespace(settings=sec_settings))
     scope = {"type": "http", "headers": [], "app": app_stub}
@@ -410,6 +412,7 @@ async def test_recent_2fa_step_up(sec_client, session, sec_settings):
     )
     assert r.status_code == 200, r.text
     session.expire_all()
+    user = await session.get(User, user_id)
     await check_step_up(request, session, user, kind="recent_2fa", action="test")
 
 

@@ -22,8 +22,7 @@ from app.errors import UnauthenticatedError
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
-from app.services import identity as identity_svc
-from app.services import login_flow
+from app.services import account_security, lockout, login_flow
 from app.services import passkeys as passkeys_svc
 
 router = APIRouter(prefix="/api/v1/auth/passkeys", tags=["auth"])
@@ -113,7 +112,16 @@ async def register(
     live = await current_identity_session(request, session)
     if live is not None:
         live.second_factor_at = datetime.now(timezone.utc)
+    account_security.audit(
+        session, user.id, "passkey.added", request=request, detail={"name": row.name}
+    )
     await session.commit()
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "New passkey added",
+        f'A passkey named "{row.name}" was added to your account.',
+    )
     return _out(row)
 
 
@@ -126,7 +134,11 @@ async def delete_passkey(
 ) -> Response:
     settings: Settings = request.app.state.settings
     await passkeys_svc.delete(session, settings, user, passkey_id)
+    account_security.audit(session, user.id, "passkey.removed", request=request)
     await session.commit()
+    await account_security.notify_now(
+        settings, user.email, "Passkey removed", "A passkey was removed from your account."
+    )
     return Response(status_code=204)
 
 
@@ -164,6 +176,7 @@ async def login_verify(
     settings: Settings = request.app.state.settings
     await enforce_rate_limit(request, f"passkey:{payload.pending_token}")
     user = await _pending_user(session, settings, payload.pending_token)
+    await lockout.ensure_not_locked(session, user)
     try:
         await passkeys_svc.authenticate(
             session,
@@ -173,12 +186,8 @@ async def login_verify(
             credential=payload.credential,
             purpose="login",
         )
-    except UnauthenticatedError:
-        identity_svc.record_login_event(
-            session, email=user.email, outcome="bad_2fa", user_id=user.id, request=request
-        )
-        await session.commit()
-        raise
+    except UnauthenticatedError as exc:
+        await lockout.fail(session, settings, request, user, outcome="bad_2fa", error=exc)
     token = await login_flow.complete_login(session, settings, request, user, second_factor=True)
     return {"access_token": token, "token_type": "bearer"}
 

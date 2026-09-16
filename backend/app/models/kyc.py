@@ -89,6 +89,8 @@ STEP_UP_ACTIONS: tuple[str, ...] = (
     "admin_grant",
     "ownership_transfer",
     "use_case_change",
+    # P42: proving who you are when every sign-in factor is lost.
+    "account_recovery",
 )
 STEP_UP_STATUSES: tuple[str, ...] = ("pending", "processing", "verified", "failed", "canceled")
 

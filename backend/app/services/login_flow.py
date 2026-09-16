@@ -71,9 +71,14 @@ async def complete_login(
     user: User,
     *,
     second_factor: bool,
+    extra_flags: list[str] | None = None,
 ) -> str:
     """Create the Session, record the event, handle risk. Commits. Returns the access token."""
     risk = await login_risk.assess(session, settings, request, user)
+    # P42: recovery sign-ins are always flagged, whatever the network looks like.
+    for flag in extra_flags or []:
+        if flag not in risk.flags:
+            risk.flags.append(flag)
     now = datetime.now(timezone.utc)
 
     identity_session = await identity_svc.create_session(
