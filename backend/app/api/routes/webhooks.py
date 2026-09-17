@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 import uuid
 from typing import Annotated
+from urllib.parse import parse_qsl
 
 import sqlalchemy as sa
 import structlog
@@ -588,6 +589,46 @@ async def bandwidth_voice_amd(
     request: Request, session: Annotated[AsyncSession, Depends(get_session)]
 ) -> Response:
     return await _handle_voice_webhook("bandwidth", request, session)
+
+
+# Literal path, declared BEFORE the parameterised /{carrier_name}/voice below: that route
+# would otherwise be the first match for "signalwire/sip-dial" and try to verify it as an
+# ordinary SignalWire carrier callback, which is not the question SignalWire is asking.
+@router.post("/signalwire/sip-dial")
+async def signalwire_sip_dial(request: Request) -> Response:
+    """Answer the LaML webhook for the SIP leg LiveKit opened to SignalWire.
+
+    LiveKit INVITEs our SignalWire Domain Application, which then asks us what to do with
+    the call and gives up with 480 if nobody answers. We answer with a <Dial> to the PSTN
+    number, using our own SignalWire number as the caller id. No DB, no outbound I/O: this
+    sits on the call path and SignalWire's timeout is short.
+    """
+    from app.providers.signalwire import sip_dial
+
+    settings = request.app.state.settings
+    raw = await request.body()
+
+    token = settings.signalwire_api_token.get_secret_value()
+    if not sip_dial.verify(
+        request.headers, raw, sip_dial.signing_url(settings.public_base_url), token
+    ):
+        # Refused, never "handled anyway": this endpoint can make us pay for a phone call.
+        log.warning("signalwire_sip_dial_unverified")
+        return Response(content=b"", media_type="application/xml", status_code=403)
+
+    fields = dict(parse_qsl(raw.decode("utf-8", "replace"), keep_blank_values=True))
+    to = fields.get("To", "")
+    from_ = fields.get("From", "")
+    call_sid = fields.get("CallSid", "")
+
+    if not (sip_dial.is_e164(to) and sip_dial.is_e164(from_)):
+        # The numbers ARE logged: the caller id is our own org's number and a refused call
+        # is undebuggable without the pair.
+        log.warning("signalwire_sip_dial_bad_numbers", call_sid=call_sid, to=to, from_=from_)
+        return Response(content=b"", media_type="application/xml", status_code=403)
+
+    log.info("signalwire_sip_dial", call_sid=call_sid, to=to, from_=from_)
+    return Response(content=sip_dial.build_laml(to, from_), media_type="application/xml")
 
 
 @router.post("/{carrier_name}/voice")
