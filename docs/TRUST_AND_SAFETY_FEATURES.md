@@ -10,12 +10,15 @@ What exists today to keep scammers and account takeovers off the platform. One l
 - Every owner (25%+) passes an ID + live selfie check (Stripe Identity); we never store ID images.
 - Declared use case: what they call/text for, who they contact, where numbers come from, volumes, countries.
 - Signed agreement: truthful info, consent laws, monitoring for abuse, per-violation penalty, no reselling.
-- Automatic checks on submit: registry (UK automatic, US/CA manual), sanctions lists (US/UK/Canada), ban list, website and domain age, email domain, ID names vs. declared names.
-- AI reviewer summary of each application (advisory only).
-- Risk tier with plain-language reasons; high risk requires a video call before approval.
-- An operator approves or rejects every business; approval is blocked until all checks are clear.
+- Every owner declares their current home address and uploads a proof of address dated in the last 90 days.
+- The AI reads every uploaded document (bills, statements, certificates, tax letters) and checks name, address, date, company and number; the applicant sees within seconds if it isn't accepted and why.
+- Automatic checks on submit: registry (UK Companies House, Canada federal registry, New York/Colorado/Oregon/Connecticut open data, otherwise the AI-read registration document), sanctions lists (US/UK/Canada), ban list, website and domain age, email domain, ID names vs. declared names.
+- Sanctions, ban list and names are checked again at the moment of approval.
+- The AI prepares every decision: recommendation, confidence, its thinking per area, concerns with evidence, questions for the applicant and suggested starting limits.
+- Risk tier with plain-language reasons; high-risk applications need every document to fully match.
+- An operator approves or rejects every business with one click; approval is blocked until all checks are clear. The AI never approves.
 - One unverified workspace per person at a time.
-- Annual re-verification of owners, with a 14-day grace period.
+- Annual re-verification of owners, with a 14-day grace period; it must be the same person, and only they can restart it.
 - Daily sanctions re-screen of approved businesses.
 
 ## Login & account security
@@ -46,6 +49,17 @@ What exists today to keep scammers and account takeovers off the platform. One l
 - SSO sign-ins go through the same risk checks as passwords.
 - SCIM user sync: people removed in the company's identity provider lose access here at once.
 - API keys: optional IP ranges, last-used IP, 1-year maximum life, overlap on rotation.
+
+## AI traffic monitoring (DeepSeek Flash)
+- Every outbound text is checked before it is sent: clear scams blocked, suspicious ones held for a second AI look, normal ones sent; one check per campaign message.
+- If the AI is unreachable, texts from new or flagged accounts wait instead of sending.
+- Calls from new accounts, flagged accounts and a 20% sample of the rest are recorded (announcement first) or transcribed live, then reviewed by the AI with exact quotes.
+- Patterns are watched without reading anything: very short calls, unanswered calls, volume far above what was declared, STOP spikes, angry replies, carrier spam flags.
+- Anyone can report a suspicious call or text from our numbers (no account needed).
+- Each account has a risk score: watched, then restricted (lower daily limits), then paused (no calling or texting) automatically.
+- When paused, the AI writes a case file for the operator, owners are emailed, and the business can explain; only an operator unpauses or suspends and bans.
+- Operator decisions teach the monitor: they become examples in its exam.
+- Proof it works: an hourly canary of known scams and a weekly exam (catch rate and false alarms), with an alert if either fails.
 
 ## Limits & calling/texting gate
 - No texting, calling or phone numbers until the business is approved.

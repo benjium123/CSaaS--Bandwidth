@@ -75,6 +75,25 @@ recommended before the first large enterprise customer.
 | 14.4.x | Security headers (CSP, HSTS, nosniff, frame) | Met | `main.py` middleware, `deploy/nginx-csaas.conf` |
 | 14.5.3 | Trusted client IP only from known proxies | Met | `app/net.py::client_ip` with `TRUSTED_PROXY_COUNT` |
 
+## Findings fixed in P43 (2026-09-17 debug pass)
+Each has a regression test in `backend/tests/test_p43_auth_fixes.py`.
+
+| Severity | Finding | Fix |
+|---|---|---|
+| Critical | An admin or API key could repoint SSO / trust IdP MFA and sign in as the owner (V4.1, V2.2) | SSO settings owner-only, no API keys, fresh 2FA + ID step-up |
+| High | SSO/SCIM default role could be the owner role (V4.1) | Owner roles refused on save and at provisioning |
+| High | Adding a passkey refreshed "recent 2FA" without proof (V2.5, V3.7) | Add/remove factors needs fresh 2FA; adding never refreshes the session |
+| High | Approval used screening from before the real ID was known | Sanctions, ban list and name match re-run at approval; mismatch blocks |
+| Medium | Re-verification accepted a different person | Identity hash must match; only the linked person restarts it |
+| Medium | Rotating an API key could hand out more power than the caller has (V4.1) | Same scope check on rotate and revoke as on create |
+| Medium | Events websocket outlived revocation and ignored workspace policy (V3.3) | Re-authorised on every refresh; closes on revocation |
+| Medium | Lockout revealed a correct password; email case bypassed rate limits (V2.2.1) | Lock checked before password; normalised rate-limit key |
+| Low | Trusted IdP MFA honoured another workspace's SSO session | Must be this workspace's SSO session |
+| Low | One global password-reset rate-limit bucket | Keyed per token |
+| Low | TOTP step-up guesses didn't count toward lockout (V2.2.1) | Counted |
+| Low | Single-use step-ups could be spent twice concurrently | Conditional UPDATE |
+| Low | Operator browser (cookie) sessions refused on legacy ops routes | Accepted |
+
 ## Known gaps and follow-ups
 1. Bearer JWT compatibility must be switched off after cut-over (`AUTH_BEARER_COMPAT=false`).
 2. HIBP check fails open when the service is down (deliberate availability trade-off).

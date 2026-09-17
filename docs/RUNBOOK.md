@@ -399,10 +399,15 @@ Checks:
 - Text the 682 number from a phone → thread appears in the inbox within seconds; `docker logs csaas-api-1` shows a verified webhook, no `signature_mismatch`.
 - Send from the 682 number to the operator's phone → received, and shows **delivered** within ~10 s, not just sent.
 - Repeat both for 469.
-- Call the 682 number → the "not yet configured for inbound calls" announcement, webhook verified. Expected.
 
-### What calls do on these numbers today
-A call arriving on either SignalWire number gets the platform's existing "not yet configured for inbound calls" announcement and hangs up (`routes/webhooks.py:130-134`). SignalWire has no trunk into LiveKit, and whether it can place outbound calls from an external SIP server is undocumented; the trunk spike is P40. Setting the voice webhook now is still right: the call is logged and verified.
+### Calling on these numbers (P40)
+Calls go SignalWire <-> livekit-sip <-> LiveKit rooms, same as Telnyx: the softphone, the dialer and the AI assistant all work from a signalwire number, and the call is billed at the signalwire rate card. A call from a number on a carrier with no trunk still uses the Telnyx trunk, as before. Setup: `deploy/livekit/README.md` step 5c.
+
+Checks after setup:
+- Softphone -> call your mobile FROM +1 682 423 1003 -> it rings, the caller id reads 682 423 1003, audio both ways. `docker logs csaas-api-1` has no `livekit_dial` error; the Calls page shows carrier **signalwire**.
+- Call the 682 number from a mobile -> the call rings in the console (`lk room list` shows a `call-` room). Answer it; audio both ways.
+- Repeat for 469.
+- Outbound fails with 401/407 in `docker logs csaas-livekit-sip-1` -> wrong trunk username/password. Inbound never arrives -> the number's call handler is not the inbound SWML script, or UDP 5060 is blocked.
 
 Rollback: unset the four `SIGNALWIRE_*` values and redeploy. Delete the numbers from the Numbers page. The code changes are additive and inert without credentials.
 
@@ -495,6 +500,41 @@ pauses campaigns, hangs up live calls, emails the owners.
 - Owner/admin lost everything: "Lost access" on the sign-in page -> ID + selfie matching
   their verified identity. If that fails, operator "Reset 2FA" in `/ops` after checking
   identity out of band (video call with ID). Every reset is audited and emailed.
+
+## AI safety go-live (P43)
+
+1. **DeepSeek key.** `DEEPSEEK_API_KEY=sk-...` in the server `.env` (the key needs the `sk-`
+   prefix). Check it: `docker compose exec api python scripts/monitor_exam.py` - expect PASSED
+   (catch rate >= 95%, false alarms <= 3%). Add DeepSeek to the privacy policy / customer
+   agreement as a data processor before switching monitoring on.
+2. **Deploy.** `alembic upgrade head` applies 0050 + 0051. New Python deps: pillow, pypdfium2.
+3. **Canada registry (free).** Create an account at api.ised-isde.canada.ca, subscribe to
+   Federal Corporation API -> Public Plan, set `ISED_API_KEY`. Without it Canadian companies are
+   confirmed from their uploaded documents.
+4. **Call listener.** Rebuild and start the `call-monitor` service from
+   `deploy/livekit/docker-compose.livekit.yml` (same image as the AI agent; needs
+   `DEEPGRAM_API_KEY` and `ELEVENLABS_API_KEY`). Smoke test: place a softphone call from a new
+   workspace, hear the announcement, hang up after 30 s, and within ~3 minutes the call shows a
+   review in `/ops` > Monitoring. `DEEPGRAM_API_KEY` is also needed for recorded carrier calls.
+5. **Watch mode first (recommended).** For the first days set `MONITOR_PAUSE_SCORE=100000` and
+   `MONITOR_RESTRICT_SCORE=100000` so nobody is paused while you check `/ops` > Monitoring for
+   false alarms; texts are still screened. Then set them back to 100 / 60.
+6. **Applications already in review.** They can't be approved until each owner adds a home
+   address and a proof of address (the documents check says so). Use "Ask for more info" - the
+   AI decision pack pre-fills the request.
+
+### Every day (5 minutes)
+- `/ops` > Monitoring: the canary and exam pills must be green. Red = open the
+  `monitor_health` alert; if DeepSeek is down, texts from new accounts are waiting, not lost.
+- Flagged accounts: open each paused one, read the AI case file and the business's explanation,
+  then "False alarm - unpause" or "Confirmed - suspend and ban". Both teach the monitor.
+- Held texts: release or block anything the second look couldn't decide.
+- Review queue: open each application, read the AI decision pack, click approve / ask for info /
+  reject.
+
+### Changing a prompt, the model or the rules
+Run `scripts/monitor_exam.py --labels` before and after. Don't ship a change that lowers the
+catch rate or raises false alarms.
 
 ## Incident quick-checks
 
