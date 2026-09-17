@@ -89,6 +89,42 @@ def verify(
     return True
 
 
+def diagnose(
+    headers: Mapping[str, str], raw_body: bytes, public_base_url: str, api_token: str
+) -> str:
+    """Which (header, url spelling, hash) combination SignalWire's signature matches, if any.
+
+    Only ever called on the refused path. Returns a label, never a signature or the token;
+    "none" means the key SignalWire signed with is not the API token we hold.
+    """
+    if not (public_base_url and api_token):
+        return "unconfigured"
+    base = signing_url(public_base_url)
+    urls = {
+        "https": base,
+        "https_slash": base + "/",
+        "http": base.replace("https://", "http://", 1),
+        "https_443": base.replace("://", "://", 1).replace(
+            base.split("/")[2], base.split("/")[2] + ":443", 1
+        ),
+    }
+    params = parse_qsl(raw_body.decode("utf-8", "replace"), keep_blank_values=True)
+    ordered = "".join(name + value for name, value in sorted(params, key=lambda p: p[0]))
+    unordered = "".join(name + value for name, value in params)
+    bodies = {"sorted": ordered, "asis": unordered, "rawbody": raw_body.decode("utf-8", "replace")}
+    for header, received in headers.items():
+        if "signature" not in header.lower():
+            continue
+        for url_label, url in urls.items():
+            for body_label, body in bodies.items():
+                for algo_label, algo in (("sha1", hashlib.sha1), ("sha256", hashlib.sha256)):
+                    mac = hmac.new(api_token.encode(), (url + body).encode(), algo)
+                    candidates = (base64.b64encode(mac.digest()).decode(), mac.hexdigest())
+                    if any(hmac.compare_digest(c, received) for c in candidates):
+                        return f"{header.lower()}:{url_label}:{body_label}:{algo_label}"
+    return "none"
+
+
 def build_laml(to_e164: str, caller_id: str) -> str:
     """answerOnBridge is load-bearing: without it SignalWire answers our SIP leg the moment it
     arrives and the caller hears silence instead of ringback while the PSTN leg is dialled."""

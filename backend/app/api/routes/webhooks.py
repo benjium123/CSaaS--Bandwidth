@@ -628,6 +628,10 @@ async def signalwire_sip_dial(request: Request) -> Response:
             field_names=sorted(
                 name for name, _ in parse_qsl(raw.decode("utf-8", "replace"))
             ),
+            # A label for which header/url/hash combination matched, never a signature.
+            signed_candidate=sip_dial.diagnose(
+                request.headers, raw, settings.public_base_url, token
+            ),
         )
         return Response(content=b"", media_type="application/xml", status_code=403)
 
