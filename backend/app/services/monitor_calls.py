@@ -28,6 +28,7 @@ import random
 import re
 import uuid
 from datetime import datetime, time, timedelta, timezone
+from time import monotonic
 
 import httpx
 import sqlalchemy as sa
@@ -53,6 +54,7 @@ log = structlog.get_logger("monitor_calls")
 MONITOR_AGENT_NAME_DEFAULT = "call-monitor"
 DEEPGRAM_URL = "https://api.deepgram.com/v1/listen"
 REVIEW_DELAY = timedelta(minutes=2)
+TICK_BUDGET_SECONDS = 90
 GIVE_UP_AFTER = timedelta(hours=6)
 MIN_TALK_SECONDS = 15
 MAX_TRANSCRIPT_CHARS = 24_000
@@ -255,7 +257,9 @@ async def transcribe_recording(
             content=data,
         )
         if resp.status_code >= 400:
-            return "failed"
+            # 429/5xx are worth retrying; any other 4xx will fail the same way every time.
+            retryable = resp.status_code in (408, 429) or resp.status_code >= 500
+            return "failed" if retryable else "rejected"
         payload = resp.json()
     except (httpx.HTTPError, ValueError):
         return "failed"
@@ -330,8 +334,16 @@ async def review_one(
 ) -> str:
     set_org_context(session, call.org_id)
     now = _now()
+    review.updated_at = now  # rotate: a waiting review goes to the back of the queue
+    if call.status not in TERMINAL_CALL_STATUSES:
+        started = _aware(call.created_at) or now
+        if now - started > GIVE_UP_AFTER:
+            review.status = "skipped"
+            review.error = "The call never reached a final status"
+            return "skipped"
+        return "waiting"
     ended = _aware(call.ended_at) or _aware(call.updated_at) or now
-    if call.status not in TERMINAL_CALL_STATUSES or now - ended < REVIEW_DELAY:
+    if now - ended < REVIEW_DELAY:
         return "waiting"
     if call.status != "completed" or (call.duration_seconds or 0) < MIN_TALK_SECONDS:
         review.status = "skipped"
@@ -349,7 +361,11 @@ async def review_one(
                 review.attempts += 1
                 return "waiting"
             review.status = "skipped"
-            review.error = "No transcript available"
+            review.error = (
+                "The recording could not be transcribed"
+                if outcome == "rejected"
+                else "No transcript available"
+            )
             return "skipped"
 
     transcript = "\n".join(f"{s.role}: {s.text}" for s in segments)[:MAX_TRANSCRIPT_CHARS]
@@ -363,9 +379,11 @@ async def review_one(
             {"direction": call.direction, "duration_seconds": call.duration_seconds},
         )
     except ai_guard.AIUnavailable as exc:
+        # Stays pending and is retried as the queue rotates; only a call that still can't be
+        # reviewed a day later is given up on.
         review.attempts += 1
         review.error = str(exc)[:255]
-        if review.attempts >= 10:
+        if now - ended > timedelta(hours=24):
             review.status = "error"
         return "error"
 
@@ -409,7 +427,7 @@ async def review_tick(
             await session.execute(
                 sa.select(CallReview)
                 .where(CallReview.status == "pending")
-                .order_by(CallReview.created_at)
+                .order_by(CallReview.updated_at)
                 .limit(limit)
                 .execution_options(**{ALLOW_UNSCOPED_KEY: True})
             )
@@ -417,7 +435,10 @@ async def review_tick(
         .scalars()
         .all()
     )
+    started = monotonic()
     for review in pending:
+        if monotonic() - started > TICK_BUDGET_SECONDS:
+            break  # the rest waits for the next pass; the sweeper must not stall
         set_org_context(session, review.org_id)
         call = await session.get(Call, review.call_id)
         if call is None:
@@ -432,6 +453,8 @@ async def review_tick(
             continue
         counts[outcome] = counts.get(outcome, 0) + 1
         await session.commit()
+        if outcome == "error":
+            break  # the AI is unavailable: don't spend this pass retrying every call
     return counts
 
 
@@ -470,6 +493,8 @@ async def _signal_once_a_day(
     if await _signalled_today(session, org_id, kind) >= DAILY_CAPS.get(kind, 1):
         return False
     await monitor_score.add_signal(session, settings, org_id, kind, summary, detail=detail)
+    # Commit per workspace: the next org's context must never flush this org's rows.
+    await session.commit()
     return True
 
 

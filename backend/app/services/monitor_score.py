@@ -53,6 +53,11 @@ WEIGHTS: dict[str, int] = {
     "public_report": 20,
 }
 LEVEL_ORDER = {"normal": 0, "watch": 1, "restricted": 2, "paused": 3}
+#: Signals outsiders can create (anyone can file a report or text back "scam"). On their own
+#: they can restrict an account, never pause it - a competitor must not be able to switch a
+#: business off. A pause also needs evidence the platform observed itself.
+SOFT_KINDS = frozenset({"public_report", "complaint_reply"})
+PUBLIC_REPORT_DAILY_CAP = 2
 
 
 def _now() -> datetime:
@@ -90,20 +95,24 @@ def level_for(settings: Settings, score: int) -> str:
 
 
 async def current_score(
-    session: AsyncSession, settings: Settings, state: OrgMonitoring, *, now: datetime | None = None
+    session: AsyncSession,
+    settings: Settings,
+    state: OrgMonitoring,
+    *,
+    now: datetime | None = None,
+    hard_only: bool = False,
 ) -> int:
     now = now or _now()
     since = now - timedelta(days=settings.monitor_signal_window_days)
     cleared = _aware(state.cleared_before)
     if cleared is not None and cleared > since:
         since = cleared
-    total = (
-        await session.execute(
-            sa.select(sa.func.coalesce(sa.func.sum(MonitorSignal.weight), 0)).where(
-                MonitorSignal.org_id == state.org_id, MonitorSignal.created_at >= since
-            )
-        )
-    ).scalar_one()
+    stmt = sa.select(sa.func.coalesce(sa.func.sum(MonitorSignal.weight), 0)).where(
+        MonitorSignal.org_id == state.org_id, MonitorSignal.created_at >= since
+    )
+    if hard_only:
+        stmt = stmt.where(MonitorSignal.kind.not_in(tuple(SOFT_KINDS)))
+    total = (await session.execute(stmt)).scalar_one()
     return int(total or 0)
 
 
@@ -141,6 +150,10 @@ async def add_signal(
 async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitoring) -> None:
     state.score = await current_score(session, settings, state)
     target = level_for(settings, state.score)
+    if target == "paused":
+        hard = await current_score(session, settings, state, hard_only=True)
+        if hard < settings.monitor_watch_score:
+            target = "restricted"
     if state.level == "paused":
         return  # only an operator ends a pause
     if target == state.level:
@@ -369,7 +382,6 @@ async def _owner_emails(session: AsyncSession, org_id: uuid.UUID) -> list[str]:
 
 async def case_file_tick(session: AsyncSession, settings: Settings) -> int:
     """Write the AI case file for newly paused workspaces and email their owners."""
-    from app.services import account_security
 
     # JUSTIFIED allow_unscoped: the sweeper walks every paused workspace.
     rows = (
@@ -384,12 +396,21 @@ async def case_file_tick(session: AsyncSession, settings: Settings) -> int:
         .all()
     )
     written = 0
+    ai_down = False
     for state in rows:
         if (state.case_file or {}).get("status") not in ("pending", "unavailable"):
             continue
         org_id = state.org_id
         evidence = await case_evidence(session, org_id, state)
         first_attempt = (state.case_file or {}).get("status") == "pending"
+        if ai_down:
+            # Don't wait on the AI again this pass, but still record the evidence and email
+            # the owners - the pause itself must be explained without the AI.
+            if first_attempt:
+                state.case_file = {"status": "unavailable", "evidence": evidence}
+                await session.commit()
+                await _email_paused_owners(session, settings, org_id)
+            continue
         try:
             judgement = await ai_guard.judge(
                 settings,
@@ -417,19 +438,28 @@ async def case_file_tick(session: AsyncSession, settings: Settings) -> int:
             }
         except ai_guard.AIUnavailable:
             state.case_file = {"status": "unavailable", "evidence": evidence}
+            ai_down = True
         written += 1
         await session.commit()
         if first_attempt:
-            emails = await _owner_emails(session, org_id)
-            if emails:
-                await account_security.notify_now(
-                    settings,
-                    emails,
-                    "Calling and texting paused for review",
-                    "Our automatic monitoring paused calling and texting on your account "
-                    "because recent traffic looked like it could be harmful to the people "
-                    "receiving it. A member of our team is reviewing it now.\n\n"
-                    "If you believe this is a mistake, open the console and send us an "
-                    "explanation from the banner at the top of the page.",
-                )
+            await _email_paused_owners(session, settings, org_id)
     return written
+
+
+async def _email_paused_owners(
+    session: AsyncSession, settings: Settings, org_id: uuid.UUID
+) -> None:
+    from app.services import account_security
+
+    emails = await _owner_emails(session, org_id)
+    if emails:
+        await account_security.notify_now(
+            settings,
+            emails,
+            "Calling and texting paused for review",
+            "Our automatic monitoring paused calling and texting on your account "
+            "because recent traffic looked like it could be harmful to the people "
+            "receiving it. A member of our team is reviewing it now.\n\n"
+            "If you believe this is a mistake, open the console and send us an "
+            "explanation from the banner at the top of the page.",
+        )

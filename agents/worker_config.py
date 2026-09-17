@@ -35,3 +35,12 @@ def role_for_participant(*, kind: object, attributes: Mapping[str, str], sip_kin
     if kind == sip_kind or (attributes or {}).get("sip.callID"):
         return "user"
     return "agent"
+
+
+def sip_call_active(attributes: Mapping[str, str]) -> bool:
+    """Has the phone side of a SIP participant actually answered? livekit-sip reports
+    ``sip.callStatus`` (dialing / ringing / active / hangup). Older bridges that don't
+    report it only add the participant once the call is connected, so a missing status
+    counts as answered."""
+    status = (attributes or {}).get("sip.callStatus")
+    return status is None or status == "active"

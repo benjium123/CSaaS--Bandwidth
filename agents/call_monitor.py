@@ -29,7 +29,7 @@ from livekit.plugins import deepgram, elevenlabs
 
 from .backend_client import BackendClient
 from .transcript_buffer import TranscriptBuffer
-from .worker_config import resolve_monitor_agent_name, role_for_participant
+from .worker_config import resolve_monitor_agent_name, role_for_participant, sip_call_active
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,8 @@ async def entrypoint(ctx: JobContext) -> None:
     tasks: list[asyncio.Task] = []
     announced = False
     seen_tracks: set[str] = set()
+    # Nothing is transcribed until the other side has been told (announcement played).
+    ready = asyncio.Event()
     recognizer = deepgram.STT(model="nova-3")
 
     def now_ms() -> int:
@@ -96,6 +98,7 @@ async def entrypoint(ctx: JobContext) -> None:
             attributes=dict(getattr(participant, "attributes", {}) or {}),
             sip_kind=rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
         )
+        await ready.wait()
         audio = rtc.AudioStream(track)
         stream = recognizer.stream()
 
@@ -141,6 +144,9 @@ async def entrypoint(ctx: JobContext) -> None:
         if drained:
             await post(drained)
 
+    def call_answered(participant: rtc.RemoteParticipant) -> bool:
+        return sip_call_active(dict(getattr(participant, "attributes", {}) or {}))
+
     def is_phone(participant: rtc.RemoteParticipant) -> bool:
         return (
             role_for_participant(
@@ -151,17 +157,33 @@ async def entrypoint(ctx: JobContext) -> None:
             == "user"
         )
 
+    async def announce_then_listen(text: str) -> None:
+        try:
+            await _announce(ctx.room, text)
+        finally:
+            ready.set()
+
+    def maybe_announce(participant: rtc.RemoteParticipant) -> None:
+        nonlocal announced
+        if announced or not is_phone(participant) or not call_answered(participant):
+            return
+        announced = True
+        text = str(meta.get("announcement") or "")
+        tasks.append(asyncio.create_task(announce_then_listen(text)))
+
     @ctx.room.on("track_subscribed")
     def on_track(track: rtc.Track, publication: Any, participant: rtc.RemoteParticipant) -> None:
-        nonlocal announced
         if track.kind != rtc.TrackKind.KIND_AUDIO or publication.sid in seen_tracks:
             return
         seen_tracks.add(publication.sid)
         tasks.append(asyncio.create_task(transcribe(track, participant)))
-        if is_phone(participant) and not announced:
-            announced = True
-            text = str(meta.get("announcement") or "")
-            tasks.append(asyncio.create_task(_announce(ctx.room, text)))
+        maybe_announce(participant)
+
+    @ctx.room.on("participant_attributes_changed")
+    def on_attributes(_changed: dict, participant: rtc.RemoteParticipant) -> None:
+        # livekit-sip publishes the phone's track while it is still ringing; the
+        # announcement waits for sip.callStatus to become "active" (answered).
+        maybe_announce(participant)
 
     @ctx.room.on("participant_disconnected")
     def on_left(participant: rtc.RemoteParticipant) -> None:

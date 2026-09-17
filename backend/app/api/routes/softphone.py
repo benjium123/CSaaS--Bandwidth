@@ -150,6 +150,7 @@ async def _ws_org_from_cookie(
     if parsed is None:
         return None
     sid, secret = parsed
+    _remember_session_id(websocket, sid)
     row = await session.get(IdentitySession, sid)
     now = datetime.now(timezone.utc)
     if row is None or row.revoked_at is not None or not session_tokens.secret_matches(row, secret):
@@ -219,6 +220,44 @@ async def _ws_org_policy_allows(
     return True
 
 
+def _remember_session_id(websocket: WebSocket, sid) -> None:  # noqa: ANN001
+    try:
+        websocket._csaas_session_id = sid  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+
+
+async def _ws_recheck(
+    websocket: WebSocket,
+    session: AsyncSession,
+    settings: Settings,
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> tuple[uuid.UUID, uuid.UUID, list[str]] | None:
+    """P43: the periodic re-check of an OPEN socket. It looks the session up by id - never by
+    the cookie secret the socket was opened with, because a step-up or password change
+    rotates that secret and must not sign the person out. Revocation, expiry, removal from
+    the workspace and workspace policy all still end the stream."""
+    sid = getattr(websocket, "_csaas_session_id", None)
+    if sid is None:
+        return await resolve_ws_org(websocket, session, settings)
+    row = await identity_svc.get_live_session(session, sid)
+    if row is None or row.user_id != user_id:
+        return None
+    user = await users_repo.get_by_id(session, user_id)
+    if user is None or not user.is_active:
+        return None
+    if settings.require_2fa_all_users and not user.has_second_factor:
+        return None
+    found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user_id)
+    if found is None:
+        return None
+    org, _membership, role = found
+    if not await _ws_org_policy_allows(session, settings, websocket, user, org, role, row):
+        return None
+    return org_id, user_id, list(role.permissions or [])
+
+
 async def resolve_ws_org(
     websocket: WebSocket, session: AsyncSession, settings: Settings
 ) -> tuple[uuid.UUID, uuid.UUID, list[str]] | None:
@@ -269,6 +308,8 @@ async def resolve_ws_org(
     # A revoked or expired session must not be able to open an events socket and keep it
     # open indefinitely - that would outlive "sign out everywhere" entirely.
     live_row = await identity_svc.get_live_session(session, sid) if sid is not None else None
+    if sid is not None:
+        _remember_session_id(websocket, sid)
     if sid is not None and live_row is None:
         return None
 
@@ -432,7 +473,7 @@ async def _forward_events(
             # grants - "sign out everywhere", removal and suspension must end the stream.
             settings: Settings = websocket.app.state.settings
             async with get_sessionmaker()() as auth_session:
-                again = await resolve_ws_org(websocket, auth_session, settings)
+                again = await _ws_recheck(websocket, auth_session, settings, org_id, user_id)
             if again is None or again[0] != org_id or again[1] != user_id:
                 await websocket.close(code=4401)
                 return
@@ -465,6 +506,11 @@ async def pump_events(
     )
     try:
         await asyncio.wait({watcher, forwarder}, return_when=asyncio.FIRST_COMPLETED)
+        if forwarder.done() and not forwarder.cancelled() and forwarder.exception() is not None:
+            # P43: a failed access re-check must end the stream, not leave it open unchecked.
+            log.error("events_ws_forwarder_failed", error=repr(forwarder.exception()))
+            with contextlib.suppress(Exception):
+                await websocket.close(code=1011)
     finally:
         for task in (watcher, forwarder):
             if not task.done():

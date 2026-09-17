@@ -38,6 +38,8 @@ export type Me = {
   /** P41 */
   has_passkey?: boolean;
   is_platform_operator?: boolean;
+  /** P43: "reviewer" | "admin" for platform operators. */
+  operator_role?: string | null;
   /** P41: must add an authenticator app or passkey before anything else works. */
   second_factor_required?: boolean;
   /** P42: owner/admin/billing/operator - passkey sign-in required after the grace date. */

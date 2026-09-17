@@ -174,7 +174,13 @@ async def judge_call_case(settings: Settings, case: dict) -> tuple[str, tuple[in
     return ("allowed" if result["verdict"] == "ok" else "stopped"), result["tokens"]
 
 
-async def run(settings: Settings, texts: list[dict], calls: list[dict]) -> ExamResult:
+async def run(
+    settings: Settings,
+    texts: list[dict],
+    calls: list[dict],
+    *,
+    stop_on_unavailable: bool = False,
+) -> ExamResult:
     result = ExamResult()
     for kind, cases, judge in (
         ("text", texts, judge_text_case),
@@ -191,6 +197,8 @@ async def run(settings: Settings, texts: list[dict], calls: list[dict]) -> ExamR
                 outcome, tokens = await judge(settings, case)
             except ai_guard.AIUnavailable:
                 result.unavailable += 1
+                if stop_on_unavailable:
+                    return result  # one outage answer is enough - don't wait on the rest
                 continue
             result.tokens_in += tokens[0]
             result.tokens_out += tokens[1]
@@ -243,7 +251,7 @@ async def canary_tick(session: AsyncSession, settings: Settings) -> MonitorHealt
     """Hourly: the fixed canary set through the live judgement functions."""
     # Strict by construction: with 3 scams and 1 legit case, one miss or one false alarm
     # already falls outside CATCH_RATE_MIN / FALSE_ALARM_MAX.
-    result = await run(settings, CANARY_TEXTS, CANARY_CALLS)
+    result = await run(settings, CANARY_TEXTS, CANARY_CALLS, stop_on_unavailable=True)
     return await _record(session, "canary", result)
 
 
@@ -251,7 +259,7 @@ async def exam_tick(session: AsyncSession, settings: Settings) -> MonitorHealth:
     """Weekly: the whole library, plus the latest operator-labelled cases."""
     texts = load_cases("texts") + await labelled_cases(session, "texts")
     calls = load_cases("calls") + await labelled_cases(session, "calls")
-    result = await run(settings, texts, calls)
+    result = await run(settings, texts, calls, stop_on_unavailable=True)
     return await _record(session, "exam", result)
 
 

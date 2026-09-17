@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 
 import httpx
 import sqlalchemy as sa
@@ -28,6 +29,11 @@ from app.services import kyc_checks, kyc_decision, kyc_doc_reader
 log = structlog.get_logger("kyc_automation")
 
 REVIEW_STATUSES = ("submitted", "in_review", "needs_info", "reverification_due")
+TICK_BUDGET_SECONDS = 90
+
+
+class AIDown(RuntimeError):
+    """The safety AI is unavailable - stop this pass instead of retrying every application."""
 ERROR_RETRY_AFTER = timedelta(minutes=10)
 
 
@@ -53,10 +59,15 @@ async def review_documents(
     *,
     force: bool = False,
 ) -> int:
-    persons = await kyc_checks.persons_for(session, profile.org_id)
+    org_id = profile.org_id
+    persons = await kyc_checks.persons_for(session, org_id)
     reviewed = 0
     now = datetime.now(timezone.utc)
-    for document in await _documents(session, profile.org_id):
+    document_ids = [d.id for d in await _documents(session, org_id)]
+    for document_id in document_ids:
+        document = await session.get(KycDocument, document_id)
+        if document is None:
+            continue
         if document.review_result not in (None, "error"):
             continue
         last = document.reviewed_at
@@ -70,12 +81,33 @@ async def review_documents(
             and now - last < ERROR_RETRY_AFTER
         ):
             continue
-        await kyc_doc_reader.review_document(
-            session, settings, object_store, profile, document, persons
-        )
+        try:
+            await kyc_doc_reader.review_document(
+                session, settings, object_store, profile, document, persons
+            )
+        except Exception as exc:  # noqa: BLE001 - one unreadable file must not block the rest
+            log.exception("kyc_document_review_failed", document_id=str(document_id))
+            # rollback expires every loaded row: only use ids captured before it
+            await session.rollback()
+            set_org_context(session, org_id)
+            await session.refresh(profile)
+            persons = await kyc_checks.persons_for(session, org_id)
+            document = await session.get(KycDocument, document_id, populate_existing=True)
+            if document is None:
+                continue
+            document.review_result = "error"
+            document.review = {
+                "error": type(exc).__name__,
+                "reasons": ["Automatic review is unavailable."],
+            }
+            document.reviewed_at = datetime.now(timezone.utc)
         reviewed += 1
+        if document.review_result == "error" and (document.review or {}).get("ai_unavailable"):
+            await session.commit()
+            set_org_context(session, org_id)
+            raise AIDown()
         await session.commit()
-        set_org_context(session, profile.org_id)
+        set_org_context(session, org_id)
     return reviewed
 
 
@@ -179,9 +211,15 @@ async def tick(
         .all()
     )
     totals = {"documents_reviewed": 0, "decisions_written": 0}
+    started = monotonic()
     for org_id in org_ids[: limit * 5]:
+        if monotonic() - started > TICK_BUDGET_SECONDS:
+            break
         try:
             counts = await process(session, settings, object_store, org_id, http_client=http_client)
+        except AIDown:
+            await session.rollback()
+            break
         except Exception:  # noqa: BLE001 - one broken application must not stop the rest
             log.exception("kyc_automation_failed", org_id=str(org_id))
             await session.rollback()

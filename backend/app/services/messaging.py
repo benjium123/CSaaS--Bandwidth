@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.compliance import gate, registration
+from app.compliance import service as compliance_svc
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import (
     ComplianceBlockedError,
@@ -331,8 +332,13 @@ async def send_message(
         thread_id=thread.id,
         direction="outbound",
         status="queued",
-        # P43: compliance auto-replies (STOP/HELP confirmations) skip the AI text guard.
-        moderation_state="exempt" if exemption else None,
+        # P43: only the platform's own standard STOP/START/HELP replies skip the AI text
+        # guard; a reply text the business edited is screened like any other text.
+        moderation_state=(
+            "exempt"
+            if exemption and await compliance_svc.is_standard_auto_reply(session, org_id, body)
+            else None
+        ),
         from_e164=from_e164,
         to_e164=to_e164,
         body=body,
@@ -348,6 +354,21 @@ async def send_message(
     # P28 link tracking. Done AFTER the row is flushed, never before: short_links.
     # message_id is a real foreign key, and creating the links first would let an
     # autoflush insert them while the message they point at does not exist yet.
+    # P43: tracked links replace every URL with our own short link, which would hide the
+    # real destination from the safety check at dispatch. Screen the ORIGINAL text first;
+    # only a text that passes gets its links tracked (a held/blocked one keeps its real links
+    # so the second look and the operator see them).
+    if track_links and public_web_url and (message.body or "").strip():
+        from app.services import monitor_text
+
+        monitor_settings = telephony_access._settings_of(session)
+        if monitor_settings.monitor_enforced and message.moderation_state is None:
+            pre_screen = await monitor_text.screen(session, monitor_settings, org_id, message)
+            set_org_context(session, org_id)
+            if pre_screen.action == "allow":
+                message.moderation_state = "allowed"
+            else:
+                track_links = False
     if track_links and public_web_url and (message.body or "").strip():
         session.add(message)
         await session.flush()

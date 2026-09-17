@@ -291,7 +291,11 @@ function PeopleStep({ profile, editable }: { profile: KycProfile; editable: bool
                 {p.last_error && <p className="text-xs text-muted-foreground">{p.last_error}</p>}
                 {(p.role === "owner" || p.role === "beneficial_owner") && (
                   <div className="mt-2">
-                    <OwnerResidence person={p} documents={profile.documents} editable={editable} />
+                    <OwnerResidence
+                      person={p}
+                      documents={profile.documents}
+                      editable={editable && (profile.status === "draft" || profile.status === "needs_info")}
+                    />
                   </div>
                 )}
               </div>

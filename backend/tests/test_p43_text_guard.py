@@ -185,14 +185,19 @@ async def test_ai_outage_holds_new_accounts_but_not_established_ones(guard, sess
 async def test_compliance_auto_replies_are_never_screened(guard, session, guard_settings):
     client, carrier, fake, _app = guard
     token, org = await _org(client)
+    from app.compliance import service as compliance_svc
+
     set_org_context(session, uuid.UUID(org["id"]))
+    body = await compliance_svc.auto_reply_body(
+        session, uuid.UUID(org["id"]), compliance_svc.KeywordHit("opt_out", "STOP")
+    )
     message = await messaging_svc.send_message(
         session,
         uuid.UUID(org["id"]),
         carrier,
         to_e164=TO,
         from_e164="+15125550100",
-        body="You are unsubscribed. Reply START to resubscribe.",
+        body=body,
         exemption="auto_reply",
     )
     assert message.status == "accepted"

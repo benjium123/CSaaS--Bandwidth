@@ -81,9 +81,23 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
             return None
 
         async def exam(s):  # noqa: ANN001, ANN202
-            if await monitor_exam.due(s, "exam", timedelta(days=7)):
-                return (await monitor_exam.exam_tick(s, settings)).passed
-            return None
+            # The weekly exam takes minutes: run it beside the sweeper, never inside it.
+            if getattr(app.state, "_monitor_exam_task", None) is not None and not (
+                app.state._monitor_exam_task.done()
+            ):
+                return "running"
+            if not await monitor_exam.due(s, "exam", timedelta(days=7)):
+                return None
+
+            async def _run_exam() -> None:
+                try:
+                    async with get_sessionmaker()() as exam_session:
+                        await monitor_exam.exam_tick(exam_session, settings)
+                except Exception:
+                    log.exception("monitor_exam_failed")
+
+            app.state._monitor_exam_task = asyncio.create_task(_run_exam())
+            return "started"
 
         jobs += [("canary", canary), ("exam", exam)]
     for label, job in jobs:

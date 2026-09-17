@@ -29,6 +29,7 @@ from app.services import ai_guard, kyc_documents
 log = structlog.get_logger("kyc_doc_reader")
 
 MAX_PDF_PAGES = 2
+MAX_RENDER_PIXELS = 2200  # longest side of a rendered page
 PDF_TEXT_ENOUGH = 200  # characters: a digital PDF; fewer = scanned, render the pages
 ACCEPTED_ADDRESS_PROOF = (
     "utility_bill",
@@ -117,7 +118,11 @@ def _pdf_parts(data: bytes) -> tuple[str, list[dict]]:
 
         pdf = pdfium.PdfDocument(data)
         for index in range(min(len(pdf), MAX_PDF_PAGES)):
-            bitmap = pdf[index].render(scale=1.6)
+            page = pdf[index]
+            width, height = page.get_size()  # PDF points
+            # Cap the rendered size: a huge page must not allocate gigabytes.
+            scale = min(1.6, MAX_RENDER_PIXELS / max(width, height, 1.0))
+            bitmap = page.render(scale=scale)
             buffer = io.BytesIO()
             bitmap.to_pil().save(buffer, "PNG")
             images.append(ai_guard.image_part(buffer.getvalue(), "image/png"))
@@ -235,7 +240,11 @@ async def review_document(
         )
     except ai_guard.AIUnavailable as exc:
         document.review_result = "error"
-        document.review = {"error": str(exc)[:200], "reasons": ["Automatic review is unavailable."]}
+        document.review = {
+            "error": str(exc)[:200],
+            "ai_unavailable": True,
+            "reasons": ["Automatic review is unavailable."],
+        }
         document.reviewed_at = now
         return document
     result, reasons = decide(settings, document, judgement.data)

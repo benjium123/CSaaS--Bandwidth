@@ -160,6 +160,26 @@ def update_business(settings: Settings, profile: KycProfile, data: dict) -> None
             setattr(profile, field, data[field])
 
 
+#: Changing any of these means the AI's read of the company documents no longer applies.
+COMPANY_DOC_FIELDS = ("legal_name", "dba_name", "registration_number", "tax_id", "country")
+COMPANY_DOC_KINDS = ("registration_certificate", "articles", "tax_id_letter")
+
+
+async def reset_document_reviews(
+    session: AsyncSession, org_id: uuid.UUID, *, kinds: tuple[str, ...], person_id=None
+) -> int:
+    """P43: a document reviewed against old details must be read again."""
+    stmt = sa.select(KycDocument).where(KycDocument.org_id == org_id, KycDocument.kind.in_(kinds))
+    if person_id is not None:
+        stmt = stmt.where(KycDocument.person_id == person_id)
+    rows = (await session.execute(stmt)).scalars().all()
+    for row in rows:
+        row.review_result = None
+        row.review = None
+        row.reviewed_at = None
+    return len(rows)
+
+
 def update_use_case(settings: Settings, profile: KycProfile, data: dict) -> str:
     """Returns "applied" or "pending_review" (a change to an approved business waits for an
     operator and keeps the approved use case in force meanwhile)."""
@@ -229,10 +249,16 @@ async def add_person(
     return row
 
 
-def set_residential_address(profile: KycProfile, person: KycPerson, address: dict) -> None:
+async def set_residential_address(
+    session: AsyncSession, profile: KycProfile, person: KycPerson, address: dict
+) -> None:
     """P43: owners declare where they live now; a proof of address must match it."""
     _require_editable(profile)
-    person.residential_address = address
+    if person.residential_address != address:
+        person.residential_address = address
+        await reset_document_reviews(
+            session, profile.org_id, kinds=("proof_of_address",), person_id=person.id
+        )
 
 
 async def get_person(session: AsyncSession, org_id: uuid.UUID, person_id: uuid.UUID) -> KycPerson:
@@ -422,7 +448,10 @@ async def missing_for_submission(session: AsyncSession, profile: KycProfile) -> 
         missing.append("proof_of_address")
     documents = (
         await session.execute(
-            sa.select(sa.func.count(KycDocument.id)).where(KycDocument.org_id == profile.org_id)
+            # P43: an owner's proof of address is not a business document.
+            sa.select(sa.func.count(KycDocument.id)).where(
+                KycDocument.org_id == profile.org_id, KycDocument.kind != "proof_of_address"
+            )
         )
     ).scalar_one()
     if not documents:

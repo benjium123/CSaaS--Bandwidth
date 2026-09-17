@@ -154,6 +154,18 @@ async def report_number(
             .execution_options(**{ALLOW_UNSCOPED_KEY: True})
         )
     ).scalar_one_or_none()
+    # One report per number per sender address per day: repeating it adds nothing.
+    repeat = (
+        await session.execute(
+            sa.select(NumberReport.id).where(
+                NumberReport.reported_e164 == e164[:20],
+                NumberReport.ip == ip[:64],
+                NumberReport.created_at >= _now() - timedelta(days=1),
+            )
+        )
+    ).first()
+    if repeat is not None:
+        return {"received": True}
     session.add(
         NumberReport(
             id=uuid.uuid4(),
@@ -176,6 +188,19 @@ message), given what the business says it does.
 
 Return JSON: {"credible": true|false, "category": "scam"|"fraud"|"harassment"|"spam"|
 "legitimate"|"unclear", "summary": "one sentence"}"""
+
+
+async def _report_signals_today(session: AsyncSession, org_id: uuid.UUID) -> int:
+    set_org_context(session, org_id)
+    return (
+        await session.execute(
+            sa.select(sa.func.count(MonitorSignal.id)).where(
+                MonitorSignal.org_id == org_id,
+                MonitorSignal.kind == "public_report",
+                MonitorSignal.created_at >= _now() - timedelta(days=1),
+            )
+        )
+    ).scalar_one()
 
 
 async def assess_reports_tick(session: AsyncSession, settings) -> int:  # noqa: ANN001
@@ -225,7 +250,12 @@ async def assess_reports_tick(session: AsyncSession, settings) -> int:  # noqa: 
             "category": str(data.get("category") or "unclear")[:32],
             "summary": str(data.get("summary") or "")[:300],
         }
-        if report.assessment["credible"] and report.assessment["category"] != "legitimate":
+        if (
+            report.assessment["credible"]
+            and report.assessment["category"] != "legitimate"
+            and await _report_signals_today(session, report.org_id)
+            < monitor_score.PUBLIC_REPORT_DAILY_CAP
+        ):
             await monitor_score.add_signal(
                 session,
                 settings,

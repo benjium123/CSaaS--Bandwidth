@@ -48,3 +48,12 @@ def test_phone_side_is_user_and_browser_side_is_agent() -> None:
     assert role_for_participant(kind=sip, attributes={}, sip_kind=sip) == "user"
     assert role_for_participant(kind=None, attributes={"sip.callID": "abc"}, sip_kind=sip) == "user"
     assert role_for_participant(kind="standard", attributes={}, sip_kind=sip) == "agent"
+
+
+def test_announcement_waits_for_the_phone_to_answer() -> None:
+    from agents.worker_config import sip_call_active
+
+    assert sip_call_active({"sip.callStatus": "ringing"}) is False
+    assert sip_call_active({"sip.callStatus": "dialing"}) is False
+    assert sip_call_active({"sip.callStatus": "active"}) is True
+    assert sip_call_active({}) is True

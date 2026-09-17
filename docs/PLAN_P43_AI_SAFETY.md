@@ -47,9 +47,12 @@ one retry, untrusted content always tagged as data, never fails open. `llm_clien
   approve (applies suggested limits) / ask for info (prefilled) / reject.
 
 **Slice 3 — AI text guard** `services/monitor_text.py`, `services/monitor_rules.py`
-At dispatch (every send path): exempt auto-replies → cached verdict per normalised body → rules
+At dispatch (every send path): the platform's unedited STOP/START/HELP replies are exempt (an
+edited reply, or one whose workspace name or help contact carries a link or phone number, is
+screened) → cached verdict per normalised body → rules
 block clear scams → AI allow/hold/block vs declared business → outage: hold new/flagged
-accounts, send + re-check later for established ones. Held texts get a stricter second AI look;
+accounts, send + re-check later for established ones. Link tracking screens the original links
+before they are replaced. The cache key keeps digits in links and phone numbers. Held texts get a stricter second AI look;
 cleared texts go out through the normal release (compliance re-checked).
 
 **Slice 4 — calls** `services/monitor_calls.py`, `agents/call_monitor.py`
@@ -62,7 +65,11 @@ Signals: blocked/confirmed texts, suspicious/scam calls, short calls, no-answer 
 spikes, STOP rate, carrier spam rejections, complaint replies, public reports. Levels: watch (30)
 → restricted (60, daily caps) → paused (100, telephony refused, AI case file, owners emailed,
 customer can appeal). Operators unpause or suspend+ban; decisions become labels.
-Public `/report` page.
+Public `/report` page. Outsider signals (public reports, complaint replies) are capped (2 reports
+a day count; one per number+IP per day) and can reach "restricted" at most: a pause always needs
+platform-observed evidence (blocked texts, scam calls, carrier data).
+AI outages never stall the sweeper: every AI job has a time budget and stops calling the AI for
+the rest of a pass once it fails (pauses still email owners without a case file).
 
 **Slice 6 — proof it works** `services/monitor_exam.py`, `scripts/monitor_exam.py`
 38-case library (texts + calls) plus operator labels, run through the live judgement functions.
@@ -72,9 +79,18 @@ health, daily numbers, flagged accounts, held texts.
 
 ## Tests
 `test_p43_auth_fixes.py`, `test_p43_kyc_automation.py`, `test_p43_text_guard.py`,
-`test_p43_call_monitoring.py`, `test_p43_monitoring_ops.py`, updated P41/P42 suites,
+`test_p43_call_monitoring.py`, `test_p43_monitoring_ops.py`, `test_p43_monitor_fixes.py`
+(second bug hunt), updated P41/P42 suites,
 `agents/tests/test_worker_config.py`, frontend `P43Monitoring.test.tsx`. Tests use a fake
 safety AI (`tests/fake_ai.py`); migrations 0050/0051 verified up/down/up on Postgres.
+
+## Live demo (2026-09-17, local, real DeepSeek)
+Wrong-person 8-month-old bill → fail with 3 reasons; matching bill and certificate → pass;
+decision pack recommended "needs info" (placeholder website) and nothing was approved until the
+operator clicked; approved business: normal text sent, bank-phishing and IRS gift-card texts
+blocked; after 4 blocked scams the account paused, a normal text was refused
+(`account_paused`), the console showed the appeal banner and the AI case file quoted all four
+texts. (Stripe ID was simulated: no Stripe keys locally.)
 
 ## Not done / limits
 - Paid US registry: none under $0.50/lookup was confirmed; a provider can be added behind

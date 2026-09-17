@@ -92,11 +92,20 @@ export function OwnerResidence({
     api.request(`/api/v1/kyc/documents/${id}`, { method: "DELETE" }),
   );
 
-  // While the AI is reading an upload, refresh a few times so the result appears by itself.
+  // While the AI is reading an upload, refresh a few times so the result appears by itself
+  // (at most ~2 minutes - a review that takes longer shows up on the next visit).
   const refresh = useKycMutation(api, async () => undefined);
   React.useEffect(() => {
     if (!reviewing) return;
-    const timer = window.setInterval(() => refresh.mutate(undefined), 4000);
+    let polls = 0;
+    const timer = window.setInterval(() => {
+      polls += 1;
+      if (polls > 30) {
+        window.clearInterval(timer);
+        return;
+      }
+      refresh.mutate(undefined);
+    }, 4000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewing]);

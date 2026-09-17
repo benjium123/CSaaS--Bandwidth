@@ -158,7 +158,8 @@ function HeldTexts() {
 }
 
 function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
-  const { api } = useAuth();
+  const { api, me } = useAuth();
+  const isAdmin = me?.operator_role === "admin";
   const q = useQuery({
     queryKey: ["ops", "monitoring", "case", orgId],
     queryFn: () => api.request<CaseDetail>(`/api/v1/ops/monitoring/orgs/${orgId}`),
@@ -236,6 +237,7 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
         </Card>
       )}
 
+      {isAdmin ? (
       <Card className="space-y-2">
         <p className="text-sm font-medium">Decide</p>
         <Textarea aria-label="Decision note" rows={2} placeholder="What you checked and why" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -250,6 +252,9 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
         <p className="text-xs text-muted-foreground">Your decision also teaches the monitor: the texts and calls below are saved as examples for its exam.</p>
         {act.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(act.error)}</p>}
       </Card>
+      ) : (
+        <p className="text-xs text-muted-foreground">Only admin operators can unpause or suspend an account.</p>
+      )}
 
       <Card className="space-y-2">
         <p className="text-sm font-medium">Signals (last 30 days)</p>

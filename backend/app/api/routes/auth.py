@@ -77,6 +77,9 @@ class MeOut(BaseModel):
     totp_enabled: bool = False
     has_passkey: bool = False
     is_platform_operator: bool = False
+    #: P43: "reviewer" or "admin" for platform operators, so the console only offers what
+    #: the operator may actually do.
+    operator_role: str | None = None
     #: P41: true while this account must still add an authenticator app or passkey.
     second_factor_required: bool = False
     #: P42: privileged account that must use passkeys; grace end while it may still not.
@@ -316,13 +319,15 @@ async def me(
             permissions = sorted(PERMISSIONS)
         else:
             permissions = sorted(set(role.permissions or []))
+    operator = await operators_svc.get_active(session, user.id)
     return MeOut(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
         has_passkey=user.has_passkey,
-        is_platform_operator=await operators_svc.is_operator(session, user.id),
+        is_platform_operator=operator is not None,
+        operator_role=operator.role if operator is not None else None,
         second_factor_required=bool(
             request.app.state.settings.require_2fa_all_users and not user.has_second_factor
         ),

@@ -297,6 +297,37 @@ def _interpolate(text: str, org_name: str, help_contact: str) -> str:
     return text.replace("{org}", org_name).replace("{help_contact}", help_contact or "support")
 
 
+async def is_standard_auto_reply(session: AsyncSession, org_id: uuid.UUID, body: str) -> bool:
+    """P43: is this exactly one of the PLATFORM's default STOP/START/HELP replies? Only those
+    skip the AI text guard - a business can edit its reply texts (and its help contact), and
+    an edited reply must be screened like any other text."""
+    from app.models.compliance import ComplianceSettings
+
+    settings = await get_settings(session, org_id)
+    org_name = await _org_name(session, org_id)
+    from app.services import monitor_rules
+
+    if monitor_rules.extract_links(org_name) or sum(ch.isdigit() for ch in org_name) >= 5:
+        return False  # the workspace name is customer-controlled too (a link or phone number)
+    for column in ("optout_text", "optin_text", "help_text"):
+        default = ComplianceSettings.__table__.c[column].default
+        template = getattr(default, "arg", None)
+        if not isinstance(template, str):
+            continue
+        help_contact = settings.help_contact if column == "help_text" else ""
+        if column == "help_text" and help_contact and not _plain_contact(help_contact):
+            continue  # a help contact that is a link or free text must be screened
+        if _interpolate(template, org_name, help_contact) == body:
+            return True
+    return False
+
+
+def _plain_contact(value: str) -> bool:
+    import re
+
+    return bool(re.fullmatch(r"[\w.+-]+@[\w-]+(\.[\w-]+)+|\+?[\d\s().-]{7,20}", value.strip()))
+
+
 async def auto_reply_body(
     session: AsyncSession, org_id: uuid.UUID, hit: KeywordHit
 ) -> str | None:

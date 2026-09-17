@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,7 @@ from app.models import KycCheck, KycDocument, KycProfile
 from app.services import ai_guard, kyc_checks
 
 RECOMMENDATIONS = ("approve", "needs_info", "reject")
+ERROR_BACKOFF = timedelta(minutes=15)
 
 SYSTEM = """You are the senior compliance analyst for a telecom company that sells phone
 numbers, calling and texting to businesses in the US, Canada and UK. Scammers try to sign up
@@ -229,12 +231,16 @@ async def generate_if_stale(
     application = await build_application(session, settings, profile)
     digest = fingerprint(application)
     previous = await latest_decision(session, profile.org_id)
-    if (
-        previous is not None
-        and (previous.detail or {}).get("input_hash") == digest
-        and previous.result != "error"
-    ):
-        return None
+    if previous is not None and (previous.detail or {}).get("input_hash") == digest:
+        if previous.result != "error":
+            return None
+        # The AI failed on this exact application recently: back off instead of calling it
+        # again every two minutes.
+        created = previous.created_at
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created is not None and datetime.now(timezone.utc) - created < ERROR_BACKOFF:
+            return None
     try:
         judgement = await ai_guard.judge(
             settings,
@@ -247,6 +253,7 @@ async def generate_if_stale(
         pack = _normalize(judgement.data)
     except ai_guard.AIUnavailable as exc:
         if previous is not None and previous.result == "error":
+            previous.created_at = datetime.now(timezone.utc)  # restart the back-off
             return None  # don't pile up error rows every tick
         return kyc_checks._record(
             session,

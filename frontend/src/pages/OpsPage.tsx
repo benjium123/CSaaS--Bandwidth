@@ -199,7 +199,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
             if (Object.keys(chosen).length > 0) {
               await action.mutateAsync({
                 path: `${base}/limits`,
-                json: { deposit_required_cents: app.deposit_required_cents, limits: chosen },
+                json: { deposit_required_cents: app.deposit_required_cents, limits: { ...(app.limits ?? {}), ...chosen } },
               });
             }
             run("approve", { note: approveNote });

@@ -224,13 +224,20 @@ async def put_business(
     payload: BusinessIn,
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    background: BackgroundTasks,
 ) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     data = payload.model_dump(exclude_unset=True, mode="python")
     for key in ("registered_address", "operating_address"):
         if isinstance(data.get(key), dict):
             data[key]["country"] = data[key]["country"].upper()
+    before = {f: getattr(profile, f) for f in kyc_svc.COMPANY_DOC_FIELDS}
     kyc_svc.update_business(request.app.state.settings, profile, data)
+    if any(getattr(profile, f) != before[f] for f in kyc_svc.COMPANY_DOC_FIELDS):
+        await kyc_svc.reset_document_reviews(
+            ctx.session, ctx.org.id, kinds=kyc_svc.COMPANY_DOC_KINDS
+        )
+        background.add_task(_run_automation, request.app, ctx.org.id, True)
     await ctx.session.commit()
     return await _profile_out(ctx.session, profile)
 
@@ -295,11 +302,14 @@ def _address_dict(address: AddressIn) -> dict:
 async def set_person_address(
     person_id: uuid.UUID,
     payload: AddressIn,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    background: BackgroundTasks,
 ) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     person = await kyc_svc.get_person(ctx.session, ctx.org.id, person_id)
-    kyc_svc.set_residential_address(profile, person, _address_dict(payload))
+    await kyc_svc.set_residential_address(ctx.session, profile, person, _address_dict(payload))
+    background.add_task(_run_automation, request.app, ctx.org.id, True)
     await ctx.session.commit()
     return _person_out(person)
 
@@ -394,6 +404,11 @@ async def _run_automation(app, org_id: uuid.UUID, reviews_only: bool) -> None:
                 http_client=getattr(app.state, "kyc_http_client", None),
                 reviews_only=reviews_only,
             )
+    except kyc_automation.AIDown:
+        import structlog
+
+        # expected during an AI outage: the documents are marked and the sweeper retries
+        structlog.get_logger("kyc").warning("kyc_automation_background_ai_down", org_id=str(org_id))
     except Exception:  # noqa: BLE001 - the sweeper retries anything left pending
         import structlog
 

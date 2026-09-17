@@ -624,8 +624,13 @@ async def require_platform_operator(
         # P43: operators in the browser authenticate with the session cookie since P42.
         from app.services import operators as operators_svc
 
-        user = await get_current_user(request, creds, session)
-        if await operators_svc.get_active(session, user.id) is not None:
+        try:
+            user = await get_current_user(request, creds, session)
+        except (UnauthenticatedError, PermissionDeniedError):
+            # A non-operator (or expired) browser session on this route gets the same 403
+            # as a wrong token - never a 401, which would sign the operator console out.
+            user = None
+        if user is not None and await operators_svc.get_active(session, user.id) is not None:
             await _operator_check(request, session, user, "admin")
             return
     if not configured:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -35,6 +36,8 @@ from app.services import ai_guard, monitor_rules, monitor_score
 log = structlog.get_logger("monitor_text")
 
 VERDICT_TTL = timedelta(days=7)
+#: A sweeper tick never spends longer than this on AI calls.
+TICK_BUDGET_SECONDS = 60
 UNCHECKED_TTL = timedelta(hours=1)
 
 PUBLIC_BLOCKED = "Not sent - this message looks like a scam and was blocked by our safety checks."
@@ -88,10 +91,25 @@ def _aware(value: datetime | None) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
+_KEEP_DIGITS = re.compile(
+    # links and phone numbers: where a message sends people is what the verdict is about
+    r"(?i)(https?://\S+|www\.\S+|[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/\S*)?|\+?\d[\d\s().-]{6,}\d)"
+)
+
+
 def normalise(body: str) -> str:
-    """Numbers (codes, amounts, dates) and spacing don't change what a message is."""
-    text = re.sub(r"\d", "#", (body or "").lower())
-    return re.sub(r"\s+", " ", text).strip()
+    """Codes, amounts and dates don't change what a message is; links and phone numbers do,
+    so their digits are kept (a clean verdict must never carry over to a different number
+    or domain)."""
+    text = (body or "").lower()
+    parts: list[str] = []
+    last = 0
+    for match in _KEEP_DIGITS.finditer(text):
+        parts.append(re.sub(r"\d", "#", text[last : match.start()]))
+        parts.append(match.group(0))
+        last = match.end()
+    parts.append(re.sub(r"\d", "#", text[last:]))
+    return re.sub(r"\s+", " ", "".join(parts)).strip()
 
 
 def body_hash(body: str) -> str:
@@ -133,24 +151,47 @@ async def _store(
     tokens: tuple[int, int] = (0, 0),
     ttl: timedelta = VERDICT_TTL,
 ) -> None:
-    set_org_context(session, org_id)
-    row = (
-        await session.execute(
-            sa.select(TextVerdict).where(
-                TextVerdict.org_id == org_id, TextVerdict.body_hash == digest
+    from sqlalchemy.exc import IntegrityError
+
+    values = {
+        "verdict": screening.action,
+        "category": screening.category[:32],
+        "reason": screening.reason[:500],
+        "source": screening.source,
+        "confidence": confidence,
+        "tokens_in": tokens[0],
+        "tokens_out": tokens[1],
+        "expires_at": _now() + ttl,
+    }
+
+    async def _existing() -> TextVerdict | None:
+        set_org_context(session, org_id)
+        return (
+            await session.execute(
+                sa.select(TextVerdict).where(
+                    TextVerdict.org_id == org_id, TextVerdict.body_hash == digest
+                )
             )
-        )
-    ).scalar_one_or_none()
+        ).scalar_one_or_none()
+
+    row = await _existing()
     if row is None:
-        row = TextVerdict(id=uuid.uuid4(), org_id=org_id, body_hash=digest)
-        session.add(row)
-    row.verdict = screening.action
-    row.category = screening.category[:32]
-    row.reason = screening.reason[:500]
-    row.source = screening.source
-    row.confidence = confidence
-    row.tokens_in, row.tokens_out = tokens
-    row.expires_at = _now() + ttl
+        # Written (flushed) NOW, inside a savepoint: two sends of the same new text racing
+        # must not surface a unique-constraint error at the commit AFTER the carrier call.
+        try:
+            async with session.begin_nested():
+                session.add(
+                    TextVerdict(id=uuid.uuid4(), org_id=org_id, body_hash=digest, **values)
+                )
+                await session.flush()
+            return
+        except IntegrityError:
+            row = await _existing()
+            if row is None:
+                return
+    for key, value in values.items():
+        setattr(row, key, value)
+    await session.flush()
 
 
 async def business_context(session: AsyncSession, org_id: uuid.UUID) -> dict:
@@ -349,6 +390,8 @@ async def second_look_tick(
         .scalars()
         .all()
     )
+    started = time.monotonic()
+    ai_down = False
     for message in held:
         org_id = message.org_id
         set_org_context(session, org_id)
@@ -356,10 +399,15 @@ async def second_look_tick(
         digest = body_hash(message.body or "")
         cached = await _cached(session, org_id, digest)
         decided: Screening | None = None
+        # When the AI is down (or this pass has run long) the rest of the batch only gets
+        # the cheap expiry check - the sweeper must not stall on a slow AI.
+        out_of_time = time.monotonic() - started > TICK_BUDGET_SECONDS
         if cached is not None and cached.source in ("second_look", "operator"):
             decided = Screening(
                 action=cached.verdict, reason=cached.reason or "", source=cached.source
             )
+        elif ai_down or out_of_time:
+            decided = None
         else:
             rules = monitor_rules.evaluate(
                 message.body or "", trusted_hosts=trusted_hosts(settings)
@@ -371,6 +419,7 @@ async def second_look_tick(
                 await _store(session, org_id, digest, decided, confidence=confidence, tokens=tokens)
             except ai_guard.AIUnavailable:
                 decided = None
+                ai_down = True
         if decided is None:
             if _now() - created > timedelta(hours=settings.monitor_hold_max_hours):
                 message.status = "rejected"
