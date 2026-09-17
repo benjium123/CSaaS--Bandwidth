@@ -11,10 +11,19 @@ rtc:
   # The VPS has a static public IP; advertising it directly beats STUN round-trips.
   use_external_ip: true
   # Under network_mode: host LiveKit enumerates EVERY host interface, including the
-  # 172.x docker bridges of the other tenants' stacks, and advertised all of them as
-  # external IPs (seen live 2026-09-09: nine candidates, one real). Dead candidates
-  # slow ICE and can be selected first. Pin the advertised node IP and restrict
-  # candidate gathering to the public NIC.
+  # 172.x docker bridges of the other tenants' stacks (seen 2026-09-09, still true
+  # 2026-09-18: the startup "using external IPs" line lists nine, one real).
+  # VERIFIED 2026-09-18 here and on rei-crm's separate instance - what each setting
+  # actually does, because the earlier comment claimed more than it delivered:
+  #   - node_ip DOES work: the announced node IP is the public one.
+  #   - interfaces.includes does NOT filter that enumeration - the line is identical
+  #     with and without it. Never read this block as "the bridges are gone".
+  #   - What reaches a browser IS clean: real call logs show only 144.126.152.175
+  #     (udp + tcp 7881) and the host's public IPv6 as local candidates, no 172.x.
+  #     So the noisy startup line is cosmetic today, not a live ICE problem.
+  # Trap if you ever switch to rtc.ips.includes: it needs CIDR. A bare
+  # 144.126.152.175 fails with "invalid CIDR address", and compose then restart-loops
+  # the container instead of failing loudly. Use 144.126.152.175/32.
   node_ip: 144.126.152.175
   interfaces:
     includes:
