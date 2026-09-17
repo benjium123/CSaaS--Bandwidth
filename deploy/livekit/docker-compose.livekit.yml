@@ -113,3 +113,26 @@ services:
     mem_limit: 8g
     depends_on: [livekit]
     logging: *default-logging
+
+  # P43 call-monitor: the silent listener that transcribes softphone calls chosen for
+  # safety monitoring (backend services/monitor_calls.py dispatches it by agent name). Same
+  # image as the AI worker; it only needs LiveKit, the backend, Deepgram and ElevenLabs
+  # (for the one-line monitoring announcement).
+  call-monitor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+    restart: unless-stopped
+    command: ["python", "-m", "agents.call_monitor", "start"]
+    env_file: [../.env]
+    environment:
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: csaas-media
+      BACKEND_URL: http://127.0.0.1:8080
+      # MUST match the backend's MONITOR_AGENT_NAME (services/monitor_calls.py).
+      MONITOR_AGENT_NAME: ${MONITOR_AGENT_NAME:-call-monitor}
+    network_mode: host
+    cpus: "2"
+    mem_limit: 2g
+    depends_on: [livekit]
+    logging: *default-logging

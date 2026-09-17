@@ -39,6 +39,7 @@ REFUSAL_PUBLIC_TEXT = {
     "account_not_verified": "Not sent - texting unlocks once your business is verified.",
     "account_suspended": "Not sent - this account is suspended.",
     "daily_limit_reached": "Not sent - today's texting limit for this account was reached.",
+    "account_paused": "Not sent - calling and texting are paused while we review this account.",
 }
 
 
@@ -67,7 +68,14 @@ async def refusal(
     now: datetime | None = None,
 ) -> str | None:
     """None when allowed, else a machine code: account_not_verified, account_suspended,
-    daily_limit_reached, number_limit_reached, deposit_required."""
+    account_paused, daily_limit_reached, number_limit_reached, deposit_required."""
+    # P43: the traffic monitor's automatic pause / restriction applies whether or not
+    # business verification is enforced.
+    from app.services import monitor_score
+
+    monitored = await monitor_score.refusal(session, settings, org_id, kind)
+    if monitored is not None:
+        return monitored
     if not settings.kyc_enforced:
         return None
     profile = await _profile(session, org_id)
@@ -136,6 +144,12 @@ def _raise_for(code: str) -> None:
             "This account reached today's limit. It resets at midnight UTC, or ask support "
             "to raise it.",
             code="daily_limit_reached",
+        )
+    if code == "account_paused":
+        raise PermissionDeniedError(
+            "Calling and texting are paused while our team reviews recent activity on this "
+            "account. You can send us an explanation from the console.",
+            code="account_paused",
         )
     if code == "number_limit_reached":
         raise PermissionDeniedError(

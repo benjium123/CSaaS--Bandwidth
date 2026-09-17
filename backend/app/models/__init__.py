@@ -72,6 +72,18 @@ from app.models.credentials import (
     RecoveryCode,
 )
 from app.models.enterprise_sso import OrgDomain, ScimToken
+from app.models.monitoring import (
+    CALL_REVIEW_STATUSES,
+    MODERATION_STATES,
+    MONITOR_LEVELS,
+    CallReview,
+    MonitorHealth,
+    MonitorLabel,
+    MonitorSignal,
+    NumberReport,
+    OrgMonitoring,
+    TextVerdict,
+)
 from app.models.identity import LOGIN_OUTCOMES, LoginEvent, Session
 from app.models.inbox_pro import NOTIFICATION_KINDS, Notification, ThreadNote
 from app.models.inboxes import (
@@ -209,6 +221,16 @@ from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
 __all__ = [
     "OrgDomain",
+    "CALL_REVIEW_STATUSES",
+    "MODERATION_STATES",
+    "MONITOR_LEVELS",
+    "CallReview",
+    "MonitorHealth",
+    "MonitorLabel",
+    "MonitorSignal",
+    "NumberReport",
+    "OrgMonitoring",
+    "TextVerdict",
     "ScimToken",
     "ACCOUNT_AUDIT_ACTIONS",
     "AccountAuditEntry",

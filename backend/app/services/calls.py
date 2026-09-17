@@ -311,8 +311,19 @@ async def create_outbound_call(
     # first minutes (committed with the rows just below).
     await telephony_access.require_telephony_allowed(session, org_id, "call")
     await telephony_billing.require_call_credit(session, org_id, call)
+    # P43: monitored calls are recorded (announcement first) and reviewed by the safety AI.
+    from app.services import monitor_calls
+
+    monitor_reason = await monitor_calls.choose(
+        session, telephony_access._settings_of(session), org_id
+    )
+    if monitor_reason is not None:
+        monitor_calls.mark(call, monitor_reason, record=True)
     session.add(call)
     session.add(leg)
+    if monitor_reason is not None:
+        await session.flush()
+        await monitor_calls.queue_review(session, call, monitor_reason)
     # 3.19: make the queued rows durable BEFORE carrier I/O - a crash mid-dial must
     # never lose the row entirely, only leave it stuck queued (recovered elsewhere).
     await session.commit()

@@ -73,6 +73,20 @@ class FakeSafetyAI:
             "evidence": [],
             "category": "none",
         }
+        self.report: dict = {
+            "credible": True,
+            "category": "scam",
+            "summary": "Caller demanded gift cards.",
+        }
+        self.case_file: dict = {
+            "summary": "Repeated scam traffic.",
+            "what_they_claim": "Plumbing reminders",
+            "what_we_saw": ["Blocked scam texts"],
+            "evidence_quotes": [],
+            "false_alarm_signs": [],
+            "recommendation": "keep_paused",
+            "confidence": 80,
+        }
         self.generic: dict = {}
 
     def _answer(self, payload: dict) -> dict:
@@ -89,6 +103,10 @@ class FakeSafetyAI:
             return self.text_verdict(text)
         if "call transcript" in system:
             return self.call_verdict(text)
+        if "triage reports" in system:
+            return self.report
+        if "fraud investigator" in system:
+            return self.case_file if not self.generic else self.generic
         return self.generic
 
     def handler(self, request: httpx.Request) -> httpx.Response:

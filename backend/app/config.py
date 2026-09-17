@@ -231,6 +231,9 @@ class Settings(BaseSettings):
     livekit_api_secret: SecretStr = SecretStr("")
     #: SIP trunk id configured in livekit-sip for OUTBOUND calls (lk sip outbound create).
     livekit_sip_outbound_trunk_id: str = ""
+    #: P40: a second outbound trunk that reaches the PSTN through a SignalWire SIP domain
+    #: app. Calls from a signalwire number use it; everything else keeps the Telnyx trunk.
+    livekit_sip_signalwire_trunk_id: str = ""
 
     signalwire_enabled: bool | None = None
     signalwire_project_id: str = ""
@@ -304,6 +307,24 @@ class Settings(BaseSettings):
     #: Off = every AI check reports "unavailable" and the fail-safe rules apply.
     ai_guard_enabled: bool = True
     ai_guard_timeout_seconds: float = 20.0
+    #: P43 traffic monitoring. Off = texts/calls are not screened and nothing is paused.
+    monitor_enforced: bool = True
+    #: The pre-send text check waits at most this long for the AI.
+    monitor_text_ai_timeout_seconds: float = 6.0
+    #: New accounts get the strictest treatment (AI outage = hold; every call reviewed).
+    monitor_new_account_days: int = 60
+    #: Share of calls reviewed for established, normal-level accounts.
+    monitor_call_sample_percent: int = 20
+    #: Held texts not cleared by then are rejected.
+    monitor_hold_max_hours: int = 24
+    #: Risk score thresholds (sum of signal weights over the window).
+    monitor_watch_score: int = 30
+    monitor_restrict_score: int = 60
+    monitor_pause_score: int = 100
+    monitor_signal_window_days: int = 30
+    #: Daily caps while restricted (when the business has no lower limit of its own).
+    monitor_restricted_daily_texts: int = 200
+    monitor_restricted_daily_calls: int = 100
     groq_api_key: SecretStr = SecretStr("")
     google_api_key: SecretStr = SecretStr("")
 
@@ -323,6 +344,8 @@ class Settings(BaseSettings):
     # P23b: the LiveKit agent_name the assistant worker registers under. The dispatch
     # falls back to "ai-agent" when unset, which is what deploy/livekit/README documents.
     ai_agent_name: str = "ai-agent"
+    #: P43: the silent call-monitor listener worker (agents/call_monitor.py).
+    monitor_agent_name: str = "call-monitor"
 
     # ---------------- media / storage ----------------
     media_store_backend: str = "local"   # local | memory | s3 (s3 raises until P5)
@@ -552,7 +575,9 @@ class Settings(BaseSettings):
             {
                 "LIVEKIT_URL": self.livekit_url,
                 "LIVEKIT_API_SECRET": self.livekit_api_secret,
-                "LIVEKIT_SIP_OUTBOUND_TRUNK_ID": self.livekit_sip_outbound_trunk_id,
+                # Either trunk makes calling possible.
+                "LIVEKIT_SIP_OUTBOUND_TRUNK_ID": self.livekit_sip_outbound_trunk_id
+                or self.livekit_sip_signalwire_trunk_id,
             },
         )
         keyed(

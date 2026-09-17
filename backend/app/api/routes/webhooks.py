@@ -342,7 +342,11 @@ def _outbound_answer_commands(call, org, *, needs_pause: bool) -> list[VoiceComm
     needs the Pause.
     """
     commands: list[VoiceCommand] = []
-    if org is not None and calling_settings_svc.announcement_enabled(org):
+    # P43: a call recorded for safety monitoring ALWAYS tells the other side first, even
+    # when the business turned its own announcement off (two-party consent states).
+    if org is not None and (
+        calling_settings_svc.announcement_enabled(org) or (call.extra or {}).get("monitor")
+    ):
         commands.append(Speak(text=calling_settings_svc.announcement_text_for(org)))
     if call.extra.get("record"):
         commands.append(StartRecording())
@@ -648,6 +652,16 @@ async def livekit_webhook(
         )
     except Exception:  # noqa: BLE001 - the ack must not depend on a dispatch
         log.exception("assistant_dispatch_hook_failed", event_type=event.get("event"))
+
+    # P43: monitored softphone calls get the silent call-monitor listener.
+    try:
+        from app.services import monitor_calls
+
+        await monitor_calls.on_livekit_event(
+            session, request.app.state.livekit, settings, event
+        )
+    except Exception:  # noqa: BLE001 - monitoring must never fail the webhook ack
+        log.exception("call_monitor_hook_failed", event_type=event.get("event"))
 
     return JSONResponse(status_code=200, content={"status": "ok"})
 

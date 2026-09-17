@@ -33,6 +33,7 @@ from app.api.routes import links as links_routes
 from app.api.routes import me as me_routes
 from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
+from app.api.routes import monitoring as monitoring_routes
 from app.api.routes import numbers as number_routes
 from app.api.routes import ops as ops_routes
 from app.api.routes import orgs as org_routes
@@ -263,6 +264,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(saml_routes.router)
     app.include_router(enterprise_sso_routes.router)
     app.include_router(scim_routes.router)
+    app.include_router(monitoring_routes.customer_router)
+    app.include_router(monitoring_routes.public_router)
+    app.include_router(monitoring_routes.ops_router)
     app.include_router(number_routes.router)
     app.include_router(telephony_routes.router)
     app.include_router(contact_routes.router)

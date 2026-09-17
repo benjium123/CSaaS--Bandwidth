@@ -35,6 +35,64 @@ SPEND_TICK_INTERVAL_SECONDS = 3600
 #: P41: trust & safety housekeeping, and the (large) sanctions/Tor list downloads.
 KYC_TICK_INTERVAL_SECONDS = 3600
 KYC_AUTOMATION_INTERVAL_SECONDS = 120
+#: P43 traffic monitoring cadences.
+MONITOR_FAST_INTERVAL_SECONDS = 120
+MONITOR_HOURLY_INTERVAL_SECONDS = 3600
+
+
+async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
+    """P43: call reviews and case files (every couple of minutes); behaviour signals,
+    unchecked texts, public reports and the canary (hourly); the full exam (weekly)."""
+    from datetime import timedelta
+
+    from app.api.routes import monitoring as monitoring_routes
+    from app.db.session import get_sessionmaker
+    from app.services import monitor_calls, monitor_exam, monitor_score, monitor_text
+
+    settings = app.state.settings
+    now = time.monotonic()
+    fast_due = now - getattr(app.state, "_monitor_fast_last_run", -1e9) >= (
+        MONITOR_FAST_INTERVAL_SECONDS
+    )
+    hourly_due = now - getattr(app.state, "_monitor_hourly_last_run", -1e9) >= (
+        MONITOR_HOURLY_INTERVAL_SECONDS
+    )
+    jobs = []
+    if fast_due:
+        app.state._monitor_fast_last_run = now
+        jobs += [
+            (
+                "call_reviews",
+                lambda s: monitor_calls.review_tick(s, settings, app.state.media_store),
+            ),
+            ("case_files", lambda s: monitor_score.case_file_tick(s, settings)),
+        ]
+    if hourly_due:
+        app.state._monitor_hourly_last_run = now
+        jobs += [
+            ("behaviour", lambda s: monitor_calls.behaviour_tick(s, settings)),
+            ("unchecked_texts", lambda s: monitor_text.unchecked_tick(s, settings)),
+            ("public_reports", lambda s: monitoring_routes.assess_reports_tick(s, settings)),
+        ]
+
+        async def canary(s):  # noqa: ANN001, ANN202
+            if await monitor_exam.due(s, "canary", timedelta(minutes=55)):
+                return (await monitor_exam.canary_tick(s, settings)).passed
+            return None
+
+        async def exam(s):  # noqa: ANN001, ANN202
+            if await monitor_exam.due(s, "exam", timedelta(days=7)):
+                return (await monitor_exam.exam_tick(s, settings)).passed
+            return None
+
+        jobs += [("canary", canary), ("exam", exam)]
+    for label, job in jobs:
+        try:
+            async with get_sessionmaker()() as session:
+                outcome = await job(session)
+            results[f"monitor_{label}"] = outcome
+        except Exception:
+            log.exception("sweeper_monitoring_job_failed", job=label)
 SECURITY_LISTS_INTERVAL_SECONDS = 86400
 
 #: 8.18/4.15/6.19: arbitrary constant lock key, one per "the whole sweeper pass". Any
@@ -162,6 +220,21 @@ async def _run_once_locked(app) -> dict[str, int]:
                 )
         except Exception:
             log.exception("sweeper_number_order_poll_failed")
+
+    # P43: second look at texts held by the AI safety check. Runs BEFORE the held-message
+    # release so a text cleared here goes out on this same pass.
+    if getattr(app.state.settings, "monitor_enforced", False):
+        from app.services import monitor_text
+
+        try:
+            async with get_sessionmaker()() as session:
+                second = await monitor_text.second_look_tick(session, app.state.settings)
+            results.update({f"text_second_look_{k}": v for k, v in second.items()})
+        except Exception:
+            log.exception("sweeper_text_second_look_failed")
+
+    if getattr(app.state.settings, "monitor_enforced", False):
+        await _monitoring_jobs(app, results)
 
     if carrier is not None:
         try:

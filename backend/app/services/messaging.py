@@ -331,6 +331,8 @@ async def send_message(
         thread_id=thread.id,
         direction="outbound",
         status="queued",
+        # P43: compliance auto-replies (STOP/HELP confirmations) skip the AI text guard.
+        moderation_state="exempt" if exemption else None,
         from_e164=from_e164,
         to_e164=to_e164,
         body=body,
@@ -526,6 +528,10 @@ async def dispatch_with_failover(
         await session.commit()
 
         last = await _dispatch_to_carrier(session, org_id, carrier, last, media_urls)
+        # P43: a text held or blocked by the safety check (or refused by an account gate)
+        # is not a carrier failure - don't try other carriers or trip their breakers.
+        if last.status != "accepted" and last.moderation_state in ("held", "blocked"):
+            return last
         if last.status == "accepted":
             breaker.record_success()
             # 2.5: a failover win that changed from_e164 must repoint the conversation to
@@ -587,6 +593,19 @@ async def _dispatch_to_carrier(
         )
         await session.commit()
         return message
+    # P43: the AI text guard, after the account-level gates and before any carrier.
+    from app.services import monitor_text
+
+    monitor_settings = telephony_access._settings_of(session)
+    screening = await monitor_text.screen(session, monitor_settings, org_id, message)
+    set_org_context(session, org_id)
+    if screening.action in ("hold", "block"):
+        return await monitor_text.apply_hold_or_block(
+            session, monitor_settings, org_id, message, screening
+        )
+    if message.moderation_state is None and monitor_settings.monitor_enforced:
+        message = await session.get(Message, message.id)
+        message.moderation_state = "allowed"
     if not await telephony_billing.can_send_sms(session, org_id, message):
         set_org_context(session, org_id)
         message = await session.get(Message, message.id)
@@ -1333,6 +1352,8 @@ async def recover_stale_queued(
             Message.status == "queued",
             Message.hold_until.is_(None),
             Message.created_at <= bind_moment - timedelta(minutes=STALE_QUEUED_MINUTES),
+            # P43: a text held by the safety check is waiting on purpose, not crashed.
+            sa.or_(Message.moderation_state.is_(None), Message.moderation_state != "held"),
         )
         .limit(SWEEPER_BATCH_LIMIT)
         .execution_options(**{ALLOW_UNSCOPED_KEY: True})

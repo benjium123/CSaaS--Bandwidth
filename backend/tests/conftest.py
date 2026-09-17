@@ -106,6 +106,8 @@ def make_settings(**overrides) -> Settings:
         # P43: never call the real DeepSeek from tests, whatever the developer's .env holds.
         "deepseek_api_key": "",
         "ai_guard_enabled": False,
+        # P43: pre-P43 tests send texts and place calls without the traffic monitor.
+        "monitor_enforced": False,
     }
     base.update(overrides)
     return Settings(**base)
