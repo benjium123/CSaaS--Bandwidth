@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.models import (
     KycCheck,
+    KycDocument,
     KycPerson,
     KycProfile,
     LoginDevice,
@@ -140,16 +141,17 @@ async def check_registry(
     link = REGISTRY_LOOKUP_LINKS.get(profile.country or "", "").format(
         name=quote(profile.legal_name or "")
     )
+    # P43: free automatic sources first - Companies House (UK), the Federal Corporation API
+    # (Canada), state open-data registries (some US states). Everywhere else the company is
+    # confirmed from its AI-reviewed registration documents.
+    region = str((profile.registered_address or {}).get("region") or "").strip().upper()
+    if profile.country == "CA" and settings.ised_api_key.get_secret_value().strip():
+        return await _canada_federal(session, settings, profile, persons, client, link)
+    if profile.country == "US" and region in US_OPEN_REGISTRIES:
+        return await _us_open_registry(session, profile, client, region, link)
     api_key = settings.companies_house_api_key.get_secret_value().strip()
     if profile.country != "GB" or not api_key:
-        return _record(
-            session,
-            profile,
-            "registry",
-            "pending",
-            "Manual registry lookup needed - confirm the business is registered and active",
-            {"manual": True, "lookup_link": link, "registration_number": number},
-        )
+        return await registry_from_documents(session, profile, link, lookup=None)
     if not number:
         return _record(
             session, profile, "registry", "fail", "No Companies House number was provided", None
@@ -706,3 +708,379 @@ async def generate_ai_summary(
     row.tokens_in = result.tokens_in
     row.tokens_out = result.tokens_out
     return row
+
+
+# --------------------------------------------------------------------------------------
+# P43: free automatic registry sources beyond Companies House
+# --------------------------------------------------------------------------------------
+#: US states that publish their business registry as free open data (Socrata).
+US_OPEN_REGISTRIES: dict[str, dict] = {
+    "NY": {
+        "url": "https://data.ny.gov/resource/n9v6-gdp6.json",
+        "id": "dos_id",
+        "name": "current_entity_name",
+        "status": None,  # the dataset lists ACTIVE corporations only
+        "formed": "initial_dos_filing_date",
+        "label": "New York Department of State (active corporations)",
+    },
+    "CO": {
+        "url": "https://data.colorado.gov/resource/4ykn-tg5h.json",
+        "id": "entityid",
+        "name": "entityname",
+        "status": "entitystatus",
+        "formed": "entityformdate",
+        "label": "Colorado Secretary of State",
+    },
+    "OR": {
+        "url": "https://data.oregon.gov/resource/tckn-sxa6.json",
+        "id": "registry_number",
+        "name": "business_name",
+        "status": None,  # active businesses only
+        "formed": "registry_date",
+        "label": "Oregon Secretary of State (active businesses)",
+    },
+    "CT": {
+        "url": "https://data.ct.gov/resource/n7gp-d28j.json",
+        "id": "accountnumber",
+        "name": "name",
+        "status": "status",
+        "formed": "date_registration",
+        "label": "Connecticut Secretary of the State",
+    },
+}
+ISED_BASE = "https://apigateway-passerelledapi.ised-isde.canada.ca/corporations/api"
+_ACTIVE_WORDS = ("active", "good standing", "in existence", "exists")
+_DEAD_WORDS = (
+    "dissolved",
+    "inactive",
+    "revoked",
+    "withdrawn",
+    "cancel",
+    "forfeit",
+    "struck",
+    "amalgamated",
+)
+
+
+def _status_result(status: str) -> str:
+    lowered = status.lower()
+    if any(word in lowered for word in _DEAD_WORDS):
+        return "fail"
+    if not lowered or any(word in lowered for word in _ACTIVE_WORDS):
+        return "pass"
+    return "warn"  # e.g. "Delinquent", "Reserved"
+
+
+def _soql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+async def _us_open_registry(
+    session: AsyncSession,
+    profile: KycProfile,
+    client: httpx.AsyncClient,
+    region: str,
+    link: str,
+) -> KycCheck:
+    source = US_OPEN_REGISTRIES[region]
+    number = re.sub(r"\s+", "", profile.registration_number or "")
+    rows: list[dict] = []
+    try:
+        if number:
+            resp = await client.get(
+                source["url"], params={source["id"]: number, "$limit": 5}, timeout=20.0
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            rows = body if isinstance(body, list) else []
+        if not rows and profile.legal_name:
+            literal = _soql_literal(profile.legal_name.strip())
+            where = f"upper({source['name']}) = upper({literal})"
+            resp = await client.get(
+                source["url"], params={"$where": where, "$limit": 5}, timeout=20.0
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            rows = body if isinstance(body, list) else []
+    except (httpx.HTTPError, ValueError) as exc:
+        return _record(
+            session,
+            profile,
+            "registry",
+            "error",
+            f"{source['label']} could not be reached - it will be retried",
+            {"error": str(exc)[:200], "lookup_link": link, "source": source["label"]},
+        )
+    lookup = {"source": source["label"], "state": region, "found": bool(rows)}
+    if not rows:
+        return await registry_from_documents(session, profile, link, lookup=lookup)
+    match = next(
+        (r for r in rows if names_match(r.get(source["name"]), profile.legal_name)), None
+    )
+    row = match or rows[0]
+    status = str(row.get(source["status"]) or "") if source["status"] else "active"
+    detail = {
+        **lookup,
+        "registered_name": row.get(source["name"]),
+        "registration_number": row.get(source["id"]),
+        "company_status": status,
+        "formed": row.get(source["formed"]),
+        "lookup_link": link,
+    }
+    if match is None:
+        return _record(
+            session,
+            profile,
+            "registry",
+            "fail",
+            f"{source['label']}: registration {number} belongs to '{row.get(source['name'])}'",
+            detail,
+        )
+    result = _status_result(status)
+    summary = {
+        "pass": f"Found in {source['label']}: active, name matches",
+        "warn": f"Found in {source['label']} with status '{status}'",
+        "fail": f"{source['label']} shows the company as '{status}'",
+    }[result]
+    return _record(session, profile, "registry", result, summary, detail)
+
+
+async def _canada_federal(
+    session: AsyncSession,
+    settings: Settings,
+    profile: KycProfile,
+    persons: list[KycPerson],
+    client: httpx.AsyncClient,
+    link: str,
+) -> KycCheck:
+    headers = {"user-key": settings.ised_api_key.get_secret_value().strip()}
+    candidates = [
+        re.sub(r"\D", "", profile.registration_number or ""),
+        re.sub(r"\D", "", profile.tax_id or "")[:9],
+    ]
+    corp: dict | None = None
+    used = ""
+    try:
+        for candidate in [c for c in candidates if c]:
+            resp = await client.get(
+                f"{ISED_BASE}/v1/corporations/{candidate}.json",
+                params={"lang": "eng"},
+                headers=headers,
+                timeout=20.0,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            first = body[0] if isinstance(body, list) and body else None
+            if isinstance(first, dict):
+                corp, used = first, candidate
+                break
+    except (httpx.HTTPError, ValueError) as exc:
+        return _record(
+            session,
+            profile,
+            "registry",
+            "error",
+            "Corporations Canada could not be reached - it will be retried",
+            {"error": str(exc)[:200], "lookup_link": link},
+        )
+    lookup = {"source": "Corporations Canada (federal)", "found": corp is not None}
+    if corp is None:
+        # Provincially incorporated companies aren't in the federal registry.
+        return await registry_from_documents(session, profile, link, lookup=lookup)
+
+    names = []
+    for entry in corp.get("corporationNames") or []:
+        if isinstance(entry, dict):
+            name = (entry.get("CorporationName") or {}).get("name")
+            if name:
+                names.append(name)
+    status = str(corp.get("status") or "")
+    directors: list[str] = []
+    try:
+        resp = await client.get(
+            f"{ISED_BASE}/v2/corporations/{corp.get('corporationId') or used}/directors",
+            headers={**headers, "Accept-Language": "en"},
+            timeout=20.0,
+        )
+        if resp.status_code == 200:
+            for d in (resp.json().get("_embedded") or {}).get("directors") or []:
+                directors.append(f"{d.get('firstName', '')} {d.get('lastName', '')}".strip())
+    except (httpx.HTTPError, ValueError):
+        directors = []
+    owners = [p for p in persons if p.role in ("owner", "beneficial_owner")]
+    unmatched = [
+        p.full_name
+        for p in owners
+        if directors and not any(names_match(d, p.full_name) for d in directors)
+    ]
+    detail = {
+        **lookup,
+        "corporation_number": corp.get("corporationId") or used,
+        "registered_names": names,
+        "company_status": status,
+        "directors": directors[:20],
+        "owners_not_listed_as_directors": unmatched,
+        "lookup_link": link,
+    }
+    if not any(names_match(n, profile.legal_name) for n in names):
+        return _record(
+            session,
+            profile,
+            "registry",
+            "fail",
+            f"Corporations Canada lists this number as '{names[0] if names else 'unknown'}'",
+            detail,
+        )
+    result = _status_result(status)
+    if result == "pass" and unmatched:
+        return _record(
+            session,
+            profile,
+            "registry",
+            "warn",
+            "Active federal corporation, but these owners are not listed as directors: "
+            + ", ".join(unmatched),
+            detail,
+        )
+    summary = {
+        "pass": "Active federal corporation; name matches",
+        "warn": f"Federal corporation with status '{status}'",
+        "fail": f"Corporations Canada shows the company as '{status}'",
+    }[result]
+    return _record(session, profile, "registry", result, summary, detail)
+
+
+async def registry_from_documents(
+    session: AsyncSession, profile: KycProfile, link: str, *, lookup: dict | None
+) -> KycCheck:
+    """No free registry source: rely on the AI-reviewed registration documents."""
+    docs = (
+        (
+            await session.execute(
+                sa.select(KycDocument).where(
+                    KycDocument.org_id == profile.org_id,
+                    KycDocument.kind.in_(("registration_certificate", "articles")),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    detail = {"manual": False, "lookup_link": link, "from_documents": True, **(lookup or {})}
+    not_found = bool(lookup) and not lookup.get("found")
+    source_note = (
+        f" ({lookup['source']} has no record - the company may be registered elsewhere)"
+        if not_found
+        else ""
+    )
+    if not docs:
+        return _record(
+            session,
+            profile,
+            "registry",
+            "fail" if not_found else "pending",
+            "Upload the company's registration certificate or articles so it can be confirmed"
+            + source_note,
+            {**detail, "manual": True},
+        )
+    reviewed = [d for d in docs if d.review_result in ("pass", "warn", "fail")]
+    if not reviewed:
+        return _record(
+            session,
+            profile,
+            "registry",
+            "pending",
+            "Waiting for the registration documents to be reviewed",
+            {**detail, "manual": True},
+        )
+    detail["documents"] = [
+        {"id": str(d.id), "kind": d.kind, "result": d.review_result} for d in reviewed
+    ]
+    if any(d.review_result == "pass" for d in reviewed):
+        return _record(
+            session,
+            profile,
+            "registry",
+            "warn",
+            "Company confirmed from its registration document, not a live registry" + source_note,
+            detail,
+        )
+    if any(d.review_result == "warn" for d in reviewed):
+        return _record(
+            session,
+            profile,
+            "registry",
+            "warn",
+            "Registration document partly confirms the company - check the details" + source_note,
+            detail,
+        )
+    return _record(
+        session,
+        profile,
+        "registry",
+        "fail",
+        "The registration documents don't match the declared company" + source_note,
+        detail,
+    )
+
+
+def check_documents(
+    session: AsyncSession,
+    profile: KycProfile,
+    persons: list[KycPerson],
+    documents: list[KycDocument],
+) -> KycCheck:
+    """Roll the per-document AI reviews up into one check."""
+    owners = [p for p in persons if p.role in ("owner", "beneficial_owner")]
+    problems: list[str] = []
+    unsure: list[str] = []
+    waiting = False
+    for person in owners:
+        proofs = [
+            d for d in documents if d.kind == "proof_of_address" and d.person_id == person.id
+        ]
+        if not proofs:
+            problems.append(f"No proof of address for {person.full_name}")
+            continue
+        results = {d.review_result for d in proofs}
+        if "pass" in results:
+            continue
+        if None in results or "error" in results:
+            waiting = True
+        elif "warn" in results:
+            unsure.append(f"Proof of address for {person.full_name} needs a closer look")
+        else:
+            problems.append(f"Proof of address for {person.full_name} doesn't match")
+    for doc in documents:
+        if doc.kind not in ("registration_certificate", "articles", "tax_id_letter"):
+            continue
+        label = doc.kind.replace("_", " ").capitalize()
+        if doc.review_result is None or doc.review_result == "error":
+            waiting = True
+        elif doc.review_result == "fail":
+            problems.append(f"{label} doesn't match")
+        elif doc.review_result == "warn":
+            unsure.append(f"{label} needs a closer look")
+    detail = {
+        "documents": [
+            {
+                "id": str(d.id),
+                "kind": d.kind,
+                "person_id": str(d.person_id) if d.person_id else None,
+                "result": d.review_result,
+                "reasons": (d.review or {}).get("reasons"),
+            }
+            for d in documents
+        ]
+    }
+    if problems:
+        return _record(session, profile, "documents", "fail", "; ".join(problems), detail)
+    if waiting:
+        return _record(
+            session, profile, "documents", "pending", "Documents are being reviewed", detail
+        )
+    if unsure:
+        return _record(session, profile, "documents", "warn", "; ".join(unsure), detail)
+    return _record(
+        session, profile, "documents", "pass", "All documents match the application", detail
+    )

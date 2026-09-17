@@ -41,6 +41,7 @@ from tests.conftest import (
     make_settings,
     register_and_login,
 )
+from tests.fake_ai import FakeSafetyAI
 
 OWNER_DOB = "1980-04-02"
 CONTACT = "+15125550199"
@@ -139,7 +140,10 @@ async def kyc_app(engine, kyc_settings, monkeypatch):
 
     transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, application, carrier, created, outcomes
+        # P43: documents are read by the safety AI - a fake one, never the real DeepSeek.
+        with FakeSafetyAI().installed() as fake_ai:
+            application.state.fake_ai = fake_ai
+            yield c, application, carrier, created, outcomes
     await application.state.kyc_http_client.aclose()
 
 
@@ -264,11 +268,25 @@ async def _complete_application(
             "email": "jane@acme-plumbing.example",
             "ownership_percent": 100,
             "is_me": True,
+            "residential_address": {
+                "line1": "12 Oak St",
+                "city": "Austin",
+                "region": "TX",
+                "postal_code": "78702",
+                "country": "US",
+            },
         },
         headers=h,
     )
     assert r.status_code == 201, r.text
     person_id = r.json()["id"]
+    r = await client.post(
+        "/api/v1/kyc/documents",
+        data={"kind": "proof_of_address", "person_id": person_id},
+        files={"file": ("bill.pdf", _pdf_bytes(), "application/pdf")},
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
     r = await client.post(f"/api/v1/kyc/persons/{person_id}/verify", json={}, headers=h)
     assert r.status_code == 200, r.text
     vs = created[-1]
@@ -321,7 +339,8 @@ async def test_new_business_is_blocked_until_approved(kyc_app, session, kyc_sett
     body = r.json()
     assert body["status"] == "submitted"
     assert body["checks"]["website"]["result"] == "pass"
-    assert body["checks"]["registry"]["result"] == "pending"  # US = manual lookup
+    # P43: Texas has no free registry feed - confirmed from the AI-read registration document.
+    assert body["checks"]["registry"]["result"] == "warn"
     assert "sanctions" not in body["checks"]  # operator-only detail
 
     ops_token = await _make_operator(client, session, "reviewer@platform.example")
@@ -332,11 +351,10 @@ async def test_new_business_is_blocked_until_approved(kyc_app, session, kyc_sett
     detail = (await client.get(f"/api/v1/ops/applications/{org['id']}", headers=oh)).json()
     assert detail["checks"]["sanctions"]["result"] == "pass"
     assert detail["risk"]["tier"] == "standard"
-    assert any("Registry" in b for b in detail["approval_blockers"])
-
-    r = await client.post(f"/api/v1/ops/applications/{org['id']}/approve", json={}, headers=oh)
-    assert r.status_code == 409
-    assert r.json()["error"]["code"] == "kyc_approval_blocked"
+    # P43: the AI read the documents and prepared the decision; the human still decides.
+    assert detail["checks"]["documents"]["result"] == "pass"
+    assert detail["checks"]["ai_decision"]["detail"]["recommendation"] == "approve"
+    assert detail["status"] == "submitted"
 
     r = await client.post(
         f"/api/v1/ops/applications/{org['id']}/registry",
@@ -506,10 +524,12 @@ async def test_ops_routes_need_a_named_operator(kyc_app, session):
 # --------------------------------------------------------------------------------------
 # Risk, sanctions, ban list
 # --------------------------------------------------------------------------------------
-async def test_high_risk_needs_video_call_and_sanctions_match_blocks(
+async def test_high_risk_needs_documents_and_sanctions_match_blocks(
     kyc_app, session, kyc_settings
 ):
     client, app, carrier, created, outcomes = kyc_app
+    # The AI can't compare the address on the bill: fine for standard risk, not for high.
+    app.state.fake_ai.document = {**app.state.fake_ai.document, "address_matches": None}
     _write_sanctions(kyc_settings, ["Jane Smith"])
     token = await register_and_login(client, "risky@acme-plumbing.example")
     org = await create_org(client, token, "Risky")
@@ -521,11 +541,11 @@ async def test_high_risk_needs_video_call_and_sanctions_match_blocks(
     oh = auth_headers(ops)
     detail = (await client.get(f"/api/v1/ops/applications/{org['id']}", headers=oh)).json()
     assert detail["risk"]["tier"] == "high"
-    assert detail["risk"]["video_call_required"] is True
     assert any("debt relief" in r for r in detail["risk"]["reasons"])
     assert detail["checks"]["sanctions"]["result"] == "fail"
     blockers = " | ".join(detail["approval_blockers"])
-    assert "video call" in blockers and "sanctions" in blockers
+    # P43: no video call any more - documents must match (and fully, for high risk).
+    assert "sanctions" in blockers and "document" in blockers.lower()
 
 
 async def test_sanctions_lists_missing_block_approval():

@@ -34,6 +34,7 @@ REPUTATION_TICK_INTERVAL_SECONDS = 3600
 SPEND_TICK_INTERVAL_SECONDS = 3600
 #: P41: trust & safety housekeeping, and the (large) sanctions/Tor list downloads.
 KYC_TICK_INTERVAL_SECONDS = 3600
+KYC_AUTOMATION_INTERVAL_SECONDS = 120
 SECURITY_LISTS_INTERVAL_SECONDS = 86400
 
 #: 8.18/4.15/6.19: arbitrary constant lock key, one per "the whole sweeper pass". Any
@@ -390,7 +391,6 @@ async def _run_once_locked(app) -> dict[str, int]:
         for label, job in (
             ("reverification", lambda s: kyc_tick.reverification_tick(s, cfg)),
             ("identity_reconcile", lambda s: kyc_tick.reconcile_identity_sessions(s, cfg)),
-            ("ai_summaries", lambda s: kyc_tick.ai_summary_tick(s, cfg)),
             ("webauthn_cleanup", lambda s: kyc_tick.cleanup_challenges(s)),
         ):
             try:
@@ -402,6 +402,28 @@ async def _run_once_locked(app) -> dict[str, int]:
                     results[f"kyc_{label}"] = outcome
             except Exception:
                 log.exception("sweeper_kyc_tick_failed", job=label)
+    # P43: hands-off verification - read documents, retry registries, refresh the AI decision
+    # pack. Every couple of minutes so a submitted application is ready for a decision fast.
+    last_auto_run = getattr(app.state, "_kyc_automation_last_run", None)
+    if kyc_on and (
+        last_auto_run is None
+        or time.monotonic() - last_auto_run >= KYC_AUTOMATION_INTERVAL_SECONDS
+    ):
+        app.state._kyc_automation_last_run = time.monotonic()
+        from app.services import kyc_automation
+
+        try:
+            async with get_sessionmaker()() as session:
+                auto = await kyc_automation.tick(
+                    session,
+                    app.state.settings,
+                    app.state.media_store,
+                    http_client=getattr(app.state, "kyc_http_client", None),
+                )
+            results.update({f"kyc_{k}": v for k, v in auto.items()})
+        except Exception:
+            log.exception("sweeper_kyc_automation_failed")
+
     last_lists_run = getattr(app.state, "_security_lists_last_run", None)
     if kyc_on and (
         last_lists_run is None

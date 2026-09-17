@@ -11,7 +11,16 @@ from datetime import date, datetime
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,12 +36,12 @@ from app.errors import PermissionDeniedError, ValidationFailedError
 from app.models import KycDocument, KycPerson, KycStepUp, SecurityAlert, User
 from app.services import identity as identity_svc
 from app.services import kyc as kyc_svc
-from app.services import kyc_checks, kyc_documents, kyc_step_up
+from app.services import kyc_checks, kyc_doc_reader, kyc_documents, kyc_step_up
 
 router = APIRouter(prefix="/api/v1/kyc", tags=["kyc"])
 
 #: Checks a customer sees: the outcome only. Sanctions/ban-list/AI details are for operators.
-CUSTOMER_VISIBLE_CHECKS = ("registry", "website", "email_domain", "name_match")
+CUSTOMER_VISIBLE_CHECKS = ("registry", "website", "email_domain", "name_match", "documents")
 
 
 class AddressIn(BaseModel):
@@ -77,6 +86,8 @@ class PersonIn(BaseModel):
     ownership_percent: int | None = None
     #: True = this person is the signed-in user.
     is_me: bool = False
+    #: P43: where an owner lives now (proven by a proof_of_address document).
+    residential_address: AddressIn | None = None
 
 
 class AgreementIn(BaseModel):
@@ -114,6 +125,7 @@ def _person_out(p) -> dict:
         "document_country": p.document_country,
         "verified_at": p.verified_at.isoformat() if p.verified_at else None,
         "last_error": p.last_error,
+        "residential_address": p.residential_address,
     }
 
 
@@ -125,6 +137,12 @@ def _document_out(d: KycDocument) -> dict:
         "content_type": d.content_type,
         "size_bytes": d.size_bytes,
         "uploaded_at": d.created_at.isoformat() if d.created_at else None,
+        "person_id": str(d.person_id) if d.person_id else None,
+        # P43: the applicant sees whether the automatic review accepted it, and why not.
+        "review_status": (
+            "reviewing" if d.review_result in (None, "error") else d.review_result
+        ),
+        "review_message": kyc_doc_reader.customer_message(d),
     }
 
 
@@ -259,7 +277,29 @@ async def add_person(
         email=payload.email,
         ownership_percent=payload.ownership_percent,
         user_id=user_id,
+        residential_address=(
+            _address_dict(payload.residential_address) if payload.residential_address else None
+        ),
     )
+    await ctx.session.commit()
+    return _person_out(person)
+
+
+def _address_dict(address: AddressIn) -> dict:
+    data = address.model_dump()
+    data["country"] = data["country"].upper()
+    return data
+
+
+@router.put("/persons/{person_id}/address")
+async def set_person_address(
+    person_id: uuid.UUID,
+    payload: AddressIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+) -> dict:
+    profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
+    person = await kyc_svc.get_person(ctx.session, ctx.org.id, person_id)
+    kyc_svc.set_residential_address(profile, person, _address_dict(payload))
     await ctx.session.commit()
     return _person_out(person)
 
@@ -306,11 +346,22 @@ async def upload_document(
     ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
     kind: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
+    background: BackgroundTasks,
+    person_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> dict:
     settings: Settings = request.app.state.settings
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     if profile.status not in ("draft", "needs_info"):
         raise ValidationFailedError("Documents can be added while the application is open")
+    # P43: a proof of address belongs to one owner.
+    if kind == "proof_of_address":
+        if person_id is None:
+            raise ValidationFailedError("Choose which owner this proof of address is for")
+        owner = await kyc_svc.get_person(ctx.session, ctx.org.id, person_id)
+        if owner.role not in ("owner", "beneficial_owner"):
+            raise ValidationFailedError("Proof of address is needed for owners only")
+    elif person_id is not None:
+        raise ValidationFailedError("Only a proof of address is linked to a person")
     data = await file.read(settings.kyc_document_max_bytes + 1)
     doc = await kyc_documents.store(
         ctx.session,
@@ -322,8 +373,31 @@ async def upload_document(
         data=data,
         uploaded_by=ctx.actor_user_id,
     )
+    doc.person_id = person_id
     await ctx.session.commit()
+    # Read it straight away so the applicant learns within seconds if it won't be accepted.
+    background.add_task(_run_automation, request.app, ctx.org.id, True)
     return _document_out(doc)
+
+
+async def _run_automation(app, org_id: uuid.UUID, reviews_only: bool) -> None:
+    from app.db.session import get_sessionmaker
+    from app.services import kyc_automation
+
+    try:
+        async with get_sessionmaker()() as session:
+            await kyc_automation.process(
+                session,
+                app.state.settings,
+                app.state.media_store,
+                org_id,
+                http_client=getattr(app.state, "kyc_http_client", None),
+                reviews_only=reviews_only,
+            )
+    except Exception:  # noqa: BLE001 - the sweeper retries anything left pending
+        import structlog
+
+        structlog.get_logger("kyc").exception("kyc_automation_background_failed")
 
 
 @router.delete("/documents/{document_id}", status_code=204)
@@ -366,6 +440,7 @@ async def accept_agreement(
 async def submit(
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    background: BackgroundTasks,
 ) -> dict:
     if ctx.membership is None:
         raise ValidationFailedError("A person, not an API key, must submit the application")
@@ -381,6 +456,8 @@ async def submit(
         http_client=getattr(request.app.state, "kyc_http_client", None),
     )
     await ctx.session.commit()
+    # P43: documents, registry fallback, risk and the AI decision pack - no human needed.
+    background.add_task(_run_automation, request.app, ctx.org.id, False)
     return await _profile_out(ctx.session, profile)
 
 

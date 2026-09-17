@@ -204,6 +204,7 @@ async def add_person(
     email: str | None,
     ownership_percent: int | None,
     user_id: uuid.UUID | None,
+    residential_address: dict | None = None,
 ) -> KycPerson:
     if role not in KYC_PERSON_ROLES:
         raise ValidationFailedError(f"Role must be one of {', '.join(KYC_PERSON_ROLES)}")
@@ -222,9 +223,16 @@ async def add_person(
         ownership_percent=ownership_percent,
         user_id=user_id,
         status="not_started",
+        residential_address=residential_address,
     )
     session.add(row)
     return row
+
+
+def set_residential_address(profile: KycProfile, person: KycPerson, address: dict) -> None:
+    """P43: owners declare where they live now; a proof of address must match it."""
+    _require_editable(profile)
+    person.residential_address = address
 
 
 async def get_person(session: AsyncSession, org_id: uuid.UUID, person_id: uuid.UUID) -> KycPerson:
@@ -393,6 +401,25 @@ async def missing_for_submission(session: AsyncSession, profile: KycProfile) -> 
     ]
     if unstarted:
         missing.append("id_verification")
+    # P43: every owner declares where they live now and proves it with a recent document.
+    owners = [p for p in persons if p.role in ("owner", "beneficial_owner")]
+    if any(not p.residential_address for p in owners):
+        missing.append("residential_address")
+    proven = set(
+        (
+            await session.execute(
+                sa.select(KycDocument.person_id).where(
+                    KycDocument.org_id == profile.org_id,
+                    KycDocument.kind == "proof_of_address",
+                    KycDocument.person_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if any(p.id not in proven for p in owners):
+        missing.append("proof_of_address")
     documents = (
         await session.execute(
             sa.select(sa.func.count(KycDocument.id)).where(KycDocument.org_id == profile.org_id)
@@ -445,8 +472,6 @@ async def refresh_risk(session: AsyncSession, settings: Settings, profile: KycPr
     tier, reasons = kyc_risk.evaluate(settings, profile, persons, checks)
     profile.risk_tier = tier
     profile.risk_reasons = reasons
-    if tier == "high":
-        profile.video_call_required = True
 
 
 # --------------------------------------------------------------------------------------
@@ -494,9 +519,17 @@ async def approval_blockers(session: AsyncSession, profile: KycProfile) -> list[
             blockers.append(f"ID check not verified for {p.full_name}")
     if not any(p.role == "owner" and p.status == "verified" for p in persons):
         blockers.append("No verified owner")
-    if profile.video_call_required and profile.video_call_done_at is None:
-        blockers.append("High-risk application: record the video call first")
     checks = await kyc_checks.latest_checks(session, profile.org_id)
+    # P43: documents are read by the safety AI (the video call is gone). A high-risk
+    # application needs every document to fully match, not just "needs a closer look".
+    documents = checks.get("documents")
+    high = profile.risk_tier == "high"
+    if documents is None or documents.result in ("pending", "error"):
+        blockers.append("Documents have not finished their automatic review")
+    elif documents.result == "fail":
+        blockers.append("Documents don't match the application: " + documents.summary)
+    elif high and documents.result != "pass":
+        blockers.append("High-risk application: every document must fully match")
     for kind in ("sanctions", "ban_list"):
         check = checks.get(kind)
         if check is None:
@@ -510,7 +543,7 @@ async def approval_blockers(session: AsyncSession, profile: KycProfile) -> list[
         blockers.append("Owner names on the application don't match their verified IDs")
     registry = checks.get("registry")
     if registry is None or registry.result not in ("pass", "warn"):
-        blockers.append("Registry check is not complete (record the manual lookup)")
+        blockers.append("Registry check is not complete or did not pass")
     return blockers
 
 

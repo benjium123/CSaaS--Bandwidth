@@ -1,9 +1,9 @@
 """P41 risk tier for a business application.
 
 Plain rules, each producing a sentence the reviewer (and, later, an auditor) can read. Any
-single reason makes the application ``high`` risk, and a high-risk application cannot be
-approved until an operator has held and recorded a short video call with the owner
-(operator decision 2026-09-16: video calls for high-risk applicants only).
+single reason makes the application ``high`` risk. P43: a high-risk application needs every
+document to fully match and gets a stricter AI review instead of a video call (operator
+decision 2026-09-17); a human still approves it.
 """
 
 from __future__ import annotations
@@ -75,8 +75,15 @@ def evaluate(
         ("name_match", "Name on an ID does not match"),
     ):
         check = checks.get(kind)
-        if check is not None and check.result in ("warn", "fail"):
-            reasons.append(label)
+        if check is None or check.result not in ("warn", "fail"):
+            continue
+        # P43: most US states have no free registry feed; a company confirmed from its
+        # registration document is normal, not a risk signal. A registry FAIL still is.
+        if kind == "registry" and check.result == "warn" and (check.detail or {}).get(
+            "from_documents"
+        ):
+            continue
+        reasons.append(label)
 
     vertical = str(use_case.get("vertical") or "").strip().lower()
     if vertical in HIGH_RISK_VERTICALS:
@@ -107,9 +114,13 @@ def evaluate(
     if foreign_ids:
         reasons.append("ID issued outside US/CA/UK for: " + ", ".join(foreign_ids))
 
-    ai = checks.get("ai_summary")
+    ai = checks.get("ai_decision") or checks.get("ai_summary")
     if ai is not None and ai.detail and ai.detail.get("suggested_risk") == "high":
         reasons.append("AI review suggested high risk")
+
+    documents = checks.get("documents")
+    if documents is not None and documents.result in ("warn", "fail"):
+        reasons.append("Documents did not fully match the application")
 
     # De-duplicate while keeping order.
     seen: set[str] = set()

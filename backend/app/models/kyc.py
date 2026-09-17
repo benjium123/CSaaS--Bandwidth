@@ -75,7 +75,13 @@ KYC_CHECK_KINDS: tuple[str, ...] = (
     "email_domain",
     "name_match",
     "ai_summary",
+    # P43: AI review of every uploaded document, and the AI decision pack for the operator.
+    "documents",
+    "ai_decision",
 )
+
+#: P43: outcome of the AI read of one uploaded document.
+KYC_DOCUMENT_REVIEW_RESULTS: tuple[str, ...] = ("pass", "warn", "fail", "error")
 KYC_CHECK_RESULTS: tuple[str, ...] = ("pass", "warn", "fail", "error", "pending")
 
 KYC_RISK_TIERS: tuple[str, ...] = ("standard", "high")
@@ -224,6 +230,9 @@ class KycPerson(Base, TenantScoped, TimestampMixin):
     identity_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True, index=True)
     verified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    #: P43: where the person lives now (an ID card's address is often out of date). Proven by
+    #: a proof_of_address document linked to this person.
+    residential_address: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
 
 
 class KycDocument(Base, TenantScoped, TimestampMixin):
@@ -237,6 +246,14 @@ class KycDocument(Base, TenantScoped, TimestampMixin):
     sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     #: Object-store key; the stored bytes are Fernet ciphertext.
     storage_key: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    #: P43: the owner a proof_of_address belongs to.
+    person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("kyc_persons.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    #: P43: AI document review - result, what was read, and why.
+    review_result: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
+    review: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
     uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

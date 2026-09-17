@@ -202,6 +202,7 @@ async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
                 "document_country": p.document_country,
                 "verified_at": _iso(p.verified_at),
                 "last_error": p.last_error,
+                "residential_address": p.residential_address,
             }
             for p in persons
         ],
@@ -214,6 +215,10 @@ async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
                 "size_bytes": d.size_bytes,
                 "sha256": d.sha256,
                 "uploaded_at": _iso(d.created_at),
+                "person_id": str(d.person_id) if d.person_id else None,
+                "review_result": d.review_result,
+                "review": d.review,
+                "reviewed_at": _iso(d.reviewed_at),
             }
             for d in documents
         ],
@@ -388,9 +393,20 @@ async def rerun_checks(org_id: uuid.UUID, request: Request, op: Reviewer) -> dic
     client = getattr(request.app.state, "kyc_http_client", None)
     await kyc_checks.run_all(op.session, settings, profile, client=client)
     await op.session.flush()
-    await kyc_checks.generate_ai_summary(op.session, settings, profile, client=client)
-    await op.session.flush()
     await kyc_svc.refresh_risk(op.session, settings, profile)
+    await op.session.commit()
+    # P43: re-read documents that errored, roll up, and refresh the AI decision pack.
+    from app.services import kyc_automation
+
+    await kyc_automation.process(
+        op.session,
+        settings,
+        request.app.state.media_store,
+        org_id,
+        http_client=client,
+        force_reviews=True,
+    )
+    set_org_context(op.session, org_id)
     return await _done(op, org_id)
 
 

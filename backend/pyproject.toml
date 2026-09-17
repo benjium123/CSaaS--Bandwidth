@@ -30,6 +30,9 @@ dependencies = [
     "tzdata>=2024.2",
     # P41/P42 authentication: passkeys (WebAuthn), login country/network lookup, SAML SSO.
     "webauthn>=3.0",
+    # P43: render scanned PDF pages so the safety AI can read KYC documents.
+    "pypdfium2>=4.30",
+    "pillow>=10.0",
     "maxminddb>=2.6",
     "signxml>=5.1",
 ]
