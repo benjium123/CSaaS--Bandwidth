@@ -302,17 +302,15 @@ async def test_lockout_after_repeated_failures(client42, session, outbox):
             json={"email": "lock@example.com", "password": "wrong-password-123"},
         )
         assert r.status_code == 401
-    # Still the generic answer for a wrong password...
-    r = await client42.post(
+    # P43: once locked, right and wrong passwords get the SAME answer (no password oracle).
+    wrong = await client42.post(
         "/api/v1/auth/login", json={"email": "lock@example.com", "password": "wrong-password-123"}
     )
-    assert r.status_code == 401
-    # ...but the right password is told about the lock.
-    r = await client42.post(
+    right = await client42.post(
         "/api/v1/auth/login", json={"email": "lock@example.com", "password": PASSWORD}
     )
-    assert r.status_code == 423
-    assert r.json()["error"]["code"] == "account_locked"
+    assert wrong.status_code == right.status_code == 423
+    assert right.json()["error"]["code"] == "account_locked"
     assert any("locked" in m["Subject"].lower() for m in outbox)
 
     from app.services import lockout

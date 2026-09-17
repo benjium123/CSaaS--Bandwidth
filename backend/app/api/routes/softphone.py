@@ -132,7 +132,11 @@ async def softphone_token(
 # Realtime events websocket
 # --------------------------------------------------------------------------------------
 async def _ws_org_from_cookie(
-    session: AsyncSession, settings: Settings, cookie: str, org_id: uuid.UUID
+    session: AsyncSession,
+    settings: Settings,
+    cookie: str,
+    org_id: uuid.UUID,
+    websocket: WebSocket,
 ) -> tuple[uuid.UUID, uuid.UUID, list[str]] | None:
     from datetime import datetime, timedelta, timezone
 
@@ -164,9 +168,55 @@ async def _ws_org_from_cookie(
     if found is None:
         return None
     org, _membership, role = found
-    if not org.is_active:
+    if not await _ws_org_policy_allows(session, settings, websocket, user, org, role, row):
         return None
     return org_id, user.id, list(role.permissions or [])
+
+
+async def _ws_org_policy_allows(
+    session: AsyncSession,
+    settings: Settings,
+    websocket: WebSocket,
+    user,
+    org,
+    role,
+    session_row,
+) -> bool:
+    """P43: the SAME workspace rules get_current_org applies to HTTP requests - checked at
+    the handshake AND on every refresh, so a removed member, a revoked session or a
+    suspended workspace stops receiving events within ACCESS_TTL_SECONDS."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.net import client_ip
+    from app.services import passkey_policy
+
+    def aware(value):
+        return value if value is None or value.tzinfo is not None else value.replace(
+            tzinfo=timezone.utc
+        )
+
+    if not org.is_active:
+        return False
+    now = datetime.now(timezone.utc)
+    if session_row is not None:
+        created = aware(session_row.created_at)
+        seen = aware(session_row.last_seen_at) or created
+        if org.session_idle_minutes and now - seen > timedelta(minutes=org.session_idle_minutes):
+            return False
+        if org.session_max_hours and now - created > timedelta(hours=org.session_max_hours):
+            return False
+    if org.ip_allowlist and not identity_svc.ip_in_allowlist(
+        client_ip(websocket), org.ip_allowlist
+    ):
+        return False
+    if identity_svc.two_factor_required(org, user):
+        return False
+    if settings.require_passkey_for_privileged and passkey_policy.is_privileged_role(role):
+        if not passkey_policy.session_satisfies(session_row, org):
+            until = passkey_policy.grace_until(settings, user)
+            if until is None or now >= until:
+                return False
+    return True
 
 
 async def resolve_ws_org(
@@ -203,7 +253,7 @@ async def resolve_ws_org(
         allowed.add(settings.public_web_url.rstrip("/"))
         if origin not in allowed:
             return None
-        return await _ws_org_from_cookie(session, settings, cookie, org_id)
+        return await _ws_org_from_cookie(session, settings, cookie, org_id, websocket)
     if not token or not settings.auth_bearer_compat:
         return None
 
@@ -218,7 +268,8 @@ async def resolve_ws_org(
 
     # A revoked or expired session must not be able to open an events socket and keep it
     # open indefinitely - that would outlive "sign out everywhere" entirely.
-    if sid is not None and await identity_svc.get_live_session(session, sid) is None:
+    live_row = await identity_svc.get_live_session(session, sid) if sid is not None else None
+    if sid is not None and live_row is None:
         return None
 
     user = await users_repo.get_by_id(session, user_id)
@@ -232,7 +283,7 @@ async def resolve_ws_org(
     if found is None:
         return None
     org, _membership, role = found
-    if not org.is_active:
+    if not await _ws_org_policy_allows(session, settings, websocket, user, org, role, live_row):
         return None
     return org_id, user.id, list(role.permissions or [])
 
@@ -377,6 +428,15 @@ async def _forward_events(
         # ping timeouts, every PING_INTERVAL_SECONDS) so the TTL is enforced with
         # reasonable granularity even on a quiet connection.
         if time.monotonic() - last_resolved >= ACCESS_TTL_SECONDS:
+            # P43: re-check the session, membership and workspace rules too, not just inbox
+            # grants - "sign out everywhere", removal and suspension must end the stream.
+            settings: Settings = websocket.app.state.settings
+            async with get_sessionmaker()() as auth_session:
+                again = await resolve_ws_org(websocket, auth_session, settings)
+            if again is None or again[0] != org_id or again[1] != user_id:
+                await websocket.close(code=4401)
+                return
+            permissions = again[2]
             access = await _resolve_ws_access(org_id, user_id, permissions)
             last_resolved = time.monotonic()
 

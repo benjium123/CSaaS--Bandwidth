@@ -144,7 +144,15 @@ async def has_fresh_selfie(
         if row.identity_hash not in expected:
             continue
         if consume:
+            # P43: conditional update - two concurrent requests can't both spend one check.
+            spent = await session.execute(
+                sa.update(KycStepUp)
+                .where(KycStepUp.id == row.id, KycStepUp.consumed_at.is_(None))
+                .values(consumed_at=now)
+                .execution_options(synchronize_session=False)
+            )
+            if spent.rowcount != 1:
+                continue
             row.consumed_at = now
-            await session.flush()
         return True
     return False

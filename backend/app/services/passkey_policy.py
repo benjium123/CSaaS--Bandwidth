@@ -52,7 +52,13 @@ def session_satisfies(row: IdentitySession | None, org: Org | None) -> bool:
         return False
     if row.auth_method == "passkey":
         return True
-    return row.auth_method == "sso" and bool(org is not None and org.trust_idp_mfa)
+    # P43: only THIS workspace's identity provider can vouch for MFA in this workspace.
+    return (
+        row.auth_method == "sso"
+        and org is not None
+        and bool(org.trust_idp_mfa)
+        and getattr(row, "org_id", None) == org.id
+    )
 
 
 async def enforce(

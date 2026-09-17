@@ -20,7 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.errors import ConflictError, NotFoundError, ValidationFailedError
+from app.errors import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationFailedError,
+)
 from app.models import (
     KYC_EDITABLE_STATUSES,
     KYC_ENTITY_TYPES,
@@ -33,6 +38,7 @@ from app.models import (
     Org,
     OrgMembership,
     Role,
+    SecurityAlert,
 )
 from app.services import audit as audit_svc
 from app.services import ban_list, kyc_checks, kyc_risk, sanctions, stripe_client
@@ -229,13 +235,24 @@ async def get_person(session: AsyncSession, org_id: uuid.UUID, person_id: uuid.U
 
 
 async def start_person_verification(
-    session: AsyncSession, settings: Settings, person: KycPerson, *, return_url: str
+    session: AsyncSession,
+    settings: Settings,
+    person: KycPerson,
+    *,
+    return_url: str,
+    actor_user_id: uuid.UUID | None = None,
 ) -> str:
-    if person.status == "verified":
+    if person.status == "verified" or person.identity_hash is not None:
         profile = await get_profile(session, person.org_id)
         # Annual re-verification is the one time a verified person checks again.
         if profile is None or profile.status not in ("reverification_due", "needs_info"):
             raise ConflictError("This person is already verified")
+        # P43: a verified person who has an account re-verifies themselves - nobody else can
+        # start (and complete) the check in their place.
+        if person.user_id is not None and actor_user_id != person.user_id:
+            raise PermissionDeniedError(
+                f"Only {person.full_name} can repeat their own ID check", code="not_your_identity"
+            )
     created = await stripe_client.create_verification_session(
         settings,
         metadata={
@@ -261,12 +278,19 @@ PERSON_STATUS_RANK = {
 }
 
 
-async def apply_person_outcome(session: AsyncSession, person: KycPerson, outcome: dict) -> None:
+async def apply_person_outcome(session: AsyncSession, person: KycPerson, outcome: dict) -> bool:
+    """Apply a Stripe outcome. Returns False when a RE-verification came back as a different
+    person (the previous identity is kept and the person must redo the check)."""
     status = outcome.get("status")
     if person.status == "verified":
-        return  # terminal; a late or replayed event never un-verifies
+        return True  # terminal; a late or replayed event never un-verifies
     if status == "verified":
         first, last = outcome.get("first_name"), outcome.get("last_name")
+        new_hash = identity_hash(first, last, outcome.get("dob"))
+        if person.identity_hash is not None and new_hash != person.identity_hash:
+            person.status = "requires_input"
+            person.last_error = "identity_mismatch: this ID belongs to a different person"
+            return False
         person.status = "verified"
         person.verified_name = " ".join(p for p in (first, last) if p)[:255] or None
         person.document_type = outcome.get("document_type") or None
@@ -282,6 +306,7 @@ async def apply_person_outcome(session: AsyncSession, person: KycPerson, outcome
         person.last_error = (outcome.get("error_code") or "Verification needs another try")[:255]
     elif status == "canceled":
         person.status = "canceled"
+    return True
 
 
 async def handle_identity_event(session: AsyncSession, settings: Settings, event: dict) -> None:
@@ -310,7 +335,29 @@ async def handle_identity_event(session: AsyncSession, settings: Settings, event
         if person is None:
             log.warning("identity_event_unknown_person", vs=vs_id)
             return
-        await apply_person_outcome(session, person, outcome)
+        same_person = await apply_person_outcome(session, person, outcome)
+        if not same_person:
+            session.add(
+                SecurityAlert(
+                    id=uuid.uuid4(),
+                    kind="identity_mismatch",
+                    org_id=org_id,
+                    user_id=person.user_id,
+                    status="open",
+                    detail={
+                        "person": person.full_name,
+                        "role": person.role,
+                        "reason": "Re-verification was completed with a different person's ID",
+                    },
+                )
+            )
+        elif person.status == "verified":
+            # P43: screening must use the REAL identity, not the name typed before the ID
+            # check finished.
+            profile = await get_profile(session, org_id)
+            if profile is not None and profile.status not in ("draft",):
+                await rescreen(session, settings, profile)
+                await refresh_risk(session, settings, profile)
         audit_svc.record(
             session,
             org_id,
@@ -430,6 +477,15 @@ def _audit_operator(
     )
 
 
+async def rescreen(session: AsyncSession, settings: Settings, profile: KycProfile) -> None:
+    """Re-run the identity-dependent checks against the people as they are NOW."""
+    persons = await kyc_checks.persons_for(session, profile.org_id)
+    kyc_checks.check_sanctions(session, settings, profile, persons)
+    await kyc_checks.check_ban_list(session, profile, persons)
+    kyc_checks.check_name_match(session, profile, persons)
+    await session.flush()
+
+
 async def approval_blockers(session: AsyncSession, profile: KycProfile) -> list[str]:
     blockers: list[str] = []
     persons = await kyc_checks.persons_for(session, profile.org_id)
@@ -449,6 +505,9 @@ async def approval_blockers(session: AsyncSession, profile: KycProfile) -> list[
             blockers.append(f"The {kind.replace('_', ' ')} check failed")
         elif kind == "sanctions" and check.result == "error":
             blockers.append("Sanctions lists are not loaded - screening did not run")
+    name_match = checks.get("name_match")
+    if name_match is None or name_match.result != "pass":
+        blockers.append("Owner names on the application don't match their verified IDs")
     registry = checks.get("registry")
     if registry is None or registry.result not in ("pass", "warn"):
         blockers.append("Registry check is not complete (record the manual lookup)")
@@ -475,8 +534,10 @@ async def approve(
     operator_id: uuid.UUID,
     note: str,
 ) -> None:
+    await rescreen(session, settings, profile)
     blockers = await approval_blockers(session, profile)
     if blockers:
+        await session.commit()  # keep the fresh screening results for the operator
         raise ConflictError(
             "Cannot approve yet: " + "; ".join(blockers), code="kyc_approval_blocked"
         )

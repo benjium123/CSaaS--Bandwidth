@@ -31,6 +31,7 @@ LOGIN_RISK_FLAGS: tuple[str, ...] = (
 WEBAUTHN_PURPOSES: tuple[str, ...] = ("register", "login", "step_up")
 
 SECURITY_ALERT_KINDS: tuple[str, ...] = (
+    "identity_mismatch",
     "flagged_login",
     "limit_request",
     "sanctions_hit",

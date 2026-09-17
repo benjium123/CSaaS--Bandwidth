@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import current_identity_session, get_current_user
+from app.auth.deps import check_step_up, current_identity_session, get_current_user
 from app.auth.security import (
     decode_pending_2fa_token,
     decrypt_credential,
@@ -98,6 +98,9 @@ async def enroll(
 ) -> EnrollOut:
     if not verify_password(payload.password, user.hashed_password):
         raise UnauthenticatedError("Incorrect password")
+    # P43: a passkey user adding an authenticator app proves the passkey first.
+    if user.has_second_factor:
+        await check_step_up(request, session, user, kind="recent_2fa", action="totp_change")
     settings: Settings = request.app.state.settings
     key = _fernet_key(settings)
     if user.totp_enabled:
@@ -127,12 +130,13 @@ async def activate(
 
     secret = decrypt_credential(user.totp_secret, key)
     step = _check_code(user, secret, payload.code)
+    had_factor = bool(user.has_second_factor)
     user.totp_enabled = True
     user.totp_last_used_step = step
     # P41: activating proves possession of the factor, so the enrolling session counts as
     # second-factor-verified from here on.
     row = await current_identity_session(request, session)
-    if row is not None:
+    if row is not None and not had_factor:
         row.second_factor_at = datetime.now(timezone.utc)
     account_security.audit(session, user.id, "totp.enabled", request=request)
     await session.commit()
@@ -210,7 +214,13 @@ async def step_up(
     if row is None:
         raise UnauthenticatedError("Sign in again to continue")
     secret = decrypt_credential(user.totp_secret, key)
-    step = _check_code(user, secret, payload.code)
+    # P43: wrong step-up codes count toward the account lockout, like sign-in codes do.
+    await lockout.ensure_not_locked(session, user)
+    try:
+        step = _check_code(user, secret, payload.code)
+    except UnauthenticatedError as exc:
+        await lockout.fail(session, settings, request, user, outcome="bad_2fa", error=exc)
+        raise
     user.totp_last_used_step = step
     row.second_factor_at = datetime.now(timezone.utc)
     session_tokens.rotate(response, settings, row)

@@ -135,6 +135,8 @@ async def test_trusted_idp_sso_session_counts(pclient, session):
         )
     ).scalar_one()
     row.auth_method = "sso"
+    # P43: only an SSO sign-in to THIS workspace can count its identity provider's MFA.
+    row.org_id = uuid.UUID(org["id"])
     await session.commit()
     assert (await pclient.get("/api/v1/orgs/current", headers=h)).status_code == 403
     org_row = await session.get(Org, uuid.UUID(org["id"]))

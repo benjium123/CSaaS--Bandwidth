@@ -103,6 +103,9 @@ def make_settings(**overrides) -> Settings:
         "api_key_max_days": 0,
         # P25 SSO tests configure a domain without DNS verification.
         "sso_require_verified_domain": False,
+        # P43: never call the real DeepSeek from tests, whatever the developer's .env holds.
+        "deepseek_api_key": "",
+        "ai_guard_enabled": False,
     }
     base.update(overrides)
     return Settings(**base)
@@ -178,6 +181,35 @@ async def register_and_login(
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
+
+
+async def mark_recent_2fa(session, email: str) -> None:
+    """P43: make the user's newest sign-in session count as a fresh second-factor proof,
+    for routes behind a ``recent_2fa`` step-up."""
+    from datetime import datetime, timezone
+
+    import sqlalchemy as sa
+
+    from app.models import Session as IdentitySession
+    from app.models import User
+
+    user = (
+        await session.execute(
+            sa.select(User)
+            .where(sa.func.lower(User.email) == email.lower())
+            .execution_options(allow_unscoped=True)
+        )
+    ).scalar_one()
+    live = (
+        await session.execute(
+            sa.select(IdentitySession)
+            .where(IdentitySession.user_id == user.id)
+            .order_by(IdentitySession.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    live.second_factor_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 def auth_headers(token: str, org_id: uuid.UUID | str | None = None) -> dict:

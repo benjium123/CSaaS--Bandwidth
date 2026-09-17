@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import OrgContext, get_current_user, require_permission
+from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import NotFoundError, ValidationFailedError
 from app.models import LoginEvent, Org, OrgMembership, User
@@ -337,6 +338,40 @@ async def list_org_login_events(
     return [_login_event_out(row) for row in rows]
 
 
+async def _require_owner_step_up(request: Request, ctx: OrgContext) -> None:
+    from app.auth.deps import check_org_selfie_step_up, check_step_up
+    from app.errors import PermissionDeniedError
+
+    if ctx.api_key is not None or ctx.actor_user_id is None:
+        raise PermissionDeniedError(
+            "Single sign-on settings can only be changed by the owner, signed in"
+        )
+    if "*" not in (ctx.role.permissions or []):
+        raise PermissionDeniedError("Only the workspace owner can change single sign-on")
+    actor = await ctx.session.get(User, ctx.actor_user_id)
+    await check_step_up(request, ctx.session, actor, kind="recent_2fa", action="sso_change")
+    await check_org_selfie_step_up(request, ctx, action="admin_grant")
+    set_org_context(ctx.session, ctx.org.id)
+
+
+async def _require_non_owner_role(ctx: OrgContext, role_id: object) -> None:
+    from app.models import Role
+
+    try:
+        rid = uuid.UUID(str(role_id))
+    except ValueError as exc:
+        raise ValidationFailedError("Default role not found") from exc
+    role = (
+        await ctx.session.execute(sa.select(Role).where(Role.id == rid))
+    ).scalar_one_or_none()
+    if role is None:
+        raise ValidationFailedError("Default role not found")
+    if "*" in (role.permissions or []):
+        raise ValidationFailedError(
+            "Single sign-on cannot make new people owners", code="sso_owner_role"
+        )
+
+
 @org_router.get("/security", response_model=SecurityPolicyOut)
 async def get_security_policy(
     ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
@@ -353,6 +388,12 @@ async def update_security_policy(
     settings = request.app.state.settings
     updates = payload.model_dump(exclude_unset=True)
     changed_fields: list[str] = []
+
+    # P43: whoever controls single sign-on can sign in AS any member on the domain, owner
+    # included. Only the owner may change it - in person (no API key), with a fresh second
+    # factor and, once businesses are verified, their ID step-up.
+    if "sso" in updates or updates.get("trust_idp_mfa") is not None:
+        await _require_owner_step_up(request, ctx)
 
     if "require_2fa" in updates:
         require_2fa = updates["require_2fa"]
@@ -447,6 +488,9 @@ async def update_security_policy(
                     # default_role_id arrives as a uuid.UUID, which the JSON column
                     # cannot serialise - store the canonical string form.
                     merged[field] = str(value) if isinstance(value, uuid.UUID) else value
+
+            if merged.get("default_role_id"):
+                await _require_non_owner_role(ctx, merged["default_role_id"])
 
             if "client_secret" in sso_update:
                 secret = sso_update["client_secret"]

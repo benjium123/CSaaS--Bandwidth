@@ -120,6 +120,11 @@ class Settings(BaseSettings):
     companies_house_api_key: SecretStr = SecretStr("")
     #: Business documents: max upload size.
     kyc_document_max_bytes: int = 10_000_000
+    #: P43: a proof of address must be dated within this many days.
+    kyc_address_proof_max_days: int = 90
+    #: P43: Canada's free Federal Corporation API key (api.ised-isde.canada.ca, Public Plan).
+    #: Blank = Canadian registry checks fall back to the uploaded registration documents.
+    ised_api_key: SecretStr = SecretStr("")
     #: Approved businesses re-verify on this cadence.
     kyc_reverify_days: int = 365
     kyc_reverify_grace_days: int = 14
@@ -292,6 +297,13 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr = SecretStr("")
     openai_api_key: SecretStr = SecretStr("")
     deepseek_api_key: SecretStr = SecretStr("")
+    #: P43: DeepSeek endpoint and the model the platform's safety AI uses (KYC document
+    #: reading and decision packs, text and call monitoring). Platform-paid, never BYOK.
+    deepseek_base_url: str = "https://api.deepseek.com"
+    ai_guard_model: str = "deepseek-flash"
+    #: Off = every AI check reports "unavailable" and the fail-safe rules apply.
+    ai_guard_enabled: bool = True
+    ai_guard_timeout_seconds: float = 20.0
     groq_api_key: SecretStr = SecretStr("")
     google_api_key: SecretStr = SecretStr("")
 

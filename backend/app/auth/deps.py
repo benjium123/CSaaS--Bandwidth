@@ -611,11 +611,17 @@ async def require_platform_operator(
         if not hmac.compare_digest(x_platform_ops_token, configured):
             raise PermissionDeniedError("Invalid platform operator token")
         return
+    from app.services import session_tokens
+
+    has_cookie = bool(
+        request.cookies.get(session_tokens.session_cookie_name(request.app.state.settings))
+    )
     if (
         creds is not None
         and creds.credentials
         and not creds.credentials.startswith(f"{API_KEY_TOKEN_PREFIX}_")
-    ):
+    ) or (creds is None and has_cookie):
+        # P43: operators in the browser authenticate with the session cookie since P42.
         from app.services import operators as operators_svc
 
         user = await get_current_user(request, creds, session)

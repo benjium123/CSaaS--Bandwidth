@@ -71,8 +71,16 @@ async def change_password(
 ) -> Response:
     settings: Settings = request.app.state.settings
     await enforce_rate_limit(request, f"password-change:{user.id}")
+    await lockout.ensure_not_locked(session, user)
     if not verify_password(payload.current_password, user.hashed_password):
-        raise UnauthenticatedError("Your current password is incorrect")
+        await lockout.fail(
+            session,
+            settings,
+            request,
+            user,
+            outcome="bad_password",
+            error=UnauthenticatedError("Your current password is incorrect"),
+        )
     if user.has_second_factor:
         await check_step_up(request, session, user, kind="recent_2fa", action="password_change")
     if payload.new_password == payload.current_password:
@@ -173,7 +181,8 @@ async def reset_password(
     person in and never bypasses the second factor: email access alone must not be enough
     to take over an account."""
     settings: Settings = request.app.state.settings
-    await enforce_rate_limit(request, "password-reset")
+    # P43: per token, never one global bucket that anyone could exhaust for everybody.
+    await enforce_rate_limit(request, f"password-reset:{_token_hash(payload.token)[:24]}")
     row = (
         await session.execute(
             sa.select(PasswordResetToken).where(
@@ -379,6 +388,17 @@ async def complete_identity_recovery(
         or not fresh
         or row.identity_hash not in await kyc_step_up.verified_identity_hashes(session, user.id)
     ):
+        raise ValidationFailedError(
+            "Your identity check is not complete or did not match. Try again.",
+            code="identity_recovery_incomplete",
+        )
+    spent = await session.execute(
+        sa.update(KycStepUp)
+        .where(KycStepUp.id == row.id, KycStepUp.consumed_at.is_(None))
+        .values(consumed_at=_now())
+        .execution_options(synchronize_session=False)
+    )
+    if spent.rowcount != 1:
         raise ValidationFailedError(
             "Your identity check is not complete or did not match. Try again.",
             code="identity_recovery_incomplete",

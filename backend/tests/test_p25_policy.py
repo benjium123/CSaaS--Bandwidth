@@ -16,6 +16,7 @@ from tests.conftest import (
     auth_headers,
     create_org,
     make_settings,
+    mark_recent_2fa,
     register_and_login,
 )
 
@@ -427,6 +428,7 @@ async def test_sso_secret_encrypted_and_never_echoed(session):
     async with _custom_client(custom_settings) as client:
         owner_token = await register_and_login(client, "sso-secret@example.com")
         org = await create_org(client, owner_token, "SSO Secret Org")
+        await mark_recent_2fa(session, "sso-secret@example.com")
         org_id = uuid.UUID(org["id"])
 
         r = await client.patch(
@@ -465,6 +467,7 @@ async def test_sso_patch_without_secret_keeps_existing(session):
     async with _custom_client(custom_settings) as client:
         owner_token = await register_and_login(client, "sso-keep@example.com")
         org = await create_org(client, owner_token, "SSO Keep Org")
+        await mark_recent_2fa(session, "sso-keep@example.com")
         org_id = uuid.UUID(org["id"])
 
         r = await client.patch(
@@ -504,9 +507,10 @@ async def test_sso_patch_without_secret_keeps_existing(session):
         assert org_row.sso["client_secret_encrypted"] == before
 
 
-async def test_sso_enforce_requires_complete_config(client):
+async def test_sso_enforce_requires_complete_config(client, session):
     owner_token = await register_and_login(client, "sso-enforce@example.com")
     org = await create_org(client, owner_token, "SSO Enforce Org")
+    await mark_recent_2fa(session, "sso-enforce@example.com")
     org_id = uuid.UUID(org["id"])
 
     r = await client.patch(
@@ -527,6 +531,7 @@ async def test_security_patch_writes_audit_entry(session):
     async with _custom_client(custom_settings) as client:
         owner_token = await register_and_login(client, "audit-secret@example.com")
         org = await create_org(client, owner_token, "Audit Secret Org")
+        await mark_recent_2fa(session, "audit-secret@example.com")
         org_id = uuid.UUID(org["id"])
 
         r = await client.patch(

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import current_identity_session, get_current_user
+from app.auth.deps import check_step_up, current_identity_session, get_current_user
 from app.auth.security import decode_pending_2fa_token
 from app.config import Settings
 from app.db.session import get_session
@@ -82,6 +82,7 @@ async def register_options(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OptionsOut:
     settings: Settings = request.app.state.settings
+    await _require_fresh_factor_if_enrolled(request, session, user)
     challenge_id, options = await passkeys_svc.registration_options(session, settings, user)
     await session.commit()
     return OptionsOut(challenge_id=challenge_id, options=options)
@@ -95,6 +96,10 @@ async def register(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PasskeyOut:
     settings: Settings = request.app.state.settings
+    # P43: adding a passkey to an account that already has a factor needs a fresh proof of
+    # that factor - otherwise a stolen session could plant its own passkey.
+    had_factor = bool(user.has_second_factor)
+    await _require_fresh_factor_if_enrolled(request, session, user)
     try:
         row = await passkeys_svc.register(
             session,
@@ -108,9 +113,10 @@ async def register(
         # The consumed challenge must stay consumed even when verification fails.
         await session.commit()
         raise
-    # Registering proves possession of the new factor, like activating TOTP does.
+    # A FIRST factor proves possession, like activating TOTP does. Adding another factor
+    # never refreshes the session's proof (that would bypass every recent-2FA check).
     live = await current_identity_session(request, session)
-    if live is not None:
+    if live is not None and not had_factor:
         live.second_factor_at = datetime.now(timezone.utc)
     account_security.audit(
         session, user.id, "passkey.added", request=request, detail={"name": row.name}
@@ -133,6 +139,7 @@ async def delete_passkey(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
     settings: Settings = request.app.state.settings
+    await check_step_up(request, session, user, kind="recent_2fa", action="passkey_change")
     await passkeys_svc.delete(session, settings, user, passkey_id)
     account_security.audit(session, user.id, "passkey.removed", request=request)
     await session.commit()
@@ -140,6 +147,13 @@ async def delete_passkey(
         settings, user.email, "Passkey removed", "A passkey was removed from your account."
     )
     return Response(status_code=204)
+
+
+async def _require_fresh_factor_if_enrolled(
+    request: Request, session: AsyncSession, user: User
+) -> None:
+    if user.has_second_factor:
+        await check_step_up(request, session, user, kind="recent_2fa", action="passkey_change")
 
 
 async def _pending_user(session: AsyncSession, settings: Settings, token: str) -> User:

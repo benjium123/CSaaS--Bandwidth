@@ -294,6 +294,7 @@ async def start_person_verification(
         settings,
         person,
         return_url=_return_url(settings, payload.return_url, "/settings/verification"),
+        actor_user_id=ctx.actor_user_id,
     )
     await ctx.session.commit()
     return {"url": url, "status": person.status}
@@ -424,6 +425,7 @@ async def verify_me(
         settings,
         person,
         return_url=_return_url(settings, payload.return_url, "/settings/verification"),
+        actor_user_id=ctx.actor_user_id,
     )
     await ctx.session.commit()
     return {"url": url, "status": person.status}

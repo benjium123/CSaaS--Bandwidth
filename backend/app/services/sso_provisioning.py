@@ -186,7 +186,8 @@ async def _role_for_new_member(session: AsyncSession, org: Org, groups: list[str
             role = (
                 await session.execute(sa.select(Role).where(Role.id == uuid.UUID(str(default_id))))
             ).scalar_one_or_none()
-            if role is not None:
+            # P43: never hand out ownership through SSO/SCIM, however it was configured.
+            if role is not None and "*" not in (role.permissions or []):
                 return role
         except ValueError:
             pass

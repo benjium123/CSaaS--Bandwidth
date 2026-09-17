@@ -83,6 +83,10 @@ async def register_failure(
     row = await _row(session, user.id)
     window_start = now - timedelta(minutes=settings.lockout_window_minutes)
     last_end = _aware(row.locked_until) if row is not None else None
+    # Count from the end of the last lock - but never from a future moment while a lock is
+    # still running, or failures during the lock would be ignored.
+    if last_end is not None and last_end > now:
+        last_end = None
     since = max(window_start, last_end) if last_end is not None else window_start
     failures = (
         await session.execute(

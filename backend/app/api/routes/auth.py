@@ -201,7 +201,7 @@ async def login(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TokenOut:
     settings: Settings = request.app.state.settings
-    await enforce_rate_limit(request, f"login:{payload.email}")
+    await enforce_rate_limit(request, f"login:{payload.email.strip().lower()}")
     user = await users_repo.get_by_email(session, payload.email)
 
     # Same failure shape for unknown-email and bad-password. Verifying against a throwaway
@@ -217,6 +217,10 @@ async def login(
             request=request,
         )
 
+    # P43: a locked account answers the same whether or not the password is right, so the
+    # lock can't be used to test guesses. Guesses made during the lock are never evaluated.
+    await lockout.ensure_not_locked(session, user)
+
     if not verify_password(payload.password, user.hashed_password):
         await lockout.fail(
             session,
@@ -226,9 +230,6 @@ async def login(
             outcome="bad_password",
             error=UnauthenticatedError("Incorrect email or password"),
         )
-
-    # P42: only someone who knows the password learns the account is locked.
-    await lockout.ensure_not_locked(session, user)
 
     if not user.is_active:
         await _log_and_fail(
