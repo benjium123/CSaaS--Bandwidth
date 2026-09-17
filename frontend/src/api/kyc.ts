@@ -80,6 +80,8 @@ export type KycDocument = {
 
 export type KycProfile = {
   status: KycStatus;
+  /** P43: countries a business can verify from (server KYC_COUNTRIES). */
+  supported_countries?: string[];
   business: KycBusiness;
   use_case: KycUseCase | null;
   use_case_pending: KycUseCase | null;

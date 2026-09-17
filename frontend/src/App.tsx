@@ -92,7 +92,23 @@ export function App() {
   // P41: an account without an authenticator app or passkey can do nothing else yet.
   if (me.second_factor_required) return <SecureAccountPage />;
 
-  if (!orgId) return <OrgPickerPage />;
+  if (!orgId) {
+    // P43: platform operators often belong to no workspace - the review console must not
+    // be hidden behind the workspace picker.
+    if (me.is_platform_operator) {
+      return (
+        <>
+          <Routes>
+            <Route path="/ops" element={<main className="mx-auto max-w-6xl p-4 sm:p-6"><OpsPage /></main>} />
+            <Route path="/report" element={<ReportNumberPage />} />
+            <Route path="*" element={<OrgPickerPage />} />
+          </Routes>
+          <StepUpDialog />
+        </>
+      );
+    }
+    return <OrgPickerPage />;
+  }
 
   return (
     <Shell>

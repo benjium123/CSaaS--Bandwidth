@@ -71,9 +71,33 @@ def resolve_zones(e164: str, contact_timezone: str | None = None) -> tuple[str, 
 
     npa = npa_of(e164)
     if npa is None:
-        # Non-NANP or malformed: we know nothing, so require legality everywhere.
+        # Non-NANP (e.g. a UK +44 number): the country's own zones. Checking a UK
+        # recipient against US zones held daytime texts until the evening and allowed
+        # them after midnight.
+        zones = _country_zones(e164)
+        if zones:
+            return zones
+        # Malformed or unknown: we know nothing, so require legality everywhere.
         return ALL_US_ZONES
     return zones_for_npa(npa)
+
+
+def _country_zones(e164: str) -> tuple[str, ...]:
+    try:
+        import phonenumbers
+        from phonenumbers import timezone as number_tz
+
+        found = number_tz.time_zones_for_number(phonenumbers.parse(e164))
+    except Exception:  # noqa: BLE001 - unparseable numbers fall back to the safe default
+        return ()
+    zones = []
+    for zone in found:
+        try:
+            ZoneInfo(zone)
+        except (ZoneInfoNotFoundError, ValueError, KeyError):
+            continue  # e.g. Etc/Unknown
+        zones.append(zone)
+    return tuple(zones)
 
 
 def _next_open(instant: datetime, zone: str, start: time, end: time) -> datetime | None:

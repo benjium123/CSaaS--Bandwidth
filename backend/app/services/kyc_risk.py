@@ -93,7 +93,9 @@ def evaluate(
     destinations = {str(c).upper() for c in (use_case.get("destination_countries") or [])}
     outside = sorted(destinations - allowed)
     if outside:
-        reasons.append("Plans to call or text outside US/CA/UK: " + ", ".join(outside))
+        reasons.append(
+            "Plans to call or text outside the countries we serve: " + ", ".join(outside)
+        )
 
     try:
         if int(use_case.get("monthly_calls") or 0) >= HIGH_MONTHLY_CALLS:

@@ -508,9 +508,10 @@ pauses campaigns, hangs up live calls, emails the owners.
    (catch rate >= 95%, false alarms <= 3%). Add DeepSeek to the privacy policy / customer
    agreement as a data processor before switching monitoring on.
 2. **Deploy.** `alembic upgrade head` applies 0050 + 0051. New Python deps: pillow, pypdfium2.
-3. **Canada registry (free).** Create an account at api.ised-isde.canada.ca, subscribe to
-   Federal Corporation API -> Public Plan, set `ISED_API_KEY`. Without it Canadian companies are
-   confirmed from their uploaded documents.
+3. **UK registry (free).** Register at developer.company-information.service.gov.uk, create a
+   REST API key, set `COMPANIES_HOUSE_API_KEY`. Without it UK companies are confirmed from their
+   uploaded documents only. (Businesses can verify from `KYC_COUNTRIES=US,GB`; Canada is off
+   for now - add `CA` and `ISED_API_KEY` to switch it back on.)
 4. **Call listener.** Rebuild and start the `call-monitor` service from
    `deploy/livekit/docker-compose.livekit.yml` (same image as the AI agent; needs
    `DEEPGRAM_API_KEY` and `ELEVENLABS_API_KEY`). Smoke test: place a softphone call from a new

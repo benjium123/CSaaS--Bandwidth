@@ -37,7 +37,7 @@ from app.services import identity as identity_svc
 log = structlog.get_logger(__name__)
 
 FLAG_LABELS: dict[str, str] = {
-    "country_not_allowed": "signed in from outside the United States, Canada and the UK",
+    "country_not_allowed": "signed in from outside the countries we serve",
     "tor": "signed in through the Tor network",
     "datacenter": "signed in through a VPN, proxy or hosting network",
     "new_device": "signed in from a new device",

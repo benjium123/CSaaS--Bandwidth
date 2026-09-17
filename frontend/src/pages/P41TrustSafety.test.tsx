@@ -9,6 +9,7 @@ import { StepUpDialog } from "@/components/security/StepUpDialog";
 import { VerifyBusinessPage } from "@/pages/VerifyBusinessPage";
 import { OpsPage } from "@/pages/OpsPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import type { KycProfile } from "@/api/kyc";
 
 const ME: Me = {
@@ -105,6 +106,19 @@ describe("VerificationBanner", () => {
 });
 
 describe("VerifyBusinessPage", () => {
+  it("only offers the countries the platform verifies", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/kyc/profile": profile({ supported_countries: ["US", "GB"] }),
+    });
+    renderWithProviders(<VerifyBusinessPage />, client);
+    const select = await screen.findByRole("combobox", { name: "Country of registration" });
+    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options).toContain("United States");
+    expect(options).toContain("United Kingdom");
+    expect(options).not.toContain("Canada");
+  });
+
   it("lists what is missing and keeps submit disabled", async () => {
     const client = makeStubClient({
       "/api/v1/auth/me": ME,
@@ -193,6 +207,8 @@ describe("OpsPage", () => {
             video_call_done: false,
             use_case_change_pending: false,
             submitted_at: null,
+            ai_recommendation: "reject",
+            ai_confidence: 91,
           },
         ],
       },
@@ -200,6 +216,24 @@ describe("OpsPage", () => {
     renderWithProviders(<OpsPage />, client);
     expect(await screen.findByText("Debt Relief Now LLC")).toBeInTheDocument();
     expect(screen.getByText(/video call needed/)).toBeInTheDocument();
+    expect(screen.getByText("AI: reject 91%")).toBeInTheDocument();
+  });
+});
+
+describe("OrgPickerPage", () => {
+  it("links an operator with no workspace to the operator console", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": { ...ME, memberships: [], is_platform_operator: true },
+    });
+    renderWithProviders(<OrgPickerPage />, client);
+    expect(await screen.findByRole("link", { name: "Open the operator console" })).toHaveAttribute("href", "/ops");
+  });
+
+  it("shows no operator link to customers", async () => {
+    const client = makeStubClient({ "/api/v1/auth/me": ME });
+    renderWithProviders(<OrgPickerPage />, client);
+    expect(await screen.findByText("Acme")).toBeInTheDocument(); // me has loaded
+    expect(screen.queryByRole("link", { name: "Open the operator console" })).toBeNull();
   });
 });
 

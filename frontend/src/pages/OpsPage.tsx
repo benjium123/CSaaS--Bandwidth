@@ -33,7 +33,11 @@ type QueueItem = {
   video_call_done: boolean;
   use_case_change_pending: boolean;
   submitted_at: string | null;
+  ai_recommendation?: "approve" | "needs_info" | "reject" | null;
+  ai_confidence?: number | null;
 };
+
+const AI_LABEL: Record<string, string> = { approve: "AI: approve", needs_info: "AI: ask for info", reject: "AI: reject" };
 
 type Check = { result: string; summary: string; detail: Record<string, unknown> | null; at: string | null; manual: boolean };
 
@@ -379,6 +383,12 @@ function QueueTab({ onOpen }: { onOpen: (orgId: string) => void }) {
               >
                 <Pill tone={a.risk_tier === "high" ? "danger" : "neutral"}>{a.risk_tier ?? "—"}</Pill>
                 <span className="text-sm font-medium">{a.legal_name ?? a.org_name}</span>
+                {a.ai_recommendation ? (
+                  <Pill tone={a.ai_recommendation === "approve" ? "success" : a.ai_recommendation === "reject" ? "danger" : "warning"}>
+                    {AI_LABEL[a.ai_recommendation]}
+                    {a.ai_confidence != null ? ` ${a.ai_confidence}%` : ""}
+                  </Pill>
+                ) : null}
                 <span className="text-xs text-muted-foreground">
                   {a.country ?? ""} · {a.status.replace(/_/g, " ")}
                   {a.video_call_required && !a.video_call_done ? " · video call needed" : ""}

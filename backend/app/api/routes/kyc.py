@@ -30,7 +30,7 @@ from app.auth.deps import (
     get_current_user,
     require_permission,
 )
-from app.config import Settings
+from app.config import Settings, get_active_settings
 from app.db.session import get_session
 from app.errors import PermissionDeniedError, ValidationFailedError
 from app.models import KycDocument, KycPerson, KycStepUp, SecurityAlert, User
@@ -162,6 +162,8 @@ async def _profile_out(session: AsyncSession, profile) -> dict:
     checks = await kyc_checks.latest_checks(session, profile.org_id)
     return {
         "status": profile.status,
+        # P43: the countries a business can verify from (KYC_COUNTRIES).
+        "supported_countries": get_active_settings().kyc_country_list,
         "business": {
             "country": profile.country,
             "legal_name": profile.legal_name,

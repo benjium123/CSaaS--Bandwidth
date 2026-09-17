@@ -382,3 +382,22 @@ async def test_a_phone_number_in_the_workspace_name_loses_the_exemption(app_ai, 
     set_org_context(session, org_id)
     body = await compliance_svc.auto_reply_body(session, org_id, compliance_svc.KeywordHit("opt_out", "STOP"))
     assert await compliance_svc.is_standard_auto_reply(session, org_id, body) is False
+
+
+async def test_exam_and_canary_hold_no_transaction_while_the_ai_answers(session, fix_settings, monkeypatch):
+    """A minutes-long exam must not keep a read transaction open (SQLite: blocks every
+    writer; Postgres: stalls migrations)."""
+    from app.services import monitor_exam
+
+    seen = []
+
+    async def fake_run(settings, texts, calls, *, stop_on_unavailable=False):
+        seen.append(session.in_transaction())
+        return monitor_exam.ExamResult()
+
+    monkeypatch.setattr(monitor_exam, "run", fake_run)
+    await monitor_exam.due(session, "exam", timedelta(days=7))  # opens a read transaction
+    await monitor_exam.exam_tick(session, fix_settings)
+    await monitor_exam.due(session, "canary", timedelta(minutes=55))
+    await monitor_exam.canary_tick(session, fix_settings)
+    assert seen == [False, False]

@@ -52,7 +52,11 @@ async def guard(engine, guard_settings):
 
 async def _org(client, number: str = "+15125550100"):
     token, org, _num = await make_org_with_number(
-        client, f"g-{uuid.uuid4().hex[:8]}@example.com", f"Guard {uuid.uuid4().hex[:6]}", number
+        client,
+        f"g-{uuid.uuid4().hex[:8]}@example.com",
+        # letters only: a run of digits in a workspace name looks like a phone number
+        "Guard " + uuid.uuid4().hex[:6].translate(str.maketrans("0123456789", "ghijklmnop")),
+        number,
     )
     return token, org
 

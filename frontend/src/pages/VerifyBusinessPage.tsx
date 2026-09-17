@@ -101,7 +101,9 @@ function BusinessStep({ profile, editable }: { profile: KycProfile; editable: bo
       <Field label="Country of registration">
         <Select aria-label="Country of registration" value={form.country ?? ""} onChange={set("country")} disabled={!editable}>
           <option value="">Choose…</option>
-          {COUNTRY_OPTIONS.map((c) => (
+          {COUNTRY_OPTIONS.filter(
+            (c) => !profile.supported_countries || profile.supported_countries.includes(c.value) || c.value === form.country,
+          ).map((c) => (
             <option key={c.value} value={c.value}>{c.label}</option>
           ))}
         </Select>
@@ -120,10 +122,10 @@ function BusinessStep({ profile, editable }: { profile: KycProfile; editable: bo
       <Field label="Trading name (if different)">
         <Input aria-label="Trading name" value={form.dba_name ?? ""} onChange={set("dba_name")} disabled={!editable} />
       </Field>
-      <Field label="Registration number" hint="State file number / Corporation number / Companies House number">
+      <Field label="Registration number" hint="State file number (US) or Companies House number (UK)">
         <Input aria-label="Registration number" value={form.registration_number ?? ""} onChange={set("registration_number")} disabled={!editable} />
       </Field>
-      <Field label="Tax ID" hint="EIN (US), Business Number (CA) or UTR/VAT (UK)">
+      <Field label="Tax ID" hint="EIN (US) or UTR / VAT number (UK)">
         <Input aria-label="Tax ID" value={form.tax_id ?? ""} onChange={set("tax_id")} disabled={!editable} />
       </Field>
       <Field label="Date the business was formed">
@@ -145,7 +147,7 @@ function BusinessStep({ profile, editable }: { profile: KycProfile; editable: bo
         <Field label="City">
           <Input aria-label="City" value={address.city} onChange={(e) => setAddress((a) => ({ ...a, city: e.target.value }))} disabled={!editable} />
         </Field>
-        <Field label="State / province / county">
+        <Field label="State / county">
           <Input aria-label="Region" value={address.region ?? ""} onChange={(e) => setAddress((a) => ({ ...a, region: e.target.value }))} disabled={!editable} />
         </Field>
         <Field label="ZIP / postal code">

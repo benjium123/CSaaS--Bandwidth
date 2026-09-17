@@ -156,8 +156,8 @@ export function OwnerResidence({
             onChange={(e) => setCity(e.target.value)}
           />
           <Input
-            aria-label={`State or province for ${person.full_name}`}
-            placeholder="State / province"
+            aria-label={`State or county for ${person.full_name}`}
+            placeholder="State / county"
             value={region}
             onChange={(e) => setRegion(e.target.value)}
           />

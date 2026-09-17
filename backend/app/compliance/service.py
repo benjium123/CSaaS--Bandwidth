@@ -8,6 +8,7 @@ the two could disagree, and the flag is the one that would be wrong.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -307,7 +308,7 @@ async def is_standard_auto_reply(session: AsyncSession, org_id: uuid.UUID, body:
     org_name = await _org_name(session, org_id)
     from app.services import monitor_rules
 
-    if monitor_rules.extract_links(org_name) or sum(ch.isdigit() for ch in org_name) >= 5:
+    if monitor_rules.extract_links(org_name) or _PHONE_LIKE.search(org_name):
         return False  # the workspace name is customer-controlled too (a link or phone number)
     for column in ("optout_text", "optin_text", "help_text"):
         default = ComplianceSettings.__table__.c[column].default
@@ -320,6 +321,10 @@ async def is_standard_auto_reply(session: AsyncSession, org_id: uuid.UUID, body:
         if _interpolate(template, org_name, help_contact) == body:
             return True
     return False
+
+
+#: five or more digits in a row (spaces, dots, dashes and brackets allowed between them)
+_PHONE_LIKE = re.compile(r"(?:\d[\s().-]{0,2}){4,}\d")
 
 
 def _plain_contact(value: str) -> bool:

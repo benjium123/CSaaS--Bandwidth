@@ -251,6 +251,8 @@ async def canary_tick(session: AsyncSession, settings: Settings) -> MonitorHealt
     """Hourly: the fixed canary set through the live judgement functions."""
     # Strict by construction: with 3 scams and 1 legit case, one miss or one false alarm
     # already falls outside CATCH_RATE_MIN / FALSE_ALARM_MAX.
+    # Never hold a database transaction open while waiting on the AI.
+    await session.commit()
     result = await run(settings, CANARY_TEXTS, CANARY_CALLS, stop_on_unavailable=True)
     return await _record(session, "canary", result)
 
@@ -259,6 +261,9 @@ async def exam_tick(session: AsyncSession, settings: Settings) -> MonitorHealth:
     """Weekly: the whole library, plus the latest operator-labelled cases."""
     texts = load_cases("texts") + await labelled_cases(session, "texts")
     calls = load_cases("calls") + await labelled_cases(session, "calls")
+    # The exam takes minutes: end the read transaction first so it holds no locks (on
+    # SQLite a reader blocks every writer; on Postgres it would stall migrations).
+    await session.commit()
     result = await run(settings, texts, calls, stop_on_unavailable=True)
     return await _record(session, "exam", result)
 

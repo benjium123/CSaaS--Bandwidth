@@ -104,6 +104,27 @@ async def queue(
     if risk:
         stmt = stmt.where(KycProfile.risk_tier == risk)
     rows = (await op.session.execute(stmt)).all()
+    # P43: the AI's recommendation next to each application, so the queue can be cleared
+    # from the list. One query for the latest decision pack of every listed business.
+    packs: dict[uuid.UUID, dict] = {}
+    org_ids = [p.org_id for p, _name in rows]
+    if org_ids:
+        pack_rows = (
+            (
+                await op.session.execute(
+                    sa.select(KycCheck)
+                    .where(KycCheck.org_id.in_(org_ids), KycCheck.kind == "ai_decision")
+                    .order_by(KycCheck.created_at.desc())
+                    .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for check in pack_rows:
+            detail = check.detail or {}
+            if check.org_id not in packs and detail.get("recommendation"):
+                packs[check.org_id] = detail
     open_alerts = (
         await op.session.execute(
             sa.select(sa.func.count(SecurityAlert.id)).where(SecurityAlert.status == "open")
@@ -123,6 +144,8 @@ async def queue(
                 "video_call_done": p.video_call_done_at is not None,
                 "use_case_change_pending": p.use_case_pending is not None,
                 "submitted_at": _iso(p.submitted_at),
+                "ai_recommendation": packs.get(p.org_id, {}).get("recommendation"),
+                "ai_confidence": packs.get(p.org_id, {}).get("confidence"),
             }
             for p, name in rows
         ],

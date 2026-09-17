@@ -4,7 +4,7 @@ What exists today to keep scammers and account takeovers off the platform. One l
 
 ## Signup & business verification
 - Invite-only signup; no public registration.
-- Businesses only, registered in the US, Canada or UK.
+- Businesses only, registered in the US or UK (`KYC_COUNTRIES`; Canada is switched off for now).
 - Business details, registration number, tax ID, address, website and business email collected.
 - Business documents uploaded, file type checked, encrypted at rest, viewable only by operators.
 - Every owner (25%+) passes an ID + live selfie check (Stripe Identity); we never store ID images.

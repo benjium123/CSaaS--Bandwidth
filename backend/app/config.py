@@ -97,7 +97,9 @@ class Settings(BaseSettings):
     #: verification is not approved. Tests turn it off; see services/telephony_access.py.
     kyc_enforced: bool = True
     #: ISO-3166 alpha-2 countries businesses may verify from, and logins are expected from.
-    kyc_countries: str = "US,CA,GB"
+    #: P43: US and UK only for now (Canada's registry support stays in the code; add CA here
+    #: to switch it back on).
+    kyc_countries: str = "US,GB"
     #: WebAuthn relying party. Empty rp_id derives from PUBLIC_WEB_URL's host; the expected
     #: origin is always PUBLIC_WEB_URL.
     webauthn_rp_id: str = ""
@@ -612,6 +614,17 @@ class Settings(BaseSettings):
             )
         )
         return out
+
+
+#: P43: names for the verification countries, used in messages and the AI reviewer's brief.
+COUNTRY_NAMES = {"US": "the United States", "GB": "the United Kingdom", "CA": "Canada"}
+
+
+def countries_phrase(codes: list[str]) -> str:
+    names = [COUNTRY_NAMES.get(c, c) for c in codes]
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def load_settings(**overrides) -> Settings:

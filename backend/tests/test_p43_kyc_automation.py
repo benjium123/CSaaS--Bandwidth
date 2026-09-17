@@ -182,6 +182,30 @@ async def test_decision_pack_is_not_rewritten_when_nothing_changed(kyc_app, sess
     assert len(app.state.fake_ai.tasks("senior compliance analyst")) == before
 
 
+async def test_queue_shows_the_ai_recommendation(kyc_app, session, kyc_settings):
+    client, _app, _carrier, created, outcomes = kyc_app
+    _write_sanctions(kyc_settings, ["NOBODY"])
+    token = await register_and_login(client, "queue@acme-plumbing.example")
+    org = await create_org(client, token, "Queue Co")
+    await _complete_application(client, created, outcomes, token, org["id"])
+    await client.post("/api/v1/kyc/submit", headers=auth_headers(token, org["id"]))
+    oh = auth_headers(await _make_operator(client, session, "queue-ops@platform.example"))
+    detail = (await client.get(f"/api/v1/ops/applications/{org['id']}", headers=oh)).json()
+    pack = detail["checks"]["ai_decision"]["detail"]
+    queue = (await client.get("/api/v1/ops/queue", headers=oh)).json()["applications"]
+    row = next(a for a in queue if a["org_id"] == org["id"])
+    assert row["ai_recommendation"] == pack["recommendation"]
+    assert row["ai_confidence"] == pack["confidence"]
+
+
+def test_only_us_and_uk_businesses_by_default():
+    from app.config import countries_phrase
+
+    settings = make_settings()
+    assert settings.kyc_country_list == ["US", "GB"]
+    assert countries_phrase(settings.kyc_country_list) == "the United States and the United Kingdom"
+
+
 # --- free registries ------------------------------------------------------------------------
 
 

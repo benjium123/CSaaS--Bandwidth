@@ -6,6 +6,7 @@ One test (or a small group) per finding, named after what the attacker could do 
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -311,7 +312,12 @@ async def test_locked_account_answers_the_same_for_right_and_wrong_password(api,
         "/api/v1/auth/login", json={"email": email, "password": "nope-nope-nope"}
     )
     assert right.status_code == wrong.status_code == 423
-    assert right.json()["error"]["message"] == wrong.json()["error"]["message"]
+    # Same wording either way. The countdown minutes are masked: they tick between the two
+    # requests, and the point of the test is that the password itself changes nothing.
+    def shape(response):
+        return re.sub(r"\d+", "N", response.json()["error"]["message"])
+
+    assert shape(right) == shape(wrong)
 
 
 async def test_login_rate_limit_ignores_email_case(fix_settings, engine, monkeypatch):

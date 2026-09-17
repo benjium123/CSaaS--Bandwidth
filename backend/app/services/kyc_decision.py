@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings
+from app.config import Settings, countries_phrase
 from app.models import KycCheck, KycDocument, KycProfile
 from app.services import ai_guard, kyc_checks
 
@@ -30,7 +30,7 @@ RECOMMENDATIONS = ("approve", "needs_info", "reject")
 ERROR_BACKOFF = timedelta(minutes=15)
 
 SYSTEM = """You are the senior compliance analyst for a telecom company that sells phone
-numbers, calling and texting to businesses in the US, Canada and UK. Scammers try to sign up
+numbers, calling and texting to businesses in {countries}. Scammers try to sign up
 as legitimate-looking businesses, so you review applications carefully, but you also don't
 want to turn away genuine small businesses over paperwork noise.
 
@@ -245,7 +245,7 @@ async def generate_if_stale(
         judgement = await ai_guard.judge(
             settings,
             task="kyc_decision",
-            system=SYSTEM,
+            system=SYSTEM.replace("{countries}", countries_phrase(settings.kyc_country_list)),
             user=ai_guard.data_block("application", application)
             + "\n\nPrepare the decision for the reviewer.",
             max_tokens=1500,

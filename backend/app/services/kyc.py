@@ -133,9 +133,11 @@ def update_business(settings: Settings, profile: KycProfile, data: dict) -> None
     if "country" in data and data["country"] is not None:
         country = str(data["country"]).upper()
         if country not in settings.kyc_country_list:
+            from app.config import countries_phrase
+
             raise ValidationFailedError(
-                "We can currently verify businesses registered in the United States, Canada "
-                "and the United Kingdom only"
+                "We can currently verify businesses registered in "
+                f"{countries_phrase(settings.kyc_country_list)} only"
             )
         data["country"] = country
     if data.get("entity_type") is not None and data["entity_type"] not in KYC_ENTITY_TYPES:

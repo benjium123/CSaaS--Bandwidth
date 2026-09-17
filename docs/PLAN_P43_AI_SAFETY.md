@@ -17,6 +17,7 @@ Built 2026-09-17 on branch `p41-kyc`. Migrations `0050_kyc_automation`, `0051_mo
 | D-P43-3 | AI prepares the KYC decision (review, thinking, recommendation); an operator approves. AI never approves. |
 | D-P43-4 | No video call; high-risk applications need every document to fully match. |
 | D-P43-5 | Every owner uploads proof of residence dated within 90 days. |
+| D-P43-8 | 2026-09-17: US and UK only for now (`KYC_COUNTRIES=US,GB`); Canada code kept but switched off. |
 | D-P43-6 | Registry lookups only if <= $0.50 each: free sources only (Companies House, Corporations Canada, NY/CO/OR/CT open data, otherwise AI-read registration documents). |
 | D-P43-7 | Monitoring may hold texts and pause accounts automatically; suspending/banning stays human. |
 
@@ -91,6 +92,24 @@ operator clicked; approved business: normal text sent, bank-phishing and IRS gif
 blocked; after 4 blocked scams the account paused, a normal text was refused
 (`account_paused`), the console showed the appeal banner and the AI case file quoted all four
 texts. (Stripe ID was simulated: no Stripe keys locally.)
+
+## Full US + UK run (2026-09-17, local, real DeepSeek)
+Local end-to-end script (not committed), 129/129 checks: auth (2FA, lockout), country gate (US/UK only),
+four applicants (Texas LLC via documents + needs-info round trip, New York LLC confirmed live by
+the NY registry, UK Ltd via Companies House certificate, scam applicant: AI "reject 92%", approve
+refused while blockers remain, rejected + banned), texts in both countries (cache, rules block,
+AI block, tracked-link phishing, off-topic promo, scheduled scam, STOP reply exempt, opt-out),
+held text (operator block from /ops, second look clears and sends), calls (US legit "ok 95",
+SSA scam "scam 100", HMRC and Barclays safe-account scams "scam 100"), public reports (dedupe,
+never pause), UK risk ladder (watch -> restricted daily cap -> paused, texts and calls refused,
+appeal, AI case file with quotes, operator 2FA step-up, unpause, suspend + ban), daily report,
+labels, canary. Exam library now 50 cases incl. 12 UK: 25/25 caught, 0/25 false alarms.
+Stripe ID, carrier delivery and call audio were simulated (no local credentials).
+
+Bugs found and fixed by this run: UK recipients were checked against US quiet hours (daytime
+texts held until the evening); the weekly exam and hourly canary held a database transaction
+open for minutes; the ops queue lacked the AI recommendation; operators without a workspace
+could not open /ops; digits in a workspace name were read as a phone number.
 
 ## Not done / limits
 - Paid US registry: none under $0.50/lookup was confirmed; a provider can be added behind

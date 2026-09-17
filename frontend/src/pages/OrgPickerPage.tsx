@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { Button } from "@/components/ui/primitives";
 
@@ -27,6 +28,14 @@ export function OrgPickerPage() {
             You are not a member of any organization yet.
           </p>
         )}
+        {me?.is_platform_operator ? (
+          <Link
+            to="/ops"
+            className="block w-full rounded-md border border-border px-3 py-2 text-center text-sm font-medium hover:bg-muted"
+          >
+            Open the operator console
+          </Link>
+        ) : null}
         <Button variant="ghost" className="w-full" onClick={logout}>
           Sign out
         </Button>
