@@ -148,6 +148,12 @@ class Settings(BaseSettings):
     #: Accept ``Authorization: Bearer <JWT>`` for people (pre-cookie clients). API keys are
     #: unaffected. Off by default: browsers use HttpOnly session cookies.
     auth_bearer_compat: bool = False
+    #: SSO/SCIM may only enforce for, or link new people from, DNS-verified email domains.
+    sso_require_verified_domain: bool = True
+    #: DNS-over-HTTPS resolver used to check domain verification TXT records.
+    dns_over_https_url: str = "https://cloudflare-dns.com/dns-query"
+    #: Clock skew tolerated when checking SAML assertion time windows.
+    saml_clock_skew_seconds: int = 120
     #: API keys expire after at most this many days (0 = no maximum).
     api_key_max_days: int = 365
     #: Owners, admins, billing members and operators must use a passkey session.

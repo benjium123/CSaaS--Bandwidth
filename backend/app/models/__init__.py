@@ -71,6 +71,7 @@ from app.models.credentials import (
     PasswordResetToken,
     RecoveryCode,
 )
+from app.models.enterprise_sso import OrgDomain, ScimToken
 from app.models.identity import LOGIN_OUTCOMES, LoginEvent, Session
 from app.models.inbox_pro import NOTIFICATION_KINDS, Notification, ThreadNote
 from app.models.inboxes import (
@@ -207,6 +208,8 @@ from app.models.user import User
 from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
 __all__ = [
+    "OrgDomain",
+    "ScimToken",
     "ACCOUNT_AUDIT_ACTIONS",
     "AccountAuditEntry",
     "AccountLockout",

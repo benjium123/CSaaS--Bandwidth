@@ -102,7 +102,9 @@ async def _log_and_fail(
     raise error
 
 
-async def _sso_enforced_for(session: AsyncSession, user: User, email: str) -> bool:
+async def _sso_enforced_for(
+    session: AsyncSession, user: User, email: str, settings: Settings | None = None
+) -> bool:
     """Return True when an SSO-enforcing org owns the email domain and the user lacks owner."""
     domain = email.partition("@")[2].strip().lower()
     if not domain:
@@ -129,6 +131,15 @@ async def _sso_enforced_for(session: AsyncSession, user: User, email: str) -> bo
             continue
         if "*" in (role.permissions or []):
             return False
+        # P42: an unverified domain can't sign anyone in through SSO, so it must not
+        # block password sign-in either - that would lock the members out entirely.
+        if settings is not None and settings.sso_require_verified_domain:
+            from app.services import sso_provisioning
+
+            if sso_domain.lower() not in await sso_provisioning.verified_domains(
+                session, org.id
+            ):
+                continue
         return True
 
     return False
@@ -229,7 +240,7 @@ async def login(
             request=request,
         )
 
-    if await _sso_enforced_for(session, user, user.email):
+    if await _sso_enforced_for(session, user, user.email, request.app.state.settings):
         await _log_and_fail(
             session,
             PermissionDeniedError(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import secrets
 import uuid
 from urllib.parse import urlencode
 
@@ -9,21 +8,19 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.security import create_access_token, hash_password
 from app.config import Settings
-from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
+from app.db.base import ALLOW_UNSCOPED_KEY
 from app.db.session import get_session
 from app.errors import (
     FeatureUnavailableError,
     NotFoundError,
-    PermissionDeniedError,
     UnauthenticatedError,
 )
-from app.models import Org, OrgMembership, Role, User
+from app.models import Org, Role
 from app.rate_limit import enforce_rate_limit
 from app.services import credentials as credentials_svc
 from app.services import identity as identity_svc
-from app.services import oidc, session_tokens
+from app.services import oidc, sso_provisioning
 
 router = APIRouter(prefix="/api/v1/auth/sso", tags=["auth"])
 
@@ -31,7 +28,7 @@ SSO_SCOPE = "openid email profile"
 
 
 def _usable_sso(config: object) -> bool:
-    if not isinstance(config, dict):
+    if not isinstance(config, dict) or (config.get("protocol") or "oidc") != "oidc":
         return False
     required = ("issuer", "client_id", "client_secret_encrypted", "domain")
     return all(
@@ -213,104 +210,18 @@ async def sso_callback(
         jwks_uri=discovery["jwks_uri"],
     )
 
-    email = claims["email"]
-    domain = str(org.sso["domain"]).strip().lower()
-    if oidc.email_domain(email) != domain:
-        identity_svc.record_login_event(
-            session,
-            email=email,
-            outcome="bad_password",
-            org_id=org.id,
-            request=request,
-            detail="sso_domain_mismatch",
-        )
-        await session.commit()
-        raise PermissionDeniedError(
-            "This account is not permitted to sign in to this organization",
-            code="sso_domain_mismatch",
-        )
-
-    stmt = sa.select(User).where(sa.func.lower(User.email) == email).limit(1)
-    user = (await session.execute(stmt)).scalar_one_or_none()
-
-    if user is not None and not user.is_active:
-        identity_svc.record_login_event(
-            session,
-            email=email,
-            outcome="locked",
-            user_id=user.id,
-            org_id=org.id,
-            request=request,
-            detail="sso_user_inactive",
-        )
-        await session.commit()
-        raise PermissionDeniedError("This account is disabled", code="account_locked")
-
-    if user is None:
-        # A new SSO user gets an unguessable random password so the row is never
-        # password-loginable. An empty string would also not be a valid password hash.
-        user = User(
-            id=uuid.uuid4(),
-            email=email,
-            hashed_password=hash_password(secrets.token_urlsafe(32)),
-            full_name=str(claims.get("name") or "").strip()[:255],
-            is_active=True,
-        )
-        session.add(user)
-
-    # OrgMembership and Role are TenantScoped; set the tenant context before touching
-    # either of them.
-    set_org_context(session, org.id)
-
-    membership = (
-        await session.execute(
-            sa.select(OrgMembership).where(
-                OrgMembership.org_id == org.id,
-                OrgMembership.user_id == user.id,
-            )
-        )
-    ).scalar_one_or_none()
-
-    if membership is None:
-        role = await _resolve_role(session, org)
-        membership = OrgMembership(org_id=org.id, user_id=user.id, role_id=role.id)
-        session.add(membership)
-
-    identity_session = await identity_svc.create_session(
-        session,
-        user_id=user.id,
-        org_id=org.id,
-        request=request,
-        expire_hours=settings.session_max_hours,
-    )
-    # P42: SSO sessions are cookie sessions like every other sign-in.
-    identity_session.auth_method = "sso"
-    cookie_value = session_tokens.issue_secret(identity_session)
-    await session.flush()
-
-    access_token = create_access_token(
-        user.id,
-        settings.jwt_secret.get_secret_value(),
-        expire_hours=settings.jwt_expire_hours,
-        sid=identity_session.id,
-    )
-
-    identity_svc.record_login_event(
-        session,
-        email=email,
-        outcome="sso",
-        user_id=user.id,
-        org_id=org.id,
-        request=request,
-    )
-
-    await session.commit()
-    session_tokens.set_cookies(response, settings, identity_session, cookie_value)
-
+    # P42: domain check, account linking and the session itself are shared with SAML.
     # Return JSON, not a 302. A token in a query string lands in logs, Referer headers,
-    # and browser history; the console is expected to complete the flow from this JSON.
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "org_id": str(org.id),
-    }
+    # and browser history; the console completes the flow from this JSON (the session
+    # itself arrives as an HttpOnly cookie on this response).
+    return await sso_provisioning.complete_sso_login(
+        session,
+        settings,
+        request,
+        response,
+        org=org,
+        email=str(claims["email"]),
+        full_name=str(claims.get("name") or ""),
+        groups=[str(g) for g in (claims.get("groups") or []) if isinstance(g, str)],
+        protocol="oidc",
+    )

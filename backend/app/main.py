@@ -22,6 +22,7 @@ from app.api.routes import compliance as compliance_routes
 from app.api.routes import contacts as contact_routes
 from app.api.routes import conversations as conversation_routes
 from app.api.routes import departments as department_routes
+from app.api.routes import enterprise_sso as enterprise_sso_routes
 from app.api.routes import flows as flow_routes
 from app.api.routes import health as health_routes
 from app.api.routes import identity as identity_routes
@@ -42,7 +43,9 @@ from app.api.routes import provider_accounts as provider_accounts_routes
 from app.api.routes import registration as registration_routes
 from app.api.routes import roles as roles_routes
 from app.api.routes import routing as routing_routes
+from app.api.routes import saml as saml_routes
 from app.api.routes import scheduling as scheduling_routes
+from app.api.routes import scim as scim_routes
 from app.api.routes import softphone as softphone_routes
 from app.api.routes import spend as spend_routes
 from app.api.routes import sso as sso_routes
@@ -192,6 +195,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return response
 
+    @app.exception_handler(scim_routes.ScimError)
+    async def handle_scim_error(request: Request, exc: scim_routes.ScimError) -> JSONResponse:
+        # SCIM clients (Okta, Entra ID) expect RFC 7644 error bodies, not our envelope.
+        return scim_routes.scim_error_response(exc)
+
     @app.exception_handler(CsaasError)
     async def handle_csaas_error(request: Request, exc: CsaasError) -> JSONResponse:
         request_id = request.headers.get("X-Request-Id", "")
@@ -252,6 +260,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(kyc_routes.router)
     app.include_router(ops_routes.router)
     app.include_router(sso_routes.router)
+    app.include_router(saml_routes.router)
+    app.include_router(enterprise_sso_routes.router)
+    app.include_router(scim_routes.router)
     app.include_router(number_routes.router)
     app.include_router(telephony_routes.router)
     app.include_router(contact_routes.router)

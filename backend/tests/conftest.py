@@ -101,6 +101,8 @@ def make_settings(**overrides) -> Settings:
         "session_max_hours": 24,
         "require_passkey_for_privileged": False,
         "api_key_max_days": 0,
+        # P25 SSO tests configure a domain without DNS verification.
+        "sso_require_verified_domain": False,
     }
     base.update(overrides)
     return Settings(**base)

@@ -60,6 +60,12 @@ class SsoOut(BaseModel):
     enforce: bool
     default_role_id: uuid.UUID | None
     client_secret_set: bool
+    #: P42: "oidc" (default) or "saml".
+    protocol: str = "oidc"
+    idp_entity_id: str = ""
+    idp_sso_url: str = ""
+    idp_cert_set: bool = False
+    group_roles: dict[str, str] = {}
 
 
 class SecurityPolicyOut(BaseModel):
@@ -80,6 +86,12 @@ class SsoIn(BaseModel):
     domain: str | None = None
     enforce: bool = False
     default_role_id: uuid.UUID | None = None
+    protocol: str | None = None
+    idp_entity_id: str | None = None
+    idp_sso_url: str | None = None
+    idp_x509_cert: str | None = None
+    #: IdP group name -> workspace role name, applied when SSO adds someone new.
+    group_roles: dict[str, str] | None = None
 
 
 class SecurityPolicyIn(BaseModel):
@@ -135,6 +147,15 @@ def _sso_out(org: Org) -> SsoOut | None:
         enforce=bool(sso.get("enforce", False)),
         default_role_id=default_role_id,
         client_secret_set=bool(sso.get("client_secret_encrypted")),
+        protocol=str(sso.get("protocol") or "oidc"),
+        idp_entity_id=str(sso.get("idp_entity_id") or ""),
+        idp_sso_url=str(sso.get("idp_sso_url") or ""),
+        idp_cert_set=bool(sso.get("idp_x509_cert")),
+        group_roles={
+            str(k): str(v) for k, v in (sso.get("group_roles") or {}).items()
+        }
+        if isinstance(sso.get("group_roles"), dict)
+        else {},
     )
 
 
@@ -411,7 +432,16 @@ async def update_security_policy(
             current_sso = dict(ctx.org.sso) if ctx.org.sso else {}
             merged: dict = dict(current_sso)
 
-            for field in ("issuer", "client_id", "domain", "enforce", "default_role_id"):
+            for field in (
+                "issuer",
+                "client_id",
+                "domain",
+                "enforce",
+                "default_role_id",
+                "protocol",
+                "idp_entity_id",
+                "idp_sso_url",
+            ):
                 if field in sso_update and sso_update[field] is not None:
                     value = sso_update[field]
                     # default_role_id arrives as a uuid.UUID, which the JSON column
@@ -440,12 +470,37 @@ async def update_security_policy(
             if issuer is not None and not str(issuer).startswith("https://"):
                 raise ValidationFailedError("SSO issuer must start with https://")
 
-            if merged.get("enforce") and not (
-                merged.get("issuer")
-                and merged.get("client_id")
-                and merged.get("domain")
-                and merged.get("client_secret_encrypted")
-            ):
+            # P42 SAML settings.
+            protocol = str(merged.get("protocol") or "oidc")
+            if protocol not in ("oidc", "saml"):
+                raise ValidationFailedError("SSO protocol must be oidc or saml")
+            merged["protocol"] = protocol
+            idp_sso_url = merged.get("idp_sso_url")
+            if idp_sso_url and not str(idp_sso_url).startswith("https://"):
+                raise ValidationFailedError("SAML sign-in URL must start with https://")
+            if sso_update.get("idp_x509_cert"):
+                from app.services import saml as saml_svc
+
+                merged["idp_x509_cert"] = saml_svc.certificate_pem(sso_update["idp_x509_cert"])
+            if "group_roles" in sso_update and sso_update["group_roles"] is not None:
+                merged["group_roles"] = {
+                    str(k).strip()[:255]: str(v).strip()[:64]
+                    for k, v in sso_update["group_roles"].items()
+                    if str(k).strip() and str(v).strip()
+                }
+
+            if protocol == "saml":
+                from app.services import saml as saml_svc
+
+                complete = saml_svc.is_configured(merged)
+            else:
+                complete = bool(
+                    merged.get("issuer")
+                    and merged.get("client_id")
+                    and merged.get("domain")
+                    and merged.get("client_secret_encrypted")
+                )
+            if merged.get("enforce") and not complete:
                 raise ValidationFailedError(
                     "Complete the single sign-on setup before enforcing it"
                 )
