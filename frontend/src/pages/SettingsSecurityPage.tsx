@@ -17,6 +17,11 @@ import {
 } from "@/components/settings/AccountSecurityCards";
 import { LoginHistoryCard } from "@/components/settings/LoginHistoryCard";
 import { OrgSecurityPolicyCard } from "@/components/settings/OrgSecurityPolicyCard";
+import {
+  SamlSsoCard,
+  ScimTokensCard,
+  VerifiedDomainsCard,
+} from "@/components/settings/EnterpriseSsoCards";
 
 const VISIBILITY_OPTIONS: {
   value: ContactVisibility;
@@ -251,6 +256,10 @@ export function SettingsSecurityPage() {
       <section className="space-y-3 rounded-md border border-border p-4">
         <OrgSecurityPolicyCard />
       </section>
+
+      <VerifiedDomainsCard />
+      <SamlSsoCard />
+      <ScimTokensCard />
 
       <section className="space-y-3 rounded-md border border-border p-4">
         <LoginHistoryCard scope="org" />

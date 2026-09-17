@@ -8,12 +8,28 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { Button, Spinner } from "@/components/ui/primitives";
 
+function ssoErrorMessage(code: string | null): string {
+  switch (code) {
+    case "sso_domain_unverified":
+      return "Your workspace has not verified its email domain yet, so single sign-on is switched off. Ask your admin, or sign in with your password.";
+    case "sso_domain_mismatch":
+      return "This account's email address is not allowed to sign in to that workspace.";
+    case "account_locked":
+      return "This account is disabled. Contact your workspace admin.";
+    default:
+      return "We could not complete that sign-in. Start again from the sign-in page.";
+  }
+}
+
 export function SsoCallbackPage() {
   const [params] = useSearchParams();
   const code = params.get("code");
   const state = params.get("state");
   const error = params.get("error");
   const errorDescription = params.get("error_description");
+  // P42 SAML: the backend already verified the response and set the session cookie, then
+  // sent the browser here with only the workspace id.
+  const samlOrgId = params.get("saml") === "1" ? params.get("org_id") : null;
 
   const { api, completeSso } = useAuth();
   const navigate = useNavigate();
@@ -26,11 +42,23 @@ export function SsoCallbackPage() {
     exchangedRef.current = true;
 
     async function run() {
-      if (error || !code || !state) {
+      if (error || ((!code || !state) && !samlOrgId)) {
         setStatus("error");
-        setMessage("We could not complete that sign-in. Start again from the sign-in page.");
+        setMessage(ssoErrorMessage(error));
         return;
       }
+
+      if (samlOrgId) {
+        const res = await completeSso(null, samlOrgId);
+        if (res.kind === "ok") {
+          navigate("/inbox", { replace: true });
+        } else {
+          setStatus("error");
+          setMessage(res.kind === "error" ? res.message : ssoErrorMessage(null));
+        }
+        return;
+      }
+      if (!code || !state) return;
 
       try {
         const data = await api.request<{
@@ -62,7 +90,7 @@ export function SsoCallbackPage() {
     }
 
     void run();
-  }, [api, code, completeSso, error, navigate, state]);
+  }, [api, code, completeSso, error, navigate, samlOrgId, state]);
 
   return (
     <div className="flex min-h-full items-center justify-center p-6">

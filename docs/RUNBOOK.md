@@ -449,6 +449,53 @@ Order matters - do these before switching enforcement on.
 passkey/authenticator check). Ends sessions, revokes API keys, cancels scheduled texts,
 pauses campaigns, hangs up live calls, emails the owners.
 
+## Enterprise auth go-live (P42)
+
+1. **Redis.** Production refuses to start without `REDIS_URL`. Rate limits, SSO state and
+   the SAML replay store live there, shared by every worker.
+2. **Email (Resend).** `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=587`, `SMTP_USERNAME=resend`,
+   `SMTP_PASSWORD=<Resend API key>`, `SMTP_FROM=security@<your verified domain>`. Production
+   refuses plaintext SMTP. Password resets, invites, lockouts and security notices use it.
+3. **Proxy.** `TRUSTED_PROXY_COUNT=1` behind the single nginx. If a load balancer also sits in
+   front, set 2 - a wrong value lets callers fake their IP (IP allowlists, lockout, risk).
+4. **Deploy.** `alembic upgrade head` applies 0046-0049. Reload nginx (new `limit_req` paths
+   and console CSP).
+5. **Cookie cut-over.** First deploy with `AUTH_BEARER_COMPAT=true` so open console tabs keep
+   working; the console switches to cookies on next load. After a day, set it to `false`
+   and restart. Scripts should use API keys, never user tokens.
+6. **Passkeys.** Owners, admins, billing and operators see a banner for
+   `PASSKEY_GRACE_DAYS` (14), then must sign in with a passkey. Tell them before deploying.
+7. **SSO customers already on OIDC.** SSO stops signing people in until the workspace
+   verifies its domain: Settings > Security > Verified domains > add the TXT record >
+   "Check DNS". Password sign-in keeps working meanwhile (enforcement pauses too).
+8. **Smoke test.** Forgot password -> email -> reset -> sign in still asks for the second
+   factor. Ten wrong passwords -> "account locked" email -> unlock from `/ops`.
+
+### Setting up SAML for a customer
+- Customer verifies their domain first (above).
+- Settings > Security > SAML single sign-on shows the Entity ID, ACS URL and metadata URL to
+  paste into Okta / Entra ID / Google. NameID or an `email` attribute must be the email;
+  optional `displayName` and `groups`. Signing: SHA-256; sign the assertion (preferred) or
+  the response. Encryption off.
+- Paste the IdP entity ID, sign-in URL and signing certificate, save. Test with
+  `https://<web>/api/v1/auth/sso/<slug>/start` (the normal "Sign in with SSO" link).
+- Refusals are logged as `saml_login_refused` with a `reason` (e.g. `wrong_audience`,
+  `expired`, `replayed`, `unsigned`).
+
+### Setting up SCIM (user sync)
+- The workspace owner creates a token in Settings > Security > User sync (needs a fresh
+  2FA check). Base URL `https://<api>/scim/v2`, auth "Bearer token".
+- People can only be created on the workspace's verified domains. Deactivating someone in
+  the IdP removes them from the workspace and ends their sessions at once. Owners can't be
+  removed or re-roled through SCIM. Revoke a token in the same card.
+
+### Locked out / lost factors
+- Lockout: `/ops` > Users > search email > Unlock (admin operator, fresh 2FA).
+- Agent lost their phone: a workspace admin uses "Reset 2FA" on the member.
+- Owner/admin lost everything: "Lost access" on the sign-in page -> ID + selfie matching
+  their verified identity. If that fails, operator "Reset 2FA" in `/ops` after checking
+  identity out of band (video call with ID). Every reset is audited and emailed.
+
 ## Incident quick-checks
 
 No `journalctl` here - everything runs in Docker, so:

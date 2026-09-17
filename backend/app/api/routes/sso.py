@@ -20,7 +20,7 @@ from app.models import Org, Role
 from app.rate_limit import enforce_rate_limit
 from app.services import credentials as credentials_svc
 from app.services import identity as identity_svc
-from app.services import oidc, sso_provisioning
+from app.services import oidc, saml, sso_provisioning
 
 router = APIRouter(prefix="/api/v1/auth/sso", tags=["auth"])
 
@@ -118,6 +118,9 @@ async def sso_start(
     settings: Settings = request.app.state.settings
 
     org = await _org_by_slug(session, org_slug)
+    if org is not None and org.is_active and saml.is_configured(org.sso):
+        # P42: one sign-in link for every workspace, whichever protocol it uses.
+        return RedirectResponse(f"/api/v1/auth/saml/{org_slug}/start", status_code=302)
     if org is None or not org.is_active or not _usable_sso(org.sso):
         # The internet must not be able to enumerate slugs or which slugs have SSO.
         raise NotFoundError("Single sign-on is not configured")

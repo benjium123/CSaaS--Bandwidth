@@ -204,6 +204,13 @@ async def test_metadata_describes_the_service_provider(browser, session):
     assert f"{BASE}/api/v1/auth/saml/{org.slug}/acs" in r.text
 
 
+async def test_generic_sso_link_forwards_to_saml(browser, session):
+    org = await _saml_org(browser, session)
+    r = await browser.get(f"/api/v1/auth/sso/{org.slug}/start", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == f"/api/v1/auth/saml/{org.slug}/start"
+
+
 async def test_signed_assertion_signs_in_and_provisions(browser, session):
     org = await _saml_org(browser, session)
     email = f"new-{uuid.uuid4().hex[:6]}@{DOMAIN}"

@@ -25,8 +25,27 @@ What exists today to keep scammers and account takeovers off the platform. One l
 - Fresh passkey/authenticator check before sensitive operator actions.
 - Fresh ID + selfie before: changing payment method, requesting higher limits, bulk number orders, creating API keys, granting admin/billing/owner, changing the declared use case.
 - Admin and billing members of an approved business verify their own ID before using those powers.
+- Owners, admins, billing and operators must sign in with a passkey (14-day grace).
 - Session list, remote sign-out, login history.
-- Per-workspace IP allowlist and single sign-on (existing).
+- Per-workspace IP allowlist (existing).
+
+## Passwords, sessions & recovery
+- Passwords: 12+ characters; ones leaked in known breaches are refused.
+- Forgot/reset password by email; a reset never skips the second factor.
+- Account locks after repeated wrong passwords or codes; owner emailed; operator unlock.
+- One-time recovery codes; using one flags the sign-in and alerts.
+- Lost every factor: ID + selfie that must match the verified person, then a 24-hour wait before sensitive actions.
+- Sessions in secure browser cookies; signed out after 30 minutes idle or 12 hours total (workspaces can be stricter).
+- Password change, removal from a workspace or a role change ends that person's sessions.
+- Personal account activity log (password, factors, recovery, lockouts).
+- Shared rate limits on sign-in, reset, recovery and SSO; the client IP can't be faked.
+
+## Enterprise sign-in
+- Single sign-on with OpenID Connect or SAML, only for email domains the workspace proved it owns (DNS).
+- SAML accepts only signed, unexpired, single-use answers to a sign-in we started.
+- SSO sign-ins go through the same risk checks as passwords.
+- SCIM user sync: people removed in the company's identity provider lose access here at once.
+- API keys: optional IP ranges, last-used IP, 1-year maximum life, overlap on rotation.
 
 ## Limits & calling/texting gate
 - No texting, calling or phone numbers until the business is approved.
@@ -46,4 +65,6 @@ What exists today to keep scammers and account takeovers off the platform. One l
 - Operator console: review queue, application detail, documents, checks, AI summary, decisions, limits, suspension.
 - Security alerts queue (flagged logins, limit requests, sanctions hits).
 - Every decision, document view and suspension is written to the audit log with the operator's name.
+- Operator unlock, 2FA reset, deactivate and reactivate for any user, each audited.
+- Audit log also covers number purchases/releases, invites, SSO/SCIM provisioning and domain changes.
 - Decision emails to business owners (approved, more info needed, rejected).

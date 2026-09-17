@@ -39,6 +39,11 @@ export type SsoConfigOut = {
   enforce: boolean;
   default_role_id: string | null;
   client_secret_set: boolean;
+  protocol?: "oidc" | "saml";
+  idp_entity_id?: string;
+  idp_sso_url?: string;
+  idp_cert_set?: boolean;
+  group_roles?: Record<string, string>;
 };
 
 export type SecurityPolicyOut = {
@@ -55,6 +60,12 @@ export type SsoConfigIn = {
   domain?: string;
   enforce?: boolean;
   default_role_id?: string | null;
+  /** P42: "oidc" (default) or "saml". */
+  protocol?: "oidc" | "saml";
+  idp_entity_id?: string;
+  idp_sso_url?: string;
+  idp_x509_cert?: string;
+  group_roles?: Record<string, string>;
 };
 
 export type SecurityPolicyIn = {

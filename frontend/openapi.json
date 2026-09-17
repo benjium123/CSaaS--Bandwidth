@@ -409,6 +409,20 @@
       },
       "ApiKeyCreatedOut": {
         "properties": {
+          "allowed_cidrs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Cidrs"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -447,6 +461,17 @@
             ],
             "title": "Last Used At"
           },
+          "last_used_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used Ip"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -483,6 +508,20 @@
       },
       "ApiKeyIn": {
         "properties": {
+          "allowed_cidrs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Cidrs"
+          },
           "expires_at": {
             "anyOf": [
               {
@@ -519,6 +558,20 @@
       },
       "ApiKeyOut": {
         "properties": {
+          "allowed_cidrs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Cidrs"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -552,6 +605,17 @@
               }
             ],
             "title": "Last Used At"
+          },
+          "last_used_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used Ip"
           },
           "name": {
             "title": "Name",
@@ -1222,6 +1286,24 @@
           "number_id"
         ],
         "title": "BindFlowIn",
+        "type": "object"
+      },
+      "Body_saml_acs_api_v1_auth_saml__org_slug__acs_post": {
+        "properties": {
+          "RelayState": {
+            "default": "",
+            "title": "Relaystate",
+            "type": "string"
+          },
+          "SAMLResponse": {
+            "title": "Samlresponse",
+            "type": "string"
+          }
+        },
+        "required": [
+          "SAMLResponse"
+        ],
+        "title": "Body_saml_acs_api_v1_auth_saml__org_slug__acs_post",
         "type": "object"
       },
       "Body_upload_api_v1_media_post": {
@@ -3479,6 +3561,81 @@
         "title": "DispositionIn",
         "type": "object"
       },
+      "DomainIn": {
+        "properties": {
+          "domain": {
+            "maxLength": 253,
+            "minLength": 3,
+            "title": "Domain",
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain"
+        ],
+        "title": "DomainIn",
+        "type": "object"
+      },
+      "DomainOut": {
+        "properties": {
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "txt_name": {
+            "title": "Txt Name",
+            "type": "string"
+          },
+          "txt_value": {
+            "title": "Txt Value",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "id",
+          "domain",
+          "verified",
+          "verified_at",
+          "last_checked_at",
+          "txt_name",
+          "txt_value"
+        ],
+        "title": "DomainOut",
+        "type": "object"
+      },
       "EnrollOut": {
         "properties": {
           "provisioning_uri": {
@@ -3587,6 +3744,20 @@
           "created_at"
         ],
         "title": "FlowOut",
+        "type": "object"
+      },
+      "ForgotIn": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "ForgotIn",
         "type": "object"
       },
       "GatherIn": {
@@ -3805,6 +3976,25 @@
           "published"
         ],
         "title": "HandoffOut",
+        "type": "object"
+      },
+      "IdentityCompleteIn": {
+        "properties": {
+          "pending_token": {
+            "title": "Pending Token",
+            "type": "string"
+          },
+          "step_up_id": {
+            "format": "uuid",
+            "title": "Step Up Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pending_token",
+          "step_up_id"
+        ],
+        "title": "IdentityCompleteIn",
         "type": "object"
       },
       "ImportantPairIn": {
@@ -4665,6 +4855,23 @@
             },
             "title": "Memberships",
             "type": "array"
+          },
+          "passkey_grace_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passkey Grace Until"
+          },
+          "passkey_required": {
+            "default": false,
+            "title": "Passkey Required",
+            "type": "boolean"
           },
           "permissions": {
             "items": {
@@ -6111,6 +6318,26 @@
         "title": "PasskeyOut",
         "type": "object"
       },
+      "PasswordChangeIn": {
+        "properties": {
+          "current_password": {
+            "title": "Current Password",
+            "type": "string"
+          },
+          "new_password": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "New Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "PasswordChangeIn",
+        "type": "object"
+      },
       "PasswordIn": {
         "properties": {
           "password": {
@@ -6146,19 +6373,6 @@
           "stripe_payment_method_id"
         ],
         "title": "PaymentMethodIn",
-        "type": "object"
-      },
-      "PendingIn": {
-        "properties": {
-          "pending_token": {
-            "title": "Pending Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "pending_token"
-        ],
-        "title": "PendingIn",
         "type": "object"
       },
       "PersonIn": {
@@ -7484,6 +7698,21 @@
         "title": "ReadPairIn",
         "type": "object"
       },
+      "ReasonIn": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ReasonIn",
+        "type": "object"
+      },
       "ReconciliationItemOut": {
         "properties": {
           "carrier": {
@@ -7660,6 +7889,26 @@
         "title": "RecordingOut",
         "type": "object"
       },
+      "RecoveryLoginIn": {
+        "properties": {
+          "code": {
+            "maxLength": 32,
+            "minLength": 8,
+            "title": "Code",
+            "type": "string"
+          },
+          "pending_token": {
+            "title": "Pending Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pending_token",
+          "code"
+        ],
+        "title": "RecoveryLoginIn",
+        "type": "object"
+      },
       "RegistryIn": {
         "properties": {
           "link": {
@@ -7718,6 +7967,28 @@
           "contact_id"
         ],
         "title": "RenderIn",
+        "type": "object"
+      },
+      "ResetIn": {
+        "properties": {
+          "new_password": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "New Password",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 200,
+            "minLength": 20,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "ResetIn",
         "type": "object"
       },
       "RetentionOut": {
@@ -7967,6 +8238,171 @@
         "title": "RolePatchIn",
         "type": "object"
       },
+      "SamlSetupOut": {
+        "properties": {
+          "acs_url": {
+            "title": "Acs Url",
+            "type": "string"
+          },
+          "metadata_url": {
+            "title": "Metadata Url",
+            "type": "string"
+          },
+          "sp_entity_id": {
+            "title": "Sp Entity Id",
+            "type": "string"
+          },
+          "start_url": {
+            "title": "Start Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sp_entity_id",
+          "acs_url",
+          "metadata_url",
+          "start_url"
+        ],
+        "title": "SamlSetupOut",
+        "type": "object"
+      },
+      "ScimTokenCreatedOut": {
+        "properties": {
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "created_at",
+          "last_used_at",
+          "revoked_at",
+          "token",
+          "base_url"
+        ],
+        "title": "ScimTokenCreatedOut",
+        "type": "object"
+      },
+      "ScimTokenIn": {
+        "properties": {
+          "name": {
+            "maxLength": 127,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ScimTokenIn",
+        "type": "object"
+      },
+      "ScimTokenOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "created_at",
+          "last_used_at",
+          "revoked_at"
+        ],
+        "title": "ScimTokenOut",
+        "type": "object"
+      },
       "ScrubIn": {
         "properties": {
           "numbers": {
@@ -8078,6 +8514,28 @@
             ],
             "title": "Require 2Fa"
           },
+          "session_idle_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Idle Minutes"
+          },
+          "session_max_hours": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Max Hours"
+          },
           "sso": {
             "anyOf": [
               {
@@ -8087,6 +8545,17 @@
                 "type": "null"
               }
             ]
+          },
+          "trust_idp_mfa": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trust Idp Mfa"
           }
         },
         "title": "SecurityPolicyIn",
@@ -8124,6 +8593,28 @@
             ],
             "title": "Require 2Fa Grace Until"
           },
+          "session_idle_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Idle Minutes"
+          },
+          "session_max_hours": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Max Hours"
+          },
           "sso": {
             "anyOf": [
               {
@@ -8133,6 +8624,11 @@
                 "type": "null"
               }
             ]
+          },
+          "trust_idp_mfa": {
+            "default": false,
+            "title": "Trust Idp Mfa",
+            "type": "boolean"
           }
         },
         "required": [
@@ -8596,6 +9092,53 @@
             "title": "Enforce",
             "type": "boolean"
           },
+          "group_roles": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Roles"
+          },
+          "idp_entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Entity Id"
+          },
+          "idp_sso_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Sso Url"
+          },
+          "idp_x509_cert": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp X509 Cert"
+          },
           "issuer": {
             "anyOf": [
               {
@@ -8606,6 +9149,17 @@
               }
             ],
             "title": "Issuer"
+          },
+          "protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol"
           }
         },
         "title": "SsoIn",
@@ -8641,8 +9195,36 @@
             "title": "Enforce",
             "type": "boolean"
           },
+          "group_roles": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Group Roles",
+            "type": "object"
+          },
+          "idp_cert_set": {
+            "default": false,
+            "title": "Idp Cert Set",
+            "type": "boolean"
+          },
+          "idp_entity_id": {
+            "default": "",
+            "title": "Idp Entity Id",
+            "type": "string"
+          },
+          "idp_sso_url": {
+            "default": "",
+            "title": "Idp Sso Url",
+            "type": "string"
+          },
           "issuer": {
             "title": "Issuer",
+            "type": "string"
+          },
+          "protocol": {
+            "default": "oidc",
+            "title": "Protocol",
             "type": "string"
           }
         },
@@ -10083,6 +10665,31 @@
         "title": "WebhookEndpointUpdateIn",
         "type": "object"
       },
+      "app__api__routes__account__PendingIn": {
+        "properties": {
+          "pending_token": {
+            "title": "Pending Token",
+            "type": "string"
+          },
+          "return_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Url"
+          }
+        },
+        "required": [
+          "pending_token"
+        ],
+        "title": "PendingIn",
+        "type": "object"
+      },
       "app__api__routes__agent__ContactOut": {
         "properties": {
           "last_messages": {
@@ -10809,6 +11416,19 @@
           "created_at"
         ],
         "title": "CampaignOut",
+        "type": "object"
+      },
+      "app__api__routes__passkeys__PendingIn": {
+        "properties": {
+          "pending_token": {
+            "title": "Pending Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pending_token"
+        ],
+        "title": "PendingIn",
         "type": "object"
       },
       "app__api__routes__passkeys__RegisterIn": {
@@ -13132,6 +13752,18 @@
             }
           },
           {
+            "in": "query",
+            "name": "overlap_hours",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 24,
+              "minimum": 0,
+              "title": "Overlap Hours",
+              "type": "integer"
+            }
+          },
+          {
             "in": "header",
             "name": "X-Org-Id",
             "required": false,
@@ -13625,6 +14257,49 @@
         ]
       }
     },
+    "/api/v1/auth/2fa/recovery": {
+      "post": {
+        "operationId": "login_with_recovery_code_api_v1_auth_2fa_recovery_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryLoginIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Login With Recovery Code Api V1 Auth 2Fa Recovery Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login With Recovery Code",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/2fa/step-up": {
       "post": {
         "description": "P41: re-prove the authenticator app inside an existing session (step-up).",
@@ -13718,6 +14393,61 @@
         ]
       }
     },
+    "/api/v1/auth/activity": {
+      "get": {
+        "operationId": "account_activity_api_v1_auth_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Account Activity Api V1 Auth Activity Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Account Activity",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/invites/accept": {
       "post": {
         "operationId": "accept_invite_api_v1_auth_invites_accept_post",
@@ -13802,6 +14532,21 @@
           }
         },
         "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "description": "Ends the current browser session and clears its cookies. Works even when the session\nhas already expired, so the console can always get back to a clean signed-out state.",
+        "operationId": "logout_api_v1_auth_logout_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
         "tags": [
           "auth"
         ]
@@ -13898,7 +14643,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PendingIn"
+                "$ref": "#/components/schemas/app__api__routes__passkeys__PendingIn"
               }
             }
           },
@@ -14163,6 +14908,266 @@
         ]
       }
     },
+    "/api/v1/auth/password/change": {
+      "post": {
+        "operationId": "change_password_api_v1_auth_password_change_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Change Password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/password/forgot": {
+      "post": {
+        "description": "Always 202 with the same body, whether or not the account exists.",
+        "operationId": "forgot_password_api_v1_auth_password_forgot_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Forgot Password Api V1 Auth Password Forgot Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forgot Password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/password/reset": {
+      "post": {
+        "description": "Sets a new password and signs out every session. It deliberately does NOT sign the\nperson in and never bypasses the second factor: email access alone must not be enough\nto take over an account.",
+        "operationId": "reset_password_api_v1_auth_password_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/recovery-codes": {
+      "get": {
+        "operationId": "recovery_codes_status_api_v1_auth_recovery_codes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recovery Codes Status Api V1 Auth Recovery Codes Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Recovery Codes Status",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "Shown once. Needs a second factor on the account and proof of it in this session.",
+        "operationId": "generate_recovery_codes_api_v1_auth_recovery_codes_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Generate Recovery Codes Api V1 Auth Recovery Codes Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generate Recovery Codes",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/recovery/identity/complete": {
+      "post": {
+        "operationId": "complete_identity_recovery_api_v1_auth_recovery_identity_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityCompleteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Complete Identity Recovery Api V1 Auth Recovery Identity Complete Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Identity Recovery",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/recovery/identity/start": {
+      "post": {
+        "description": "Password proven (pending token); every factor lost. Only people who passed an ID +\nselfie check during business verification can recover this way - the new selfie must\nmatch that same person.",
+        "operationId": "start_identity_recovery_api_v1_auth_recovery_identity_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/app__api__routes__account__PendingIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Identity Recovery Api V1 Auth Recovery Identity Start Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Identity Recovery",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/register": {
       "post": {
         "description": "Registration is INVITE-ONLY once the instance has an owner.\n\nThe single exception is first-run: while no account exists at all there is nobody who\ncould issue an invitation, so the first registration is allowed and becomes the owner.\nThat gate is a COUNT of users rather than a config flag - a flag can be left switched\non by accident and silently reopen the instance months later; this condition flips\nitself the moment the first account exists and can never drift back.",
@@ -14200,6 +15205,136 @@
           }
         },
         "summary": "Register",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/saml/{org_slug}/acs": {
+      "post": {
+        "operationId": "saml_acs_api_v1_auth_saml__org_slug__acs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_slug",
+            "required": true,
+            "schema": {
+              "title": "Org Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_saml_acs_api_v1_auth_saml__org_slug__acs_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Saml Acs",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/saml/{org_slug}/metadata": {
+      "get": {
+        "operationId": "saml_metadata_api_v1_auth_saml__org_slug__metadata_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_slug",
+            "required": true,
+            "schema": {
+              "title": "Org Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Saml Metadata",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/saml/{org_slug}/start": {
+      "get": {
+        "operationId": "saml_start_api_v1_auth_saml__org_slug__start_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_slug",
+            "required": true,
+            "schema": {
+              "title": "Org Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Saml Start",
         "tags": [
           "auth"
         ]
@@ -23908,6 +25043,251 @@
         ]
       }
     },
+    "/api/v1/ops/users": {
+      "get": {
+        "operationId": "find_user_api_v1_ops_users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "email",
+            "required": true,
+            "schema": {
+              "minLength": 3,
+              "title": "Email",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Find User Api V1 Ops Users Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Find User",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/users/{user_id}/deactivate": {
+      "post": {
+        "operationId": "deactivate_user_api_v1_ops_users__user_id__deactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Deactivate User",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/users/{user_id}/reactivate": {
+      "post": {
+        "operationId": "reactivate_user_api_v1_ops_users__user_id__reactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reactivate User",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/users/{user_id}/reset-2fa": {
+      "post": {
+        "description": "Last resort, after verifying the person out of band (e.g. a video call with ID).",
+        "operationId": "operator_reset_factors_api_v1_ops_users__user_id__reset_2fa_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Operator Reset Factors",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/users/{user_id}/unlock": {
+      "post": {
+        "operationId": "unlock_user_api_v1_ops_users__user_id__unlock_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unlock User",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/api/v1/orgs": {
       "post": {
         "operationId": "create_org_api_v1_orgs_post",
@@ -24125,6 +25505,247 @@
         "summary": "Update Calling Settings",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/current/domains": {
+      "get": {
+        "operationId": "list_domains_api_v1_orgs_current_domains_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DomainOut"
+                  },
+                  "title": "Response List Domains Api V1 Orgs Current Domains Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Domains",
+        "tags": [
+          "identity"
+        ]
+      },
+      "post": {
+        "operationId": "add_domain_api_v1_orgs_current_domains_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DomainIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Domain",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/orgs/current/domains/{domain_id}": {
+      "delete": {
+        "operationId": "delete_domain_api_v1_orgs_current_domains__domain_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "domain_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Domain Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Domain",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/orgs/current/domains/{domain_id}/verify": {
+      "post": {
+        "operationId": "verify_domain_api_v1_orgs_current_domains__domain_id__verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "domain_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Domain Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Verify Domain",
+        "tags": [
+          "identity"
         ]
       }
     },
@@ -24574,6 +26195,63 @@
         ]
       }
     },
+    "/api/v1/orgs/current/members/{user_id}/reset-2fa": {
+      "post": {
+        "operationId": "reset_member_factors_api_v1_orgs_current_members__user_id__reset_2fa_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reset Member Factors",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
     "/api/v1/orgs/current/members/{user_id}/sessions": {
       "delete": {
         "operationId": "revoke_member_sessions_api_v1_orgs_current_members__user_id__sessions_delete",
@@ -24816,6 +26494,183 @@
         "summary": "Current Org Roles",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/current/scim-tokens": {
+      "get": {
+        "operationId": "list_scim_tokens_api_v1_orgs_current_scim_tokens_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScimTokenOut"
+                  },
+                  "title": "Response List Scim Tokens Api V1 Orgs Current Scim Tokens Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Scim Tokens",
+        "tags": [
+          "identity"
+        ]
+      },
+      "post": {
+        "operationId": "create_scim_token_api_v1_orgs_current_scim_tokens_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScimTokenIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScimTokenCreatedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Scim Token",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/orgs/current/scim-tokens/{token_id}": {
+      "delete": {
+        "operationId": "revoke_scim_token_api_v1_orgs_current_scim_tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Token Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Scim Token",
+        "tags": [
+          "identity"
         ]
       }
     },
@@ -25108,6 +26963,60 @@
         "summary": "Update Org Settings",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/current/sso/saml": {
+      "get": {
+        "operationId": "saml_setup_api_v1_orgs_current_sso_saml_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SamlSetupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Saml Setup",
+        "tags": [
+          "identity"
         ]
       }
     },
@@ -31118,6 +33027,402 @@
         "summary": "Follow",
         "tags": [
           "links"
+        ]
+      }
+    },
+    "/scim/v2/Groups": {
+      "get": {
+        "operationId": "list_groups_scim_v2_Groups_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Groups",
+        "tags": [
+          "scim"
+        ]
+      }
+    },
+    "/scim/v2/Groups/{group_id}": {
+      "get": {
+        "operationId": "get_group_scim_v2_Groups__group_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Group",
+        "tags": [
+          "scim"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_group_scim_v2_Groups__group_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Group",
+        "tags": [
+          "scim"
+        ]
+      }
+    },
+    "/scim/v2/ResourceTypes": {
+      "get": {
+        "operationId": "resource_types_scim_v2_ResourceTypes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Resource Types",
+        "tags": [
+          "scim"
+        ]
+      }
+    },
+    "/scim/v2/ServiceProviderConfig": {
+      "get": {
+        "operationId": "service_provider_config_scim_v2_ServiceProviderConfig_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Service Provider Config",
+        "tags": [
+          "scim"
+        ]
+      }
+    },
+    "/scim/v2/Users": {
+      "get": {
+        "operationId": "list_users_scim_v2_Users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "startIndex",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Startindex",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "count",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Count",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Users",
+        "tags": [
+          "scim"
+        ]
+      },
+      "post": {
+        "operationId": "create_user_scim_v2_Users_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create User",
+        "tags": [
+          "scim"
+        ]
+      }
+    },
+    "/scim/v2/Users/{user_id}": {
+      "delete": {
+        "operationId": "delete_user_scim_v2_Users__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete User",
+        "tags": [
+          "scim"
+        ]
+      },
+      "get": {
+        "operationId": "get_user_scim_v2_Users__user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get User",
+        "tags": [
+          "scim"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_user_scim_v2_Users__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch User",
+        "tags": [
+          "scim"
+        ]
+      },
+      "put": {
+        "operationId": "replace_user_scim_v2_Users__user_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replace User",
+        "tags": [
+          "scim"
         ]
       }
     },

@@ -16,7 +16,8 @@ import {
   mutationErrorMessage,
 } from "@/components/ui/primitives";
 
-/** P41 operator console: review businesses, handle security alerts, keep the ban list. */
+/** P41 operator console: review businesses, handle security alerts, keep the ban list.
+ * P42: account support (unlock, reset 2FA, deactivate). */
 
 type QueueItem = {
   org_id: string;
@@ -422,10 +423,94 @@ function BanListTab() {
   );
 }
 
+type OpsUser = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  is_active: boolean;
+  totp_enabled: boolean;
+  has_passkey: boolean;
+  recovery_codes_remaining: number;
+  locked_until: string | null;
+  step_up_blocked_until: string | null;
+};
+
+/** P42: account support - unlock, reset sign-in factors, deactivate. Every action needs a
+ * fresh operator 2FA check server-side and is audited and emailed to the person. */
+function UsersTab() {
+  const { api } = useAuth();
+  const [email, setEmail] = React.useState("");
+  const [reason, setReason] = React.useState("");
+  const [search, setSearch] = React.useState<string | null>(null);
+  const q = useQuery({
+    queryKey: ["ops", "users", search],
+    queryFn: () => api.request<OpsUser>(`/api/v1/ops/users?email=${encodeURIComponent(search ?? "")}`),
+    enabled: Boolean(search),
+    retry: false,
+  });
+  const act = useMutation({
+    mutationFn: (action: "unlock" | "reset-2fa" | "deactivate" | "reactivate") =>
+      api.request(`/api/v1/ops/users/${q.data?.id}/${action}`, {
+        method: "POST",
+        ...(action === "unlock" ? {} : { json: { reason } }),
+      }),
+    onSuccess: () => void q.refetch(),
+  });
+  const user = q.data;
+  const needsReason = reason.trim().length < 3;
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <Input aria-label="User email" placeholder="person@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Button type="button" disabled={email.trim().length < 3} onClick={() => setSearch(email.trim())}>Find</Button>
+      </div>
+      {q.isFetching && <Spinner label="Looking up account" />}
+      {q.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(q.error)}</p>}
+      {user && (
+        <Card className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">{user.email}</span>
+            {!user.is_active && <Pill tone="danger">Deactivated</Pill>}
+            {user.locked_until && <Pill tone="warning">Locked until {new Date(user.locked_until).toLocaleString()}</Pill>}
+            <Pill>{user.has_passkey ? "Passkey" : "No passkey"}</Pill>
+            <Pill>{user.totp_enabled ? "Authenticator app" : "No authenticator"}</Pill>
+            <Pill>{user.recovery_codes_remaining} recovery codes</Pill>
+            {user.step_up_blocked_until && <Pill tone="warning">Recovery cool-down</Pill>}
+          </div>
+          <Input aria-label="Support reason" placeholder="Reason (required, e.g. verified on video call with ID)" value={reason} onChange={(e) => setReason(e.target.value)} />
+          <div className="flex flex-wrap gap-2">
+            {user.locked_until && (
+              <Button type="button" size="sm" disabled={act.isPending} onClick={() => act.mutate("unlock")}>Unlock</Button>
+            )}
+            <Button type="button" size="sm" variant="outline" disabled={act.isPending || needsReason} onClick={() => act.mutate("reset-2fa")}>
+              Reset 2FA
+            </Button>
+            {user.is_active ? (
+              <Button type="button" size="sm" variant="outline" disabled={act.isPending || needsReason} onClick={() => act.mutate("deactivate")}>
+                Deactivate
+              </Button>
+            ) : (
+              <Button type="button" size="sm" variant="outline" disabled={act.isPending || needsReason} onClick={() => act.mutate("reactivate")}>
+                Reactivate
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Reset 2FA only after confirming who they are out of band. It removes every factor and starts a cool-down on sensitive actions.
+          </p>
+          {act.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(act.error)}</p>}
+          {act.isSuccess && <p className="text-sm text-emerald-300">Done.</p>}
+        </Card>
+      )}
+    </div>
+  );
+}
+
 const TABS = [
   { id: "queue", label: "Review queue" },
   { id: "alerts", label: "Security alerts" },
   { id: "bans", label: "Ban list" },
+  { id: "users", label: "Users" },
 ];
 
 export function OpsPage() {
@@ -453,6 +538,7 @@ export function OpsPage() {
             {tab === "queue" && <QueueTab onOpen={setOpenOrg} />}
             {tab === "alerts" && <AlertsTab />}
             {tab === "bans" && <BanListTab />}
+            {tab === "users" && <UsersTab />}
           </TabPanel>
         </>
       )}

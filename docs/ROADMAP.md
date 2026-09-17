@@ -33,6 +33,7 @@ least as much UI as it adds.
 | 21 | P39 SignalWire numbers live (texting) | docs/PLAN_P39_SIGNALWIRE_LIVE.md | none | built 2026-09-16, awaiting operator go-live steps |
 | 22 | P38 AI worker deployed + port ranges widened | docs/PLAN_P38_AGENT_WORKER.md | none | built 2026-09-16, awaiting operator keys + ufw + deploy |
 | 23 | P41 Trust & safety: mandatory 2FA + passkeys, login risk, business KYC (Stripe Identity), telephony gate, suspension, ban list, operator console | docs/PLAN_P41_KYC.md | 0044, 0045 | built + tested 2026-09-16 on branch p41-kyc; not deployed (operator steps in RUNBOOK "Trust & safety go-live (P41)") |
+| 24 | P42 Enterprise auth: password reset/policy, recovery, lockout, cookie sessions + timeouts, Redis rate limits, passkeys for privileged roles, verified domains, SAML 2.0, SCIM 2.0, API key hardening | docs/PLAN_P42_ENTERPRISE_AUTH.md | 0046-0049 | built + tested 2026-09-17 on branch p41-kyc; not deployed (RUNBOOK "Enterprise auth go-live (P42)") |
 
 External inputs still owed by the operator: valid Bandwidth API credentials + application
 callbacks (see session notes 2026-09-09), Bandwidth account upgrade (trial 402), Stripe keys

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useMutation } from "@tanstack/react-query";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import {
   useCreateInvite,
@@ -91,6 +92,7 @@ export function TeamPage() {
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
 
   const canEditRoles = hasPermission(me, orgId, "roles:write");
+  const canResetMembers = hasPermission(me, orgId, "members:update");
   const grantablePermissions = React.useCallback(
     (key: string) => hasPermission(me, orgId, key),
     [me, orgId],
@@ -244,6 +246,7 @@ export function TeamPage() {
                       <th className="px-3 py-2 font-medium">Name</th>
                       <th className="px-3 py-2 font-medium">Email</th>
                       <th className="px-3 py-2 font-medium">Role</th>
+                      {canResetMembers && <th className="px-3 py-2 font-medium">Sign-in</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -256,6 +259,11 @@ export function TeamPage() {
                         <td className="px-3 py-2 text-xs text-muted-foreground">
                           {member.role_name}
                         </td>
+                        {canResetMembers && (
+                          <td className="px-3 py-2">
+                            {member.user_id !== me?.id && <ResetMemberTwoFactor userId={member.user_id} />}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -606,6 +614,43 @@ export function TeamPage() {
             </form>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** P42: a member who lost their phone gets their 2FA reset by an admin (fresh 2FA check,
+ * audited, emailed). Owners/admins/billing recover through ID + selfie instead - the server
+ * refuses those here. */
+function ResetMemberTwoFactor({ userId }: { userId: string }) {
+  const { api } = useAuth();
+  const [confirming, setConfirming] = React.useState(false);
+  const reset = useMutation({
+    mutationFn: () =>
+      api.request(`/api/v1/orgs/current/members/${userId}/reset-2fa`, { method: "POST" }),
+    onSettled: () => setConfirming(false),
+  });
+  if (reset.isSuccess) return <span className="text-xs text-muted-foreground">2FA reset</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {confirming ? (
+        <>
+          <Button type="button" size="sm" variant="outline" disabled={reset.isPending} onClick={() => reset.mutate()}>
+            Confirm reset
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+            Cancel
+          </Button>
+        </>
+      ) : (
+        <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+          Reset 2FA
+        </Button>
+      )}
+      {reset.isError && (
+        <span role="alert" className="text-xs text-destructive">
+          {getErrorMessage(reset.error)}
+        </span>
       )}
     </div>
   );
