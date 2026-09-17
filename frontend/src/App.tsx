@@ -20,6 +20,8 @@ import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { LowBalanceBanner } from "@/components/billing/LowBalanceBanner";
 import { VerificationBanner } from "@/components/kyc/VerificationBanner";
+import { MonitoringBanner } from "@/components/kyc/MonitoringBanner";
+import { ReportNumberPage } from "@/pages/ReportNumberPage";
 import { StepUpDialog } from "@/components/security/StepUpDialog";
 import { SecureAccountPage } from "@/pages/SecureAccountPage";
 import { OpsPage } from "@/pages/OpsPage";
@@ -55,6 +57,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <main className="min-h-0 flex-1 pb-14 sm:pb-0">
           <PasskeyGraceBanner />
           <VerificationBanner />
+          <MonitoringBanner />
           <LowBalanceBanner />
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
@@ -80,6 +83,7 @@ export function App() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/recover" element={<RecoverAccountPage />} />
+        <Route path="/report" element={<ReportNumberPage />} />
         <Route path="*" element={<LoginPage />} />
       </Routes>
     );
@@ -105,6 +109,7 @@ export function App() {
         <Route path="/calls" element={<CallsPage />} />
         <Route path="/campaigns" element={<CampaignsPage />} />
         <Route path="/ops" element={<OpsPage />} />
+        <Route path="/report" element={<ReportNumberPage />} />
 
         <Route path="/settings" element={<SettingsIndexRedirect />} />
         <Route path="/settings/:section" element={<SettingsPage />} />

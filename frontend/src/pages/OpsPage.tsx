@@ -1,4 +1,6 @@
 import * as React from "react";
+import { DecisionPackCard, type DecisionPack } from "@/components/ops/DecisionPackCard";
+import { MonitoringTab } from "@/components/ops/MonitoringTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAuthedBlob } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
@@ -60,7 +62,16 @@ type Application = {
     document_type: string | null;
     document_country: string | null;
   }[];
-  documents: { id: string; kind: string; filename: string; content_type: string; size_bytes: number }[];
+  documents: {
+    id: string;
+    kind: string;
+    filename: string;
+    content_type: string;
+    size_bytes: number;
+    person_id?: string | null;
+    review_result?: string | null;
+    review?: { reasons?: string[]; read?: Record<string, unknown> } | null;
+  }[];
   checks: Record<string, Check>;
   approval_blockers: string[];
   deposit_required_cents: number | null;
@@ -88,6 +99,7 @@ const CHECK_LABELS: Record<string, string> = {
   email_domain: "Email domain",
   name_match: "Names on IDs",
   ai_summary: "AI reviewer summary",
+  documents: "Documents (AI-read)",
 };
 
 function useOps<T>(key: unknown[], path: string, enabled = true) {
@@ -150,6 +162,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
   }
 
   const ai = app.checks.ai_summary;
+  const decision = app.checks.ai_decision;
 
   return (
     <div className="space-y-4">
@@ -172,7 +185,30 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
           </Card>
         )}
 
-        {ai && (
+        <DecisionPackCard
+          pack={(decision?.detail as unknown as DecisionPack) ?? null}
+          result={decision?.result ?? null}
+          blockers={app.approval_blockers}
+          pending={action.isPending}
+          onApprove={async (approveNote, limits) => {
+            const chosen = {
+              ...(limits.daily_calls != null ? { daily_calls: limits.daily_calls } : {}),
+              ...(limits.daily_texts != null ? { daily_texts: limits.daily_texts } : {}),
+              ...(limits.max_numbers != null ? { max_numbers: limits.max_numbers } : {}),
+            };
+            if (Object.keys(chosen).length > 0) {
+              await action.mutateAsync({
+                path: `${base}/limits`,
+                json: { deposit_required_cents: app.deposit_required_cents, limits: chosen },
+              });
+            }
+            run("approve", { note: approveNote });
+          }}
+          onAskInfo={(message) => run("request-info", { message })}
+          onReject={(reason, banIdentifiers) => run("reject", { reason, ban: banIdentifiers })}
+        />
+
+        {ai && !decision && (
           <Card>
             <p className="text-sm font-medium">AI reviewer summary <span className="text-xs text-muted-foreground">(advisory)</span></p>
             <p className="text-sm">{String((ai.detail?.summary as string) ?? ai.summary)}</p>
@@ -186,7 +222,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
 
         <Card className="space-y-2">
           <p className="text-sm font-medium">Automatic checks</p>
-          {Object.entries(app.checks).filter(([k]) => k !== "ai_summary").map(([k, c]) => (
+          {Object.entries(app.checks).filter(([k]) => k !== "ai_summary" && k !== "ai_decision").map(([k, c]) => (
             <details key={k} className="rounded-md border border-border px-3 py-2">
               <summary className="flex cursor-pointer items-center gap-2 text-sm">
                 <Pill tone={RESULT_TONE[c.result] ?? "neutral"}>{c.result}</Pill>
@@ -231,8 +267,17 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
         <Card className="space-y-2">
           <p className="text-sm font-medium">Documents</p>
           {app.documents.map((d) => (
-            <div key={d.id} className="flex items-center justify-between text-sm">
-              <span>{d.kind.replace(/_/g, " ")} · {d.filename}</span>
+            <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="space-x-2">
+                {d.review_result && <Pill tone={RESULT_TONE[d.review_result] ?? "neutral"}>{d.review_result}</Pill>}
+                <span>
+                  {d.kind.replace(/_/g, " ")}
+                  {d.person_id ? ` for ${app.persons.find((p) => p.id === d.person_id)?.full_name ?? "an owner"}` : ""} · {d.filename}
+                </span>
+                {(d.review?.reasons ?? []).length > 0 && (
+                  <span className="block text-xs text-muted-foreground">{d.review!.reasons!.join(" ")}</span>
+                )}
+              </span>
               <Button type="button" size="sm" variant="outline" onClick={() => void openDocument(d.id, d.filename)}>
                 Download
               </Button>
@@ -252,7 +297,6 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
             {app.status === "submitted" && <Button type="button" variant="outline" onClick={() => run("review")}>Start review</Button>}
             <Button type="button" disabled={app.approval_blockers.length > 0 || action.isPending} onClick={() => run("approve", { note })}>Approve</Button>
             <Button type="button" variant="outline" disabled={!note.trim()} onClick={() => run("request-info", { message: note })}>Ask for more info</Button>
-            <Button type="button" variant="outline" onClick={() => run("video-call", { note })}>Record video call done</Button>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={ban} onChange={(e) => setBan(e.target.checked)} />
               also ban identifiers
@@ -510,6 +554,7 @@ const TABS = [
   { id: "queue", label: "Review queue" },
   { id: "alerts", label: "Security alerts" },
   { id: "bans", label: "Ban list" },
+  { id: "monitoring", label: "Monitoring" },
   { id: "users", label: "Users" },
 ];
 
@@ -538,6 +583,7 @@ export function OpsPage() {
             {tab === "queue" && <QueueTab onOpen={setOpenOrg} />}
             {tab === "alerts" && <AlertsTab />}
             {tab === "bans" && <BanListTab />}
+            {tab === "monitoring" && <MonitoringTab />}
             {tab === "users" && <UsersTab />}
           </TabPanel>
         </>

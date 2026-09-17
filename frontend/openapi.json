@@ -650,6 +650,21 @@
         "title": "ApiKeyOut",
         "type": "object"
       },
+      "AppealIn": {
+        "properties": {
+          "explanation": {
+            "maxLength": 4000,
+            "minLength": 20,
+            "title": "Explanation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "explanation"
+        ],
+        "title": "AppealIn",
+        "type": "object"
+      },
       "AppointmentBookIn": {
         "properties": {
           "call_id": {
@@ -1330,6 +1345,18 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
           }
         },
         "required": [
@@ -3331,6 +3358,21 @@
         "title": "CustomFieldIn",
         "type": "object"
       },
+      "DecisionIn": {
+        "properties": {
+          "note": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "title": "DecisionIn",
+        "type": "object"
+      },
       "DepartmentIn": {
         "properties": {
           "name": {
@@ -3976,6 +4018,26 @@
           "published"
         ],
         "title": "HandoffOut",
+        "type": "object"
+      },
+      "HeldDecisionIn": {
+        "properties": {
+          "decision": {
+            "pattern": "^(release|block)$",
+            "title": "Decision",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "HeldDecisionIn",
         "type": "object"
       },
       "IdentityCompleteIn": {
@@ -6411,6 +6473,16 @@
             ],
             "title": "Ownership Percent"
           },
+          "residential_address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AddressIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "role": {
             "title": "Role",
             "type": "string"
@@ -7967,6 +8039,46 @@
           "contact_id"
         ],
         "title": "RenderIn",
+        "type": "object"
+      },
+      "ReportIn": {
+        "properties": {
+          "contact": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact"
+          },
+          "description": {
+            "maxLength": 2000,
+            "minLength": 10,
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "pattern": "^(call|text)$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "number": {
+            "maxLength": 32,
+            "minLength": 7,
+            "title": "Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "kind",
+          "description"
+        ],
+        "title": "ReportIn",
         "type": "object"
       },
       "ResetIn": {
@@ -22238,6 +22350,82 @@
         ]
       }
     },
+    "/api/v1/kyc/persons/{person_id}/address": {
+      "put": {
+        "operationId": "set_person_address_api_v1_kyc_persons__person_id__address_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddressIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Person Address Api V1 Kyc Persons  Person Id  Address Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Person Address",
+        "tags": [
+          "kyc"
+        ]
+      }
+    },
     "/api/v1/kyc/persons/{person_id}/verify": {
       "post": {
         "description": "Returns Stripe's hosted ID + selfie page. Open it yourself when the person is you,\nor send the link to the owner it belongs to.",
@@ -23460,6 +23648,128 @@
         "summary": "Cancel Schedule",
         "tags": [
           "messaging"
+        ]
+      }
+    },
+    "/api/v1/monitoring/appeal": {
+      "post": {
+        "operationId": "appeal_api_v1_monitoring_appeal_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppealIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Appeal Api V1 Monitoring Appeal Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Appeal",
+        "tags": [
+          "monitoring"
+        ]
+      }
+    },
+    "/api/v1/monitoring/status": {
+      "get": {
+        "operationId": "my_status_api_v1_monitoring_status_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Org-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response My Status Api V1 Monitoring Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "My Status",
+        "tags": [
+          "monitoring"
         ]
       }
     },
@@ -24966,6 +25276,380 @@
           }
         ],
         "summary": "Remove Ban",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/monitoring": {
+      "get": {
+        "operationId": "queue_api_v1_ops_monitoring_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Queue Api V1 Ops Monitoring Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Queue",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/monitoring/held-texts": {
+      "get": {
+        "operationId": "held_texts_api_v1_ops_monitoring_held_texts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Held Texts Api V1 Ops Monitoring Held Texts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Held Texts",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/monitoring/orgs/{org_id}": {
+      "get": {
+        "operationId": "case_api_v1_ops_monitoring_orgs__org_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Case Api V1 Ops Monitoring Orgs  Org Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Case",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/monitoring/orgs/{org_id}/suspend": {
+      "post": {
+        "description": "Confirmed abuse: label the evidence as scam and suspend (+ ban) the business.",
+        "operationId": "suspend_api_v1_ops_monitoring_orgs__org_id__suspend_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Suspend Api V1 Ops Monitoring Orgs  Org Id  Suspend Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Suspend",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/monitoring/orgs/{org_id}/unpause": {
+      "post": {
+        "operationId": "unpause_api_v1_ops_monitoring_orgs__org_id__unpause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Unpause Api V1 Ops Monitoring Orgs  Org Id  Unpause Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unpause",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/monitoring/report": {
+      "get": {
+        "description": "What the monitor did, and whether it still works.",
+        "operationId": "daily_report_api_v1_ops_monitoring_report_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 30,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Daily Report Api V1 Ops Monitoring Report Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Daily Report",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/ops/monitoring/texts/{message_id}": {
+      "post": {
+        "operationId": "decide_held_text_api_v1_ops_monitoring_texts__message_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeldDecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Decide Held Text Api V1 Ops Monitoring Texts  Message Id  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decide Held Text",
         "tags": [
           "ops"
         ]
@@ -28808,6 +29492,50 @@
         "summary": "Put Provider Rates",
         "tags": [
           "spend"
+        ]
+      }
+    },
+    "/api/v1/public/report-number": {
+      "post": {
+        "description": "Always 202 and the same answer - it must not reveal whether a number is ours.",
+        "operationId": "report_number_api_v1_public_report_number_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Report Number Api V1 Public Report Number Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Number",
+        "tags": [
+          "public"
         ]
       }
     },

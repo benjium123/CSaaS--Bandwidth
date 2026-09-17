@@ -60,6 +60,8 @@ export type KycPerson = {
   document_country: string | null;
   verified_at: string | null;
   last_error: string | null;
+  /** P43: where the owner lives now. */
+  residential_address?: Address | null;
 };
 
 export type KycDocument = {
@@ -69,6 +71,11 @@ export type KycDocument = {
   content_type: string;
   size_bytes: number;
   uploaded_at: string | null;
+  /** P43: the owner a proof of address belongs to. */
+  person_id?: string | null;
+  /** P43: the automatic AI review - "reviewing" until it has read the document. */
+  review_status?: "reviewing" | "pass" | "warn" | "fail";
+  review_message?: string | null;
 };
 
 export type KycProfile = {
@@ -112,7 +119,6 @@ export const DOCUMENT_KINDS = [
   { value: "registration_certificate", label: "Certificate of incorporation / registration" },
   { value: "tax_id_letter", label: "Tax ID letter (IRS EIN letter, CRA BN, HMRC)" },
   { value: "articles", label: "Articles / operating agreement" },
-  { value: "proof_of_address", label: "Proof of business address" },
   { value: "other", label: "Other" },
 ];
 
@@ -146,6 +152,8 @@ export const MISSING_LABELS: Record<string, string> = {
   owner: "An owner",
   id_verification: "ID + selfie check for every owner",
   documents: "At least one business document",
+  residential_address: "Each owner's current home address",
+  proof_of_address: "A recent proof of address for each owner",
   agreement: "Accept the agreement",
 };
 
@@ -174,10 +182,16 @@ export function useKycMutation<TVars>(
   });
 }
 
-export async function uploadKycDocument(api: ApiClient, kind: string, file: File) {
+export async function uploadKycDocument(
+  api: ApiClient,
+  kind: string,
+  file: File,
+  personId?: string,
+) {
   const form = new FormData();
   form.append("kind", kind);
   form.append("file", file);
+  if (personId) form.append("person_id", personId);
   return api.request<KycDocument>("/api/v1/kyc/documents", { method: "POST", body: form });
 }
 

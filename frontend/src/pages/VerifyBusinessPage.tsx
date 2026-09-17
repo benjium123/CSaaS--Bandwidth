@@ -1,4 +1,5 @@
 import * as React from "react";
+import { DocumentReview, OwnerResidence } from "@/components/kyc/OwnerResidence";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import {
   COUNTRY_OPTIONS,
@@ -288,6 +289,11 @@ function PeopleStep({ profile, editable }: { profile: KycProfile; editable: bool
                 </p>
                 <Pill tone={PERSON_STATUS[p.status].tone}>{PERSON_STATUS[p.status].label}</Pill>
                 {p.last_error && <p className="text-xs text-muted-foreground">{p.last_error}</p>}
+                {(p.role === "owner" || p.role === "beneficial_owner") && (
+                  <div className="mt-2">
+                    <OwnerResidence person={p} documents={profile.documents} editable={editable} />
+                  </div>
+                )}
               </div>
               {p.status !== "verified" && p.status !== "processing" && (
                 <Button type="button" size="sm" onClick={() => verify.mutate(p)} disabled={verify.isPending}>
@@ -348,6 +354,8 @@ function DocumentsStep({ profile, editable }: { profile: KycProfile; editable: b
   const [file, setFile] = React.useState<File | null>(null);
   const upload = useKycMutation(api, () => uploadKycDocument(api, kind, file as File));
   const remove = useKycMutation(api, (id: string) => api.request(`/api/v1/kyc/documents/${id}`, { method: "DELETE" }));
+  // Owners' proofs of address are shown with each owner, not here.
+  const businessDocs = profile.documents.filter((d) => d.kind !== "proof_of_address");
 
   return (
     <div className="space-y-3">
@@ -355,13 +363,14 @@ function DocumentsStep({ profile, editable }: { profile: KycProfile; editable: b
         Upload your certificate of incorporation or registration, plus your tax ID letter if you
         have it. PDF, JPG or PNG, up to 10 MB. Files are encrypted and only our compliance team can open them.
       </p>
-      {profile.documents.length > 0 && (
+      {businessDocs.length > 0 && (
         <ul className="space-y-1">
-          {profile.documents.map((d) => (
-            <li key={d.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
+          {businessDocs.map((d) => (
+            <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
               <span className="truncate">
                 {DOCUMENT_KINDS.find((k) => k.value === d.kind)?.label ?? d.kind} · {d.filename}
               </span>
+              <DocumentReview doc={d} />
               {editable && (
                 <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${d.filename}`} onClick={() => remove.mutate(d.id)}>
                   Remove
@@ -481,7 +490,7 @@ export function VerifyBusinessPage() {
       <StepCard n={2} title="How you'll use calling and texting" done={!profile.missing.some((m) => m.startsWith("use_case."))}>
         <UseCaseStep profile={profile} editable={editable} />
       </StepCard>
-      <StepCard n={3} title="Owners and ID check" done={!missing.has("owner") && !missing.has("id_verification")}>
+      <StepCard n={3} title="Owners, ID check and home address" done={!missing.has("owner") && !missing.has("id_verification") && !missing.has("residential_address") && !missing.has("proof_of_address")}>
         <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} />
       </StepCard>
       <StepCard n={4} title="Business documents" done={!missing.has("documents")}>
