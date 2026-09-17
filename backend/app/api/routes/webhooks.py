@@ -613,7 +613,22 @@ async def signalwire_sip_dial(request: Request) -> Response:
         request.headers, raw, sip_dial.signing_url(settings.public_base_url), token
     ):
         # Refused, never "handled anyway": this endpoint can make us pay for a phone call.
-        log.warning("signalwire_sip_dial_unverified")
+        # The shape of what SignalWire actually sent is logged (content type, which
+        # signature header, body length and the form field NAMES) because a mismatch is
+        # otherwise undebuggable; no values and no secrets.
+        log.warning(
+            "signalwire_sip_dial_unverified",
+            content_type=request.headers.get("content-type", ""),
+            sig_headers=[
+                name
+                for name in request.headers.keys()
+                if "signature" in name.lower()
+            ],
+            body_len=len(raw),
+            field_names=sorted(
+                name for name, _ in parse_qsl(raw.decode("utf-8", "replace"))
+            ),
+        )
         return Response(content=b"", media_type="application/xml", status_code=403)
 
     fields = dict(parse_qsl(raw.decode("utf-8", "replace"), keep_blank_values=True))
