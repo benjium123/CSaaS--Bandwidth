@@ -24,9 +24,9 @@ cookie only, which is the production path.
   diverge.
 - The browser's own half of the ceremony — origin binding, RP ID checks, user-gesture
   requirements — is bypassed by replacing `navigator.credentials`, not exercised.
-- The single-use challenge is proven **sequentially**. The concurrent case — two requests
-  racing for the same challenge row, which is what the conditional UPDATE exists for —
-  cannot be produced by driving one browser, and remains reasoning about row locking.
+- No **physical** device was ever involved, and no real credential was created. The keys
+  lived in page memory. A page reload once lost the override and let a real
+  `navigator.credentials.get` reach the operator's actual hardware — see *Hazards* below.
 
 ## Results
 
@@ -56,6 +56,64 @@ Result 10 exercises the branch jsdom can never reach: in a real browser
 `window.PublicKeyCredential` exists, so the passkey control renders **enabled** with no
 "this browser cannot use passkeys" notice, which is the opposite of what the unit tests can
 see.
+
+## The concurrent claim — narrowed, not closed
+
+The single-use challenge was first proven only **sequentially**, and both sessions assumed
+the concurrent case needed two browsers. It does not: `consume_challenge` runs **before**
+verification, so the claim can be raced with a credential that is merely well-formed. No
+authenticator, no valid crypto, no prompt.
+
+One challenge minted, then two simultaneous `POST /passkeys/login/verify` with the same
+`challenge_id`. Over four attempts, **exactly one request got past the claim every time**:
+
+| Outcome | Message |
+|---|---|
+| Winner (claimed the challenge, then failed later) | 401 "That passkey is not registered to this account" |
+| Loser (refused at the claim) | 401 "This passkey request has expired - try again" |
+
+Never two winners. Note the winner fails at **credential lookup**, not signature
+verification — the claim happens before the credential is resolved, so the predicted 422 is
+actually a 401 with a different message. The property held; the status pair we expected did
+not, which is worth knowing before someone writes an assertion against it.
+
+**This narrows the gap, it does not close it.** SQLite serialises writers, so passing here
+is necessary but weaker than PostgreSQL, where the conditional UPDATE's row-locking remains
+reasoning rather than observation. What it does settle is the claim that *no test issues two
+simultaneous requests against a challenge* — one now does.
+
+## Corroborated in the database, not just by status codes
+
+The audit session queried the resulting SQLite file read-only. Three things HTTP could not
+show:
+
+- **8 challenges, 1 unconsumed.** Cross-referenced with `login_events` (5 ok, 2 bad_2fa),
+  every login challenge carries `consumed_at` — including the two that belonged to *failed*
+  ceremonies. The burn-on-failure rule observed as rows.
+- **`sign_count` stayed at its high-water mark of 4** after the rolled-back assertion. The
+  server refused it *and* declined to persist the lower value. A fix that returned 401 while
+  still writing the rollback would look identical from the browser and would silently
+  disable clone detection from then on.
+- **`auth_method='passkey'` and `second_factor_at` were set on all four passkey sessions.**
+  Neither column had ever been checked end to end, and both are load-bearing:
+  `passkey_policy.session_satisfies` tests `auth_method`, and `check_step_up("recent_2fa")`
+  reads `second_factor_at`. So a passkey sign-in demonstrably satisfies the privileged-role
+  passkey requirement *and* counts as a fresh second factor — a stronger result than the one
+  being aimed at.
+
+## Hazards for whoever runs this next
+
+- **Deliberate failures feed the real lockout counter.** `bad_2fa` is in `FAILURE_OUTCOMES`,
+  threshold 10 per 15 minutes. The fourth concurrency run hit it: `423 "Too many failed
+  attempts. Try again in 15 minutes or reset your password."` That is the lockout working,
+  but budget for it or reset the account between runs, or the next person debugs a 423
+  instead of their test.
+- **A page reload silently disarms a software authenticator.** The override lives in page
+  memory; after a reload, `navigator.credentials` is the real one again, and the next call
+  prompts the **operator's own devices** — in this run it reached for their iPhone over the
+  cross-device flow. Install a guard that throws when the override is missing rather than
+  letting it fall through to real hardware. Nothing was ever written to a real keychain, but
+  the prompt itself is intrusive and should not happen twice.
 
 ## Found by running it
 
