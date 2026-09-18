@@ -112,7 +112,13 @@ def _return_url(settings: Settings, requested: str | None, fallback_path: str) -
     return base + fallback_path
 
 
-def _person_out(p) -> dict:
+def _viewer(ctx) -> uuid.UUID | None:
+    """The signed-in member, or None for an API key. Only used to answer "is this person
+    you?" - an API key is nobody, and gets `is_you: false` on every person."""
+    return ctx.membership.user_id if ctx.membership is not None else None
+
+
+def _person_out(p, viewer_id: uuid.UUID | None = None) -> dict:
     return {
         "id": str(p.id),
         "role": p.role,
@@ -120,6 +126,15 @@ def _person_out(p) -> dict:
         "email": p.email,
         "ownership_percent": p.ownership_percent,
         "is_user": p.user_id is not None,
+        # WHETHER this person is the viewer, never WHICH user they are. The console has to
+        # answer "is this me?" - only the person themselves may start their own ID check
+        # (`kyc.py::start_person_verification` raises `not_your_identity` otherwise), so a
+        # re-verification prompt that offers everyone a button offers most people a dead
+        # end. Matching on email would be the alternative and it is wrong: a person added
+        # by an owner can carry a different address from the one their account signs in
+        # with. Exposing the raw `user_id` to everyone holding `org:read` would answer the
+        # question and hand out the workspace's user ids as a side effect.
+        "is_you": viewer_id is not None and p.user_id == viewer_id,
         "status": p.status,
         "verified_name": p.verified_name,
         "document_country": p.document_country,
@@ -146,7 +161,7 @@ def _document_out(d: KycDocument) -> dict:
     }
 
 
-async def _profile_out(session: AsyncSession, profile) -> dict:
+async def _profile_out(session: AsyncSession, profile, viewer_id: uuid.UUID | None = None) -> dict:
     persons = await kyc_checks.persons_for(session, profile.org_id)
     documents = (
         (
@@ -182,7 +197,7 @@ async def _profile_out(session: AsyncSession, profile) -> dict:
         },
         "use_case": profile.use_case,
         "use_case_pending": profile.use_case_pending,
-        "persons": [_person_out(p) for p in persons],
+        "persons": [_person_out(p, viewer_id) for p in persons],
         "documents": [_document_out(d) for d in documents],
         "checks": {
             k: {"result": c.result, "summary": c.summary}
@@ -216,7 +231,7 @@ async def _profile_out(session: AsyncSession, profile) -> dict:
 @router.get("/profile")
 async def get_profile(ctx: Annotated[OrgContext, Depends(require_permission("org:read"))]) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
-    out = await _profile_out(ctx.session, profile)
+    out = await _profile_out(ctx.session, profile, _viewer(ctx))
     await ctx.session.commit()
     return out
 
@@ -241,7 +256,7 @@ async def put_business(
         )
         background.add_task(_run_automation, request.app, ctx.org.id, True)
     await ctx.session.commit()
-    return await _profile_out(ctx.session, profile)
+    return await _profile_out(ctx.session, profile, _viewer(ctx))
 
 
 @router.put("/profile/use-case")
@@ -264,7 +279,7 @@ async def put_use_case(
         request.app.state.settings, profile, payload.model_dump(mode="python")
     )
     await ctx.session.commit()
-    return {"result": result, **(await _profile_out(ctx.session, profile))}
+    return {"result": result, **(await _profile_out(ctx.session, profile, _viewer(ctx)))}
 
 
 @router.post("/persons", status_code=201)
@@ -450,7 +465,7 @@ async def accept_agreement(
         version=payload.version,
     )
     await ctx.session.commit()
-    return await _profile_out(ctx.session, profile)
+    return await _profile_out(ctx.session, profile, _viewer(ctx))
 
 
 @router.post("/submit")
@@ -475,7 +490,7 @@ async def submit(
     await ctx.session.commit()
     # P43: documents, registry fallback, risk and the AI decision pack - no human needed.
     background.add_task(_run_automation, request.app, ctx.org.id, False)
-    return await _profile_out(ctx.session, profile)
+    return await _profile_out(ctx.session, profile, _viewer(ctx))
 
 
 @router.post("/me/verify")

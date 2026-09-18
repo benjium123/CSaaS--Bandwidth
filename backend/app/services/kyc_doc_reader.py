@@ -260,11 +260,38 @@ async def review_document(
     return document
 
 
+#: Reasons an APPLICANT must never be handed verbatim, and what they get instead.
+#:
+#: "The document shows signs of editing" is a fraud detector reporting its own hit to the
+#: person it fired on. Upload, learn the forgery was spotted, adjust, re-upload: the loop
+#: closes in minutes and costs nothing. Every other reason in `decide()` is the opposite -
+#: a real applicant cannot fix a stale utility bill without being told it is stale - which
+#: is why the rest are shown verbatim and only this one is replaced.
+#:
+#: The replacement is deliberately actionable rather than a refusal, because an honest
+#: applicant whose phone scan looked odd needs a way forward, and because "upload the
+#: original" is indistinguishable from what we would say about a poor scan. The real reason
+#: is still recorded in `document.review["reasons"]` for the operator and the audit trail.
+_APPLICANT_SAFE_REASONS = {
+    "The document shows signs of editing.": (
+        "We couldn't accept this copy. Please upload the original document - an original "
+        "PDF from whoever issued it, or a clear photo of the paper original."
+    ),
+}
+
+
 def customer_message(document: KycDocument) -> str | None:
-    """What the applicant sees - the reasons, never the raw extraction."""
+    """What the applicant sees - the reasons, never the raw extraction.
+
+    See `_APPLICANT_SAFE_REASONS`: one reason is rewritten because telling someone which
+    detector caught them is how a detector gets defeated.
+    """
     if document.review_result in (None, "pass"):
         return None
     if document.review_result == "error":
         return "We'll review this document shortly."
     reasons = (document.review or {}).get("reasons") or []
-    return " ".join(reasons)[:500] or None
+    # dict.fromkeys de-duplicates while keeping order: two rewritten reasons must not
+    # produce the same sentence twice.
+    safe = list(dict.fromkeys(_APPLICANT_SAFE_REASONS.get(r, r) for r in reasons))
+    return " ".join(safe)[:500] or None

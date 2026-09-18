@@ -722,3 +722,123 @@ async def test_the_weekly_tick_writes_both_exam_rows(session, fix_settings):
         monitor_exam.load_cases("calls")
     )
     assert kinds["exam"].detail["total"] != kinds["cohort_exam"].detail["total"]
+
+
+# ======================================================================================
+# What the applicant is told, and who the applicant is. Both found while reviewing the
+# onboarding UI plan - neither is reachable from a test that only checks pass/fail.
+# ======================================================================================
+def test_the_applicant_is_never_told_the_forgery_detector_fired():
+    """`looks_edited` is a fraud detector. Telling the person it fired on closes the loop
+    for them: upload, learn it was spotted, adjust, re-upload, in minutes, for free. Every
+    OTHER reason is the opposite - an honest applicant cannot fix a stale utility bill
+    without being told it is stale - which is why only this one is rewritten."""
+    from app.models import KycDocument
+    from app.services import kyc_doc_reader
+
+    doc = KycDocument(
+        id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+        kind="proof_of_address",
+        filename="bill.pdf",
+        content_type="application/pdf",
+        size_bytes=1,
+        review_result="fail",
+        review={"reasons": ["The document shows signs of editing."]},
+    )
+    message = kyc_doc_reader.customer_message(doc)
+    assert message
+    assert "editing" not in message.lower()
+    assert "tamper" not in message.lower()
+    assert "original" in message.lower(), "an honest applicant still needs a way forward"
+    # The real reason survives for the operator and the audit trail.
+    assert doc.review["reasons"] == ["The document shows signs of editing."]
+
+
+def test_reasons_an_honest_applicant_can_act_on_are_still_shown_verbatim():
+    """The mirror of the test above, and the reason it is a separate test: a fix that
+    silenced every reason would pass the first one and make the product unusable."""
+    from app.models import KycDocument
+    from app.services import kyc_doc_reader
+
+    doc = KycDocument(
+        id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+        kind="proof_of_address",
+        filename="bill.pdf",
+        content_type="application/pdf",
+        size_bytes=1,
+        review_result="fail",
+        review={
+            "reasons": [
+                "The document is older than 90 days.",
+                "The address on the document doesn't match the one declared.",
+            ]
+        },
+    )
+    message = kyc_doc_reader.customer_message(doc)
+    assert "older than 90 days" in message
+    assert "address on the document" in message
+
+
+def test_two_rewritten_reasons_do_not_repeat_the_same_sentence():
+    from app.models import KycDocument
+    from app.services import kyc_doc_reader
+
+    doc = KycDocument(
+        id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+        kind="proof_of_address",
+        filename="bill.pdf",
+        content_type="application/pdf",
+        size_bytes=1,
+        review_result="fail",
+        review={
+            "reasons": [
+                "The document shows signs of editing.",
+                "The document shows signs of editing.",
+            ]
+        },
+    )
+    message = kyc_doc_reader.customer_message(doc)
+    assert message.lower().count("upload the original") == 1
+
+
+async def test_a_person_payload_says_whether_it_is_you_without_naming_who(app_ai, session):
+    """Only the person themselves may start their own ID check (`not_your_identity`), so a
+    re-verification prompt has to know which owner is the viewer. `is_user` cannot answer
+    that, and exposing `user_id` would answer it by handing every member the workspace's
+    user ids."""
+    client, _carrier, _fake, _app = app_ai
+    email = f"owner-{uuid.uuid4().hex[:6]}@example.com"
+    token, org, _num = await make_org_with_number(client, email, "Dan Plumbing Ltd", OUR)
+    h = auth_headers(token, org["id"])
+
+    me = (await client.get("/api/v1/auth/me", headers=h)).json()
+    r = await client.post(
+        "/api/v1/kyc/persons",
+        json={"role": "owner", "full_name": "Dan Owner", "email": email,
+              "ownership_percent": 100, "is_me": True},
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
+
+    persons = (await client.get("/api/v1/kyc/profile", headers=h)).json()["persons"]
+    linked = [p for p in persons if p["is_user"]]
+    assert linked, "the owner should be linked to the signing-in user"
+    for person in persons:
+        assert "user_id" not in person, "the payload must not hand out user ids"
+    assert any(p["is_you"] for p in linked), (
+        f"no person came back as the viewer; me={me['id']}"
+    )
+    # A person who is not the viewer must be is_you false even when they are a user.
+    other = await client.post(
+        "/api/v1/kyc/persons",
+        json={"role": "beneficial_owner", "full_name": "Sam Partner",
+              "email": f"sam-{uuid.uuid4().hex[:6]}@example.com", "ownership_percent": 40},
+        headers=h,
+    )
+    assert other.status_code == 201, other.text
+    persons = (await client.get("/api/v1/kyc/profile", headers=h)).json()["persons"]
+    sam = [p for p in persons if p["full_name"] == "Sam Partner"][0]
+    assert sam["is_you"] is False
