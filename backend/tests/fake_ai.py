@@ -88,6 +88,15 @@ class FakeSafetyAI:
             "confidence": 80,
         }
         self.generic: dict = {}
+        #: Cohort (campaign) reviews. Callable so a test can answer differently per template -
+        #: which is what the dedupe and budget tests need.
+        self.cohort_verdict = lambda bodies: {
+            "verdict": "consistent",
+            "confidence": 90,
+            "category": "none",
+            "impersonates": None,
+            "reason": "Matches the declared business.",
+        }
 
     def _answer(self, payload: dict) -> dict:
         system = payload["messages"][0]["content"]
@@ -99,6 +108,17 @@ class FakeSafetyAI:
             return self.document
         if "senior compliance analyst" in system:
             return self.decision
+        # Must come BEFORE the text branch: a campaign review is not a per-message check, and
+        # answering it with a text verdict ("allow") makes review_one raise AIUnavailable -
+        # an AI that is working reported as an outage.
+        if "reviewing a CAMPAIGN" in system:
+            # `generic` WINS, as it does on the fraud-investigator branch below. Without this
+            # the branch answered a hardcoded "consistent" to every campaign, so a test that
+            # set `ai.generic` to an inconsistent verdict and asserted the scam was flagged got
+            # "consistent" instead - and, far worse, a test asserting that nothing was flagged
+            # passed for the wrong reason. A canned reassuring answer in a shared fake is the
+            # same anti-pattern as a check that can only pass.
+            return self.generic or self.cohort_verdict(text)
         if "outbound text message" in system:
             return self.text_verdict(text)
         if "call transcript" in system:
