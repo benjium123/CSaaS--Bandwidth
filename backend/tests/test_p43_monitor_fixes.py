@@ -690,3 +690,35 @@ def test_every_cohort_exam_case_is_well_formed_and_the_set_is_balanced():
     for country in ("US", "GB"):
         assert any(c["country"] == country and c["label"] == "scam" for c in cases), country
         assert any(c["country"] == country and c["label"] == "legit" for c in cases), country
+
+
+async def test_the_weekly_tick_writes_both_exam_rows(session, fix_settings):
+    """The wiring claim itself: ONE weekly tick, TWO monitor_health rows.
+
+    Tested end-to-end through `exam_tick` rather than by calling `cohort_exam_tick` directly,
+    because "the campaign exam runs weekly" is a claim about the caller. Calling the callee
+    and finding it works is how you confirm a wiring that isn't there - the same mistake that
+    let `monitor_cohorts.tick()` exist for its entire life with no caller at all.
+    """
+    from app.services import monitor_exam
+
+    ai = FakeSafetyAI()
+    ai.cohort_verdict = lambda text: {
+        "verdict": "inconsistent" if _scam_shaped(text) else "consistent",
+        "confidence": 95, "category": "none", "impersonates": None, "reason": "test",
+    }
+    with ai.installed():
+        row = await monitor_exam.exam_tick(session, fix_settings)
+
+    assert row.kind == "exam", "exam_tick must still return the text/call row"
+    kinds = {
+        r.kind: r
+        for r in (await session.execute(sa.select(MonitorHealth))).scalars().all()
+    }
+    assert set(kinds) == {"exam", "cohort_exam"}, kinds
+    # Separate numbers, not a blend: the campaign row counts only campaigns.
+    assert kinds["cohort_exam"].detail["total"] == len(monitor_exam.load_cohort_cases())
+    assert kinds["exam"].detail["total"] == len(monitor_exam.load_cases("texts")) + len(
+        monitor_exam.load_cases("calls")
+    )
+    assert kinds["exam"].detail["total"] != kinds["cohort_exam"].detail["total"]
