@@ -70,6 +70,23 @@ describe("P26 verify - composer", () => {
 
     const field = screen.getByLabelText("Message");
     await userEvent.type(field, "/gre");
+
+    // The quick-pick list is debounced by 200ms (Composer.tsx: setDebouncedTemplateSearch).
+    // The FIRST listbox to appear is rendered from the previous search term; when the
+    // debounce fires, the query key changes, the new query has no cached data, and the
+    // options are replaced by "Searching..." before coming back. React therefore discards
+    // the original option nodes - a handle taken before that point is detached, and
+    // clicking it silently does nothing.
+    //
+    // That is the whole failure: not a typing race (the field already held the complete
+    // "/gre"), and not something `waitFor` around the value assertion would fix - the
+    // click never ran, so the value never arrives and the test would only fail slower.
+    // Wait for the debounced fetch to have gone out, then take the handle.
+    await waitFor(() =>
+      expect(
+        client.calls.some((call) => call.path === "/api/v1/templates?q=gre"),
+      ).toBe(true),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("listbox", { name: "Insert a saved reply" }),
@@ -78,7 +95,7 @@ describe("P26 verify - composer", () => {
 
     await userEvent.click(screen.getByRole("option", { name: /Greeting/ }));
 
-    expect(field).toHaveValue(TEMPLATE.body);
+    await waitFor(() => expect(field).toHaveValue(TEMPLATE.body));
     await waitFor(() => expect(field).toHaveFocus());
   });
 });

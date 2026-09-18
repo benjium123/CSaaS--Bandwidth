@@ -11,7 +11,12 @@ type Status = { level: "normal" | "restricted" | "paused"; message: string | nul
 export function MonitoringBanner() {
   const { api, me, orgId } = useAuth();
   const qc = useQueryClient();
-  const canRead = Boolean(orgId) && hasPermission(me, orgId, "org:read");
+  // `Boolean(orgId) &&` used to be needed here because hasPermission returned true for a
+  // null org - this is one of the two sites that noticed and patched it by hand, because
+  // the answer gated a FETCH rather than a render. hasPermission now denies what it does
+  // not know, so the guard is redundant and is removed rather than left to read as
+  // superstition to the next person.
+  const canRead = hasPermission(me, orgId, "org:read");
   const canAppeal = hasPermission(me, orgId, "org:update");
   const [open, setOpen] = React.useState(false);
   const [text, setText] = React.useState("");

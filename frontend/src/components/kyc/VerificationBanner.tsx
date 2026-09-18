@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/primitives";
 export function VerificationBanner() {
   const { api, me, orgId } = useAuth();
   const navigate = useNavigate();
-  const profileQ = useKycProfile(api, Boolean(orgId) && hasPermission(me, orgId, "org:read"));
+  // The `Boolean(orgId) &&` that used to be here is gone: hasPermission no longer returns
+  // true for an org it has not been given. See the note in MonitoringBanner.
+  const profileQ = useKycProfile(api, hasPermission(me, orgId, "org:read"));
 
   if (!profileQ.data) return null;
   const copy = statusCopy(profileQ.data.status);

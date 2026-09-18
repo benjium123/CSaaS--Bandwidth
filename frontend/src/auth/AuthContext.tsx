@@ -18,7 +18,20 @@ export type Membership = {
  * rather than lock users out of actions they've always had. Once `permissions` is
  * present, it is authoritative. */
 export function hasPermission(me: Me | null, orgId: string | null, permission: string): boolean {
-  if (!me || !orgId) return true;
+  // "We have not asked yet" is NOT "allowed". `me` is null until /auth/me answers, so
+  // returning true here made all eleven call sites render admin affordances - role editing
+  // and member reset on TeamPage among them - for the duration of every page load. That is
+  // the conflation of "false" with "not loaded" that components/auth/AuthShell.tsx's header
+  // describes, in the permissive direction, inside the one function whose job is to answer a
+  // security question. api/capabilities.ts:52 already states the principle for its own
+  // fallback: never show an admin item to an agent because a lookup came back undefined.
+  //
+  // The visible effect of denying instead is that a control appears a beat late rather than
+  // appearing and vanishing - the safe direction, and self-correcting.
+  //
+  // NOT a privilege escalation either way: the backend enforces all of these with
+  // require_permission, so the affordance was always a lie rather than a door.
+  if (!me || !orgId) return false;
   const membership = me.memberships.find((m) => m.org_id === orgId);
   if (!membership || !membership.permissions) return true;
   return membership.permissions.includes(permission);

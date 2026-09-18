@@ -116,8 +116,14 @@ describe("hasPermission", () => {
     expect(hasPermission(ME, "org-2", "numbers:write")).toBe(false);
   });
 
-  it("fails open with no user or no org selected", () => {
-    expect(hasPermission(null, "org-1", "calls:place")).toBe(true);
-    expect(hasPermission(ME, null, "calls:place")).toBe(true);
+  // The expectation here is INVERTED from what it originally asserted, deliberately. It
+  // used to pin `true` for both, i.e. it pinned the defect: a null `me` means /auth/me has
+  // not answered, which is "unknown", and answering "permitted" to unknown showed admin
+  // affordances on every page load. The feature-detection fail-open above is a different
+  // case and is untouched - there, the backend HAS answered and simply predates the
+  // `permissions` field.
+  it("fails closed when we do not know yet - no user loaded, or no org selected", () => {
+    expect(hasPermission(null, "org-1", "calls:place")).toBe(false);
+    expect(hasPermission(ME, null, "calls:place")).toBe(false);
   });
 });
