@@ -20,6 +20,7 @@ from app.models import (
     KycDocument,
     Message,
     MessageThread,
+    MonitorHealth,
     MonitorSignal,
     Org,
     OrgMonitoring,
@@ -398,7 +399,7 @@ async def test_exam_and_canary_hold_no_transaction_while_the_ai_answers(session,
 
     seen = []
 
-    async def fake_run(settings, texts, calls, *, stop_on_unavailable=False):
+    async def fake_run(settings, texts, calls, *, cohorts=None, stop_on_unavailable=False):
         seen.append(session.in_transaction())
         return monitor_exam.ExamResult()
 
@@ -407,7 +408,9 @@ async def test_exam_and_canary_hold_no_transaction_while_the_ai_answers(session,
     await monitor_exam.exam_tick(session, fix_settings)
     await monitor_exam.due(session, "canary", timedelta(minutes=55))
     await monitor_exam.canary_tick(session, fix_settings)
-    assert seen == [False, False]
+    # Three, not two: exam_tick now also runs the campaign exam, and a second AI-bound run
+    # inside the same call is a second chance to hold the transaction open across minutes.
+    assert seen == [False, False, False]
 
 
 # ======================================================================================
@@ -576,3 +579,114 @@ async def test_an_exhausted_ai_budget_is_stated_in_the_headline(session, setting
     assert report["conclusive"] is False
     assert "could not be reviewed" in report["headline"]
     assert "budget is 1 AI calls" in report["headline"]
+
+
+# ======================================================================================
+# The campaign reviewer's weekly exam. These test the WIRING - that it runs, that it is
+# scored apart from the text exam, and that it cannot pass without doing anything. Whether
+# the model is any good is measured against the live API by scripts/cohort_exam.py, which no
+# mock can stand in for.
+# ======================================================================================
+def _scam_shaped(text: str) -> bool:
+    """The exam's scam bodies all link to a throwaway TLD; the legitimate ones link to the
+    business's own domain or to nothing. Crude on purpose - this stands in for the model so
+    the test can be about the tick, not about judgement."""
+    return any(
+        marker in text for marker in (".top/", ".xyz/", ".link/", "t.me/", "WhatsApp")
+    )
+
+
+async def test_the_weekly_exam_scores_campaigns_in_their_own_bucket(session, fix_settings):
+    """Blending the two rates would hide which half regressed. They ask different questions -
+    "is this message a scam?" against "is this campaign the kind of thing this business would
+    send?" - and the campaign question is the harder one, so a regression there is exactly
+    what an averaged number would swallow."""
+    from app.services import monitor_exam
+
+    ai = FakeSafetyAI()
+    ai.cohort_verdict = lambda text: {
+        "verdict": "inconsistent" if _scam_shaped(text) else "consistent",
+        "confidence": 95,
+        "category": "scam" if _scam_shaped(text) else "none",
+        "impersonates": None,
+        "reason": "test",
+    }
+    with ai.installed():
+        await monitor_exam.cohort_exam_tick(session, fix_settings)
+
+    rows = (
+        await session.execute(
+            sa.select(MonitorHealth).where(MonitorHealth.kind == "cohort_exam")
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    detail = rows[0].detail
+    assert detail["scams"] >= 10 and detail["legit"] >= 8, detail
+    assert detail["catch_rate"] == 1.0 and detail["false_alarm_rate"] == 0.0, detail
+    assert rows[0].passed is True
+    # And it is a SEPARATE row: nothing was folded into the text exam's numbers.
+    assert not (
+        await session.execute(sa.select(MonitorHealth).where(MonitorHealth.kind == "exam"))
+    ).scalars().all()
+
+
+async def test_an_unreachable_ai_fails_the_campaign_exam(session, fix_settings):
+    """The failure mode this whole audit keeps finding: an outage that scores as a clean
+    sheet. Zero cases judged means zero scams missed, and a catch rate over zero scams is
+    1.0."""
+    from app.services import monitor_exam
+
+    ai = FakeSafetyAI()
+    ai.fail = True  # every call returns 503
+    with ai.installed():
+        row = await monitor_exam.cohort_exam_tick(session, fix_settings)
+
+    assert row.passed is False
+    assert row.detail["unavailable"] >= 1
+    assert row.detail["catch_rate"] == 1.0, (
+        "the rate itself is still vacuously perfect - `passed` must not be computed from it alone"
+    )
+
+
+async def test_an_exam_that_loaded_nothing_cannot_pass(session, fix_settings, monkeypatch):
+    """A renamed data file, a filter that matches nothing, a bucket wired up but never
+    populated: all of them used to score 100% caught and 0% false alarms."""
+    from app.services import monitor_exam
+
+    monkeypatch.setattr(monitor_exam, "load_cohort_cases", lambda: [])
+    ai = FakeSafetyAI()
+    with ai.installed():
+        row = await monitor_exam.cohort_exam_tick(session, fix_settings)
+
+    assert row.detail["total"] == 0
+    assert row.detail["catch_rate"] == 1.0 and row.detail["false_alarm_rate"] == 0.0
+    assert row.passed is False, "an exam with no cases in it reported a pass"
+
+
+def test_every_cohort_exam_case_is_well_formed_and_the_set_is_balanced():
+    """A pure check on the data, because the exam is only as good as its cases: a library
+    that drifted to all-scams would post a perfect catch rate and measure nothing about
+    false alarms, which is the rate that decides whether operators keep trusting it."""
+    from app.services import monitor_exam
+
+    cases = monitor_exam.load_cohort_cases()
+    assert len(cases) >= 20
+    required = {
+        "id", "country", "expect", "business", "bodies", "size", "recipients",
+        "first_contact_ratio", "reply_rate", "undelivered_rate", "spread", "label",
+    }
+    ids = set()
+    for case in cases:
+        missing = required - set(case)
+        assert not missing, f"{case.get('id')} missing {missing}"
+        assert case["expect"] in ("consistent", "inconsistent")
+        assert case["country"] in ("US", "GB"), case["country"]
+        assert case["bodies"], case["id"]
+        assert case["id"] not in ids, f"duplicate case id {case['id']}"
+        ids.add(case["id"])
+    scams = [c for c in cases if c["label"] == "scam"]
+    legit = [c for c in cases if c["label"] == "legit"]
+    assert len(scams) >= 8 and len(legit) >= 8, (len(scams), len(legit))
+    for country in ("US", "GB"):
+        assert any(c["country"] == country and c["label"] == "scam" for c in cases), country
+        assert any(c["country"] == country and c["label"] == "legit" for c in cases), country

@@ -101,8 +101,15 @@ class ExamResult:
 
     @property
     def passed(self) -> bool:
+        # `scams`/`legit` must be non-zero, and that is not belt-and-braces. `catch_rate`
+        # returns 1.0 over zero scams and `false_alarm_rate` returns 0.0 over zero legit
+        # cases, so an exam that loaded NOTHING - a data file renamed, a filter that matched
+        # nothing, a bucket wired up but never populated - scores a perfect pass. An exam
+        # that cannot fail is not an exam.
         return (
             self.unavailable == 0
+            and self.scams > 0
+            and self.legit > 0
             and self.catch_rate >= CATCH_RATE_MIN
             and self.false_alarm_rate <= FALSE_ALARM_MAX
         )
@@ -174,17 +181,71 @@ async def judge_call_case(settings: Settings, case: dict) -> tuple[str, tuple[in
     return ("allowed" if result["verdict"] == "ok" else "stopped"), result["tokens"]
 
 
+def load_cohort_cases() -> list[dict]:
+    """The campaign cases, translated into the shape `run` scores.
+
+    `cohorts.jsonl` is written in the reviewer's own vocabulary (`expect: consistent |
+    inconsistent`) because `scripts/cohort_exam.py` reads it too and that is the vocabulary
+    an operator reading the file needs. The mapping is exact: a campaign the monitor should
+    act on is a scam, and one it should leave alone is legitimate.
+    """
+    path = DATA_DIR / "cohorts.jsonl"
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        case = json.loads(line)
+        out.append(
+            {
+                **case,
+                "label": "scam" if case["expect"] == "inconsistent" else "legit",
+            }
+        )
+    return out
+
+
+async def judge_cohort_case(settings: Settings, case: dict) -> tuple[str, tuple[int, int]]:
+    """One campaign through `review_one` - the same call the sweep makes on real traffic.
+
+    The cohort is built in memory rather than inserted and re-clustered: what is under test
+    here is the JUDGEMENT, and clustering has its own suite. Only `inconsistent` counts as
+    stopped, matching `CohortReview.actionable` - the monitor does not act on `unclear`, so
+    scoring `unclear` as a catch would credit the exam for a scam that goes out.
+    """
+    from app.services import monitor_cohorts
+
+    cohort = monitor_cohorts.Cohort(
+        fingerprint=case["id"],
+        sample_body=case["bodies"][0],
+        samples=list(case["bodies"][1:]),
+        message_ids=[None] * int(case["size"]),
+        recipients={f"+1000000{n:04d}" for n in range(int(case["recipients"]))},
+    )
+    m = monitor_cohorts.CohortMetrics(
+        first_contact_ratio=float(case["first_contact_ratio"]),
+        reply_rate=float(case["reply_rate"]),
+        undelivered_rate=float(case["undelivered_rate"]),
+        spread=int(case["spread"]),
+    )
+    review = await monitor_cohorts.review_one(settings, cohort, m, case["business"])
+    return ("stopped" if review.actionable else "allowed"), review.tokens
+
+
 async def run(
     settings: Settings,
     texts: list[dict],
     calls: list[dict],
     *,
+    cohorts: list[dict] | None = None,
     stop_on_unavailable: bool = False,
 ) -> ExamResult:
     result = ExamResult()
     for kind, cases, judge in (
         ("text", texts, judge_text_case),
         ("call", calls, judge_call_case),
+        ("cohort", cohorts or [], judge_cohort_case),
     ):
         for case in cases:
             result.total += 1
@@ -257,15 +318,39 @@ async def canary_tick(session: AsyncSession, settings: Settings) -> MonitorHealt
     return await _record(session, "canary", result)
 
 
+async def cohort_exam_tick(session: AsyncSession, settings: Settings) -> MonitorHealth:
+    """Weekly: the campaign reviewer, scored in its OWN bucket.
+
+    Kept out of the text/call exam's numbers deliberately. They measure different questions -
+    "is this message a scam?" against "is this campaign the kind of thing this business would
+    send?" - and a blended rate hides which half regressed. The campaign question is the
+    harder one: the same words are legitimate from one business and fraudulent from another,
+    so a regression here looks like nothing at all in a combined score.
+    """
+    cases = load_cohort_cases()
+    await session.commit()
+    result = await run(settings, [], [], cohorts=cases, stop_on_unavailable=True)
+    return await _record(session, "cohort_exam", result)
+
+
 async def exam_tick(session: AsyncSession, settings: Settings) -> MonitorHealth:
-    """Weekly: the whole library, plus the latest operator-labelled cases."""
+    """Weekly: the whole library, plus the latest operator-labelled cases.
+
+    Runs the cohort exam alongside it and records it as a SEPARATE monitor_health row, so the
+    two rates stay independent while the schedule stays single. A failure in either opens the
+    alert; neither can mask the other, and neither can pass by being empty.
+    """
     texts = load_cases("texts") + await labelled_cases(session, "texts")
     calls = load_cases("calls") + await labelled_cases(session, "calls")
     # The exam takes minutes: end the read transaction first so it holds no locks (on
     # SQLite a reader blocks every writer; on Postgres it would stall migrations).
     await session.commit()
     result = await run(settings, texts, calls, stop_on_unavailable=True)
-    return await _record(session, "exam", result)
+    row = await _record(session, "exam", result)
+    # After the primary row is recorded, so a failure in the campaign reviewer can never cost
+    # us the text exam's result.
+    await cohort_exam_tick(session, settings)
+    return row
 
 
 async def due(session: AsyncSession, kind: str, every: timedelta) -> bool:
