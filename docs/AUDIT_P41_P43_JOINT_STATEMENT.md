@@ -107,7 +107,7 @@ PostgreSQL), `2c8b757` (runbook).
    that had become unable to fail, because the control it checked now rendered permanently
    disabled in jsdom — fixed, and pinned from both sides); the implementing session reviewed
    only the files it owned (StepUpDialog, verified as presentation-only against `git show
-   HEAD:`) and supplied the contracts, the risk-signal shapes and the certificate spec. Its
+   HEAD:`) and supplied the contracts, the risk-signal shapes and the certificate spec. The
    auditing session's review covers `frontend/src/auth`, `components/auth`,
    `components/security` and one settings card; it has explicitly NOT read the rest of the
    console, and independently re-ran the auth suites on a clear machine (67 passed across 8
