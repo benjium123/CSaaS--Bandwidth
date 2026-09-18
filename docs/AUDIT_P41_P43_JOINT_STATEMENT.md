@@ -1,6 +1,6 @@
 # P41-P43 adversarial audit — joint closing statement
 
-Branch `p41-kyc`, 2026-09-18. HEAD `2c8b757`, 23 commits ahead of `origin/main`, **not pushed**.
+Branch `p41-kyc`, 2026-09-18. 26 commits ahead of `origin/main`, **not pushed**.
 
 One session built P41-P43 (business verification, enterprise auth, AI safety monitoring). A
 second session audited it adversarially at the operator's request. This is both sessions'
@@ -101,12 +101,21 @@ PostgreSQL), `2c8b757` (runbook).
 1. **The frontend beyond a handful of auth components.** Six were reviewed by the implementing
    session; the auditing session reviewed none until reading a diff. ~900 vitest tests exist
    over code neither read. A third session has now rewritten the unauthenticated console UI.
-   That work is **uncommitted and unmerged** at the time of writing, and its status is: the
+   That work is committed as `22a1d84` (frontend and docs only - verified: it touches no
+   backend file) and unmerged, and its status is: the
    auditing session reviewed it across four rounds and found one real defect (a pinned test
    that had become unable to fail, because the control it checked now rendered permanently
    disabled in jsdom — fixed, and pinned from both sides); the implementing session reviewed
    only the files it owned (StepUpDialog, verified as presentation-only against `git show
    HEAD:`) and supplied the contracts, the risk-signal shapes and the certificate spec. Its
+   auditing session's review covers `frontend/src/auth`, `components/auth`,
+   `components/security` and one settings card; it has explicitly NOT read the rest of the
+   console, and independently re-ran the auth suites on a clear machine (67 passed across 8
+   files) and reproduced the two suspected flakes passing in isolation, so that conclusion is
+   two-directional rather than one session's. Two tests remain a named follow-up rather than a
+   closed matter — `AgentPage > creates, renames...` and `p26VerifyComposer > clicking a
+   quick-pick entry...` — with the diagnosis recorded (assert after awaiting the typed value,
+   not immediately after `userEvent.type`). Its
    own handover note is docs/CONSOLE_AUTH_UI.md, which carries an explicit NOT-restyled list -
    SessionsCard, LoginHistoryCard, OrgSecurityPolicyCard, AccountSecurityCards,
    components/kyc/, and the login risk flags, which still have no surface at all. "The auth UI
