@@ -167,6 +167,31 @@ describe("StepUpDialog", () => {
     expect(screen.getByText(/create an API key/)).toBeInTheDocument();
   });
 
+  it("claims nothing about someone's second factors until they are known", async () => {
+    // Audit finding 12: `!me?.totp_enabled` is TRUE while me is still loading, so the
+    // "you have no way to confirm" copy - and a button that discards the pending step-up -
+    // used to be shown to people who own a passkey.
+    const client = makeStubClient({ "/api/v1/auth/me": new Promise(() => {}) as never });
+    renderWithProviders(<StepUpDialog />, client);
+    await waitFor(() => expect(client.onStepUpRequired).toBeTypeOf("function"));
+    client.onStepUpRequired!({ kind: "recent_2fa", action: "suspend", message: "" });
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByText(/don't have a way to confirm/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set up a second factor" })).toBeNull();
+  });
+
+  it("offers a way out when neither second factor can be used here", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": { ...ME, totp_enabled: false, has_passkey: true },
+    });
+    renderWithProviders(<StepUpDialog />, client);
+    await waitFor(() => expect(client.onStepUpRequired).toBeTypeOf("function"));
+    client.onStepUpRequired!({ kind: "recent_2fa", action: "suspend", message: "" });
+    // jsdom has no WebAuthn, so passkeysSupported() is false: the dead-end case.
+    expect(await screen.findByText(/can't use passkeys/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set up a second factor" })).toBeInTheDocument();
+  });
+
   it("asks for an authenticator code for recent_2fa", async () => {
     const client = makeStubClient({
       "/api/v1/auth/me": ME,

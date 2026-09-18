@@ -116,11 +116,15 @@ export function StepUpDialog() {
           <p className="text-sm text-muted-foreground">Go ahead and try that again.</p>
         ) : pending.kind === "passkey_session" ? (
           <>
+            {/* Nothing is claimed until `me` has loaded: `!me?.x` cannot tell "they don't
+                have it" from "we haven't asked yet", and guessing wrong here tells someone
+                who owns a passkey to go and add one - and throws away their pending
+                step-up when they press the button. */}
             <p className="text-sm text-muted-foreground">
               Admin and billing features need a passkey sign-in.{" "}
-              {me?.has_passkey ? "Confirm with your passkey to continue." : "Add a passkey first."}
+              {!me ? "" : me.has_passkey ? "Confirm with your passkey to continue." : "Add a passkey first."}
             </p>
-            {me?.has_passkey && passkeysSupported() ? (
+            {!me ? null : me.has_passkey && passkeysSupported() ? (
               <Button type="button" onClick={confirmWithPasskey} disabled={busy} className="w-full">
                 Use your passkey
               </Button>
@@ -170,6 +174,28 @@ export function StepUpDialog() {
                   Confirm
                 </Button>
               </div>
+            )}
+            {/* Audit: a passkey-only person on a browser without WebAuthn used to get this
+                dialog with NO button and no explanation - a dead end they could not leave.
+                Say what happened and give them a way out. */}
+            {me && !me.totp_enabled && !(me.has_passkey && passkeysSupported()) && (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {me?.has_passkey
+                    ? "This browser can't use passkeys, so we can't confirm it's you here. Open the console in a browser that supports passkeys, or add an authenticator app as a second way in."
+                    : "You don't have a way to confirm yet. Add a passkey or an authenticator app first."}
+                </p>
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={() => {
+                    setPending(null);
+                    window.location.assign("/settings/team?tab=security");
+                  }}
+                >
+                  Set up a second factor
+                </Button>
+              </>
             )}
           </>
         )}
