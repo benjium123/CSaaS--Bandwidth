@@ -959,3 +959,86 @@ def test_risk_rules():
         "flagged sign-in",
     ):
         assert fragment in text, fragment
+
+
+async def test_me_says_whether_a_member_still_needs_their_own_id_check(kyc_app, session):
+    """The console could only learn this by being refused, so it is now a standing state on
+    each membership - and the test's real job is to pin that the FIELD and the GATE agree at
+    every step, because the failure mode of a mirrored rule is the two drifting apart.
+
+    Three values rather than a boolean: `false` would have to mean both "already verified"
+    and "this does not apply to you", which is the trap `second_factor_required` sets - a
+    policy switch and a fact about a person sharing one field.
+    """
+    from app.models import KycPerson, KycProfile, OrgMembership, Role
+
+    client, _app, *_ = kyc_app
+    owner_token, org = await _approved_org(client, session, "owner@idv.example", "Idv")
+    admin_token = await register_and_login(client, "admin@idv.example")
+    org_id = uuid.UUID(org["id"])
+    set_org_context(session, org_id)
+    admin_role = (await session.execute(sa.select(Role).where(Role.name == "admin"))).scalar_one()
+    admin = (
+        await session.execute(sa.select(User).where(User.email == "admin@idv.example"))
+    ).scalar_one()
+    session.add(
+        OrgMembership(id=uuid.uuid4(), org_id=org_id, user_id=admin.id, role_id=admin_role.id)
+    )
+    await session.commit()
+
+    async def state(token: str) -> str:
+        body = (await client.get("/api/v1/auth/me", headers=auth_headers(token))).json()
+        rows = [m for m in body["memberships"] if m["org_id"] == org["id"]]
+        assert rows, body["memberships"]
+        return rows[0]["identity_verification"]
+
+    async def gate_refuses(token: str) -> bool:
+        r = await client.post(
+            "/api/v1/numbers",
+            json={"e164": OUR_NUMBER, "carrier": "bandwidth"},
+            headers=auth_headers(token, org["id"]),
+        )
+        return (
+            r.status_code == 403
+            and r.json()["error"]["code"] == "identity_verification_required"
+        )
+
+    # 1. An unverified admin of an APPROVED business: required, and the gate agrees.
+    assert await state(admin_token) == "required"
+    assert await gate_refuses(admin_token) is True
+
+    # 2. The owner is never asked - they are the verified person on the application itself.
+    assert await state(owner_token) == "not_applicable"
+    assert await gate_refuses(owner_token) is False
+
+    # 3. Before approval the application IS the gate, so the question does not apply. Same
+    #    person, same role - only the workspace's status changed.
+    set_org_context(session, org_id)
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "in_review"
+    await session.commit()
+    assert await state(admin_token) == "not_applicable"
+    assert await gate_refuses(admin_token) is False
+
+    # 4. Approved again, with this member's own check passed: verified, and they are let in.
+    set_org_context(session, org_id)
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    session.add(
+        KycPerson(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            role="admin",
+            user_id=admin.id,
+            full_name="Admin Person",
+            email="admin@idv.example",
+            status="verified",
+        )
+    )
+    await session.commit()
+    assert await state(admin_token) == "verified"
+    assert await gate_refuses(admin_token) is False

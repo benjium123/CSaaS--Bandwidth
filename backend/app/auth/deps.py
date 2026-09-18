@@ -407,31 +407,69 @@ IDENTITY_GATED_PERMISSIONS = frozenset(
 )
 
 
-async def _require_verified_privileged_member(request: Request, ctx: OrgContext) -> None:
-    settings: Settings = request.app.state.settings
-    if not settings.kyc_enforced or ctx.membership is None:
-        return
-    if WILDCARD_PERMISSION in (ctx.role.permissions or []):
-        return  # owners are the verified people on the application itself
+async def identity_verification_state(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    org_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    role,  # Role
+) -> str:
+    """``"not_applicable" | "required" | "verified"`` for one person in one workspace.
+
+    THE GATE CALLS THIS, so the console cannot drift from it. `_require_verified_privileged_member`
+    is now a thin wrapper that raises on ``"required"`` - the alternative, a second
+    implementation for the UI, is a rule written twice and true in one place.
+
+    THREE VALUES, NOT A BOOLEAN, and the reason is the trap `second_factor_required` sets:
+    ``false`` there means both "already done" and "this deployment does not ask", a policy
+    switch and a fact about a person sharing one field, so a tick driven off it shows a green
+    check to someone with nothing enrolled. Here "you are verified" and "this does not apply
+    to you" must stay distinguishable, because one of them becomes "required" the moment the
+    business is approved and the other never does.
+
+    ``"not_applicable"`` is a POSITIVE finding - KYC is off, or the caller is an API key, or
+    the role is an owner's, or the role holds none of the gated permissions, or the business
+    is not approved yet so the application itself is the gate. It is never a fallback for
+    "could not tell": a resolver that answers "does not apply" when it does not know hides
+    the step it exists to reveal. Anything unknown raises out of here rather than being
+    smoothed into a reassuring answer.
+    """
     from app.models import KYC_TELEPHONY_STATUSES, KycPerson, KycProfile
 
+    if not settings.kyc_enforced or user_id is None:
+        return "not_applicable"
+    if WILDCARD_PERMISSION in (role.permissions or []):
+        return "not_applicable"  # owners are the verified people on the application itself
+    if not any(role.grants(p) for p in IDENTITY_GATED_PERMISSIONS):
+        return "not_applicable"
     status = (
-        await ctx.session.execute(
-            sa.select(KycProfile.status).where(KycProfile.org_id == ctx.org.id)
-        )
+        await session.execute(sa.select(KycProfile.status).where(KycProfile.org_id == org_id))
     ).scalar_one_or_none()
     if status not in KYC_TELEPHONY_STATUSES:
-        return  # before approval the application itself is the gate
+        return "not_applicable"  # before approval the application itself is the gate
     verified = (
-        await ctx.session.execute(
+        await session.execute(
             sa.select(KycPerson.id).where(
-                KycPerson.org_id == ctx.org.id,
-                KycPerson.user_id == ctx.membership.user_id,
+                KycPerson.org_id == org_id,
+                KycPerson.user_id == user_id,
                 KycPerson.status == "verified",
             )
         )
     ).first()
-    if verified is None:
+    return "verified" if verified is not None else "required"
+
+
+async def _require_verified_privileged_member(request: Request, ctx: OrgContext) -> None:
+    settings: Settings = request.app.state.settings
+    state = await identity_verification_state(
+        ctx.session,
+        settings,
+        org_id=ctx.org.id,
+        user_id=ctx.membership.user_id if ctx.membership is not None else None,
+        role=ctx.role,
+    )
+    if state == "required":
         raise PermissionDeniedError(
             "Verify your identity (ID + selfie) to use admin and billing features",
             code="identity_verification_required",

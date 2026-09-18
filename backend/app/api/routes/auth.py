@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_user, identity_verification_state
 from app.auth.security import (
     create_pending_2fa_token,
     hash_password,
@@ -68,6 +68,12 @@ class MembershipOut(BaseModel):
     org_name: str
     org_slug: str
     role_name: str
+    #: P43: "not_applicable" | "required" | "verified" - whether this person must pass their
+    #: own ID + selfie check before using admin and billing powers IN THIS WORKSPACE. Per
+    #: membership rather than per account on purpose: the answer depends on the workspace's
+    #: verification status and on the role held there, so the same person can be "verified"
+    #: in one and "not_applicable" in another. Computed by the same function the gate calls.
+    identity_verification: str = "not_applicable"
 
 
 class MeOut(BaseModel):
@@ -325,6 +331,27 @@ async def me(
         else:
             permissions = sorted(set(role.permissions or []))
     operator = await operators_svc.get_active(session, user.id)
+    # Per workspace, because the answer IS per workspace: the same person can be verified in
+    # one and not asked in another. Two cheap queries per membership, and only when the role
+    # actually holds a gated permission and KYC is enforced - see the resolver.
+    memberships = []
+    for org, role in rows:
+        set_org_context(session, org.id)
+        memberships.append(
+            MembershipOut(
+                org_id=org.id,
+                org_name=org.name,
+                org_slug=org.slug,
+                role_name=role.name,
+                identity_verification=await identity_verification_state(
+                    session,
+                    request.app.state.settings,
+                    org_id=org.id,
+                    user_id=user.id,
+                    role=role,
+                ),
+            )
+        )
     return MeOut(
         id=user.id,
         email=user.email,
@@ -342,12 +369,7 @@ async def me(
         ),
         passkey_grace_until=passkey_policy.grace_until(request.app.state.settings, user),
         permissions=permissions,
-        memberships=[
-            MembershipOut(
-                org_id=org.id, org_name=org.name, org_slug=org.slug, role_name=role.name
-            )
-            for org, role in rows
-        ],
+        memberships=memberships,
     )
 
 

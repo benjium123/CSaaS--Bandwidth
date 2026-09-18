@@ -842,3 +842,17 @@ async def test_a_person_payload_says_whether_it_is_you_without_naming_who(app_ai
     persons = (await client.get("/api/v1/kyc/profile", headers=h)).json()["persons"]
     sam = [p for p in persons if p["full_name"] == "Sam Partner"][0]
     assert sam["is_you"] is False
+
+
+async def test_identity_verification_does_not_apply_when_kyc_is_not_enforced(app_ai):
+    """`not_applicable` is a positive finding, and this is the branch that makes it one: with
+    KYC off nobody is ever asked, so the console must not render the step at all."""
+    client, _carrier, _fake, _app = app_ai  # this fixture runs with kyc_enforced False
+    token, org, _num = await make_org_with_number(
+        client, f"noidv-{uuid.uuid4().hex[:6]}@example.com", "No Idv Ltd", OUR
+    )
+    body = (await client.get("/api/v1/auth/me", headers=auth_headers(token))).json()
+    assert body["memberships"], body
+    assert any(m["org_id"] == org["id"] for m in body["memberships"])
+    for membership in body["memberships"]:
+        assert membership["identity_verification"] == "not_applicable"
