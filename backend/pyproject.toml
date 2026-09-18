@@ -41,6 +41,10 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    # A blocked test must FAIL, not hang: a two-session write conflict deadlocks for ever on
+    # PostgreSQL (SQLite serialises writes and never shows it), and without a watchdog the
+    # whole run sits there with no output. Cost an hour twice before it was diagnosed.
+    "pytest-timeout>=2.3",
     "ruff>=0.8",
 ]
 
