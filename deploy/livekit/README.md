@@ -1,7 +1,7 @@
 # LiveKit media plane — bring-up
 
 One media plane for the browser softphone (P6) and the AI agent (P7+) — decision D17.
-PSTN reaches LiveKit through a **Telnyx SIP trunk** ↔ `livekit-sip` ↔ SFU rooms.
+PSTN reaches LiveKit through a **Telnyx SIP trunk** (and, since P40, a SignalWire one) ↔ `livekit-sip` ↔ SFU rooms.
 
 ## One-time setup
 
@@ -109,6 +109,33 @@ lk sip dispatch create ... '{"rule":{"dispatchRuleIndividual":{"roomPrefix":"cal
 lk sip outbound create ... '{"name":"telnyx-out","address":"sip.telnyx.com","numbers":["+1XXXXXXXXXX"],"authUsername":"<trunk user>","authPassword":"<trunk pass>"}'
 # → put the returned trunk id into .env as LIVEKIT_SIP_OUTBOUND_TRUNK_ID
 ```
+
+### 5c. SignalWire trunk (P40)
+
+One script sets up both sides; it is idempotent and a dry run unless `--apply`
+(`deploy/signalwire_voice_setup.py` docstring lists every step). Needs `SIGNALWIRE_*` and
+`LIVEKIT_*` in `.env`.
+
+```bash
+bash deploy/signalwire_sip_firewall.sh --install-cron     # SignalWire -> 5060/udp
+docker cp deploy/signalwire_voice_setup.py csaas-api-1:/tmp/sw_setup.py
+docker exec csaas-api-1 python /tmp/sw_setup.py +16824231003 +14692103654           # plan
+docker exec csaas-api-1 python /tmp/sw_setup.py --apply +16824231003 +14692103654   # do it
+# put the printed LIVEKIT_SIP_SIGNALWIRE_TRUNK_ID=... into .env, then:
+cd /opt/csaas && docker compose --env-file .env -f deploy/docker-compose.prod.yml up -d api
+```
+
+How it fits together:
+- Outbound: livekit-sip -> `<space>.sip.signalwire.com`, digest-authenticated as SIP
+  credential `csaas-livekit`, whose outbound calls run SWML script `csaas-livekit-outbound`.
+  That script dials the Request-URI number with the SIP From number as caller id, so each
+  call shows the CSaaS number it was placed from.
+- Inbound: each number's CALLING handler is SWML script `csaas-livekit-inbound`, which
+  connects to `sip:<number>@144.126.152.175:5060` -> trunk `signalwire-in` -> dispatch rule
+  `signalwire-in-individual` -> room `call-...`. The Telnyx dispatch rule is limited to the
+  Telnyx trunk, which is why SignalWire gets its own rule. Texting handlers are untouched.
+- A new SignalWire number: add it to the Numbers page, then re-run the script with every
+  number (new trunks pick them up; for existing trunks it tells you to add the number).
 
 ### 5b. AI worker
 

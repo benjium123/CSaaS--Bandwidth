@@ -66,6 +66,35 @@ CALL_ROOM_PREFIX = "call-"
 #: incoming webhook event (see module docstring - that is attribute-based only).
 SIP_IDENTITY_PREFIX = "sip-"
 
+#: The carrier the original (single) outbound trunk dials through.
+DEFAULT_TRUNK_CARRIER = "telnyx"
+#: Every carrier that can have a trunk into livekit-sip.
+TRUNK_CARRIERS: tuple[str, ...] = (DEFAULT_TRUNK_CARRIER, "signalwire")
+
+
+def room_trunks(settings: Settings) -> dict[str, str]:
+    """P40: carrier -> LiveKit outbound trunk id, only for trunks that are configured.
+
+    A call dials out through the trunk of the carrier that owns its caller-id number,
+    because a carrier refuses (or rewrites) a caller id it does not own."""
+    trunks = {
+        DEFAULT_TRUNK_CARRIER: settings.livekit_sip_outbound_trunk_id,
+        "signalwire": getattr(settings, "livekit_sip_signalwire_trunk_id", ""),
+    }
+    return {carrier: trunk for carrier, trunk in trunks.items() if trunk}
+
+
+def trunk_for_carrier(settings: Settings, carrier: str) -> tuple[str, str] | None:
+    """(carrier, trunk id) to dial a number on `carrier` with. A carrier without its own
+    trunk falls back to the default trunk - the behaviour before P40."""
+    trunks = room_trunks(settings)
+    if carrier in trunks:
+        return carrier, trunks[carrier]
+    if DEFAULT_TRUNK_CARRIER in trunks:
+        return DEFAULT_TRUNK_CARRIER, trunks[DEFAULT_TRUNK_CARRIER]
+    return None
+
+
 #: In-flight background outbound-dial tasks (B2), held here so nothing garbage-collects
 #: them mid-flight the way an unreferenced asyncio.Task can be. Tests await
 #: ``wait_for_pending_dial_tasks`` instead of sleeping/polling for one to land.
@@ -139,13 +168,20 @@ async def start_room_call(
     leg/call land on "failed" with the detail recorded, and this function returns normally
     rather than raising.
     """
+    from_number = (
+        await session.execute(sa.select(OrgNumber.carrier).where(OrgNumber.e164 == from_e164))
+    ).first()
+    route = trunk_for_carrier(
+        settings, from_number.carrier if from_number is not None else DEFAULT_TRUNK_CARRIER
+    )
+    trunk_carrier, trunk_id = route or (DEFAULT_TRUNK_CARRIER, "")
     call = Call(
         id=uuid.uuid4(),
         org_id=org_id,
         direction="outbound",
         contact_e164=to,
         our_e164=from_e164,
-        carrier="telnyx",
+        carrier=trunk_carrier,
         status="queued",
         tag=tag or None,
     )
@@ -197,6 +233,7 @@ async def start_room_call(
                 to=to,
                 from_e164=from_e164,
                 sip_identity=sip_identity,
+                trunk_id=trunk_id,
             ),
             name=f"dial-{call.id}",
         )
@@ -244,13 +281,14 @@ async def _dial_and_await_answer(
     to: str,
     from_e164: str,
     sip_identity: str,
+    trunk_id: str | None = None,
 ) -> None:
     """The background half of ``start_room_call`` (B2). Owns its OWN DB session - the
     sweeper's shape (app/services/sweeper.py), never the request's session, which is long
     gone by the time this coroutine resumes."""
     try:
         await api.create_sip_participant(
-            trunk_id=settings.livekit_sip_outbound_trunk_id,
+            trunk_id=trunk_id or settings.livekit_sip_outbound_trunk_id,
             call_to=to,
             room=room,
             from_number=from_e164,
@@ -582,7 +620,12 @@ async def _create_inbound_room_call(
         direction="inbound",
         contact_e164=contact_number,
         our_e164=trunk_number,
-        carrier="telnyx",
+        # P40: a number on a carrier with its own trunk arrived over that trunk.
+        carrier=(
+            org_number.carrier
+            if org_number.carrier in TRUNK_CARRIERS
+            else DEFAULT_TRUNK_CARRIER
+        ),
         status="initiated",
         extra={"via": "livekit", "room": room},
     )

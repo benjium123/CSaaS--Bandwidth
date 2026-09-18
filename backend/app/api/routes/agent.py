@@ -779,20 +779,20 @@ async def call_me_agent_profile(
     if api is None:
         raise FeatureUnavailableError("Calling is not set up on this system yet.")
     settings = request.app.state.settings
-    if not settings.livekit_sip_outbound_trunk_id:
+    from app.voice_plane import service as voice_plane_svc
+
+    trunk_carriers = list(voice_plane_svc.room_trunks(settings))
+    if not trunk_carriers:
         raise FeatureUnavailableError("Calling is not set up on this system yet.")
 
     to_norm = to_e164(payload.to_e164)
-
-    from app.api.routes.calls import _ROOM_TRUNK_CARRIER
-    from app.voice_plane import service as voice_plane_svc
 
     from_number = (
         await ctx.session.execute(
             sa.select(OrgNumber)
             .where(
                 OrgNumber.org_id == ctx.org.id,
-                OrgNumber.carrier == _ROOM_TRUNK_CARRIER,
+                OrgNumber.carrier.in_(trunk_carriers),
                 # BOTH flags: `status` tracks the provider order's lifecycle while
                 # `is_active` is the operator's own switch, and routes/calls.py's room
                 # path checks is_active. A number turned off must not be dialled from.

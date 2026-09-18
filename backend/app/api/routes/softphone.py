@@ -32,6 +32,7 @@ from app.services import inbox_access as inbox_access_svc
 from app.services.inbox_access import InboxAccess
 from app.voice_plane.livekit_api import mint_access_token
 from app.voice_plane.service import CALL_ROOM_PREFIX
+from app.voice_plane.service import room_trunks as voice_plane_trunks
 
 router = APIRouter(tags=["softphone"])
 log = structlog.get_logger("softphone")
@@ -93,7 +94,7 @@ async def softphone_token(
     settings: Settings = request.app.state.settings
     if getattr(request.app.state, "livekit", None) is None:
         raise FeatureUnavailableError("LiveKit is not configured")
-    if not settings.livekit_sip_outbound_trunk_id:
+    if not voice_plane_trunks(settings):
         # (finding 12) same gate as POST /calls via="room" - a deploy with no outbound
         # trunk configured yet cannot back this feature either.
         raise FeatureUnavailableError("No LiveKit SIP outbound trunk is configured")

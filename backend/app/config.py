@@ -151,6 +151,9 @@ class Settings(BaseSettings):
     livekit_api_secret: SecretStr = SecretStr("")
     #: SIP trunk id configured in livekit-sip for OUTBOUND calls (lk sip outbound create).
     livekit_sip_outbound_trunk_id: str = ""
+    #: P40: a second outbound trunk that reaches the PSTN through a SignalWire SIP domain
+    #: app. Calls from a signalwire number use it; everything else keeps the Telnyx trunk.
+    livekit_sip_signalwire_trunk_id: str = ""
 
     signalwire_enabled: bool | None = None
     signalwire_project_id: str = ""
@@ -448,7 +451,9 @@ class Settings(BaseSettings):
             {
                 "LIVEKIT_URL": self.livekit_url,
                 "LIVEKIT_API_SECRET": self.livekit_api_secret,
-                "LIVEKIT_SIP_OUTBOUND_TRUNK_ID": self.livekit_sip_outbound_trunk_id,
+                # Either trunk makes calling possible.
+                "LIVEKIT_SIP_OUTBOUND_TRUNK_ID": self.livekit_sip_outbound_trunk_id
+                or self.livekit_sip_signalwire_trunk_id,
             },
         )
         keyed(
