@@ -223,3 +223,179 @@ async def test_a_legitimate_blast_to_known_customers_is_not_flagged(session):
         f"worth an AI call: first_contact={m.first_contact_ratio} reply={m.reply_rate} "
         f"undelivered={m.undelivered_rate} spread={m.spread}"
     )
+
+
+# ======================================================================================
+# The AI half. What is under test is the LOAD property as much as the verdict: 304 messages
+# must cost ONE AI call, not 304, and the call must carry enough context to answer.
+# ======================================================================================
+async def _plumber_with_a_side_scam(session, settings):
+    """300 genuine appointment texts to known customers + 4 parcel scams to strangers."""
+    from app.models import KycProfile
+
+    org_id = await _org(session)
+    session.add(
+        KycProfile(
+            id=uuid.uuid4(), org_id=org_id, status="approved", legal_name="Dan's Plumbing Ltd",
+            website="dansplumbing.example",
+            use_case={
+                "vertical": "home_services",
+                "description": "Booking confirmations and reminders for plumbing jobs",
+                "who_you_contact": "Customers who booked a job",
+            },
+        )
+    )
+    old = NOW - timedelta(days=30)
+    customers = [f"+1214555{2000 + n}" for n in range(60)]
+    for to in customers:
+        await _send(session, org_id, body="Hi, Dan here. Booking confirmed.", to=to, at=old)
+    await session.commit()
+    for i, to in enumerate(customers * 5):
+        await _send(
+            session, org_id,
+            body=f"Hi, your plumbing appointment is confirmed for {i % 7 + 1}pm today. Dan.",
+            to=to, at=NOW, inbound=(i % 2 == 0),
+        )
+    for n, to in enumerate(["+19725558001", "+13055558002", "+16175558003", "+14155558004"]):
+        await _send(
+            session, org_id,
+            body=f"DHL: parcel {90000 + n} held pending £2.99 fee. Pay: http://dhl-{n}.top/p",
+            to=to, at=NOW, status="failed" if n == 3 else "delivered",
+        )
+    await session.commit()
+    return org_id
+
+
+async def test_one_ai_call_for_the_campaign_not_one_per_message(session, monkeypatch):
+    """The load claim, measured. 304 messages, and the AI is asked exactly once."""
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key")
+    await _plumber_with_a_side_scam(session, settings)
+
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 92, "category": "impersonation",
+        "impersonates": "DHL",
+        "reason": "A plumbing business is sending courier parcel-fee notices to strangers.",
+    }
+    with ai.installed():
+        result = await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=1))
+
+    cohort_calls = ai.tasks("reviewing a CAMPAIGN")
+    assert len(cohort_calls) == 1, f"expected ONE cohort call, got {len(cohort_calls)}"
+    assert result["reviewed"] == 1
+    assert result["signals"] == 1
+
+    # The one call it made was about the scam, not the 300 genuine messages.
+    sent = cohort_calls[0]["messages"][1]["content"]
+    assert "dhl" in sent.lower()
+    assert "plumbing appointment is confirmed" not in sent
+
+
+async def test_the_signal_is_a_decision_pack_not_just_a_score(session):
+    """An operator must be able to decide without opening the message log - that is where the
+    review-time half of the load saving comes from."""
+    from app.models import MonitorSignal
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key")
+    org_id = await _plumber_with_a_side_scam(session, settings)
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 92, "category": "impersonation",
+        "impersonates": "DHL", "reason": "Courier parcel-fee notices from a plumber.",
+    }
+    with ai.installed():
+        await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=1))
+
+    set_org_context(session, org_id)
+    signal = (
+        await session.execute(
+            MonitorSignal.__table__.select().where(MonitorSignal.kind == "cohort_inconsistent")
+        )
+    ).first()
+    assert signal is not None, "a confident inconsistent verdict must record a signal"
+    detail = signal.detail
+    for key in (
+        "template", "messages", "recipients", "first_contact_ratio", "reply_rate",
+        "undelivered_rate", "spread", "impersonates", "confidence", "reason",
+    ):
+        assert key in detail, f"decision pack is missing {key}"
+    assert detail["messages"] == 4
+    assert detail["first_contact_ratio"] == 1.0
+    assert detail["impersonates"] == "DHL"
+    # Weight, not just presence: one confident cohort must NOT be enough to pause an account.
+    assert signal.weight == mc.WEIGHT_INCONSISTENT
+    assert signal.weight < 100
+
+
+async def test_a_consistent_verdict_records_nothing(session):
+    """The false-positive guard. If the AI says the campaign fits the business, no signal -
+    otherwise every legitimate marketing send becomes an operator task."""
+    from app.models import MonitorSignal
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key")
+    await _plumber_with_a_side_scam(session, settings)
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "consistent", "confidence": 88, "category": "none",
+        "impersonates": None, "reason": "Delivery notices are normal for this business.",
+    }
+    with ai.installed():
+        result = await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=1))
+    assert result["reviewed"] == 1
+    assert result["signals"] == 0
+    rows = (await session.execute(MonitorSignal.__table__.select())).all()
+    assert rows == []
+
+
+async def test_an_ai_outage_is_not_an_enforcement_decision(session):
+    """A cohort that cannot be reviewed is counted and left alone. Failing closed here would
+    mean a DeepSeek outage silently throttles every customer."""
+    from app.models import MonitorSignal
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key")
+    await _plumber_with_a_side_scam(session, settings)
+    ai = FakeSafetyAI()
+    ai.fail = True
+    with ai.installed():
+        result = await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=1))
+    assert result["unavailable"] == 1
+    assert result["signals"] == 0
+    assert (await session.execute(MonitorSignal.__table__.select())).all() == []
+
+
+async def test_low_confidence_gets_a_lighter_weight(session):
+    from app.models import MonitorSignal
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key")
+    org_id = await _plumber_with_a_side_scam(session, settings)
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 40, "category": "scam",
+        "impersonates": None, "reason": "Possibly unrelated to the declared business.",
+    }
+    with ai.installed():
+        await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=1))
+    set_org_context(session, org_id)
+    signal = (
+        await session.execute(
+            MonitorSignal.__table__.select().where(MonitorSignal.kind == "cohort_inconsistent")
+        )
+    ).first()
+    assert signal is not None
+    assert signal.weight == mc.WEIGHT_INCONSISTENT_WEAK

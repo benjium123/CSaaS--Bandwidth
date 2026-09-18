@@ -365,3 +365,204 @@ def looks_like_a_campaign(cohort: Cohort, m: CohortMetrics) -> bool:
     if m.undelivered_rate >= 0.2:
         return True
     return m.first_contact_ratio >= 0.5 and m.spread >= 5
+
+
+# --------------------------------------------------------------------------------------
+# The AI question, asked of a COHORT rather than of a message
+# --------------------------------------------------------------------------------------
+#: Weight for a confident "this campaign is not what this business does". Deliberately below
+#: `call_scam` (40) and above `text_blocked` (25): one such cohort should not pause an account
+#: on its own, two should reach "restricted", three should reach the pause threshold. A
+#: scammer running a campaign a day is stopped within days; a single ambiguous campaign is
+#: not, which is the trade the operator's review budget actually cares about.
+WEIGHT_INCONSISTENT = 35
+WEIGHT_INCONSISTENT_WEAK = 15
+#: Below this the model is guessing, and a guess at 1% prevalence is noise.
+CONFIDENT = 70
+
+COHORT_SYSTEM = """You are reviewing a CAMPAIGN: a batch of messages one business sent,
+all variations of a single template, to many recipients. You are told what the
+business said it does when it signed up, the template itself, and how the batch behaved.
+
+Your question is CONSISTENCY, not suspicion: is this campaign the kind of messaging this
+business would send?
+
+Judge carefully:
+- Sending to people who have not been contacted before is NOT by itself wrongdoing.
+  Legitimate marketing, recruitment and delivery notifications all do it.
+- What matters is whether the CONTENT fits the declared business, and whether it is of a kind
+  used to defraud: impersonating a bank, courier, tax office or government; demanding a fee to
+  release a parcel, refund or account; or driving recipients to a link that collects
+  credentials or card details.
+- A plumber sending appointment reminders is consistent. The same plumber sending parcel-fee
+  notices is not, however ordinary the words look on their own.
+
+Return JSON only:
+{"verdict": "consistent" | "unclear" | "inconsistent",
+ "confidence": 0-100,
+ "category": "scam" | "phishing" | "impersonation" | "unrelated_business" | "none",
+ "impersonates": "who it pretends to be, or null",
+ "reason": "one sentence an operator can act on"}"""
+
+
+@dataclass(frozen=True)
+class CohortReview:
+    verdict: str
+    confidence: int
+    category: str
+    reason: str
+    impersonates: str | None = None
+    tokens: tuple[int, int] = (0, 0)
+
+    @property
+    def actionable(self) -> bool:
+        return self.verdict == "inconsistent"
+
+
+async def review_one(settings, cohort: Cohort, m: CohortMetrics, business: dict) -> CohortReview:
+    """One AI call for one cohort. No database, so an exam or a canary can drive exactly the
+    judgement live traffic gets - the same property `judge_text` has."""
+    from app.services import ai_guard
+
+    user = "\n\n".join(
+        [
+            ai_guard.data_block("business", business),
+            ai_guard.data_block("template", cohort.sample_body[:2000]),
+            ai_guard.data_block(
+                "how_the_batch_behaved",
+                {
+                    "messages": cohort.size,
+                    "recipients": cohort.recipient_count,
+                    "never_contacted_before": f"{m.first_contact_ratio:.0%}",
+                    "recipients_who_replied": f"{m.reply_rate:.0%}",
+                    "undelivered": f"{m.undelivered_rate:.0%}",
+                    "distinct_area_codes": m.spread,
+                },
+            ),
+            "Give your verdict on this campaign.",
+        ]
+    )
+    judgement = await ai_guard.judge(
+        settings,
+        task="cohort_check",
+        system=COHORT_SYSTEM,
+        user=user,
+        max_tokens=250,
+        timeout=settings.monitor_text_ai_timeout_seconds,
+    )
+    verdict = judgement.data.get("verdict")
+    if verdict not in ("consistent", "unclear", "inconsistent"):
+        raise ai_guard.AIUnavailable("AI gave no valid cohort verdict")
+    try:
+        confidence = int(judgement.data.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0
+    impersonates = judgement.data.get("impersonates")
+    return CohortReview(
+        verdict=verdict,
+        confidence=max(0, min(100, confidence)),
+        category=str(judgement.data.get("category") or "none")[:32],
+        reason=str(judgement.data.get("reason") or "")[:255],
+        impersonates=str(impersonates)[:64] if impersonates else None,
+        tokens=(judgement.tokens_in, judgement.tokens_out),
+    )
+
+
+async def active_org_ids(
+    session: AsyncSession, *, since: datetime, limit: int = 500
+) -> list[uuid.UUID]:
+    """Workspaces with outbound texts in the window."""
+    # JUSTIFIED allow_unscoped: a platform-wide sweep that RESOLVES which orgs to look at, so
+    # it cannot be org-scoped by construction. Returns ids only - no message content crosses a
+    # tenant boundary here, and every later query is scoped to one org at a time.
+    from app.db.base import ALLOW_UNSCOPED_KEY
+
+    rows = (
+        (
+            await session.execute(
+                sa.select(Message.org_id)
+                .where(Message.direction == "outbound", Message.created_at >= since)
+                .group_by(Message.org_id)
+                .limit(limit)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+async def tick(
+    session: AsyncSession,
+    settings,
+    *,
+    hours: int = 24,
+    now: datetime | None = None,
+) -> dict:
+    """Review each workspace's recent campaigns and record a signal for the bad ones.
+
+    The load property this exists for: one AI call per CAMPAIGN that reaches the pre-filter,
+    not one per message. A workspace sending 400 texts across five templates, of which one
+    looks like a blast to strangers, costs ONE call - and that call carries the whole batch's
+    behaviour, which is what lets the model answer confidently instead of guessing.
+
+    An AI outage is not an enforcement decision: a cohort that cannot be reviewed is counted
+    and left alone. The per-message screen still runs independently of this.
+    """
+    from app.services import ai_guard, monitor_score, monitor_text
+
+    started = now or datetime.now(timezone.utc)
+    since = started - timedelta(hours=hours)
+    out = {"orgs": 0, "cohorts": 0, "reviewed": 0, "signals": 0, "unavailable": 0}
+    if not settings.monitor_enforced or not ai_guard.is_available(settings):
+        return out
+
+    for org_id in await active_org_ids(session, since=since):
+        out["orgs"] += 1
+        cohorts = await build(session, org_id, since=since)
+        out["cohorts"] += len(cohorts)
+        worth_asking = [(c, m) for c, m in cohorts if looks_like_a_campaign(c, m)]
+        if not worth_asking:
+            continue
+        business = await monitor_text.business_context(session, org_id)
+        for cohort, m in worth_asking:
+            try:
+                review = await review_one(settings, cohort, m, business)
+            except ai_guard.AIUnavailable:
+                out["unavailable"] += 1
+                continue
+            out["reviewed"] += 1
+            if not review.actionable:
+                continue
+            weight = (
+                WEIGHT_INCONSISTENT
+                if review.confidence >= CONFIDENT
+                else WEIGHT_INCONSISTENT_WEAK
+            )
+            await monitor_score.add_signal(
+                session,
+                settings,
+                org_id,
+                "cohort_inconsistent",
+                f"Campaign of {cohort.size} messages does not match this business: {review.reason}",
+                # Everything an operator needs to decide WITHOUT opening the message log.
+                detail={
+                    "fingerprint": cohort.fingerprint,
+                    "template": cohort.sample_body[:500],
+                    "messages": cohort.size,
+                    "recipients": cohort.recipient_count,
+                    "first_contact_ratio": round(m.first_contact_ratio, 3),
+                    "reply_rate": round(m.reply_rate, 3),
+                    "undelivered_rate": round(m.undelivered_rate, 3),
+                    "spread": m.spread,
+                    "category": review.category,
+                    "impersonates": review.impersonates,
+                    "confidence": review.confidence,
+                    "reason": review.reason,
+                },
+                weight=weight,
+            )
+            out["signals"] += 1
+        await session.commit()
+    return out
