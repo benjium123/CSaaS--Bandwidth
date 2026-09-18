@@ -1,10 +1,21 @@
 import * as React from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Input } from "@/components/ui/primitives";
+import {
+  AuthAlert,
+  AuthButton,
+  AuthInput,
+  AuthNotice,
+  AuthPlate,
+  AuthSurface,
+  Field,
+} from "@/components/auth/AuthShell";
 
-/** P42: request a reset link. Always shows the same confirmation, whether or not the
- * email has an account. */
+/**
+ * P42: request a reset link. The confirmation is deliberately the same whether or not the
+ * email has an account - the server answers 202 either way, and this screen must not
+ * undo that by looking different. There is one confirmation string and no branch.
+ */
 export function ForgotPasswordPage() {
   const { api } = useAuth();
   const [email, setEmail] = React.useState("");
@@ -27,32 +38,59 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center p-6">
-      <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-lg border border-border p-6">
-        <h1 className="text-lg font-semibold">Reset your password</h1>
+    <AuthSurface>
+      <AuthPlate
+        as="form"
+        onSubmit={onSubmit}
+        eyebrow="Recovery · Password"
+        title="Reset your password"
+        lede={
+          sent
+            ? undefined
+            : "We will send a link to the address on the account. It can be used once."
+        }
+        footer={
+          <Link to="/" className="ex-link">
+            Back to sign in
+          </Link>
+        }
+      >
         {sent ? (
-          <p className="text-sm">
+          <AuthNotice>
             If an account exists for that email, a reset link is on its way. It works once and
             expires soon. You will still need your passkey or authenticator app to sign in.
-          </p>
+          </AuthNotice>
         ) : (
-          <>
-            <label className="block space-y-1">
-              <span className="text-sm text-muted-foreground">Email</span>
-              <Input aria-label="Email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
-            </label>
-            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={!email || busy}>
+          <div className="space-y-4">
+            <Field label="Email">
+              <AuthInput
+                aria-label="Email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </Field>
+            {error && <AuthAlert>{error}</AuthAlert>}
+            <AuthButton type="submit" block disabled={!email || busy}>
               Send reset link
-            </Button>
-          </>
+            </AuthButton>
+          </div>
         )}
-        <Link to="/" className="block text-sm underline">Back to sign in</Link>
-      </form>
-    </div>
+      </AuthPlate>
+    </AuthSurface>
   );
 }
 
+/**
+ * Choosing the new password.
+ *
+ * NOTE ON THE GUIDANCE COPY: it names no character count, on purpose. The minimum is a
+ * deployment setting, so any number hardcoded here is a lie on an installation configured
+ * differently - and the policy also refuses anything found in a public breach, so "at
+ * least N characters" would promise an acceptance the server will not honour. The rule is
+ * described by shape; the server's refusal is rendered verbatim and is the only authority.
+ */
 export function ResetPasswordPage() {
   const { api } = useAuth();
   const [params] = useSearchParams();
@@ -85,37 +123,60 @@ export function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center p-6">
-      <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-lg border border-border p-6">
-        <h1 className="text-lg font-semibold">Choose a new password</h1>
+    <AuthSurface>
+      <AuthPlate
+        as="form"
+        onSubmit={onSubmit}
+        eyebrow="Recovery · Password"
+        title="Choose a new password"
+        lede={
+          done || !token
+            ? undefined
+            : "A long passphrase - three or four unrelated words - beats a short clever one."
+        }
+        footer={
+          <Link to="/" className="ex-link">
+            Back to sign in
+          </Link>
+        }
+      >
         {done ? (
-          <p className="text-sm">
+          <AuthNotice>
             Your password was changed and every device was signed out. Sign in with the new
             password and your passkey or authenticator app.
-          </p>
+          </AuthNotice>
         ) : !token ? (
-          <p role="alert" className="text-sm text-destructive">This reset link is incomplete.</p>
+          <AuthAlert>This reset link is incomplete.</AuthAlert>
         ) : (
-          <>
-            <p className="text-xs text-muted-foreground">
-              Use at least 12 characters. A few unrelated words is strong and easy to remember.
-            </p>
-            <label className="block space-y-1">
-              <span className="text-sm text-muted-foreground">New password</span>
-              <Input aria-label="New password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            </label>
-            <label className="block space-y-1">
-              <span className="text-sm text-muted-foreground">Confirm new password</span>
-              <Input aria-label="Confirm new password" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-            </label>
-            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={!password || busy}>
+          <div className="space-y-4">
+            <Field
+              label="New password"
+              hint="Passwords that are too short, that look like your email address, or that have appeared in a public breach are refused."
+            >
+              <AuthInput
+                aria-label="New password"
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </Field>
+            <Field label="Confirm new password">
+              <AuthInput
+                aria-label="Confirm new password"
+                type="password"
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+              />
+            </Field>
+            {error && <AuthAlert>{error}</AuthAlert>}
+            <AuthButton type="submit" block disabled={!password || busy}>
               Save new password
-            </Button>
-          </>
+            </AuthButton>
+          </div>
         )}
-        <Link to="/" className="block text-sm underline">Back to sign in</Link>
-      </form>
-    </div>
+      </AuthPlate>
+    </AuthSurface>
   );
 }

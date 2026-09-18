@@ -6,7 +6,13 @@
 import * as React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Spinner } from "@/components/ui/primitives";
+import {
+  AuthAlert,
+  AuthButton,
+  AuthPlate,
+  AuthSurface,
+  Lamp,
+} from "@/components/auth/AuthShell";
 
 function ssoErrorMessage(code: string | null): string {
   switch (code) {
@@ -92,24 +98,44 @@ export function SsoCallbackPage() {
     void run();
   }, [api, code, completeSso, error, navigate, samlOrgId, state]);
 
-  return (
-    <div className="flex min-h-full items-center justify-center p-6">
-      {status === "working" ? (
-        <Spinner label="Finishing sign-in" />
-      ) : (
-        <div className="w-full max-w-sm space-y-4 rounded-lg border border-border p-6">
-          <h1 className="text-lg font-semibold">Sign-in failed</h1>
-          <p role="alert" className="text-sm text-destructive">
-            {message}
+  if (status === "working") {
+    return (
+      <AuthSurface>
+        <div className="ex-rise" role="status" aria-live="polite">
+          <Lamp state="wait">Finishing sign-in</Lamp>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Your identity provider has answered. Handing you over to your workspace.
           </p>
-          {errorDescription && (
-            <p className="text-xs text-muted-foreground">{errorDescription}</p>
-          )}
-          <Button type="button" variant="outline" onClick={() => navigate("/", { replace: true })}>
-            Back to sign in
-          </Button>
         </div>
-      )}
-    </div>
+      </AuthSurface>
+    );
+  }
+
+  return (
+    <AuthSurface>
+      <AuthPlate
+        eyebrow="Single sign-on"
+        title="Sign-in failed"
+        footer={
+          errorDescription ? (
+            // The identity provider's own words, kept separate from ours and never
+            // rewritten - it is the only party that knows what it objected to.
+            <p className="text-xs text-muted-foreground">{errorDescription}</p>
+          ) : undefined
+        }
+      >
+        <div className="space-y-4">
+          <AuthAlert>{message}</AuthAlert>
+          <AuthButton
+            type="button"
+            tone="quiet"
+            block
+            onClick={() => navigate("/", { replace: true })}
+          >
+            Back to sign in
+          </AuthButton>
+        </div>
+      </AuthPlate>
+    </AuthSurface>
   );
 }

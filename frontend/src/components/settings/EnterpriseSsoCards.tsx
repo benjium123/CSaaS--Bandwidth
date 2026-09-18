@@ -19,6 +19,76 @@ import {
 
 /** P42 enterprise sign-in: verified email domains, SAML single sign-on, and SCIM user sync. */
 
+/**
+ * P43: the identity provider's signing certificate has a life, and until now nothing in
+ * the console said so - a workspace found out when someone read a security alert.
+ *
+ * What this renders, and what it refuses to render:
+ *  - Nothing at all when the backend sends no expiry. An older API must produce SILENCE
+ *    here, never a "certificate valid" line: the absence of a warning is not evidence of
+ *    health, and a UI that manufactures reassurance out of missing data is worse than one
+ *    that says nothing.
+ *  - Nothing beyond 30 days. That horizon is the point of the warning - certificates are
+ *    usually annual and a rotation has to be scheduled with whoever runs the IdP, so the
+ *    window has to be long enough to plan in, and quiet before that.
+ *  - Fact and date only. "Expires on 3 October" and "in 12 days" are the server's fact
+ *    restated. There is no computed severity here - no "action required", no "at risk" -
+ *    because the backend never asserted one.
+ *  - Expired reads differently from expiring, deliberately. Before the date nothing is
+ *    wrong yet. After it, sign-ins are still being accepted against a key the identity
+ *    provider has retired, which is a real if bounded position, and the two must not look
+ *    the same.
+ * It offers no "renew" action because there is no endpoint for one: the certificate is
+ * replaced by pasting a new one into the field below, which is where this points.
+ */
+function SsoCertificateStatus({
+  expiresAt,
+  expired,
+}: {
+  expiresAt?: string | null;
+  expired?: boolean;
+}) {
+  if (!expiresAt) return null;
+  const when = new Date(expiresAt);
+  if (Number.isNaN(when.getTime())) return null;
+
+  const days = Math.ceil((when.getTime() - Date.now()) / 86_400_000);
+  const isExpired = expired === true || days < 0;
+  if (!isExpired && days > 30) return null;
+
+  const date = when.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+  return (
+    <div
+      role="status"
+      className={
+        isExpired
+          ? "rounded-md border-l-2 border-red-500 bg-red-500/10 px-3 py-2"
+          : days <= 7
+            ? "rounded-md border-l-2 border-amber-500 bg-amber-500/10 px-3 py-2"
+            : "rounded-md border-l-2 border-border bg-muted px-3 py-2"
+      }
+    >
+      <p className="text-sm font-medium">
+        {isExpired
+          ? `Your identity provider's signing certificate expired on ${date}.`
+          : `Your identity provider's signing certificate expires on ${date}${
+              days >= 0 ? ` - in ${days} ${days === 1 ? "day" : "days"}` : ""
+            }.`}
+      </p>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        {isExpired
+          ? "Single sign-on still works, so nobody is locked out. Paste the new certificate from your identity provider below to replace it."
+          : "Ask whoever runs your identity provider for the replacement, then paste it below."}
+      </p>
+    </div>
+  );
+}
+
 type DomainOut = {
   id: string;
   domain: string;
@@ -307,6 +377,10 @@ export function SamlSsoCard() {
             onChange={edit(setSsoUrl)}
           />
         </label>
+        <SsoCertificateStatus
+          expiresAt={sso?.idp_cert_expires_at}
+          expired={sso?.idp_cert_expired}
+        />
         <label className="block space-y-1">
           <span className="text-sm text-muted-foreground">
             Signing certificate

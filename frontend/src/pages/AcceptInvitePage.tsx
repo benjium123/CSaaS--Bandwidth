@@ -1,6 +1,14 @@
 import * as React from "react";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Input } from "@/components/ui/primitives";
+import {
+  AuthAlert,
+  AuthButton,
+  AuthInput,
+  AuthPlate,
+  AuthSurface,
+  Field,
+  StepRail,
+} from "@/components/auth/AuthShell";
 
 export function AcceptInvitePage() {
   const { api, login, verify2fa } = useAuth();
@@ -48,83 +56,100 @@ export function AcceptInvitePage() {
 
   if (!token) {
     return (
-      <div className="flex min-h-full items-center justify-center p-6">
-        <div className="w-full max-w-sm space-y-3 rounded-lg border border-border p-6 text-sm">
-          <p>This invitation link is missing its token.</p>
-          <a className="underline" href="/">
-            Back to sign in
-          </a>
-        </div>
-      </div>
+      <AuthSurface>
+        <AuthPlate
+          eyebrow="Invitation"
+          title="This link is incomplete"
+          footer={
+            <a className="ex-link" href="/">
+              Back to sign in
+            </a>
+          }
+        >
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            This invitation link is missing its token. Ask whoever invited you to send it again -
+            the whole link, including everything after the question mark.
+          </p>
+        </AuthPlate>
+      </AuthSurface>
     );
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center p-6">
-      <form
+    <AuthSurface>
+      <AuthPlate
+        as="form"
         onSubmit={onSubmit}
-        className="w-full max-w-sm space-y-4 rounded-lg border border-border p-6"
+        eyebrow={pendingToken ? "Invitation · Second factor" : "Invitation · Your account"}
+        title={pendingToken ? "Confirm it is you" : "Accept your invitation"}
+        lede={
+          pendingToken
+            ? "This workspace asks for a second factor. Enter the code from your authenticator app."
+            : "Your account is yours, not the workspace's. It follows you if you are invited to another."
+        }
       >
-        <h1 className="text-lg font-semibold">
-          {pendingToken ? "Two-factor code" : "Accept your invitation"}
-        </h1>
+        <StepRail steps={["Your account", "Second factor"]} active={pendingToken ? 1 : 0} />
 
         {pendingToken ? (
-          <label className="block space-y-1">
-            <span className="text-sm text-muted-foreground">Authenticator code</span>
-            <Input
+          <Field label="Authenticator code">
+            <AuthInput
+              code
               aria-label="Authenticator code"
               inputMode="numeric"
               autoComplete="one-time-code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
-          </label>
+          </Field>
         ) : (
-          <>
-            <label className="block space-y-1">
-              <span className="text-sm text-muted-foreground">Email</span>
-              <Input
+          <div className="space-y-4">
+            <Field label="Email">
+              <AuthInput
                 aria-label="Email"
                 type="email"
                 autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
-            </label>
-            <label className="block space-y-1">
-              <span className="text-sm text-muted-foreground">Full name</span>
-              <Input
+            </Field>
+            <Field label="Full name">
+              <AuthInput
                 aria-label="Full name"
                 autoComplete="name"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
               />
-            </label>
-            <label className="block space-y-1">
-              <span className="text-sm text-muted-foreground">Password</span>
-              <Input
+            </Field>
+            {/* No character count in the hint, deliberately: the minimum is a deployment
+             * setting, and the policy also refuses anything found in a public breach - so a
+             * number here would both go stale and promise an acceptance the server will not
+             * honour. The shape of a good passphrase is stated; the server's refusal is
+             * rendered verbatim above and is the only authority. */}
+            <Field
+              label="Password"
+              hint="A long passphrase - three or four unrelated words. Passwords that are too short, that look like your email address, or that have appeared in a public breach are refused."
+            >
+              <AuthInput
                 aria-label="Password"
                 type="password"
                 autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
-              <span className="block text-xs text-muted-foreground">At least 10 characters.</span>
-            </label>
-          </>
+            </Field>
+          </div>
         )}
 
         {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+          <div className="mt-4">
+            <AuthAlert>{error}</AuthAlert>
+          </div>
         )}
 
-        <Button type="submit" disabled={busy} className="w-full">
+        <AuthButton type="submit" block disabled={busy} className="mt-5">
           {busy ? "Working..." : pendingToken ? "Verify" : "Create account"}
-        </Button>
-      </form>
-    </div>
+        </AuthButton>
+      </AuthPlate>
+    </AuthSurface>
   );
 }

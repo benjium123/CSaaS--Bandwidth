@@ -1,0 +1,488 @@
+/**
+ * "The Exchange" - the visual language of the authentication surfaces.
+ *
+ * WHY THIS IS SCOPED AND NOT GLOBAL
+ * App.tsx wraps the signed-in Shell in `.dark`, but every unauthenticated route renders
+ * OUTSIDE that Shell, so until now the whole front door read index.css's light :root
+ * tokens - a white page with a 1px grey box - and signing in dropped you into a near-black
+ * console. This file closes that gap without touching one global selector: every rule is
+ * nested under `.auth-surface`, so nothing here can reach the console's own look or the
+ * ~900 tests that render those pages.
+ *
+ * The scope re-declares the same CSS variables index.css defines, and custom properties
+ * inherit, so the vendored primitives (Button, Input, Pill, Card) pick the palette up for
+ * free - no forked component library.
+ *
+ * The doubled `.auth-surface.auth-surface` selector is deliberate, and it is the
+ * load-bearing half of a pair. The wrapper also carries `dark`; today that buys nothing
+ * (there is not one `dark:` variant anywhere in components/ui), so it is insurance against
+ * a future shadcn component arriving with them, on surfaces where only these screens would
+ * break. But `.dark` and `.auth-surface` are both single-class selectors, so with both on
+ * one element the winner would depend on the order Vite happens to emit the stylesheets.
+ * Two classes beat one, whatever that order is.
+ *
+ * Palette is telephone-exchange hardware: a cold ink field, warm bone type, copper
+ * hairlines - the copper pair - and one verdigris, oxidised copper, reserved for "live /
+ * verified". Amber and red are NOT spent on branding: primitives.tsx already gives them to
+ * warning and danger, and a sign-in screen is the last place to make a colour mean two
+ * things.
+ */
+
+.auth-surface.auth-surface {
+  /* Palette ------------------------------------------------------------------ */
+  --ex-ink: 197 30% 5%;
+  --ex-ink-raise: 197 22% 8%;
+  --ex-ink-high: 197 18% 12%;
+  --ex-bone: 40 26% 92%;
+  --ex-bone-dim: 40 10% 68%;
+  --ex-copper: 24 62% 52%;
+  /* Raised from 40% to 47% lightness so it can carry small text: at 40% it measured 3.64
+   * against the ink, which clears 3.0 for rules and large type but fails AA's 4.5 for body
+   * copy - and a subordinate accent is exactly the token someone reaches for when they
+   * want a quiet caption. 47% measures above 4.5, so this one cannot become that trap. */
+  --ex-copper-soft: 24 52% 47%;
+  --ex-copper-line: 24 45% 24%;
+  --ex-verdigris: 168 58% 46%;
+  --ex-danger: 6 74% 62%;
+
+  /* The shadcn tokens the vendored primitives read. Re-pointed, not replaced. */
+  --background: var(--ex-ink);
+  --foreground: var(--ex-bone);
+  --muted: var(--ex-ink-high);
+  --muted-foreground: var(--ex-bone-dim);
+  --border: var(--ex-copper-line);
+  --primary: var(--ex-copper);
+  --primary-foreground: 197 40% 6%;
+  --destructive: var(--ex-danger);
+
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  background-color: hsl(var(--ex-ink));
+  color: hsl(var(--ex-bone));
+  font-family: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Atmosphere ----------------------------------------------------------------
+ * Two stacked pseudo-elements: a lit field (two off-centre glows, one verdigris and one
+ * copper, so the page has a direction of light), and over it the patchbay - the jack
+ * field of a switchboard - as a dot lattice crossed by a hairline grid, masked so it
+ * dissolves before it reaches the form. All CSS: `img-src 'self' data: blob:` in the
+ * console's CSP rules out fetching any decorative asset. */
+.auth-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(70ch 50ch at 12% -10%, hsl(var(--ex-verdigris) / 0.13), transparent 60%),
+    radial-gradient(60ch 45ch at 88% 108%, hsl(var(--ex-copper) / 0.14), transparent 62%),
+    linear-gradient(175deg, hsl(197 32% 7%), hsl(var(--ex-ink)) 55%);
+}
+
+.auth-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    radial-gradient(circle at center, hsl(var(--ex-bone) / 0.1) 0.8px, transparent 0.9px),
+    linear-gradient(to right, hsl(var(--ex-copper) / 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--ex-copper) / 0.07) 1px, transparent 1px);
+  background-size: 22px 22px, 88px 88px, 88px 88px;
+  -webkit-mask-image: radial-gradient(120ch 80ch at 22% 40%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(120ch 80ch at 22% 40%, #000 0%, transparent 72%);
+  opacity: 0.85;
+}
+
+/* The strip -----------------------------------------------------------------
+ * The one piece of this language that lives INSIDE the signed-in console: the banner
+ * telling a privileged account it still needs a passkey. It cannot use `.auth-surface` -
+ * that scope sets `min-height: 100%` and paints a full-bleed atmosphere, which is wrong
+ * for a bar across the top of a working page - so it carries its own small set of values
+ * and stands alone. Everything else the console renders is left exactly as it was. */
+.ex-strip {
+  --ex-copper: 24 62% 52%;
+  --ex-verdigris: 168 58% 46%;
+  position: relative;
+  background:
+    linear-gradient(90deg, hsl(24 62% 52% / 0.1), transparent 45%),
+    hsl(197 22% 8%);
+  border-bottom: 1px solid hsl(24 45% 24%);
+}
+
+.ex-strip::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, hsl(var(--ex-copper)), hsl(var(--ex-copper) / 0) 60%);
+}
+
+.ex-strip .ex-label {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+}
+
+/* Typography ---------------------------------------------------------------- */
+.ex-mono {
+  font-family: "Martian Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-feature-settings: "ss01";
+}
+
+.ex-label {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--ex-bone-dim));
+}
+
+/* The nameplate voice: Archivo pushed to the wide end of its width axis, the way a legend
+ * is set on a piece of rack equipment. This is what the 55KB width axis buys. */
+.ex-nameplate {
+  font-stretch: 122%;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  line-height: 1.05;
+}
+
+/* Surfaces ------------------------------------------------------------------ */
+.ex-plate {
+  position: relative;
+  background: linear-gradient(180deg, hsl(var(--ex-ink-raise) / 0.96), hsl(var(--ex-ink) / 0.92));
+  border: 1px solid hsl(var(--ex-copper-line) / 0.85);
+  border-radius: 4px;
+  box-shadow:
+    0 1px 0 hsl(var(--ex-bone) / 0.05) inset,
+    0 24px 60px -30px hsl(197 60% 2% / 0.9);
+}
+
+/* The charge line: a copper filament that draws itself across the top edge of the plate
+ * as the screen arrives - the one piece of ornament that is also a status. */
+.ex-plate::before {
+  content: "";
+  position: absolute;
+  inset: -1px auto auto -1px;
+  height: 2px;
+  width: calc(100% + 2px);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--ex-copper) / 0.9) 18%,
+    hsl(var(--ex-verdigris) / 0.85) 52%,
+    hsl(var(--ex-copper) / 0.9) 82%,
+    transparent
+  );
+  transform-origin: left center;
+  animation: ex-charge 1.1s cubic-bezier(0.22, 0.8, 0.2, 1) both;
+}
+
+.ex-hairline {
+  border: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--ex-copper-line)),
+    hsl(var(--ex-copper-line) / 0.15) 70%,
+    transparent
+  );
+}
+
+/* Fields -------------------------------------------------------------------- */
+.auth-surface .ex-input {
+  height: 2.75rem;
+  width: 100%;
+  border-radius: 3px;
+  border: 1px solid hsl(var(--ex-copper-line) / 0.7);
+  border-bottom-color: hsl(var(--ex-copper) / 0.55);
+  background: hsl(var(--ex-ink-raise) / 0.75);
+  color: hsl(var(--ex-bone));
+  padding: 0 0.75rem;
+  font-size: 0.9375rem;
+  box-shadow: none;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.auth-surface .ex-input::placeholder {
+  color: hsl(var(--ex-bone-dim) / 0.55);
+}
+
+.auth-surface .ex-input:focus-visible {
+  outline: none;
+  border-color: hsl(var(--ex-verdigris) / 0.8);
+  background: hsl(var(--ex-ink-high) / 0.9);
+  box-shadow:
+    0 0 0 1px hsl(var(--ex-verdigris) / 0.45),
+    0 0 26px -8px hsl(var(--ex-verdigris) / 0.6);
+}
+
+/* A one-time code is read aloud, typed in chunks and checked character by character - so
+ * it gets the mono, opened right up. Still ONE <input>: the accessible name and the typing
+ * contract the tests pin must not change, which rules out the fashionable six-box widget. */
+.auth-surface .ex-code {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-size: 1.0625rem;
+  letter-spacing: 0.2em;
+  text-align: center;
+  height: 3.25rem;
+}
+
+/* Controls ------------------------------------------------------------------ */
+.auth-surface .ex-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.75rem;
+  padding: 0 1.1rem;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    transform 120ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+/* Two ways to be unavailable, on purpose. `disabled` is for the transient case (a request
+ * is in flight) where leaving the tab order costs nothing. `aria-disabled` is for the
+ * lasting case - "this browser cannot do WebAuthn" - where the control must STAY focusable
+ * so that a keyboard or screen-reader user can land on it and hear the `aria-describedby`
+ * reason. A real `disabled` there would make the route visible to sighted users and simply
+ * absent to everyone else, which is a quieter version of the dead end it was meant to fix. */
+.auth-surface .ex-btn:disabled,
+.auth-surface .ex-btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.auth-surface .ex-btn[aria-disabled="true"]:hover {
+  background: inherit;
+}
+
+.auth-surface .ex-btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.auth-surface .ex-btn:focus-visible {
+  outline: 2px solid hsl(var(--ex-verdigris));
+  outline-offset: 2px;
+}
+
+.auth-surface .ex-btn-primary {
+  background: linear-gradient(180deg, hsl(24 66% 56%), hsl(var(--ex-copper)));
+  color: hsl(197 45% 7%);
+  box-shadow: 0 10px 30px -18px hsl(var(--ex-copper) / 0.9);
+}
+
+.auth-surface .ex-btn-primary:not(:disabled):hover {
+  background: linear-gradient(180deg, hsl(24 70% 60%), hsl(24 64% 54%));
+  box-shadow: 0 14px 34px -16px hsl(var(--ex-copper) / 1);
+}
+
+/* The sweep: a filament of light crossing the primary control on hover, the same gesture
+ * as the plate's charge line. Decorative only - it never moves the label. */
+.auth-surface .ex-btn-primary::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 -40%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, hsl(40 80% 96% / 0.5), transparent);
+  transform: skewX(-18deg);
+  opacity: 0;
+}
+
+.auth-surface .ex-btn-primary:not(:disabled):hover::after {
+  animation: ex-sweep 720ms ease-out;
+}
+
+.auth-surface .ex-btn-quiet {
+  background: hsl(var(--ex-ink-raise) / 0.6);
+  border-color: hsl(var(--ex-copper-line));
+  color: hsl(var(--ex-bone));
+}
+
+.auth-surface .ex-btn-quiet:not(:disabled):hover {
+  border-color: hsl(var(--ex-copper) / 0.7);
+  background: hsl(var(--ex-ink-high) / 0.85);
+}
+
+/* Verdigris is the passkey's colour everywhere it appears: the control that starts a
+ * ceremony, and the lamp that says one is in progress. */
+.auth-surface .ex-btn-key {
+  background: hsl(var(--ex-verdigris) / 0.1);
+  border-color: hsl(var(--ex-verdigris) / 0.5);
+  color: hsl(168 60% 78%);
+}
+
+.auth-surface .ex-btn-key:not(:disabled):hover {
+  background: hsl(var(--ex-verdigris) / 0.18);
+  border-color: hsl(var(--ex-verdigris) / 0.8);
+}
+
+/* A text control that is a real <button> because it changes state, but reads as prose. */
+.auth-surface .ex-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: hsl(var(--ex-bone-dim));
+  font-size: 0.8125rem;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: hsl(var(--ex-copper) / 0.5);
+  cursor: pointer;
+  transition: color 140ms ease, text-decoration-color 140ms ease;
+}
+
+.auth-surface .ex-link:hover {
+  color: hsl(var(--ex-bone));
+  text-decoration-color: hsl(var(--ex-copper));
+}
+
+.auth-surface .ex-link:focus-visible {
+  outline: 2px solid hsl(var(--ex-verdigris));
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Status --------------------------------------------------------------------
+ * A lamp, the way an exchange signalled a line's state. Verdigris = live, copper =
+ * waiting, red = fault. The lamp is decoration on top of text that already says it -
+ * never the only carrier of the meaning. */
+.ex-lamp {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: hsl(var(--ex-bone-dim) / 0.5);
+  flex: none;
+}
+
+.ex-lamp-live {
+  background: hsl(var(--ex-verdigris));
+  box-shadow: 0 0 0 3px hsl(var(--ex-verdigris) / 0.16), 0 0 14px hsl(var(--ex-verdigris) / 0.75);
+}
+
+.ex-lamp-wait {
+  background: hsl(var(--ex-copper));
+  box-shadow: 0 0 0 3px hsl(var(--ex-copper) / 0.16);
+  animation: ex-breathe 1.6s ease-in-out infinite;
+}
+
+.ex-lamp-fault {
+  background: hsl(var(--ex-danger));
+  box-shadow: 0 0 0 3px hsl(var(--ex-danger) / 0.18);
+}
+
+.ex-alert {
+  border-left: 2px solid hsl(var(--ex-danger));
+  background: hsl(var(--ex-danger) / 0.08);
+  padding: 0.625rem 0.75rem;
+  border-radius: 0 3px 3px 0;
+  color: hsl(6 80% 84%);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.ex-notice {
+  border-left: 2px solid hsl(var(--ex-verdigris));
+  background: hsl(var(--ex-verdigris) / 0.07);
+  padding: 0.625rem 0.75rem;
+  border-radius: 0 3px 3px 0;
+  color: hsl(168 40% 84%);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+/* The dial-tone trace on the aside: a sine drawn once, then left alone. */
+.ex-trace path {
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+  animation: ex-trace 3.2s cubic-bezier(0.4, 0, 0.2, 1) 0.5s both;
+}
+
+/* Entrance ------------------------------------------------------------------
+ * One orchestrated arrival. Each element sets --d and the screen assembles in sequence
+ * rather than fading in as a slab. */
+.ex-rise {
+  animation: ex-rise 620ms cubic-bezier(0.22, 0.85, 0.25, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+
+@keyframes ex-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ex-charge {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes ex-sweep {
+  from {
+    left: -40%;
+    opacity: 0.9;
+  }
+  to {
+    left: 120%;
+    opacity: 0;
+  }
+}
+
+@keyframes ex-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 3px hsl(var(--ex-copper) / 0.16);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 6px hsl(var(--ex-copper) / 0.04);
+  }
+}
+
+@keyframes ex-trace {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-surface *,
+  .auth-surface *::before,
+  .auth-surface *::after {
+    animation: none !important;
+    transition-duration: 1ms !important;
+  }
+
+  .ex-trace path {
+    stroke-dashoffset: 0;
+  }
+}

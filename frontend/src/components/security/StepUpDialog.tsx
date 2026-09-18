@@ -1,7 +1,14 @@
 import * as React from "react";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Input } from "@/components/ui/primitives";
 import { getPasskeyAssertion, passkeysSupported } from "@/lib/webauthn";
+import {
+  AuthAlert,
+  AuthButton,
+  AuthInput,
+  AuthPlate,
+  Field,
+  Lamp,
+} from "@/components/auth/AuthShell";
 
 type Pending = { kind: string; action: string; message: string };
 
@@ -27,6 +34,17 @@ export const ACTION_LABELS: Record<string, string> = {
  * P41: when the API refuses an action with step_up_required, this dialog asks the person to
  * prove it is them - authenticator code / passkey for recent_2fa, or a Stripe ID + selfie
  * check for recent_selfie - and then tells them to try the action again.
+ *
+ * THE LOGIC BELOW IS UNCHANGED from the version two audit findings landed on, and the
+ * guards are the findings: nothing is claimed about someone's factors until `me` is
+ * non-null, and no branch ends without a control. This pass restyled it and split the copy
+ * for the two step-up kinds - they are different promises, and the dialog used to blur
+ * them - but did not move a single decision.
+ *
+ * `ACTION_LABELS` is a lookup with a generic fallback on purpose: the backend adds action
+ * strings (monitor_unpause arrived after this table was written) and the console must meet
+ * an unknown one with a plain sentence, never by reciting a raw identifier at someone in
+ * the middle of a security prompt.
  */
 export function StepUpDialog() {
   const { api, me } = useAuth();
@@ -105,112 +123,140 @@ export function StepUpDialog() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="step-up-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[hsl(197_40%_2%/0.72)] p-4 backdrop-blur-[2px]"
     >
-      <div className="dark w-full max-w-md space-y-4 rounded-lg border border-border bg-background p-6 text-foreground">
-        <h2 id="step-up-title" className="text-base font-semibold">
-          {done ? "Thanks - you're confirmed" : "Confirm it's you"}
-        </h2>
-
-        {done ? (
-          <p className="text-sm text-muted-foreground">Go ahead and try that again.</p>
-        ) : pending.kind === "passkey_session" ? (
-          <>
-            {/* Nothing is claimed until `me` has loaded: `!me?.x` cannot tell "they don't
-                have it" from "we haven't asked yet", and guessing wrong here tells someone
-                who owns a passkey to go and add one - and throws away their pending
-                step-up when they press the button. */}
-            <p className="text-sm text-muted-foreground">
-              Admin and billing features need a passkey sign-in.{" "}
-              {!me ? "" : me.has_passkey ? "Confirm with your passkey to continue." : "Add a passkey first."}
-            </p>
-            {!me ? null : me.has_passkey && passkeysSupported() ? (
-              <Button type="button" onClick={confirmWithPasskey} disabled={busy} className="w-full">
-                Use your passkey
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                className="w-full"
-                onClick={() => {
-                  setPending(null);
-                  window.location.assign("/settings/team?tab=security");
-                }}
-              >
-                Add a passkey
-              </Button>
-            )}
-          </>
-        ) : pending.kind === "recent_selfie" ? (
-          <>
-            <p className="text-sm text-muted-foreground">
-              To {what}, take a quick photo of your ID and a selfie. It takes about a minute
-              and protects your business if someone else gets into your account.
-            </p>
-            <Button type="button" onClick={startSelfie} disabled={busy} className="w-full">
-              Verify with ID and selfie
-            </Button>
-          </>
-        ) : (
-          <>
-            <p className="text-sm text-muted-foreground">
-              To {what}, confirm with your passkey or authenticator app.
-            </p>
-            {me?.has_passkey && passkeysSupported() && (
-              <Button type="button" onClick={confirmWithPasskey} disabled={busy} className="w-full">
-                Use your passkey
-              </Button>
-            )}
-            {me?.totp_enabled && (
-              <div className="flex gap-2">
-                <Input
-                  aria-label="Authenticator code"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                />
-                <Button type="button" onClick={confirmWithCode} disabled={code.length < 6 || busy}>
-                  Confirm
-                </Button>
-              </div>
-            )}
-            {/* Audit: a passkey-only person on a browser without WebAuthn used to get this
-                dialog with NO button and no explanation - a dead end they could not leave.
-                Say what happened and give them a way out. */}
-            {me && !me.totp_enabled && !(me.has_passkey && passkeysSupported()) && (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  {me?.has_passkey
-                    ? "This browser can't use passkeys, so we can't confirm it's you here. Open the console in a browser that supports passkeys, or add an authenticator app as a second way in."
-                    : "You don't have a way to confirm yet. Add a passkey or an authenticator app first."}
-                </p>
-                <Button
+      {/* The security surfaces' own scope: a step-up is the same kind of moment as the
+          front door, and it should look like it rather than like an ordinary dialog. */}
+      <div className="auth-surface dark w-full max-w-md bg-transparent">
+        <AuthPlate
+          eyebrow={done ? "Confirmed" : "Confirm it's you"}
+          title={
+            <span id="step-up-title">{done ? "Thanks - you're confirmed" : "Confirm it's you"}</span>
+          }
+        >
+          {done ? (
+            <div className="space-y-4">
+              <Lamp state="live">This session is confirmed.</Lamp>
+              <p className="text-sm text-muted-foreground">Go ahead and try that again.</p>
+            </div>
+          ) : pending.kind === "passkey_session" ? (
+            <div className="space-y-4">
+              {/* Nothing is claimed until `me` has loaded: `!me?.x` cannot tell "they don't
+                  have it" from "we haven't asked yet", and guessing wrong here tells someone
+                  who owns a passkey to go and add one - and throws away their pending
+                  step-up when they press the button. */}
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Admin and billing features need a passkey sign-in.{" "}
+                {!me
+                  ? ""
+                  : me.has_passkey
+                    ? "Confirm with your passkey to continue."
+                    : "Add a passkey first."}
+              </p>
+              {!me ? null : me.has_passkey && passkeysSupported() ? (
+                <AuthButton type="button" tone="key" block onClick={confirmWithPasskey} disabled={busy}>
+                  Use your passkey
+                </AuthButton>
+              ) : (
+                <AuthButton
                   type="button"
-                  className="w-full"
+                  block
                   onClick={() => {
                     setPending(null);
                     window.location.assign("/settings/team?tab=security");
                   }}
                 >
-                  Set up a second factor
-                </Button>
-              </>
-            )}
-          </>
-        )}
+                  Add a passkey
+                </AuthButton>
+              )}
+            </div>
+          ) : pending.kind === "recent_selfie" ? (
+            <div className="space-y-4">
+              {/* recent_selfie is bound to THIS action - it is not a window that unlocks
+                  everything else - so the copy names the action and says so. */}
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                To {what}, take a quick photo of your ID and a selfie. It takes about a minute
+                and protects your business if someone else gets into your account.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                This check covers this one action.
+              </p>
+              <AuthButton type="button" block onClick={startSelfie} disabled={busy}>
+                Verify with ID and selfie
+              </AuthButton>
+              {busy ? <Lamp state="wait">Opening the identity check.</Lamp> : null}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* recent_2fa is satisfied for a few minutes on this session, so one proof
+                  covers the run of admin work someone is usually in the middle of. */}
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                To {what}, confirm with your passkey or authenticator app.
+              </p>
+              {me?.has_passkey && passkeysSupported() && (
+                <AuthButton type="button" tone="key" block onClick={confirmWithPasskey} disabled={busy}>
+                  Use your passkey
+                </AuthButton>
+              )}
+              {me?.totp_enabled && (
+                <div className="space-y-3">
+                  <Field label="Authenticator code">
+                    <AuthInput
+                      code
+                      aria-label="Authenticator code"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                    />
+                  </Field>
+                  <AuthButton
+                    type="button"
+                    block
+                    onClick={confirmWithCode}
+                    disabled={code.length < 6 || busy}
+                  >
+                    Confirm
+                  </AuthButton>
+                </div>
+              )}
+              {/* Audit: a passkey-only person on a browser without WebAuthn used to get this
+                  dialog with NO button and no explanation - a dead end they could not leave.
+                  Say what happened and give them a way out. */}
+              {me && !me.totp_enabled && !(me.has_passkey && passkeysSupported()) && (
+                <>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {me?.has_passkey
+                      ? "This browser can't use passkeys, so we can't confirm it's you here. Open the console in a browser that supports passkeys, or add an authenticator app as a second way in."
+                      : "You don't have a way to confirm yet. Add a passkey or an authenticator app first."}
+                  </p>
+                  <AuthButton
+                    type="button"
+                    block
+                    onClick={() => {
+                      setPending(null);
+                      window.location.assign("/settings/team?tab=security");
+                    }}
+                  >
+                    Set up a second factor
+                  </AuthButton>
+                </>
+              )}
+            </div>
+          )}
 
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
+          {error && (
+            <div className="mt-4">
+              <AuthAlert>{error}</AuthAlert>
+            </div>
+          )}
 
-        <div className="flex justify-end">
-          <Button type="button" variant="ghost" onClick={() => setPending(null)}>
-            {done ? "Close" : "Cancel"}
-          </Button>
-        </div>
+          <div className="mt-5 flex justify-end">
+            <button type="button" className="ex-link" onClick={() => setPending(null)}>
+              {done ? "Close" : "Cancel"}
+            </button>
+          </div>
+        </AuthPlate>
       </div>
     </div>
   );

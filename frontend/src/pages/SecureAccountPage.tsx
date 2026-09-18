@@ -1,11 +1,24 @@
 import * as React from "react";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Input } from "@/components/ui/primitives";
 import { PasskeysCard } from "@/components/settings/PasskeysCard";
+import {
+  AuthAlert,
+  AuthButton,
+  AuthInput,
+  AuthPlate,
+  AuthSurface,
+  Field,
+  Lamp,
+} from "@/components/auth/AuthShell";
 
 /**
  * P41: every account must have an authenticator app or a passkey. Until it does, the API
  * refuses everything except these enrolment calls, so this screen replaces the whole app.
+ *
+ * Because it is a wall rather than a page, it has to be the most helpful screen in the
+ * product: the only ways out are forward (add a factor) or back (sign out), and both are
+ * stated plainly. It claims nothing about the account it cannot know - the greeting only
+ * appears once `me` has actually loaded.
  */
 export function SecureAccountPage() {
   const { api, me, refreshMe, logout } = useAuth();
@@ -46,72 +59,100 @@ export function SecureAccountPage() {
   }
 
   return (
-    <div className="dark flex min-h-full items-center justify-center bg-background p-6 text-foreground">
-      <div className="w-full max-w-lg space-y-6 rounded-lg border border-border p-6">
-        <div className="space-y-1">
-          <h1 className="text-lg font-semibold">Secure your account</h1>
-          <p className="text-sm text-muted-foreground">
-            Every account needs a second way to prove it is you. Add a passkey (recommended) or
-            an authenticator app to continue{me?.email ? ` as ${me.email}` : ""}. Afterwards, create recovery codes in Settings, Team, Security so a lost phone never locks you out.
-          </p>
-        </div>
-
-        <section className="space-y-3 rounded-md border border-border p-4">
-          <PasskeysCard onAdded={() => void refreshMe()} />
-        </section>
-
-        <section className="space-y-3 rounded-md border border-border p-4">
-          <p className="text-sm font-medium">Authenticator app</p>
-          {!enroll ? (
-            <div className="flex gap-2">
-              <Input
-                aria-label="Your password"
-                type="password"
-                autoComplete="current-password"
-                placeholder="Confirm your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              <Button type="button" onClick={startTotp} disabled={!password || busy}>
-                Set up
-              </Button>
+    <AuthSurface>
+      <AuthPlate
+        eyebrow="Required · Second factor"
+        title="Secure your account"
+        lede={
+          <>
+            Every account needs a second way to prove it is you
+            {me && me.email ? <> — this one signs in as {me.email}</> : null}. Add a passkey, or
+            an authenticator app. Afterwards, create recovery codes in Settings, Team, Security
+            so a lost phone never locks you out.
+          </>
+        }
+        footer={
+          <button type="button" className="ex-link" onClick={logout}>
+            Sign out
+          </button>
+        }
+      >
+        <div className="space-y-5">
+          <section className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="ex-label">Option A · Recommended</span>
+              <Lamp state="live">Cannot be phished</Lamp>
             </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm">
-                Add this key to Google Authenticator, 1Password, Authy or similar, then enter the
-                six-digit code it shows.
-              </p>
-              <code className="block break-all rounded bg-muted p-2 text-xs">{enroll.secret}</code>
-              <a className="text-sm underline" href={enroll.uri}>
-                Open in authenticator app
-              </a>
-              <div className="flex gap-2">
-                <Input
-                  aria-label="Authenticator code"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                />
-                <Button type="button" onClick={activate} disabled={code.length < 6 || busy}>
-                  Turn on
-                </Button>
+            <PasskeysCard onAdded={() => void refreshMe()} />
+          </section>
+
+          <section className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="ex-label">Option B</span>
+              <span className="text-xs text-muted-foreground">Authenticator app</span>
+            </div>
+
+            {!enroll ? (
+              <div className="space-y-3">
+                <Field
+                  label="Your password"
+                  hint="Confirming your password stops someone using an unattended screen to attach their own authenticator."
+                >
+                  <AuthInput
+                    aria-label="Your password"
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder="Confirm your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </Field>
+                <AuthButton
+                  type="button"
+                  tone="quiet"
+                  onClick={startTotp}
+                  disabled={!password || busy}
+                >
+                  Set up
+                </AuthButton>
               </div>
-            </div>
-          )}
-        </section>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  Add this key to Google Authenticator, 1Password, Authy or similar, then enter
+                  the six-digit code it shows.
+                </p>
+                <code className="ex-mono block break-all rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink)/0.8)] p-3 text-[0.6875rem] leading-relaxed text-[hsl(var(--ex-verdigris))]">
+                  {enroll.secret}
+                </code>
+                <a className="ex-link" href={enroll.uri}>
+                  Open in authenticator app
+                </a>
+                <Field label="Authenticator code">
+                  <AuthInput
+                    code
+                    aria-label="Authenticator code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                  />
+                </Field>
+                <AuthButton
+                  type="button"
+                  onClick={activate}
+                  disabled={code.length < 6 || busy}
+                  block
+                >
+                  Turn on
+                </AuthButton>
+              </div>
+            )}
+          </section>
 
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-
-        <Button type="button" variant="ghost" onClick={logout}>
-          Sign out
-        </Button>
-      </div>
-    </div>
+          {error && <AuthAlert>{error}</AuthAlert>}
+        </div>
+      </AuthPlate>
+    </AuthSurface>
   );
 }

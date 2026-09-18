@@ -43,6 +43,12 @@ export type SsoConfigOut = {
   idp_entity_id?: string;
   idp_sso_url?: string;
   idp_cert_set?: boolean;
+  /** P43: when the saved signing certificate stops being valid, and whether it already
+   * has. Both are optional because a backend that predates them must produce SILENCE in
+   * the console, not a "certificate valid" claim - absence of a warning is not evidence
+   * of health. */
+  idp_cert_expires_at?: string | null;
+  idp_cert_expired?: boolean;
   group_roles?: Record<string, string>;
 };
 

@@ -1,7 +1,15 @@
 import * as React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
-import { Button } from "@/components/ui/primitives";
+import {
+  AuthAlert,
+  AuthButton,
+  AuthNotice,
+  AuthPlate,
+  AuthSurface,
+  Lamp,
+  StepRail,
+} from "@/components/auth/AuthShell";
 
 /**
  * P42: every passkey and the authenticator app are lost. Owners, admins and billing staff
@@ -38,7 +46,7 @@ export function rememberPendingForRecovery(pendingToken: string): void {
 export function RecoverAccountPage() {
   const { api, refreshMe } = useAuth();
   const navigate = useNavigate();
-  const [stored] = React.useState<Stored>(load);
+  const [stored, setStored] = React.useState<Stored>(load);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -51,7 +59,10 @@ export function RecoverAccountPage() {
         "/api/v1/auth/recovery/identity/start",
         {
           method: "POST",
-          json: { pending_token: stored.pendingToken, return_url: `${window.location.origin}/recover` },
+          json: {
+            pending_token: stored.pendingToken,
+            return_url: `${window.location.origin}/recover`,
+          },
         },
       );
       save({ ...stored, stepUpId: res.step_up_id });
@@ -82,42 +93,82 @@ export function RecoverAccountPage() {
     }
   }
 
+  /**
+   * The way out of a failed attempt, and the reason it appears ONLY after one: it clears
+   * the stored pending token, which is the one piece of state this flow cannot recreate.
+   * Offered unprompted it would be a trapdoor - a button that quietly discards a sign-in
+   * still in progress. Offered after the server has refused, the token is already spent
+   * and clearing it is the only thing that unsticks the page.
+   */
+  function startOver() {
+    try {
+      sessionStorage.removeItem(KEY);
+    } catch {
+      /* ignore - the state below is reset either way */
+    }
+    setStored({});
+    setError(null);
+    navigate("/", { replace: true });
+  }
+
+  const stage = !stored.pendingToken ? 0 : stored.stepUpId ? 2 : 1;
+
   return (
-    <div className="flex min-h-full items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-4 rounded-lg border border-border p-6">
-        <h1 className="text-lg font-semibold">Recover your account</h1>
-        {!stored.pendingToken ? (
-          <p className="text-sm">
-            Start by signing in with your email and password, then choose "Lost access to your
-            passkey and authenticator app".
-          </p>
-        ) : stored.stepUpId ? (
+    <AuthSurface>
+      <AuthPlate
+        eyebrow="Recovery · Identity"
+        title="Recover your account"
+        lede="For when the passkey and the authenticator app are both gone."
+        footer={
           <>
-            <p className="text-sm">
-              Finished the ID and selfie check? Continue to set up a new passkey. For your
-              protection, sensitive changes stay locked for 24 hours.
-            </p>
-            <Button type="button" className="w-full" onClick={complete} disabled={busy}>
-              Continue
-            </Button>
+            <Link to="/" className="ex-link">
+              Back to sign in
+            </Link>
+            {error ? (
+              <button type="button" className="ex-link" onClick={startOver}>
+                Start this recovery again
+              </button>
+            ) : null}
           </>
-        ) : (
-          <>
-            <p className="text-sm">
-              If you are an owner, admin or billing contact whose ID was verified for your
-              business, you can recover by taking a photo of the same ID and a selfie.
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Everyone else: ask an admin of your workspace to reset your sign-in methods.
-            </p>
-            <Button type="button" className="w-full" onClick={start} disabled={busy}>
-              Verify with ID and selfie
-            </Button>
-          </>
-        )}
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        <Link to="/" className="block text-sm underline">Back to sign in</Link>
-      </div>
-    </div>
+        }
+      >
+        <StepRail steps={["Sign in", "Prove identity", "New passkey"]} active={stage} />
+
+        <div className="space-y-4">
+          {stage === 0 ? (
+            <AuthNotice>
+              Start by signing in with your email and password, then choose "Lost access to your
+              passkey and authenticator app".
+            </AuthNotice>
+          ) : stage === 2 ? (
+            <>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Finished the ID and selfie check? Continue to set up a new passkey. For your
+                protection, sensitive changes stay locked for 24 hours.
+              </p>
+              <AuthButton type="button" block onClick={complete} disabled={busy}>
+                Continue
+              </AuthButton>
+              {busy ? <Lamp state="wait">Checking your identity result.</Lamp> : null}
+            </>
+          ) : (
+            <>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                If you are an owner, admin or billing contact whose ID was verified for your
+                business, you can recover by taking a photo of the same ID and a selfie.
+              </p>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Everyone else: ask an admin of your workspace to reset your sign-in methods.
+              </p>
+              <AuthButton type="button" block onClick={start} disabled={busy}>
+                Verify with ID and selfie
+              </AuthButton>
+            </>
+          )}
+
+          {error && <AuthAlert>{error}</AuthAlert>}
+        </div>
+      </AuthPlate>
+    </AuthSurface>
   );
 }

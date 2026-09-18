@@ -223,3 +223,75 @@ describe("SsoCallbackPage (SAML)", () => {
     );
   });
 });
+
+/**
+ * P43: the identity provider's signing certificate expiry. The case that matters most is
+ * the LAST one - a backend that does not send the fields has to produce silence, because
+ * a console that renders reassurance out of missing data is worse than one that renders
+ * nothing at all.
+ */
+describe("SamlSsoCard certificate expiry", () => {
+  function renderWithCert(sso: Record<string, unknown> | null) {
+    const client = makeStubClient({
+      "/api/v1/me/capabilities": caps(["settings:read", "settings:write"]),
+      "/api/v1/auth/me": ME,
+      "/api/v1/orgs/current/security": {
+        require_2fa: false,
+        require_2fa_grace_until: null,
+        ip_allowlist: null,
+        sso,
+      },
+      "/api/v1/orgs/current/sso/saml": {
+        sp_entity_id: "https://app/meta",
+        acs_url: "https://app/acs",
+        metadata_url: "https://app/meta",
+        start_url: "https://app/start",
+      },
+    });
+    renderWithProviders(<SamlSsoCard />, client);
+    return client;
+  }
+
+  const base = {
+    issuer: "",
+    client_id: "",
+    domain: "acme.com",
+    enforce: false,
+    default_role_id: null,
+    client_secret_set: false,
+    protocol: "saml",
+    idp_cert_set: true,
+  };
+
+  const inDays = (n: number) =>
+    new Date(Date.now() + n * 86_400_000).toISOString();
+
+  it("says an expired certificate is expired, and that sign-in still works", async () => {
+    renderWithCert({ ...base, idp_cert_expires_at: inDays(-3), idp_cert_expired: true });
+    expect(await screen.findByText(/signing certificate expired on/)).toBeInTheDocument();
+    // The one thing this must never imply: that people are locked out. They are not.
+    expect(screen.getByText(/Single sign-on still works/)).toBeInTheDocument();
+  });
+
+  it("warns inside the 30-day window with the date and the count", async () => {
+    renderWithCert({ ...base, idp_cert_expires_at: inDays(12), idp_cert_expired: false });
+    const line = await screen.findByText(/signing certificate expires on/);
+    expect(line).toHaveTextContent("in 12 days");
+    expect(screen.queryByText(/expired on/)).toBeNull();
+  });
+
+  it("stays quiet when the certificate is not close to expiring", async () => {
+    renderWithCert({ ...base, idp_cert_expires_at: inDays(200), idp_cert_expired: false });
+    expect(await screen.findByLabelText("Signing certificate")).toBeInTheDocument();
+    expect(screen.queryByText(/signing certificate expires on/)).toBeNull();
+  });
+
+  it("says nothing at all when the backend does not send the fields", async () => {
+    renderWithCert({ ...base });
+    expect(await screen.findByLabelText("Signing certificate")).toBeInTheDocument();
+    expect(screen.queryByText(/signing certificate expires on/)).toBeNull();
+    expect(screen.queryByText(/expired on/)).toBeNull();
+    // And no all-clear invented to fill the gap.
+    expect(screen.queryByText(/valid/i)).toBeNull();
+  });
+});

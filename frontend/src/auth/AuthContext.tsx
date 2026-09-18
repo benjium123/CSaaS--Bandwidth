@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient, type ApiClient } from "@/api/client";
+import { ApiError, createClient, type ApiClient } from "@/api/client";
 
 export type Membership = {
   org_id: string;
@@ -50,7 +50,26 @@ export type Me = {
 type LoginResult =
   | { kind: "ok" }
   | { kind: "needs_2fa"; pendingToken: string; methods: string[] }
-  | { kind: "error"; message: string };
+  /**
+   * P42: `code` is the API's own `error.code`, carried through so a caller can offer the
+   * right NEXT STEP - the one live use is `sso_required`, where the workspace enforces
+   * single sign-on and a password will never work, so a plain error message leaves the
+   * person with nowhere to go. It exists for AFFORDANCE ONLY: it must never choose the
+   * failure wording. A sign-in that failed has to read identically whatever the cause, or
+   * the screen becomes an oracle for which addresses have accounts. Passing it on leaks
+   * nothing - the browser already received `{"error":{"code":...}}` in the response body;
+   * dropping it here was lossy, not protective.
+   */
+  | { kind: "error"; message: string; code?: string };
+
+/** The error arm, with the API's code kept when the failure came from the API. */
+function loginError(err: unknown): LoginResult {
+  return {
+    kind: "error",
+    message: (err as Error).message,
+    code: err instanceof ApiError ? err.code : undefined,
+  };
+}
 
 type AuthValue = {
   api: ApiClient;
@@ -161,7 +180,7 @@ export function AuthProvider({
         await loadMe();
         return { kind: "ok" };
       } catch (err) {
-        return { kind: "error", message: (err as Error).message };
+        return loginError(err);
       }
     },
     [api, loadMe],
@@ -178,7 +197,7 @@ export function AuthProvider({
         await loadMe();
         return { kind: "ok" };
       } catch (err) {
-        return { kind: "error", message: (err as Error).message };
+        return loginError(err);
       }
     },
     [api, loadMe],
@@ -204,7 +223,7 @@ export function AuthProvider({
         await loadMe();
         return { kind: "ok" };
       } catch (err) {
-        return { kind: "error", message: (err as Error).message };
+        return loginError(err);
       }
     },
     [api, loadMe],
@@ -221,7 +240,7 @@ export function AuthProvider({
         await loadMe();
         return { kind: "ok" };
       } catch (err) {
-        return { kind: "error", message: (err as Error).message };
+        return loginError(err);
       }
     },
     [api, loadMe],
@@ -243,7 +262,7 @@ export function AuthProvider({
         }
         return { kind: "ok" };
       } catch (err) {
-        return { kind: "error", message: (err as Error).message };
+        return loginError(err);
       }
     },
     [api, loadMe, logout],
