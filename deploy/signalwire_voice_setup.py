@@ -52,8 +52,10 @@ OUTBOUND_SWML = {
             {
                 "connect": {
                     "answer_on_bridge": True,
-                    "from": "${call.sip_data.sip_from_user}",
-                    "to": "${call.sip_data.sip_req_user}",
+                    # SWML substitutes %{...}; a "${...}" literal is refused by
+                    # SignalWire's edge with a bare nginx 400 before the API sees it.
+                    "from": "%{call.from}",
+                    "to": "%{call.to}",
                 }
             }
         ]
