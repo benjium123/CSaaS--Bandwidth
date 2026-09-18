@@ -36,8 +36,8 @@ from app.services import audit as audit_svc
 from app.services import calling_settings as calling_settings_svc
 from app.services import calls as calls_svc
 from app.services import inbox_access as inbox_access_svc
+from app.services import phone_region, smart_routing
 from app.services import recordings as recordings_svc
-from app.services import smart_routing
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import LiveKitApiError, mint_access_token
 
@@ -402,7 +402,9 @@ async def create_call(
     if payload.via not in _VIA_MODES:
         raise ValidationFailedError("via must be 'carrier' or 'room'")
 
-    to_norm = to_e164(payload.to)
+    # P43 (audit): the workspace's own region, not always US - a UK workspace dialling a
+    # bare national number would otherwise place a call to a different real number.
+    to_norm = to_e164(payload.to, await phone_region.for_org(ctx.session, ctx.org.id))
     access = await inbox_access_svc.resolve_access(
         ctx.session, ctx.actor_user_id, ctx.role.permissions or []
     )
@@ -783,7 +785,9 @@ async def transfer_call(
         raise NotFoundError("Call not found")
     await _access_or_404(ctx, call, require_use=True)
 
-    to_norm = to_e164(payload.to)
+    # P43 (audit): the workspace's own region, not always US - a UK workspace dialling a
+    # bare national number would otherwise place a call to a different real number.
+    to_norm = to_e164(payload.to, await phone_region.for_org(ctx.session, ctx.org.id))
 
     if (call.extra or {}).get("via") == "livekit":
         api = getattr(request.app.state, "livekit", None)

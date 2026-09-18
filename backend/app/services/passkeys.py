@@ -80,7 +80,24 @@ async def consume_challenge(
         or _aware(row.expires_at) <= _now()
     ):
         raise UnauthenticatedError("This passkey request has expired - try again")
-    row.consumed_at = _now()
+    # P43 (audit): claim it with a CONDITIONAL update, the same way kyc_step_up spends a
+    # selfie check. Reading `consumed_at is None` and then assigning is read-modify-write:
+    # two requests carrying the same challenge_id both pass the check above and both go on
+    # to verify. SQLite hides this by serialising writes; on Postgres the second UPDATE just
+    # blocks, then overwrites. It matters because both verifications would then read the
+    # SAME stored sign_count and both accept the same new one - defeating the sign-count
+    # clone detection, which is the one mechanism that exists to notice a duplicated
+    # authenticator. Exactly one caller may win.
+    now = _now()
+    claimed = await session.execute(
+        sa.update(WebauthnChallenge)
+        .where(WebauthnChallenge.id == challenge_id, WebauthnChallenge.consumed_at.is_(None))
+        .values(consumed_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        raise UnauthenticatedError("This passkey request has expired - try again")
+    row.consumed_at = now
     return row.challenge
 
 
