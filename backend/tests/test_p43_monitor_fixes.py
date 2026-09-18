@@ -408,3 +408,171 @@ async def test_exam_and_canary_hold_no_transaction_while_the_ai_answers(session,
     await monitor_exam.due(session, "canary", timedelta(minutes=55))
     await monitor_exam.canary_tick(session, fix_settings)
     assert seen == [False, False]
+
+
+# ======================================================================================
+# Third round: the operator's own review screen. Both of the first two were found by probing
+# the review path rather than reading it, and both had the same shape - a partial look
+# presented as a full one. See docs/AUDIT_P41_P43_JOINT_STATEMENT.md.
+# ======================================================================================
+async def _campaign(session, org_id, *, bodies_at, status="delivered"):
+    """Insert outbound messages as (body, to_e164, created_at) triples. Threads first, then
+    messages: `messages.thread_id` is a real FK and inserting in the wrong order fails it."""
+    threads: dict[str, uuid.UUID] = {}
+    for _body, to, at in bodies_at:
+        if to not in threads:
+            threads[to] = uuid.uuid4()
+            session.add(
+                MessageThread(
+                    id=threads[to], org_id=org_id, our_e164="+12145550100",
+                    contact_e164=to, last_message_at=at,
+                )
+            )
+    await session.flush()
+    for body, to, at in bodies_at:
+        session.add(
+            Message(
+                id=uuid.uuid4(), org_id=org_id, thread_id=threads[to], direction="outbound",
+                status=status, from_e164="+12145550100", to_e164=to, body=body, media=[],
+                created_at=at,
+            )
+        )
+    await session.commit()
+    set_org_context(session, org_id)
+
+
+async def _reviewable_org(session, name="Dan Plumbing Ltd") -> uuid.UUID:
+    org_id = uuid.uuid4()
+    session.add(Org(id=org_id, name=name, slug=f"dans-{org_id.hex[:8]}"))
+    await session.commit()
+    set_org_context(session, org_id)
+    return org_id
+
+
+def _appointments(now, count):
+    return [
+        (f"Hi, your plumbing appointment is confirmed for {n % 7 + 1}pm. Dan.",
+         f"+1214555{2000 + (n % 400):04d}", now - timedelta(hours=2))
+        for n in range(count)
+    ]
+
+
+def _courier_scam(now, count, *, hours=1):
+    return [
+        (f"DHL: parcel {90000 + n} held pending fee. Pay: http://dhl-{n}.top/p",
+         f"+1972555{8000 + n:04d}", now - timedelta(hours=hours))
+        for n in range(count)
+    ]
+
+
+async def test_an_unreachable_ai_cannot_produce_a_reassuring_review_headline(session, settings):
+    """An outage must not read as a clean bill of health.
+
+    The first version counted every campaign FOUND as one reviewed, so with no AI key the
+    operator's review button answered "No campaign contradicts this business (2 reviewed)"
+    about two campaigns the model never saw. That is the audit's recurring pattern - a check
+    that can only return the reassuring answer - on the screen where it costs the most.
+    """
+    from app.services import monitor_review
+
+    org_id = await _reviewable_org(session)
+    now = datetime.now(timezone.utc)
+    await _campaign(session, org_id, bodies_at=_appointments(now, 40) + _courier_scam(now, 6))
+
+    settings.ai_guard_enabled = False
+    report = await monitor_review.review_account(session, settings, org_id, days=30)
+
+    assert report["ai"]["calls"] == 0
+    assert report["campaigns"], "the fixture must produce campaigns, or this proves nothing"
+    assert report["campaigns_reviewed"] == 0
+    assert report["conclusive"] is False
+    assert report["headline"].startswith("NOT REVIEWED")
+    assert "unavailable" in report["headline"]
+    # The exact sentence this used to return, asserted as a string so a future refactor that
+    # reintroduces it fails loudly.
+    assert "No campaign contradicts this business" not in report["headline"]
+
+
+async def test_a_thirty_day_review_reads_the_newest_traffic_and_admits_truncation(session, settings):
+    """`build` used to be ORDER BY created_at ASC LIMIT 5000, so a busy account's 30-day
+    review covered its OLDEST 5000 messages. A customer sending 400/day fills the cap on day
+    13; a review triggered by something that happened yesterday never loaded yesterday. The
+    scam was not scored low and not filtered out - it was never read."""
+    from app.services import monitor_cohorts, monitor_review
+
+    org_id = await _reviewable_org(session)
+    now = datetime.now(timezone.utc)
+    old = [
+        (f"Hi, your plumbing appointment is confirmed for {n % 7 + 1}pm. Dan.",
+         f"+1214555{2000 + (n % 400):04d}",
+         now - timedelta(days=20) + timedelta(seconds=n))
+        for n in range(5200)
+    ]
+    await _campaign(session, org_id, bodies_at=old + _courier_scam(now, 6, hours=24))
+
+    built = await monitor_cohorts.build(session, org_id, since=now - timedelta(days=30))
+    bodies = [c.sample_body.lower() for c, _ in built]
+    assert any("dhl" in b for b in bodies), (
+        "yesterday's campaign fell outside the row cap - the review cannot see what it was opened for"
+    )
+    assert built.truncated is True
+    assert built.scanned == 5000
+
+    settings.ai_guard_enabled = False
+    report = await monitor_review.review_account(session, settings, org_id, days=30)
+    assert report["coverage"]["truncated"] is True
+    assert "most recent 5000 messages" in report["headline"]
+    assert report["conclusive"] is False
+
+
+async def test_reviewing_one_account_twice_does_not_double_its_score(session, settings):
+    """`review_now` is open to any Reviewer and records signals. With no dedupe, one campaign
+    and three clicks reached the pause threshold (35 x 3 = 105 >= 100) - the review button
+    itself became the enforcement action."""
+    from app.services import monitor_review
+
+    org_id = await _reviewable_org(session)
+    now = datetime.now(timezone.utc)
+    await _campaign(session, org_id, bodies_at=_courier_scam(now, 12))
+
+    ai = FakeSafetyAI()
+    ai.cohort_verdict = lambda bodies: {
+        "verdict": "inconsistent", "confidence": 95, "category": "scam",
+        "impersonates": "DHL", "reason": "A plumber is sending courier fee notices.",
+    }
+    with ai.installed():
+        first = await monitor_review.review_account(session, settings, org_id, days=30)
+        assert first["signals_added"] == 1, first["headline"]
+        set_org_context(session, org_id)
+        after_one = (await monitor_score.get_state(session, org_id, create=True)).score
+
+        second = await monitor_review.review_account(session, settings, org_id, days=30)
+
+    assert second["signals_added"] == 0, "the same campaign was charged to the account twice"
+    assert second["campaigns"][0]["already_on_record"] is True
+    set_org_context(session, org_id)
+    assert (await monitor_score.get_state(session, org_id, create=True)).score == after_one
+    # And the second review still SAYS what it found: deduping the score must not hide the
+    # finding from the operator reading the report.
+    assert "do not match this business" in second["headline"]
+
+
+async def test_an_exhausted_ai_budget_is_stated_in_the_headline(session, settings):
+    """Cohorts come back largest-first, so a budget cut-off drops the SMALLEST campaigns -
+    exactly the shape of the four-message scam hidden inside legitimate traffic."""
+    from app.services import monitor_review
+
+    org_id = await _reviewable_org(session)
+    now = datetime.now(timezone.utc)
+    await _campaign(session, org_id, bodies_at=_appointments(now, 30) + _courier_scam(now, 4))
+
+    settings.monitor_review_max_ai_calls = 1
+    ai = FakeSafetyAI()
+    with ai.installed():
+        report = await monitor_review.review_account(session, settings, org_id, days=30)
+
+    assert report["ai"]["calls"] == 1
+    assert report["ai"]["skipped"] >= 1
+    assert report["conclusive"] is False
+    assert "could not be reviewed" in report["headline"]
+    assert "budget is 1 AI calls" in report["headline"]
