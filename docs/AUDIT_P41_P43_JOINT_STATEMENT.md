@@ -112,10 +112,30 @@ PostgreSQL), `2c8b757` (runbook).
    `components/security` and one settings card; it has explicitly NOT read the rest of the
    console, and independently re-ran the auth suites on a clear machine (67 passed across 8
    files) and reproduced the two suspected flakes passing in isolation, so that conclusion is
-   two-directional rather than one session's. Two tests remain a named follow-up rather than a
-   closed matter — `AgentPage > creates, renames...` and `p26VerifyComposer > clicking a
-   quick-pick entry...` — with the diagnosis recorded (assert after awaiting the typed value,
-   not immediately after `userEvent.type`). Its
+   two-directional rather than one session's.
+   CORRECTION, 18 Sept 2026, after this statement was first signed. An earlier version of this
+   paragraph recorded two tests as an open follow-up with a diagnosis: `AgentPage > creates,
+   renames...` and `p26VerifyComposer > clicking a quick-pick entry...`, attributed to
+   asserting immediately after `userEvent.type` instead of awaiting the typed value. **That
+   diagnosis was wrong on both tests, and it is now fixed in cdc9913.** The real causes:
+   p26VerifyComposer was not a typing race at all — the list is debounced 200 ms, so the first
+   listbox rendered belongs to the previous search term, and when the debounce fires the query
+   key changes, the new query has no cached data and React discards the option nodes; a handle
+   taken before that is detached, so the click silently does nothing (`sameNode: false` across
+   the debounce, reproduced with zero artificial load). The recorded fix would have made it
+   WORSE in the predicted way — wrapping the value assertion in `waitFor` waits for a value
+   that never arrives because the click never ran, so it would have failed more slowly and
+   looked like a deeper defect. AgentPage was not a race in any form: the error was `Test timed
+   out in 5000ms`, invisible because that run had been piped into `tail`; running all of
+   `src/pages` at a deliberately tight 1200 ms budget produced six failures, every one a
+   timeout and not one an assertion failure, which is the discriminator between a budget and a
+   race. `vite.config.ts` now sets `testTimeout: 20000` with that evidence beside it. The fixed
+   shape was then held green at 1500 ms — over four times the 350 ms that reproduced the
+   failure — which is the test that distinguishes a condition-based fix from a merely wider
+   window. How the error got in, since that is the point of section (d): the auditing session
+   asserted the typing-race mechanism from a symptom summary without reading either component,
+   the implementing session recorded it in its handover, and the auditing session relayed it
+   into this document. Both signatories propagated a mechanism neither had checked. Its
    own handover note is docs/CONSOLE_AUTH_UI.md, which carries an explicit NOT-restyled list -
    SessionsCard, LoginHistoryCard, OrgSecurityPolicyCard, AccountSecurityCards,
    components/kyc/, and the login risk flags, which still have no surface at all. "The auth UI
