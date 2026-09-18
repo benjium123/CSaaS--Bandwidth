@@ -11,6 +11,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import sqlalchemy as sa
+
 from app.db.base import set_org_context
 from app.models import Message, MessageThread, Org
 from app.services import monitor_cohorts as mc
@@ -399,3 +401,699 @@ async def test_low_confidence_gets_a_lighter_weight(session):
     ).first()
     assert signal is not None
     assert signal.weight == mc.WEIGHT_INCONSISTENT_WEAK
+
+
+# ======================================================================================
+# Repetition. The sweep runs hourly over a 24-hour window, so it sees the same campaign
+# roughly 24 times - and the score is a rolling sum with no decay.
+# ======================================================================================
+async def test_the_same_campaign_is_not_re_signalled_on_the_next_sweep(session, monkeypatch):
+    """Without dedupe this is the worst bug in the design, and it is arithmetic, not judgement.
+
+    One scam campaign, weight 35, re-signalled on every hourly pass across a 24-hour window:
+    105 points by the third hour, past the pause threshold of 100, from ONE campaign nobody
+    looked at twice. The operator then opens a queue showing twenty-four campaigns where there
+    was one - which is precisely the false volume the cohort design exists to remove. It also
+    pays for an AI call every single time, so the load claim collapses with it.
+    """
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                            deepseek_api_key="test-key", monitor_auto_action=True)
+    org_id = await _plumber_with_a_side_scam(session, settings)
+
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 92, "category": "impersonation",
+        "impersonates": "DHL", "reason": "Courier parcel-fee notices from a plumber.",
+    }
+    with ai.installed():
+        first = await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=1))
+        # The next hourly pass, same 24-hour window, same messages still inside it.
+        second = await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=2))
+
+    assert first["signals"] == 1
+    assert second["signals"] == 0, "the same campaign was signalled twice"
+    assert second["reviewed"] == 0, "and it cost a second AI call to do it"
+    assert second["repeats"] == 1, "the repeat should be counted, not silently dropped"
+    # One AI call across BOTH passes: the dedupe is checked before the money is spent.
+    assert len(ai.tasks("reviewing a CAMPAIGN")) == 1
+
+    set_org_context(session, org_id)
+    import sqlalchemy as sa
+
+    from app.models import MonitorSignal
+
+    rows = (
+        await session.execute(
+            sa.select(sa.func.count(MonitorSignal.id)).where(
+                MonitorSignal.org_id == org_id, MonitorSignal.kind == mc.SIGNAL_KIND
+            )
+        )
+    ).scalar_one()
+    assert rows == 1, f"{rows} signals on disk for one campaign"
+
+
+async def test_a_rejected_campaign_does_not_reappear_on_the_next_sweep(session):
+    """The operator's decision must outlive the arithmetic.
+
+    When an operator rejects a recommendation ("I checked the messages, this IS their real
+    business"), `cleared_before` stops the old signals counting. If the dedupe were narrowed to
+    that same cutoff, the very next sweep would re-signal the identical template, the score
+    would climb back, and the recommendation would be on the operator's desk again within the
+    hour. So `signalled_fingerprints` deliberately spans the whole signal window and ignores
+    `cleared_before` - "I checked this" buys quiet for the window, not for one tick.
+    """
+    from app.services import monitor_score
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                            deepseek_api_key="test-key")
+    org_id = await _plumber_with_a_side_scam(session, settings)
+
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 92, "category": "impersonation",
+        "impersonates": "DHL", "reason": "Courier parcel-fee notices from a plumber.",
+    }
+    with ai.installed():
+        assert (await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=1)))[
+            "signals"
+        ] == 1
+
+        # The operator rejects it, exactly as the decision endpoint does.
+        set_org_context(session, org_id)
+        state = await monitor_score.get_state(session, org_id, create=True)
+        monitor_score.clear_recommendation(state)
+        state.cleared_before = NOW + timedelta(minutes=2)
+        state.score = 0
+        await session.commit()
+
+        after = await mc.tick(session, settings, hours=1, now=NOW + timedelta(minutes=3))
+
+    assert after["signals"] == 0, "a rejected campaign was re-raised by the next sweep"
+    assert after["repeats"] == 1
+    set_org_context(session, org_id)
+    state = await monitor_score.get_state(session, org_id, create=True)
+    assert monitor_score.recommended_level(state) is None
+    assert state.score == 0
+
+
+async def test_a_build_reports_what_it_could_not_see(session):
+    """`truncated` and `singletons` exist so no caller can present a partial read as a full one.
+
+    This is the same failure as the headline bug in monitor_review: a function that cannot say
+    "I only read the most recent N messages" hands its caller no way to avoid claiming it read
+    everything.
+    """
+    org_id = await _org(session)
+    # Twelve genuinely unrelated one-offs. They have to be unrelated in WORDING, not just in
+    # subject: the first draft of this test used "a one-off note about job <n>" twelve times,
+    # which is one template with a merge field and correctly clustered into a single cohort.
+    one_offs = [
+        "Running about twenty minutes late, sorry.",
+        "Can you leave the side gate unlocked please?",
+        "The part came in, I can fit it Thursday.",
+        "Invoice attached, no rush on payment.",
+        "That leak was the washer, not the pipe.",
+        "Do you want me to take the old boiler away?",
+        "Parking was a nightmare, I ended up round the corner.",
+        "Your tenant says the pressure has dropped again.",
+        "I've left the manual on the kitchen worktop.",
+        "Quote is a bit higher because of the scaffolding.",
+        "Happy to come back and check it next week.",
+        "Give me a ring when you're home and I'll swing by.",
+    ]
+    for n, body in enumerate(one_offs):
+        await _send(session, org_id, body=body, to=f"+1214555{4000 + n}", at=NOW)
+    for n in range(4):
+        await _send(session, org_id, body=f"Hi, your parcel DHL-{n} is held. Pay the fee.",
+                    to=f"+1214555{5000 + n}", at=NOW)
+    await session.commit()
+
+    full = await mc.build(session, org_id, since=NOW - timedelta(hours=1))
+    assert full.scanned == 16
+    assert full.truncated is False
+    assert full.singletons == 12, "the one-offs are a known blind spot and must be reported"
+    assert len(full) == 1
+
+    capped = await mc.build(session, org_id, since=NOW - timedelta(hours=1), limit=8)
+    assert capped.truncated is True, "hitting the row cap must be visible to the caller"
+    assert capped.scanned == 8
+
+
+# ======================================================================================
+# The operator's review button, and the one thing it must never do: reassure.
+# These live here rather than in test_monitor_operator_control.py because they need the
+# cohort fixtures above - the property under test is that monitor_review reports the cohort
+# layer's blind spots honestly rather than reporting silence as safety.
+# ======================================================================================
+def _pin_review_clock(monkeypatch):
+    """`review_account` reads the wall clock, and these fixtures are pinned to NOW. Widening
+    `days` instead would make the tests pass only until the fixture date drifts far enough into
+    the past, which is a test that expires."""
+    from app.services import monitor_review
+
+    monkeypatch.setattr(monitor_review, "_now", lambda: NOW + timedelta(minutes=1))
+
+
+async def test_a_review_with_no_ai_does_not_report_a_clean_bill_of_health(session, monkeypatch):
+    """The bug the peer proved with a probe, pinned.
+
+    Before this, `review_account` counted every campaign FOUND as one reviewed, so with no AI
+    key the operator pressed "review" and got back:
+        headline: "No campaign contradicts this business (2 reviewed)"
+        ai: {"available": False, "calls": 0, "skipped": 2}
+    Two campaigns the model never saw, reported as two campaigns cleared. An operator reading
+    the headline - which is the entire point of a headline - would close the case.
+    """
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+
+    # No provider key: ai_guard.is_available() is False, exactly as during an outage or a
+    # misconfigured deploy.
+    settings = make_settings(monitor_enforced=True, monitor_auto_action=False)
+    org_id = await _plumber_with_a_side_scam(session, settings)
+    _pin_review_clock(monkeypatch)
+
+    report = await monitor_review.review_account(session, settings, org_id, days=30)
+
+    assert report["ai"]["available"] is False
+    assert report["campaigns"], "the campaigns were still found and still listed"
+    assert report["campaigns_reviewed"] == 0
+    assert report["conclusive"] is False, "nothing was judged, so nothing is settled"
+    headline = report["headline"]
+    assert "NOT REVIEWED" in headline, headline
+    assert "unavailable" in headline.lower(), headline
+    # The specific words that must not appear, because they are what a reader acts on.
+    assert "no campaign contradicts" not in headline.lower(), headline
+    assert report["actions_taken"] == [], "and it still must not act"
+
+
+async def test_a_review_that_did_run_says_how_much_it_judged(session, monkeypatch):
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key", monitor_auto_action=False)
+    org_id = await _plumber_with_a_side_scam(session, settings)
+    _pin_review_clock(monkeypatch)
+
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 92, "category": "impersonation",
+        "impersonates": "DHL", "reason": "Courier parcel-fee notices from a plumber.",
+    }
+    with ai.installed():
+        report = await monitor_review.review_account(session, settings, org_id, days=30)
+
+    assert report["campaigns_reviewed"] == len(report["campaigns"])
+    assert report["conclusive"] is True
+    assert "reviewed campaigns do not match this business" in report["headline"]
+    assert report["coverage"]["messages_scanned"] == 304
+    assert report["coverage"]["truncated"] is False
+    # It records what it found, and still takes no action.
+    assert report["signals_added"] >= 1
+    assert report["actions_taken"] == []
+    assert report["monitor"]["level"] != "paused"
+
+
+async def test_a_second_review_does_not_double_the_score(session, monkeypatch):
+    """The operator's button is idempotent per template. Pressing "thorough review" twice on
+    the same account must not score the same campaign twice - otherwise the act of looking
+    carefully at an account is itself enough to get it paused."""
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key", monitor_auto_action=False)
+    org_id = await _plumber_with_a_side_scam(session, settings)
+    _pin_review_clock(monkeypatch)
+
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 92, "category": "impersonation",
+        "impersonates": "DHL", "reason": "Courier parcel-fee notices from a plumber.",
+    }
+    with ai.installed():
+        first = await monitor_review.review_account(session, settings, org_id, days=30)
+        second = await monitor_review.review_account(session, settings, org_id, days=30)
+
+    assert first["signals_added"] >= 1
+    assert second["signals_added"] == 0, "the second review scored the same campaign again"
+    assert second["monitor"]["score"] == first["monitor"]["score"]
+    flagged = [c for c in second["campaigns"] if c.get("already_on_record")]
+    assert flagged, "the report should say which campaigns were already on the record"
+
+
+# ======================================================================================
+# The wiring. A detector with no caller detects nothing.
+# ======================================================================================
+async def test_the_sweeper_actually_runs_the_cohort_sweep(session, monkeypatch):
+    """`tick()` existed, was tested, and was called by NOTHING for its whole life.
+
+    Every other test in this file drives `tick` directly, which is exactly why that could go
+    unnoticed: a unit test proves the function works, never that anything invokes it. In
+    production the hourly sweeper is the only thing that would, so this asserts the sweeper
+    reaches it - and asserts it through `run_once`, the real entry point, rather than by reading
+    the job list.
+    """
+    from types import SimpleNamespace
+
+    from app.services import monitor_exam
+    from app.services import sweeper as sweeper_svc
+    from tests.conftest import make_settings
+
+    # This test drives the WHOLE sweeper pass, which includes other AI-bound jobs that do not
+    # install the fake - and `backend/.env` holds a live DeepSeek key. A bogus key gets a 401
+    # rather than a bill, but it is still a real outbound request from a unit test, and the
+    # failure mode if the key were ever valid is silent and costs money rather than turning
+    # anything red. Point the client at a closed port so nothing can leave the machine.
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key",
+                             deepseek_base_url="http://127.0.0.1:1")
+    org_id = await _plumber_with_a_side_scam(session, settings)
+
+    calls: list[dict] = []
+
+    async def spy(_session, _settings, **kwargs):
+        calls.append(kwargs)
+        return {"orgs": 1, "cohorts": 2, "reviewed": 1, "signals": 1, "unavailable": 0,
+                "repeats": 0}
+
+    monkeypatch.setattr(mc, "tick", spy)
+    # The same hourly block holds the canary and the WEEKLY EXAM, and the exam deliberately
+    # runs in a task beside the sweeper (`asyncio.create_task`) because it takes minutes. Left
+    # due, it outlives this test and dies mid-rollback during teardown, which shows up as a
+    # CancelledError in an unrelated fixture. Nothing to do with the wiring under test.
+    async def _not_due(*_a, **_k):
+        return False
+
+    monkeypatch.setattr(monitor_exam, "due", _not_due)
+    fake_app = SimpleNamespace(state=SimpleNamespace(settings=settings, media_store=None))
+
+    results = await sweeper_svc.run_once(fake_app)
+
+    assert calls, "the sweeper never called the cohort sweep"
+    assert calls[0]["hours"] == 24
+    # The counts reach the pass log flattened, not as a nested dict - a dict is always truthy
+    # and `any(results.values())` would then announce every hourly pass as eventful. (Other
+    # jobs in this pass do return structures, so this checks the cohort keys specifically.)
+    assert results["monitor_campaign_signals"] == 1
+    assert results["monitor_campaigns"] == 1
+    assert not any(
+        isinstance(v, dict) for k, v in results.items() if k.startswith("monitor_campaign")
+    )
+
+    # Hourly gate: an immediate second pass must not run it again.
+    await sweeper_svc.run_once(fake_app)
+    assert len(calls) == 1, "the cohort sweep ran twice inside one hour"
+    assert org_id is not None
+
+
+# ======================================================================================
+# The scammer who buys three accounts. The one pattern a per-account lens cannot see.
+# ======================================================================================
+async def test_a_victim_list_split_across_workspaces_is_counted_not_named(session, monkeypatch):
+    """Two workspaces, the same strangers, neither remarkable on its own.
+
+    This is the gap the whole rest of the module has by construction: every other signal here
+    is computed inside one org, and an operation that splits one list across three accounts
+    gives each account a modest campaign to a modest number of strangers. The overlap is the
+    only thing that betrays it.
+
+    And it must stay a COUNT. The second workspace's identity, numbers and message bodies must
+    never appear in the first one's review, or the safety feature becomes the tenancy leak.
+    """
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+
+    settings = make_settings(monitor_enforced=True, monitor_auto_action=False)
+    victims = [f"+1972555{7000 + n}" for n in range(12)]
+
+    first = await _org(session)
+    for to in victims:
+        await _send(session, first, body=f"DHL: parcel held, pay the fee. {to[-3:]}", to=to,
+                    at=NOW)
+    await session.commit()
+
+    # A second workspace, working the same list with a different template.
+    second = uuid.uuid4()
+    session.add(Org(id=second, name="Other Ltd", slug=f"other-{second.hex[:8]}"))
+    await session.commit()
+    # The write guard refuses a row whose org_id is not the session's context, which is the
+    # tenancy boundary doing its job - the fixture has to switch orgs explicitly.
+    set_org_context(session, second)
+    for to in victims[:9]:
+        await _send(session, second, body=f"USPS: redelivery fee outstanding. {to[-3:]}", to=to,
+                    at=NOW)
+    await session.commit()
+
+    _pin_review_clock(monkeypatch)
+    report = await monitor_review.review_account(session, settings, first, days=30)
+
+    campaign = report["campaigns"][0]
+    overlap = campaign["shared_with_other_workspaces"]
+    assert overlap["recipients_checked"] == 12
+    assert overlap["also_contacted_elsewhere"] == 9, overlap
+    assert overlap["other_workspaces"] == 1
+
+    # Nothing identifying the other workspace crosses over. Checked against the whole report,
+    # not just the overlap block, because a leak would not politely stay in its own field.
+    blob = repr(report)
+    assert str(second) not in blob
+    assert "Other Ltd" not in blob
+    assert "USPS" not in blob, "another workspace's message body reached this report"
+
+
+async def test_overlap_is_evidence_and_never_a_score(session, monkeypatch):
+    """A shared recipient list is not proof of anything - bought lead lists are ordinary, and a
+    consumer legitimately hears from several businesses. Scoring it would score a customer for
+    their supplier's behaviour, so it must not move the needle on its own."""
+    from app.models import MonitorSignal
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+
+    settings = make_settings(monitor_enforced=True, monitor_auto_action=False)
+    shared = [f"+1305555{8000 + n}" for n in range(10)]
+
+    a = await _org(session)
+    for to in shared:
+        await _send(session, a, body="Your MOT is due this month, book online.", to=to, at=NOW)
+    await session.commit()
+    b = uuid.uuid4()
+    session.add(Org(id=b, name="Garage Two", slug=f"g2-{b.hex[:8]}"))
+    await session.commit()
+    set_org_context(session, b)
+    for to in shared:
+        await _send(session, b, body="Service reminder: your car is due a check.", to=to, at=NOW)
+    await session.commit()
+
+    _pin_review_clock(monkeypatch)
+    report = await monitor_review.review_account(session, settings, a, days=30)
+
+    assert report["campaigns"][0]["shared_with_other_workspaces"][
+        "also_contacted_elsewhere"
+    ] == 10
+    assert report["signals_added"] == 0
+    set_org_context(session, a)
+    signals = (
+        await session.execute(
+            sa.select(sa.func.count(MonitorSignal.id)).where(MonitorSignal.org_id == a)
+        )
+    ).scalar_one()
+    assert signals == 0, "overlap must not write a signal"
+    assert report["monitor"]["level"] == "normal"
+
+
+# ======================================================================================
+# Measuring the MISS rate. Every other number here measures what was caught.
+# ======================================================================================
+async def _quiet_account_with_a_campaign(session, settings, name, *, body, count, at):
+    """An account with real outbound and no monitor findings at all - the kind the monitor is
+    silent on, which is exactly the population a miss hides in."""
+    org_id = uuid.uuid4()
+    slug = f"{name.lower().replace(chr(32), chr(45))}-{org_id.hex[:6]}"
+    session.add(Org(id=org_id, name=name, slug=slug))
+    await session.commit()
+    set_org_context(session, org_id)
+    stem = str(int(org_id.int % 900 + 100))
+    for n in range(count):
+        await _send(
+            session, org_id, body=f"{body} ref {90000 + n}",
+            to=f"+1972{stem}{n:04d}", at=at,
+        )
+    await session.commit()
+    return org_id
+
+
+async def test_the_audit_looks_where_the_monitor_says_there_is_nothing(session, monkeypatch):
+    """The only number in this system that can get worse while every other one looks healthy.
+
+    Signals raised, campaigns flagged, exam cases stopped - none of them move when the monitor
+    stops SEEING something. A template that drifts below the pre-filter, or an account nobody had
+    a reason to open, produces exactly the reporting a clean platform does. "No findings" and
+    "not looking" are indistinguishable from the inside, so this samples accounts the monitor
+    believes are fine and reviews them properly.
+    """
+    from app.models import MonitorHealth
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key", monitor_auto_action=False)
+    scammer = await _quiet_account_with_a_campaign(
+        session, settings, "Quiet Scammer",
+        body="DHL: your parcel is held pending a fee. Pay now.", count=6, at=NOW,
+    )
+    _pin_review_clock(monkeypatch)
+
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 93, "category": "impersonation",
+        "impersonates": "DHL", "reason": "Courier parcel-fee notices from an unrelated business.",
+    }
+    with ai.installed():
+        report = await monitor_review.audit_sample(
+            session, settings, sample_size=3, days=7, seed=1, now=NOW + timedelta(minutes=1)
+        )
+
+    assert report["sampled"] >= 1
+    assert report["reviewed"] >= 1
+    assert report["missed"] == 1, report
+    assert report["miss_rate"] == round(1 / report["reviewed"], 3)
+    assert report["passed"] is False
+    found = report["findings"][0]
+    assert found["org_id"] == str(scammer)
+    assert found["campaigns"][0]["reason"]
+
+    # The result is a tracked series, not a number that scrolls past in a log.
+    rows = (
+        (
+            await session.execute(
+                sa.select(MonitorHealth).where(MonitorHealth.kind == "audit_sample")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].passed is False
+    assert rows[0].detail["missed"] == 1
+
+
+async def test_the_audit_scores_nothing_and_tells_the_customer_nothing(session, monkeypatch):
+    """Two properties that make this a measurement rather than a sweep.
+
+    It must not score the accounts it samples - an audit that flagged what it sampled would change
+    the thing it measures, and being sampled would become a reason to be flagged. And it must not
+    write into a sampled customer's own audit log, because that log is visible to them: it would
+    tell a customer they had been picked for a scam audit, which is both a tip-off and, for the
+    innocent majority, simply untrue as a statement about them.
+    """
+    from app.models import MonitorSignal
+    from app.models.platform import AuditLogEntry
+    from app.services import monitor_review, monitor_score
+    from tests.conftest import make_settings
+    from tests.fake_ai import FakeSafetyAI
+
+    settings = make_settings(monitor_enforced=True, ai_guard_enabled=True,
+                             deepseek_api_key="test-key", monitor_auto_action=False)
+    org_id = await _quiet_account_with_a_campaign(
+        session, settings, "Sampled Co",
+        body="URGENT: your bank account is suspended, verify now.", count=6, at=NOW,
+    )
+    _pin_review_clock(monkeypatch)
+
+    ai = FakeSafetyAI()
+    ai.generic = {
+        "verdict": "inconsistent", "confidence": 95, "category": "phishing",
+        "impersonates": "a bank", "reason": "Bank-impersonation phishing.",
+    }
+    with ai.installed():
+        report = await monitor_review.audit_sample(
+            session, settings, sample_size=3, days=7, seed=7, now=NOW + timedelta(minutes=1)
+        )
+    assert report["missed"] == 1, "the fixture must actually be caught, or this proves nothing"
+
+    set_org_context(session, org_id)
+    signals = (
+        await session.execute(
+            sa.select(sa.func.count(MonitorSignal.id)).where(MonitorSignal.org_id == org_id)
+        )
+    ).scalar_one()
+    assert signals == 0, "the audit scored an account it merely sampled"
+    state = await monitor_score.get_state(session, org_id, create=False)
+    assert state is None or (state.level == "normal" and state.score == 0)
+
+    rows = (
+        (
+            await session.execute(
+                sa.select(AuditLogEntry).where(AuditLogEntry.org_id == org_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows == [], "a sampled customer must not be able to see that they were sampled"
+
+
+async def test_an_audit_that_could_review_nothing_does_not_pass(session, monkeypatch):
+    """The failure this whole function exists to detect, which it must not commit itself.
+
+    With no AI reachable, nothing can be judged - and a `missed == 0` computed over zero reviews
+    is the same vacuous pass as a catch rate over zero cases. `passed` therefore requires that
+    something was actually reviewed, and `miss_rate` stays None rather than becoming 0.0, because
+    0.0 reads as "we checked and found nothing".
+    """
+    from app.models import MonitorHealth
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+
+    # No provider key: ai_guard.is_available() is False.
+    settings = make_settings(monitor_enforced=True, monitor_auto_action=False)
+    await _quiet_account_with_a_campaign(
+        session, settings, "Unreviewable Co",
+        body="DHL: your parcel is held pending a fee.", count=6, at=NOW,
+    )
+    _pin_review_clock(monkeypatch)
+
+    report = await monitor_review.audit_sample(
+        session, settings, sample_size=3, days=7, seed=3, now=NOW + timedelta(minutes=1)
+    )
+
+    assert report["sampled"] >= 1
+    assert report["reviewed"] == 0
+    assert report["missed"] == 0
+    assert report["miss_rate"] is None, "0.0 would read as 'checked, found nothing'"
+    assert report["passed"] is False, "an audit that reviewed nothing has not passed"
+    assert report["inconclusive"] >= 1
+    row = (
+        await session.execute(
+            sa.select(MonitorHealth).where(MonitorHealth.kind == "audit_sample")
+        )
+    ).scalar_one()
+    assert row.passed is False
+
+
+async def test_the_audit_ignores_accounts_the_monitor_already_flagged(session, monkeypatch):
+    """The miss rate is about accounts the monitor is SILENT on. An account already carrying a
+    finding, or already above `normal`, is in front of a human by another route - counting it
+    here would flatter the number with cases the system did not miss."""
+    from app.services import monitor_review, monitor_score
+    from tests.conftest import make_settings
+
+    settings = make_settings(monitor_enforced=True, monitor_auto_action=False)
+    flagged = await _quiet_account_with_a_campaign(
+        session, settings, "Already Known",
+        body="DHL: your parcel is held pending a fee.", count=6, at=NOW,
+    )
+    await monitor_score.add_signal(
+        session, settings, flagged, "text_blocked", "already caught", weight=40
+    )
+    await session.commit()
+    _pin_review_clock(monkeypatch)
+
+    report = await monitor_review.audit_sample(
+        session, settings, sample_size=5, days=7, seed=5, now=NOW + timedelta(minutes=1)
+    )
+    assert report["eligible_accounts"] == 0, "an already-flagged account is not a candidate"
+    assert report["sampled"] == 0
+    assert report["miss_rate"] is None
+    assert report["passed"] is False
+
+
+async def test_the_audit_leaves_no_row_on_an_account_it_merely_sampled(session, monkeypatch):
+    """The promise in the docstring was false, and the write was in the READ.
+
+    `review_account` called `get_state(create=True)`, which INSERTs an empty `OrgMonitoring` row
+    for any account that has never been monitored. So a sampled account acquired a row whose
+    `created_at` records the moment it was audited - "was I sampled?" answerable from the
+    database, from a function documented as writing nothing. `record_signals=False` never covered
+    it, because a signal was not what got written.
+    """
+    from app.models import OrgMonitoring
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+
+    settings = make_settings(monitor_enforced=True, monitor_auto_action=False)
+    org_id = await _quiet_account_with_a_campaign(
+        session, settings, "Untouched By Audit",
+        body="DHL: your parcel is held pending a fee.", count=6, at=NOW,
+    )
+    _pin_review_clock(monkeypatch)
+
+    before = (
+        await session.execute(sa.select(sa.func.count(OrgMonitoring.id)))
+    ).scalar_one()
+    report = await monitor_review.audit_sample(
+        session, settings, sample_size=3, days=7, seed=2, now=NOW + timedelta(minutes=1)
+    )
+    assert report["sampled"] >= 1, "the fixture must actually be sampled, or this proves nothing"
+    after = (
+        await session.execute(sa.select(sa.func.count(OrgMonitoring.id)))
+    ).scalar_one()
+    assert after == before, "the audit created a monitoring row for an account it only read"
+
+    set_org_context(session, org_id)
+    assert (
+        await session.execute(
+            sa.select(OrgMonitoring).where(OrgMonitoring.org_id == org_id)
+        )
+    ).scalar_one_or_none() is None
+
+    # And an account with no row still reads as "the monitor has no opinion" rather than as
+    # missing data - which is the literally true statement about it.
+    one = await monitor_review.review_account(
+        session, settings, org_id, days=7, record_signals=False, touch_state=False
+    )
+    assert one["monitor"] == {
+        "level": "normal",
+        "score": 0,
+        "recommendation": None,
+        "paused_reason": None,
+    }
+
+
+async def test_a_requested_sample_size_is_honoured_not_floored_by_the_bands(session, monkeypatch):
+    """`sample_size // 3` gave one per band, so an operator who asked for five got three - with
+    the report saying `sampled: 3`, so nothing lied and nothing explained it either."""
+    from app.services import monitor_review
+    from tests.conftest import make_settings
+
+    settings = make_settings(monitor_enforced=True, monitor_auto_action=False)
+    for n in range(9):
+        await _quiet_account_with_a_campaign(
+            session, settings, f"Book Co {n}",
+            body=f"Reminder number {n} about your booking with us this week.", count=3, at=NOW,
+        )
+    _pin_review_clock(monkeypatch)
+
+    for asked in (1, 2, 5, 8):
+        report = await monitor_review.audit_sample(
+            session, settings, sample_size=asked, days=7, seed=4,
+            now=NOW + timedelta(minutes=1),
+        )
+        assert report["sampled"] == asked, f"asked for {asked}, sampled {report['sampled']}"
+
+
+def test_the_miss_rate_carries_its_precision():
+    """A rate without its sample size is a claim, not a measurement - and this one always errs
+    towards "the platform looks clean". One-sided Clopper-Pearson, checked against the closed
+    form for the zero-miss case: 1 - 0.05**(1/n)."""
+    from app.services.monitor_review import miss_rate_upper_bound
+
+    assert miss_rate_upper_bound(0, 9) == round(1 - 0.05 ** (1 / 9), 3) == 0.283
+    assert miss_rate_upper_bound(0, 25) == round(1 - 0.05 ** (1 / 25), 3)
+    # More reviews, tighter bound - the whole reason to report it.
+    assert miss_rate_upper_bound(0, 50) < miss_rate_upper_bound(0, 9)
+    # A miss found: the bound sits above the point estimate, never below it.
+    assert miss_rate_upper_bound(1, 9) > 1 / 9
+    # Degenerate cases say "we know nothing" rather than something reassuring.
+    assert miss_rate_upper_bound(0, 0) == 1.0
+    assert miss_rate_upper_bound(9, 9) == 1.0

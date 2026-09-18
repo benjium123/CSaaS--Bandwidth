@@ -36,16 +36,30 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import set_org_context
 from app.models import Message, MessageThread
 
+log = structlog.get_logger("monitor_cohorts")
+
 #: Two bodies are the same template when their normalised shingle sets overlap at least this
-#: much (Jaccard). Generous on purpose: over-merging two genuine templates costs one extra AI
-#: call, while under-merging splits a scam campaign into singletons and destroys the signal
-#: entirely. Asymmetric costs, so err towards merging.
-DEFAULT_SIMILARITY = 0.55
+#: much (Jaccard). MEASURED rather than guessed - the first value, 0.55, was above the floor
+#: for real personalised traffic and silently split templates apart:
+#:     same template, name swap, short body   0.43   <- the binding case
+#:     same template, name swap, long body    0.71
+#:     same template, day and time swap       1.00
+#:     same template, two names swapped       0.50
+#:     DIFFERENT: appointment vs parcel scam  0.00
+#:     DIFFERENT: invoice vs bank scam        0.00
+#:     DIFFERENT: two genuine templates       0.00
+#: A wide empty gap between 0.43 and 0.00, so 0.30 sits in the middle with margin on both
+#: sides. Note the cost asymmetry is NOT the naive one: over-merging used to be "one wasted
+#: AI call", but a merged-in scam was never shown to the model at all until `bodies_for_review`
+#: started sending the least-similar members too. Both directions lose the signal, so the
+#: threshold belongs in the measured gap rather than at either edge.
+DEFAULT_SIMILARITY = 0.30
 #: Word n-gram width. Shingles rather than single words so that word ORDER matters - two
 #: messages with the same vocabulary but different structure are different templates.
 #: Width 2 rather than 3: personalisation changes ONE word, and the narrower the window the
@@ -54,6 +68,9 @@ SHINGLE = 2
 #: A cohort smaller than this is not a campaign. Kept as a parameter because a scammer who
 #: learns the threshold would send batches just under it.
 MIN_COHORT = 2
+#: How many bodies from one cohort the AI is shown. One was a silent-miss bug: a scam that
+#: merged into a legitimate cohort was never put in front of the model at all.
+_MAX_SAMPLES = 3
 
 _URL = re.compile(
     r"\bhttps?://\S+|\b[a-z0-9-]+\.(?:com|net|org|io|co|uk|link|xyz|top)\b/?\S*", re.I
@@ -71,10 +88,20 @@ _MONEY = re.compile(r"[$£€]\s?\d[\d,.]*")
 #: the same question about the same template, every day, for every business that books
 #: appointments. Collapsing the day and the meridiem is cheaper and safer than loosening the
 #: similarity threshold, which would start merging genuinely different templates.
+#: ANCHORED, and the abbreviations are curated. The first version ended each month prefix with
+#: `[a-z]*`, which ate every word starting with those letters: "marketing", "maybe", "decide",
+#: "DECLINED", "junk", "separate" and "novel" all normalised to "<when>", so "Your payment was
+#: declined" became "your payment was <when>" - deleting scam vocabulary from the very text
+#: this module exists to characterise.
+#: Bare "mar", "may", "wed", "sat" and "sun" are DELIBERATELY absent: each is an ordinary
+#: English word. Losing a little clustering power on "Sat 3pm" is far cheaper than losing the
+#: words "may", "sat" and "declined" from every message.
 _WHEN = re.compile(
-    r"\b(mon|tues|wednes|thurs|fri|satur|sun)day\b|\b(mon|tue|wed|thu|fri|sat|sun)\b"
-    r"|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b"
-    r"|\b(am|pm)\b|\b(today|tomorrow|tonight|yesterday)\b",
+    r"\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b"
+    r"|\b(?:january|february|march|april|june|july|august|september|october|november|december)\b"
+    r"|\b(?:jan|feb|apr|jun|jul|aug|sept|sep|oct|nov|dec)\b"
+    r"|\b(?:mon|tue|thu|thur|fri)\b"
+    r"|\b(?:am|pm)\b|\b(?:today|tomorrow|tonight|yesterday)\b",
     re.I,
 )
 _PUNCT = re.compile(r"[^\w\s<>]+")
@@ -151,6 +178,14 @@ class Cohort:
     #: The first body seen, kept verbatim for the operator and the AI. Never normalised -
     #: a decision pack must show what was actually sent.
     sample_body: str = ""
+    #: MORE than the seed, and the reason is a real hole that review by a second reader found:
+    #: `review_one` used to send only `sample_body`, so anything that merged into a cohort was
+    #: never shown to the model at all - the model answered about the seed. Over-merging was
+    #: therefore not "one wasted call", it was a silent miss. These are the members LEAST like
+    #: the seed, which is exactly where a merged-in scam would be.
+    samples: list[str] = field(default_factory=list)
+    #: Shingles EVERY member shares. The basis for the stable fingerprint; see cluster().
+    shared: frozenset[str] = frozenset()
     first_at: datetime | None = None
     last_at: datetime | None = None
 
@@ -161,6 +196,16 @@ class Cohort:
     @property
     def recipient_count(self) -> int:
         return len(self.recipients)
+
+    def bodies_for_review(self, limit: int = 3) -> list[str]:
+        """The seed plus the least-similar members, de-duplicated, for the AI and the operator."""
+        out = [self.sample_body] if self.sample_body else []
+        for body in self.samples:
+            if len(out) >= limit:
+                break
+            if body and body not in out:
+                out.append(body)
+        return out
 
 
 def cluster(
@@ -174,8 +219,16 @@ def cluster(
     which matters because a busy workspace's day is thousands of messages and only a
     handful of templates. Cohorts come back largest first - the operator's attention and
     the AI budget should both go to the biggest campaign first.
+
+    ORDER-DEPENDENT, deliberately and with a limit. Representatives are never updated after
+    creation, so with A~B and B~C both above the threshold but A~C below it, the grouping
+    depends on arrival order. That is acceptable for deciding what to look at; it is NOT
+    acceptable as a durable key, which is why `fingerprint` is recomputed from the settled
+    cohort's shared shingles below rather than taken from whichever message happened to
+    arrive first.
     """
     cohorts: list[Cohort] = []
+    seeds: dict[int, frozenset[str]] = {}
     for message_id, body, to_e164, created_at in rows:
         shingles = shingle_set(body or "")
         match = None
@@ -185,10 +238,22 @@ def cluster(
             if s >= best:
                 match, best = cohort, s
         if match is None:
-            match = Cohort(
-                fingerprint=fingerprint(body or ""), shingles=shingles, sample_body=body or ""
-            )
+            match = Cohort(shingles=shingles, sample_body=body or "", fingerprint="")
             cohorts.append(match)
+            seeds[id(match)] = shingles
+            match.shared = shingles
+        else:
+            # Keep the members LEAST like the seed. A scam that merged in is by definition the
+            # least similar member, and it is what the AI must be shown.
+            seed = seeds.get(id(match), match.shingles)
+            if body and similarity(seed, shingles) < 0.95:
+                match.samples.append(body)
+                if len(match.samples) > _MAX_SAMPLES * 4:
+                    match.samples = sorted(
+                        match.samples, key=lambda b: similarity(seed, shingle_set(b))
+                    )[:_MAX_SAMPLES]
+            # The shingles every member shares - a stable identity for the campaign.
+            match.shared = match.shared & shingles if match.shared else shingles
         match.message_ids.append(message_id)
         if to_e164:
             match.recipients.add(to_e164)
@@ -197,6 +262,23 @@ def cluster(
                 match.first_at = created_at
             if match.last_at is None or created_at > match.last_at:
                 match.last_at = created_at
+
+    for cohort in cohorts:
+        seed = seeds.get(id(cohort), cohort.shingles)
+        cohort.samples = sorted(
+            set(cohort.samples), key=lambda b: similarity(seed, shingle_set(b))
+        )[:_MAX_SAMPLES]
+        # STABLE id: hashed from the shingles every member of the settled cohort shares, so
+        # personalisation and arrival order cannot change it. Seeding it from the first
+        # message's full body meant the same template run on Monday and Friday got different
+        # ids whenever the first recipient's name differed - which broke every use of it
+        # (dedupe, "seen this campaign before", the operator's evidence blob).
+        basis = cohort.shared or cohort.shingles
+        cohort.fingerprint = (
+            hashlib.blake2b("\x1f".join(sorted(basis)).encode(), digest_size=8).hexdigest()
+            if basis
+            else ""
+        )
     cohorts.sort(key=lambda c: c.size, reverse=True)
     return cohorts
 
@@ -311,6 +393,30 @@ async def metrics(
     return out
 
 
+@dataclass
+class CohortSet:
+    """What a build produced, INCLUDING what it could not see.
+
+    A bare list cannot say "I only read the most recent 5000 of your 12000 messages", and a
+    caller that cannot say that will happily print "no campaign contradicts this business"
+    off the back of a partial read.
+    """
+
+    cohorts: list[tuple[Cohort, CohortMetrics]] = field(default_factory=list)
+    #: Messages actually loaded.
+    scanned: int = 0
+    #: True when the row cap was hit, so older traffic in the window was not read.
+    truncated: bool = False
+    #: Cohorts dropped for being one-offs. Reported because they are a known blind spot.
+    singletons: int = 0
+
+    def __iter__(self):
+        return iter(self.cohorts)
+
+    def __len__(self) -> int:
+        return len(self.cohorts)
+
+
 async def build(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -320,13 +426,21 @@ async def build(
     min_similarity: float = DEFAULT_SIMILARITY,
     min_size: int = MIN_COHORT,
     limit: int = 5000,
-) -> list[tuple[Cohort, CohortMetrics]]:
+) -> CohortSet:
     """Cohorts for one workspace's recent outbound, largest first, with their metrics.
 
-    `min_size` drops singletons: a one-off message to one person is a conversation, not a
-    campaign, and paying for an AI call on it is the per-message trap this module exists to
-    escape. Singletons still reach the existing per-message screen - this is an additional
-    lens, not a replacement for it.
+    NEWEST FIRST, and the truncation is reported. This used to read `ORDER BY created_at` ASC
+    with a 5000 cap, which on a 30-day operator review of a busy account returned the OLDEST
+    5000 messages: a customer sending 400/day fills the cap on day 13, so a review triggered by
+    something that happened yesterday covered days 1-13 and never loaded yesterday at all. The
+    scam cohort was not scored low or filtered out, it was never read. Proven on 5200 messages:
+    one cohort, 5000 messages, the recent scam absent.
+    `truncated` exists so the caller cannot present a partial read as a clean bill of health.
+
+    `min_size` drops singletons, and that is a REAL limit on what this lens can see: four
+    bespoke one-off impersonations are four singletons and are invisible here. It catches
+    campaigns - the same template sent repeatedly - which is what a scammer running volume has
+    to do, but the per-message screen remains the only thing looking at one-offs.
     """
     now = datetime.now(timezone.utc)
     start = since or (now - timedelta(hours=hours))
@@ -339,15 +453,21 @@ async def build(
                 Message.direction == "outbound",
                 Message.created_at >= start,
             )
-            .order_by(Message.created_at)
+            .order_by(Message.created_at.desc())
             .limit(limit)
         )
     ).all()
-    cohorts = [c for c in cluster(rows, min_similarity=min_similarity) if c.size >= min_size]
+    clustered = cluster(rows, min_similarity=min_similarity)
+    kept = [c for c in clustered if c.size >= min_size]
     out: list[tuple[Cohort, CohortMetrics]] = []
-    for cohort in cohorts:
+    for cohort in kept:
         out.append((cohort, await metrics(session, org_id, cohort, now=now)))
-    return out
+    return CohortSet(
+        cohorts=out,
+        scanned=len(rows),
+        truncated=len(rows) >= limit,
+        singletons=len(clustered) - len(kept),
+    )
 
 
 def looks_like_a_campaign(cohort: Cohort, m: CohortMetrics) -> bool:
@@ -364,7 +484,12 @@ def looks_like_a_campaign(cohort: Cohort, m: CohortMetrics) -> bool:
         return True
     if m.undelivered_rate >= 0.2:
         return True
-    return m.first_contact_ratio >= 0.5 and m.spread >= 5
+    # NOT `m.spread >= 5`. `_prefix` buckets +1 numbers by area code (300+ buckets, so five is
+    # trivial for a US blast) but every UK mobile is 4470-4479 - at most ten buckets, and a list
+    # inside one or two networks gives a spread of 1. A GB scam blast to 200 strangers could
+    # never trip this branch, which is the same NANP assumption the audit found in quiet hours.
+    # Recipient COUNT is country-neutral; spread stays as evidence an operator reads, not a gate.
+    return m.first_contact_ratio >= 0.5 and cohort.recipient_count >= 10
 
 
 # --------------------------------------------------------------------------------------
@@ -375,6 +500,9 @@ def looks_like_a_campaign(cohort: Cohort, m: CohortMetrics) -> bool:
 #: on its own, two should reach "restricted", three should reach the pause threshold. A
 #: scammer running a campaign a day is stopped within days; a single ambiguous campaign is
 #: not, which is the trade the operator's review budget actually cares about.
+#: The one signal kind this module writes. A constant because the dedupe query has to match
+#: exactly what the writers write, and two string literals drift.
+SIGNAL_KIND = "cohort_inconsistent"
 WEIGHT_INCONSISTENT = 35
 WEIGHT_INCONSISTENT_WEAK = 15
 #: Below this the model is guessing, and a guess at 1% prevalence is noise.
@@ -427,7 +555,12 @@ async def review_one(settings, cohort: Cohort, m: CohortMetrics, business: dict)
     user = "\n\n".join(
         [
             ai_guard.data_block("business", business),
-            ai_guard.data_block("template", cohort.sample_body[:2000]),
+            # EVERY sample, not just the seed: a scam that merged into a legitimate cohort
+            # was otherwise never put in front of the model at all.
+            ai_guard.data_block(
+                "messages_from_this_campaign",
+                [b[:1000] for b in cohort.bodies_for_review()],
+            ),
             ai_guard.data_block(
                 "how_the_batch_behaved",
                 {
@@ -468,10 +601,139 @@ async def review_one(settings, cohort: Cohort, m: CohortMetrics, business: dict)
     )
 
 
+async def signalled_fingerprints(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    since: datetime,
+    limit: int = 500,
+) -> set[str]:
+    """Templates already recorded as inconsistent for this account inside the window.
+
+    WHY THIS IS NECESSARY, not a nicety. The score is a rolling sum over
+    `monitor_signal_window_days` with no decay, and the sweep looks back 24 hours every hour.
+    Without this, ONE scam campaign is re-reviewed and re-signalled on every pass: 24 hours of
+    overlap x 35 points crosses the pause threshold three times over, from a single campaign,
+    by repetition alone. The operator then reads a queue showing twenty-four campaigns where
+    there was one, which is exactly the false volume this whole design exists to remove.
+
+    DELIBERATELY NOT narrowed by `state.cleared_before`. The score window is truncated there,
+    but the dedupe must not be: when an operator rejects a recommendation ("I checked, this is
+    their real business"), the signals stop counting - and if the next sweep were free to
+    re-signal the same template, the recommendation would be back within the hour and the
+    operator's decision would be undone by the arithmetic. Spanning the full window means a
+    rejected template stays quiet for the window, which is what "I checked this" should buy.
+
+    Costs one small query per account per pass. The rows are AI-confirmed findings, so there
+    are a handful per account, not thousands; `limit` is a guard, not a working constraint.
+    """
+    from app.models import MonitorSignal
+
+    set_org_context(session, org_id)
+    rows = (
+        (
+            await session.execute(
+                sa.select(MonitorSignal.detail)
+                .where(
+                    MonitorSignal.org_id == org_id,
+                    MonitorSignal.kind == SIGNAL_KIND,
+                    MonitorSignal.created_at >= since,
+                )
+                .order_by(MonitorSignal.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Read in Python rather than with a JSON path predicate: `detail` is PortableJSON, which is
+    # a real JSONB on Postgres and a TEXT column on SQLite, and a query that works on one
+    # silently matches nothing on the other.
+    return {
+        d["fingerprint"]
+        for d in rows
+        if isinstance(d, dict) and d.get("fingerprint")
+    }
+
+
+async def shared_recipient_count(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    recipients: Iterable[str],
+    *,
+    since: datetime,
+    sample: int = 500,
+) -> dict:
+    """How many of this campaign's recipients other workspaces also cold-contacted. COUNTS ONLY.
+
+    WHY THIS EXISTS. Everything else in this module looks at one account, and one account is
+    exactly what a serious operation does not confine itself to: buy three workspaces, split the
+    same victim list across them, and each account on its own looks like a modest business
+    sending a modest campaign. The overlap is the only thing that betrays it, and it is
+    structurally invisible to a per-account lens however good that lens is.
+
+    WHAT IT DELIBERATELY DOES NOT RETURN. Never the other workspaces' identities, never their
+    message bodies, never which of their numbers sent what - a count, and a count of distinct
+    others at the worst-overlapping recipient. An operator learns "this list is shared" and can
+    then look at each account through its own audited endpoint, which is where the cross-tenant
+    boundary belongs. Handing one customer's traffic to another customer's case file would make
+    this the platform's own tenancy leak, dressed up as a safety feature.
+
+    WHY IT IS EVIDENCE AND NOT A SCORE. A shared list is not proof of anything: bought lead
+    lists are legal and ordinary, and a consumer legitimately hears from several businesses.
+    Weighting this into the risk score would score customers for their SUPPLIER's behaviour. So
+    it lands in the report for a person to read, and nothing here calls `add_signal`.
+    """
+    numbers = [n for n in list(dict.fromkeys(recipients))[:sample] if n]
+    if not numbers:
+        return {"recipients_checked": 0, "also_contacted_elsewhere": 0, "other_workspaces": 0}
+
+    # JUSTIFIED allow_unscoped: this question is cross-tenant BY DEFINITION - "did anyone else
+    # message these numbers" cannot be asked inside one org's scope. Bounded to be safe to run
+    # unscoped: it selects no bodies and no org ids, aggregates to counts in the database, and
+    # the only rows that can influence the answer are ones whose recipient this org already
+    # knows, because it messaged them itself.
+    from app.db.base import ALLOW_UNSCOPED_KEY
+
+    rows = (
+        await session.execute(
+            sa.select(
+                Message.to_e164,
+                sa.func.count(sa.distinct(Message.org_id)).label("others"),
+            )
+            .where(
+                Message.to_e164.in_(numbers),
+                Message.org_id != org_id,
+                Message.direction == "outbound",
+                Message.created_at >= since,
+            )
+            .group_by(Message.to_e164)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    return {
+        "recipients_checked": len(numbers),
+        "also_contacted_elsewhere": len(rows),
+        # The worst single recipient, which is what says "list" rather than "coincidence": one
+        # number reached by four other workspaces in a month is not two businesses sharing a
+        # customer.
+        "other_workspaces": max((int(n) for _, n in rows), default=0),
+        "since": since.isoformat(),
+    }
+
+
 async def active_org_ids(
-    session: AsyncSession, *, since: datetime, limit: int = 500
+    session: AsyncSession, *, since: datetime, limit: int = 5000
 ) -> list[uuid.UUID]:
-    """Workspaces with outbound texts in the window."""
+    """Workspaces with outbound texts in the window.
+
+    The cap is 5000, not 500. The operator's stated book is 100-1000 customers, and a 500-row
+    LIMIT with no ORDER BY would have swept an arbitrary, database-chosen half of them while
+    the other half was never looked at - and reported nothing unusual, because from inside the
+    sweep 500 orgs with no findings looks identical to 500 orgs that are clean. Ids only, one
+    group-by, so 5000 rows is free; the cap exists to bound memory, not to sample. Hitting it
+    is logged as a WARNING because at that point the sweep has stopped being complete.
+    """
     # JUSTIFIED allow_unscoped: a platform-wide sweep that RESOLVES which orgs to look at, so
     # it cannot be org-scoped by construction. Returns ids only - no message content crosses a
     # tenant boundary here, and every later query is scoped to one org at a time.
@@ -490,6 +752,8 @@ async def active_org_ids(
         .scalars()
         .all()
     )
+    if len(rows) >= limit:
+        log.warning("cohort_sweep_org_cap_reached", cap=limit, since=since.isoformat())
     return list(rows)
 
 
@@ -514,19 +778,57 @@ async def tick(
 
     started = now or datetime.now(timezone.utc)
     since = started - timedelta(hours=hours)
-    out = {"orgs": 0, "cohorts": 0, "reviewed": 0, "signals": 0, "unavailable": 0}
+    out = {"orgs": 0, "cohorts": 0, "reviewed": 0, "signals": 0, "unavailable": 0, "repeats": 0}
     if not settings.monitor_enforced or not ai_guard.is_available(settings):
         return out
 
     for org_id in await active_org_ids(session, since=since):
         out["orgs"] += 1
-        cohorts = await build(session, org_id, since=since)
-        out["cohorts"] += len(cohorts)
-        worth_asking = [(c, m) for c, m in cohorts if looks_like_a_campaign(c, m)]
+        built = await build(session, org_id, since=since)
+        out["cohorts"] += len(built)
+        worth_asking = [(c, m) for c, m in built if looks_like_a_campaign(c, m)]
         if not worth_asking:
             continue
+        # Templates already on the record. Checked BEFORE the AI call, not after: re-reviewing a
+        # campaign we already ruled on costs money and answers a question nobody asked.
+        seen = await signalled_fingerprints(
+            session,
+            org_id,
+            since=started - timedelta(days=settings.monitor_signal_window_days),
+        )
+        fresh = []
+        pass_seen: set[str] = set()
+        for c, m in worth_asking:
+            if c.fingerprint in seen:
+                out["repeats"] += 1
+                # A collision INSIDE one pass is a different event from "we ruled on this
+                # yesterday", and lumping both into `repeats` would hide it. Two distinct
+                # campaigns converging on one id means the second is never signalled, which is
+                # rare, harmless to the score, and exactly the kind of silence that turns into an
+                # unexplained miss six months later. Logged loudly rather than fixed: merging the
+                # two would need an id that is not derived from shared shingles, and the stable
+                # id is worth more than this edge.
+                if c.fingerprint in pass_seen:
+                    out["collisions"] = out.get("collisions", 0) + 1
+                    log.warning(
+                        "cohort_fingerprint_collision",
+                        org_id=str(org_id),
+                        fingerprint=c.fingerprint,
+                        messages=c.size,
+                        sample=c.sample_body[:120],
+                    )
+                continue
+            # Added as we go, so one pass cannot signal the same template twice. Two cohorts in
+            # a single build CAN share a fingerprint: it is recomputed from the shingle
+            # INTERSECTION after clustering, so two clusters that started apart can collapse to
+            # the same id, and only this line keeps that from double-scoring.
+            seen.add(c.fingerprint)
+            pass_seen.add(c.fingerprint)
+            fresh.append((c, m))
+        if not fresh:
+            continue
         business = await monitor_text.business_context(session, org_id)
-        for cohort, m in worth_asking:
+        for cohort, m in fresh:
             try:
                 review = await review_one(settings, cohort, m, business)
             except ai_guard.AIUnavailable:

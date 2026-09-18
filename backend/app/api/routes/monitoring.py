@@ -931,3 +931,277 @@ async def decide_recommendation(
         "level": state.level,
         "score": state.score,
     }
+
+
+# --------------------------------------------------------------------------------------
+# Entering a customer's account by hand
+# --------------------------------------------------------------------------------------
+# WHAT THIS IS AND IS NOT. The operator asked to "enter their accounts manually whenever we
+# decide". This implements that as READ-ONLY INSPECTION: an operator can look at everything a
+# customer's traffic contains and judge for themselves. It does NOT impersonate. No customer
+# session is minted, no request is ever made AS the customer, and nothing here can send,
+# cancel, refund or change a setting on their behalf.
+#
+# That is a deliberate narrowing of the literal ask, for two reasons worth stating rather than
+# burying. First, every action an operator needs is already its own audited endpoint (pause,
+# unpause, hold decisions, the recommendation decision) - impersonation would add no
+# capability, only a way to take those actions without the audit trail naming them. Second, an
+# impersonation token is the most valuable thing an attacker can steal from a platform like
+# this: one stolen operator cookie becomes write access to every customer. Reading is
+# recoverable and reviewable; acting as someone is neither.
+#
+# WHY IT IS STILL GATED HARD. Reading a customer's private message bodies is itself sensitive -
+# more so than the case file, which shows only what was already flagged. So: `recent_2fa`
+# step-up, the same as pausing an account, and EVERY access is audited with how many bodies
+# were exposed. Not sampled. The audit row is the customer's only protection against an
+# operator browsing their messages out of curiosity, and a sampled audit protects nobody.
+
+#: The inspector never returns more than this in one page. Reading a customer's messages should
+#: feel like reading, with each page a deliberate act that lands in the audit log - not like an
+#: export that quietly drains an entire account in one request.
+_INSPECT_MAX_PAGE = 200
+
+
+def _inspect_audit(op: OperatorContext, org_id: uuid.UUID, *, what: str, detail: dict) -> None:
+    """One audit row per access. Called before the commit that returns the data."""
+    from app.services import audit as audit_svc
+
+    set_org_context(op.session, org_id)
+    audit_svc.record(
+        op.session,
+        org_id,
+        action=f"monitor.account_inspected.{what}",
+        target_type="org",
+        target_id=str(org_id),
+        actor_user_id=op.user.id,
+        detail=detail,
+    )
+
+
+@ops_router.get("/orgs/{org_id}/inspect")
+async def inspect_account(
+    org_id: uuid.UUID,
+    request: Request,
+    op: Reviewer,
+    days: int = Query(default=30, ge=1, le=365),
+) -> dict:
+    """The account as a person needs to see it to form their own judgement.
+
+    Distinct from `GET /orgs/{org_id}`, which is the CASE file - what the system already
+    flagged. The whole premise of this design is that a scammer's messages mostly do not get
+    flagged (four scams in four hundred, none of them blocked), so an operator who can only see
+    flagged traffic can only ever confirm what the machine already thought. This shows the real
+    shape of the account: its numbers, its volumes, and the campaign structure of its outbound
+    with no AI verdict attached - the operator reads the templates and decides.
+    """
+    org = await op.session.get(Org, org_id)
+    if org is None:
+        raise NotFoundError("Organization not found")
+    await check_step_up(
+        request, op.session, op.user, kind="recent_2fa", action="monitor_inspect_account"
+    )
+
+    from app.services import monitor_cohorts, monitor_review
+
+    settings = request.app.state.settings
+    since = _now() - timedelta(days=days)
+    set_org_context(op.session, org_id)
+    numbers = (
+        (
+            await op.session.execute(
+                sa.select(OrgNumber).where(OrgNumber.org_id == org_id).limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    state = await monitor_score.get_state(op.session, org_id, create=False)
+    built = await monitor_cohorts.build(op.session, org_id, since=since)
+    campaigns = [
+        {
+            "fingerprint": cohort.fingerprint,
+            # Every sample, not just one: an operator reading a template needs to see how much
+            # the variants differ, which is the whole basis for judging whether it is one
+            # campaign or a legitimate template that happened to cluster.
+            "samples": [b[:500] for b in cohort.bodies_for_review()],
+            "messages": cohort.size,
+            "recipients": cohort.recipient_count,
+            "first_seen": _iso(cohort.first_at),
+            "last_seen": _iso(cohort.last_at),
+            "never_contacted_before": round(m.first_contact_ratio, 3),
+            "replied": round(m.reply_rate, 3),
+            "undelivered": round(m.undelivered_rate, 3),
+            "area_codes": m.spread,
+            "flagged_by_prefilter": monitor_cohorts.looks_like_a_campaign(cohort, m),
+        }
+        for cohort, m in built
+    ]
+    _inspect_audit(
+        op,
+        org_id,
+        what="overview",
+        detail={
+            "days": days,
+            "campaigns": len(campaigns),
+            "bodies_shown": sum(len(c["samples"]) for c in campaigns),
+        },
+    )
+    await op.session.commit()
+    return {
+        "org_id": str(org_id),
+        "org_name": org.name,
+        "read_only": True,
+        "window_days": days,
+        "monitor": {
+            "level": state.level if state else "normal",
+            "score": state.score if state else 0,
+            "recommendation": (
+                (state.case_file or {}).get(monitor_score.PENDING_ACTION) if state else None
+            ),
+        },
+        "declared_business": await monitor_text.business_context(op.session, org_id),
+        "numbers": [
+            {"e164": n.e164, "type": n.number_type, "active": n.is_active} for n in numbers
+        ],
+        "traffic": await monitor_review.traffic_summary(op.session, org_id, since),
+        "campaigns": campaigns,
+        "coverage": {
+            "messages_scanned": built.scanned,
+            "truncated": built.truncated,
+            "one_off_messages_not_grouped": built.singletons,
+        },
+        "auto_action": bool(settings.monitor_auto_action),
+    }
+
+
+@ops_router.get("/orgs/{org_id}/messages")
+async def inspect_messages(
+    org_id: uuid.UUID,
+    request: Request,
+    op: Reviewer,
+    days: int = Query(default=30, ge=1, le=365),
+    direction: str | None = Query(default=None, pattern="^(inbound|outbound)$"),
+    contains: str | None = Query(default=None, min_length=2, max_length=100),
+    to: str | None = Query(default=None, max_length=20),
+    limit: int = Query(default=50, ge=1, le=_INSPECT_MAX_PAGE),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    """The raw message log, paged. What "reviewing it myself" actually requires.
+
+    `contains` is a plain substring over the body. It is NOT the template fingerprint: the
+    cohort id is derived from the shingles a settled cohort SHARES, so it cannot be recomputed
+    from one message's text, and a filter that claimed to match it would silently return the
+    wrong rows. To walk a specific campaign, read its samples from `/inspect` and search on a
+    distinctive phrase from them.
+    """
+    if await op.session.get(Org, org_id) is None:
+        raise NotFoundError("Organization not found")
+    await check_step_up(
+        request, op.session, op.user, kind="recent_2fa", action="monitor_inspect_account"
+    )
+    set_org_context(op.session, org_id)
+    where = [Message.org_id == org_id, Message.created_at >= _now() - timedelta(days=days)]
+    if direction:
+        where.append(Message.direction == direction)
+    if to:
+        where.append(Message.to_e164 == to)
+    if contains:
+        # ESCAPED, with an explicit escape character. An operator searching for a scam's
+        # "50% off_now" would otherwise have the _ and % read as LIKE wildcards and get back a
+        # different set of messages than the one they asked for - and, reading a message log to
+        # decide whether to pause a business, believe they had seen everything that matched.
+        pattern = contains.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append(Message.body.ilike(f"%{pattern}%", escape="\\"))
+
+    total = (
+        await op.session.execute(sa.select(sa.func.count(Message.id)).where(*where))
+    ).scalar_one()
+    rows = (
+        (
+            await op.session.execute(
+                sa.select(Message)
+                .where(*where)
+                .order_by(Message.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    _inspect_audit(
+        op,
+        org_id,
+        what="messages",
+        detail={
+            "days": days,
+            "direction": direction,
+            "contains": contains,
+            "to": to,
+            "bodies_shown": len(rows),
+            "matching": int(total or 0),
+            "offset": offset,
+        },
+    )
+    await op.session.commit()
+    return {
+        "org_id": str(org_id),
+        "read_only": True,
+        "total": int(total or 0),
+        "limit": limit,
+        "offset": offset,
+        "messages": [
+            {
+                "id": str(m.id),
+                "direction": m.direction,
+                "from": m.from_e164,
+                "to": m.to_e164,
+                "body": m.body,
+                "status": m.status,
+                "moderation_state": m.moderation_state,
+                "moderation_reason": m.moderation_reason,
+                "at": _iso(m.created_at),
+            }
+            for m in rows
+        ],
+    }
+
+
+class AuditSampleIn(BaseModel):
+    #: How many clean accounts to review. Small by default: each one is a real review with real
+    #: AI calls, and the figure this produces is a sanity check, not a statistic.
+    sample_size: int = Field(default=9, ge=1, le=50)
+    days: int = Field(default=7, ge=1, le=90)
+    #: Fixing the seed makes a sample reproducible, which is what you want when comparing two
+    #: runs of a changed detector over the same accounts.
+    seed: int | None = None
+
+
+@ops_router.post("/audit-sample")
+async def audit_sample(payload: AuditSampleIn, request: Request, op: Admin) -> dict:
+    """Review a stratified sample of accounts the monitor thinks are CLEAN, and report the misses.
+
+    Every other number on the ops dashboard measures what the monitor caught, and none of them
+    can move when it stops seeing something. This is the only one that can: it looks where the
+    system says there is nothing to find.
+
+    Admin rather than Reviewer, and not because it is dangerous - it changes nothing about any
+    account and records nothing against one. It spends money: `sample_size` thorough reviews,
+    each one several AI calls, on accounts nobody reported. That is a budget decision.
+
+    The result lands in `monitor_health` under kind `audit_sample`, written by the service, so
+    the miss rate becomes a series next to the canary and the exam rather than a number that
+    scrolls past once. No audit row is written into any sampled customer's log - that would tell
+    them they were picked.
+    """
+    from app.services import monitor_review
+
+    report = await monitor_review.audit_sample(
+        op.session,
+        request.app.state.settings,
+        sample_size=payload.sample_size,
+        days=payload.days,
+        seed=payload.seed,
+    )
+    await op.session.commit()
+    return report

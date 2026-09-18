@@ -47,7 +47,13 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
 
     from app.api.routes import monitoring as monitoring_routes
     from app.db.session import get_sessionmaker
-    from app.services import monitor_calls, monitor_exam, monitor_score, monitor_text
+    from app.services import (
+        monitor_calls,
+        monitor_cohorts,
+        monitor_exam,
+        monitor_score,
+        monitor_text,
+    )
 
     settings = app.state.settings
     now = time.monotonic()
@@ -99,7 +105,27 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
             app.state._monitor_exam_task = asyncio.create_task(_run_exam())
             return "started"
 
-        jobs += [("canary", canary), ("exam", exam)]
+        async def campaigns(s):  # noqa: ANN001, ANN202
+            """The cohort sweep: one AI call per CAMPAIGN, not per message.
+
+            Hourly with a 24-hour window, so the two overlap by 23 hours on purpose - a
+            campaign that starts at 09:05 is seen at 10:00 rather than waiting for a fresh
+            window. That overlap is only affordable because `tick` checks
+            `signalled_fingerprints` BEFORE spending an AI call: a template already on the
+            record costs nothing to see again, so re-reading the day is a clustering pass,
+            not a bill. Without that check this cadence would re-score one campaign 24 times
+            and pause the account on repetition alone.
+            """
+            counts = await monitor_cohorts.tick(s, settings, hours=24)
+            # Flattened into the pass log rather than returned whole: `any(results.values())`
+            # decides whether the sweeper logs the pass at all, and a dict is ALWAYS truthy,
+            # so returning one would make every hourly pass look like something happened.
+            for key in ("cohorts", "reviewed", "signals", "unavailable", "repeats"):
+                if counts.get(key):
+                    results[f"monitor_campaign_{key}"] = counts[key]
+            return counts.get("signals", 0)
+
+        jobs += [("canary", canary), ("exam", exam), ("campaigns", campaigns)]
     for label, job in jobs:
         try:
             async with get_sessionmaker()() as session:

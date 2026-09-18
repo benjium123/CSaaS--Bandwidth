@@ -182,6 +182,11 @@ PostgreSQL), `2c8b757` (runbook).
    worker count and that number IS the control. Nobody has run this system with more than one
    worker. This is the largest untested configuration and it is a deployment decision, not a
    code one.
+   *Amended 18 Sept 2026 — see (f). The deployment half of this is answered: prod compose
+   runs Redis, boot refuses to start without it, and LiveKit shares the instance. But part of
+   it was a CODE question after all: the Redis client was undeclared in `pyproject.toml`, and
+   `/status` reported `up` for a Redis the app could not authenticate to. The worker-count
+   question in this item is untouched and it stands for that.*
 7. **Quiet hours end to end.** 22 unit tests including the UK zone fix, but it was disabled on
    the test workspaces during the live run because the run happened at 03:44 in Texas and the
    gate was correctly holding US texts. Unit-covered, not flow-covered, for a legitimate
@@ -241,3 +246,150 @@ and cannot produce the answer it claims to test.** An exception handler that swa
 until the state diverged; a git pathspec pointing at a directory that does not exist; a stop
 command that killed wrappers and left four runs alive; optional chaining that could not
 distinguish "false" from "not loaded yet"; and the skip-count criterion above.
+
+## (e) The detection layer that came out of the audit, 18 Sept 2026
+
+The audit closed on authentication. What followed was a product problem the operator put to
+both sessions afterwards, and it is recorded here because the two are now the same codebase:
+
+> find people who have phone numbers and are actually customers, but scam people. Within
+> hundreds of texts they'll send 3-4 scams. Between 10 calls they will do 1 scam call.
+
+**Why the obvious approach cannot work, which is the whole reason for the design.** At ~1%
+prevalence, asking "is THIS message a scam?" produces more false flags than true ones: a
+classifier with a 2% false-positive rate over 400 messages raises 8 false alarms to find 4 real
+ones, and that noise IS the operator's workload. Improving the classifier mostly buys more
+noise. So the unit of analysis moved from the message to the **template cohort** — a scam
+campaign is one template sent to many strangers, and 4 scams among 400 messages stop being 4
+anomalies in 400 and become 1 cohort out of 5. Measured on the fixture: 304 messages, one AI
+call.
+
+**AI detects; a human decides.** `MONITOR_AUTO_ACTION` defaults to false. Reaching a restricting
+score writes a recommendation into the case file and stops. Nothing in the detection path can
+pause, restrict or ban an account; `monitor_review.review_account` returns `actions_taken: []`
+by construction and the only code that changes a level is the operator decision endpoint, behind
+Admin plus a `recent_2fa` step-up. This was an explicit reversal of the original design intent
+on the operator's instruction, and the four tests in `test_monitor_operator_control.py` exist to
+stop it drifting back.
+
+**Per customer, on demand, and enterable by hand.** `GET /accounts` lists every customer — OUTER
+join from Org, because an inner join listed only accounts that had already tripped something and
+hid the quiet majority a book of 1000 mostly consists of. `POST /orgs/{id}/review` runs a
+thorough review of one account on command. `GET /orgs/{id}/inspect` and `/messages` are
+read-only inspection: the operator reads the real traffic, not only what was flagged, because
+the premise of the whole design is that a blended scammer's messages mostly are NOT flagged.
+Deliberately not impersonation — no customer session is ever minted, every access is audited
+with how many message bodies were exposed, and the audit is per access rather than sampled.
+
+**What the cohort lens cannot see, stated rather than implied.** Singletons: four bespoke one-off
+impersonations are four singletons and are invisible here; the per-message screen remains the
+only thing looking at them. `build()` reports `singletons` and `truncated` so no caller can
+present a partial read as a full one. And a scammer who splits one victim list across three
+workspaces is invisible to any per-account lens by construction, which is why
+`shared_recipient_count` exists — counts only, never which other workspace, and evidence for a
+person to read rather than a signal, because a shared list is also what a bought lead list looks
+like.
+
+**Verified.** 21 tests in `test_monitor_cohorts.py`, 8 in `test_monitor_operator_control.py`, 13
+in `test_monitor_ops_endpoints.py`, 4 added by the implementing session in
+`test_p43_monitor_fixes.py`. The campaign reviewer was then run against the real DeepSeek API
+over 24 hand-built cohorts, twice: 26/26 scams caught, 0 false alarms in 22 legitimate
+campaigns, identical verdicts on both passes. Four of those legitimate campaigns have the exact
+behavioural signature of a blast (e-commerce at 72% new recipients, a recruiter's unsolicited
+shift offers, a licensed debt collector, a restaurant at 91% strangers) and all four survived —
+the reviewer is reading behaviour against the declared business rather than pattern-matching
+scam vocabulary.
+
+**Two more instances of the pattern in (d), found in this work, bringing it to eight.** First:
+`review_account` counted every campaign FOUND as one reviewed, so with no AI key the operator's
+review button returned "No campaign contradicts this business (2 reviewed)" about two campaigns
+the model never saw — an outage reading as a clean bill of health. Second: `build()` ordered
+`created_at` ASC under a 5000-row cap, so a 30-day review of a busy account read the OLDEST 5000
+messages and never loaded yesterday at all; the scam cohort was not scored low, it was never
+read. Both were found by the other session probing rather than by either session's tests, and
+both now have regression tests that fail against the old behaviour.
+
+**One correction to (c) item 13.** "Head remains 0051_monitoring.py" was true of the audit and
+of this detection work - neither changed a model or a migration. It is no longer a safe reading
+of the checkout: a third session has an uncommitted 0052_agent_calls_place.py in the shared
+working tree. That is their change, not part of this statement, and it is recorded here only
+because a reader checking the tree will find a 0052 on disk that HEAD does not have. In a shared
+checkout, git show HEAD:path is the claim about the project; the file on disk is whatever any
+live session last wrote.
+
+A third belongs on the list as a test-infrastructure instance: a canned `"consistent"` verdict
+added to the shared `tests/fake_ai.py` ahead of the configurable one, which broke six tests
+loudly and would have let a test asserting "nothing was flagged" pass for the wrong reason.
+## (f) Redis: the ninth instance, and the first one found in production config
+
+The operator asked a narrow question — is Redis a production requirement, decide it yourself —
+and the answer was already settled in three places before either session looked. Prod compose
+runs it with a password, a healthcheck and `noeviction`. `config.py` refuses to boot in
+production without `REDIS_URL`. LiveKit keeps its SIP trunk and dispatch-rule state in that same
+instance, so calling goes down with it. Nothing needed deciding. What the check turned up was
+two defects underneath the decision, and they are the reason this section exists rather than a
+line in the runbook.
+
+**`redis` was never a declared dependency.** It appears in `backend/requirements.lock` and
+nowhere in `backend/pyproject.toml`. `deploy/Dockerfile` prefers the lock and explicitly falls
+back to `pip install .` when no lock has been generated — and that image has no Redis client.
+`session_cache._redis_client` returns `None` on `ImportError`, and every caller treats `None` as
+"use the in-process store". So an image built down that path passes production boot validation,
+starts, serves traffic, and reports healthy, while session revocation, the rate limiter, OIDC
+login state and the SAML assertion replay set are all per-process.
+
+**`/status` could not have caught it, and was not trying to.** The probe was a raw TCP PING
+whose docstring read "No redis client dependency exists in this app (nothing in it talks to
+redis today)" — true when it was written, false since P42 — and it deliberately counted a
+`-NOAUTH` reply as `up`, on the reasoning that any RESP reply proves the server is speaking.
+A Redis running with a password the app does not have is exactly the failure that matters.
+
+**The pattern, stated exactly.** The boot check verified that a string was set. The status probe
+verified that a port was open and answering. Neither verified the one thing that matters, which
+is that the application can use Redis. Three green signals — boot validation, a running
+container, a healthy `/status` — and none of the behaviour.
+
+**The consequence, stated flatly, and only as far as it actually goes.** With those fallbacks
+silently in force and more than one worker: a revoked session stays alive on every other worker
+for up to the 60-second cache TTL, and the rate limiter's effective ceiling multiplies by the
+worker count — that number IS the control, which is why (c) item 6 singles it out. SSO breaks
+functionally rather than dangerously: OIDC state and the SAML RelayState live in the same
+per-process store, so a callback landing on a worker that did not issue the state is rejected
+and the login simply fails.
+
+The SAML assertion replay set is the fourth fallback and it is NOT a hole, which is worth saying
+because a first draft of this section claimed it was. A replay needs a RelayState that
+`oidc.consume_state` has not already deleted, and `InResponseTo` must equal the nonce carried
+inside that state (`saml.py:428`); an attacker starting their own flow to obtain a fresh state
+gets a fresh request id the captured assertion cannot match. So `_first_use` is defence in depth
+here, not the only gate, and losing it to a per-process fallback — or to a deploy resetting the
+set — does not by itself admit a replay. (c) item 6's phrasing, "four are safe or
+double-covered", was correct; the flat claim was not, and it was corrected by tracing the code
+rather than by anyone catching it.
+
+**This is the ninth instance of the (d) pattern in the product — six in (d), two in (e), this
+one — with the `fake_ai.py` canned verdict recorded separately as a test-infrastructure
+instance. It is the first found in production CONFIGURATION rather than in application code, a
+test, or a verification step.** The other eight were mechanisms that could not produce the
+answer they claimed to test. This one is the same shape wearing
+deployment clothes, which is why it survived an audit that was specifically hunting the pattern:
+both sessions were reading application code, and a `pyproject.toml` that omits a package is not
+application code. Neither session found it while auditing. It surfaced only because the operator
+asked a question that forced someone to trace what Redis is actually for.
+
+**Fixed, in `f1becdb`.** `redis>=5.0` is a declared dependency with a comment saying why its
+absence is silent. `_probe_redis` now issues a real `PING` through the app's own client, and
+reports `degraded` — a state `_overall` already propagated — when the server answers the socket
+but the app cannot use it. `_redis_reachable` keeps the raw TCP PING for exactly one job:
+telling "the server is gone" apart from "the server is there and we cannot use it". The three
+original probe tests moved down to that function; their reasoning was correct and is kept. The
+one that asserted a RESP error reply means `up` was what pinned the hole in place. `RUNBOOK.md`
+gains the three causes of `degraded` with the command for each, and says plainly that `degraded`
+is the more urgent of the two Redis states because `down` is obvious and someone notices, while
+`degraded` looks like a working system.
+
+**What this does NOT resolve.** (c) item 6 stands. Nobody has run this system with more than one
+worker, and the probe proves the app can reach Redis, not that the shared state behaves under
+concurrency. The image still ships `--workers 1`, which is load-bearing for the in-process
+sweeper. What changed is that the failure is now visible when it happens, not that the
+multi-worker configuration has been tested.
