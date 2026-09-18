@@ -100,10 +100,17 @@ PostgreSQL), `2c8b757` (runbook).
 
 1. **The frontend beyond a handful of auth components.** Six were reviewed by the implementing
    session; the auditing session reviewed none until reading a diff. ~900 vitest tests exist
-   over code neither read. A third session is now rewriting the unauthenticated console UI and
-   neither signatory has reviewed that work — at the time of writing it has LoginPage and a
-   token layer done, with the pinned suites green (independently re-run by the auditing
-   session), and nothing committed.
+   over code neither read. A third session has now rewritten the unauthenticated console UI.
+   That work is **uncommitted and unmerged** at the time of writing, and its status is: the
+   auditing session reviewed it across four rounds and found one real defect (a pinned test
+   that had become unable to fail, because the control it checked now rendered permanently
+   disabled in jsdom — fixed, and pinned from both sides); the implementing session reviewed
+   only the files it owned (StepUpDialog, verified as presentation-only against `git show
+   HEAD:`) and supplied the contracts, the risk-signal shapes and the certificate spec. Its
+   own handover note is docs/CONSOLE_AUTH_UI.md, which carries an explicit NOT-restyled list -
+   SessionsCard, LoginHistoryCard, OrgSecurityPolicyCard, AccountSecurityCards,
+   components/kyc/, and the login risk flags, which still have no surface at all. "The auth UI
+   was rebuilt" must not be read as "the whole security surface was".
 2. **WebAuthn against a real authenticator.** The server-side code was read end to end and
    delegates correctly to the library with every expected parameter. Nobody has run these
    flows against real hardware, a real browser or a security key; jsdom has no WebAuthn, so
