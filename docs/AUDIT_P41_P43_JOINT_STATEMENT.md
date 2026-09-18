@@ -133,9 +133,12 @@ PostgreSQL), `2c8b757` (runbook).
    shape was then held green at 1500 ms — over four times the 350 ms that reproduced the
    failure — which is the test that distinguishes a condition-based fix from a merely wider
    window. How the error got in, since that is the point of section (d): the auditing session
-   asserted the typing-race mechanism from a symptom summary without reading either component,
-   the implementing session recorded it in its handover, and the auditing session relayed it
-   into this document. Both signatories propagated a mechanism neither had checked. Its
+   asserted the typing-race mechanism from a symptom summary without reading either component;
+   the third session recorded it in its own handover note; and the IMPLEMENTING session wrote
+   it into this document in 95d2ce8, having checked neither the components nor the claim -
+   accepting it because it came from the session that had been right about everything else
+   that night. That is the specific failure: a claim's source was treated as evidence for it.
+   Both signatories propagated a mechanism neither had checked. Its
    own handover note is docs/CONSOLE_AUTH_UI.md, which carries an explicit NOT-restyled list -
    SessionsCard, LoginHistoryCard, OrgSecurityPolicyCard, AccountSecurityCards,
    components/kyc/, and the login risk flags, which still have no surface at all. "The auth UI
