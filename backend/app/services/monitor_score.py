@@ -58,6 +58,9 @@ LEVEL_ORDER = {"normal": 0, "watch": 1, "restricted": 2, "paused": 3}
 #: business off. A pause also needs evidence the platform observed itself.
 SOFT_KINDS = frozenset({"public_report", "complaint_reply"})
 PUBLIC_REPORT_DAILY_CAP = 2
+#: Where a pending operator decision lives inside `case_file`. NOT "recommendation" - that
+#: key is already taken by the AI case file, where it holds a plain string.
+PENDING_ACTION = "pending_action"
 
 
 def _now() -> datetime:
@@ -156,7 +159,7 @@ def recommend(state: OrgMonitoring, level: str, *, reason: str) -> None:
     that matters, and a queue of stale recommendations is the review load this exists to cut.
     """
     case = dict(state.case_file or {})
-    case["recommendation"] = {
+    case[PENDING_ACTION] = {
         "level": level,
         "reason": reason,
         "at": _now().isoformat(),
@@ -166,15 +169,45 @@ def recommend(state: OrgMonitoring, level: str, *, reason: str) -> None:
 
 
 def recommended_level(state: OrgMonitoring) -> str | None:
-    rec = (state.case_file or {}).get("recommendation") or {}
+    """The level an operator has been asked to apply, or None.
+
+    Defensive about the shape on purpose: `case_file` is free-form JSON written by more than
+    one producer, and an earlier version of this function read `case_file["recommendation"]` -
+    which the AI case file ALREADY uses for a plain string ("unpause" / "keep_paused" /
+    "suspend_and_ban"). Calling .get() on that string raised AttributeError and turned every
+    decision request on a paused account into a 500.
+    """
+    rec = (state.case_file or {}).get(PENDING_ACTION)
+    if not isinstance(rec, dict):
+        return None
     level = rec.get("level")
     return level if level in LEVEL_ORDER else None
 
 
 def clear_recommendation(state: OrgMonitoring) -> None:
     case = dict(state.case_file or {})
-    case.pop("recommendation", None)
+    case.pop(PENDING_ACTION, None)
     state.case_file = case
+
+
+def enter_pause(state: OrgMonitoring, *, reason: str) -> dict:
+    """Everything that must happen when an account becomes paused, in ONE place.
+
+    There are two ways in - the monitor deciding by itself (MONITOR_AUTO_ACTION on) and an
+    operator applying a recommendation - and they MUST leave the same state behind, or the
+    second path silently loses the downstream effects of the first. `case_file["status"]` is
+    what `case_file_tick` looks for to write the evidence pack and email the owners, so an
+    operator-applied pause that skipped it would pause a customer and tell nobody.
+    """
+    state.level = "paused"
+    state.level_changed_at = _now()
+    state.paused_at = state.paused_at or _now()
+    state.paused_reason = reason
+    case = dict(state.case_file or {})
+    case.pop(PENDING_ACTION, None)
+    case["status"] = "pending"
+    state.case_file = case
+    return {"score": state.score, "reason": reason}
 
 
 async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitoring) -> None:
@@ -238,11 +271,13 @@ async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitor
         detail={"from": before, "to": target, "score": state.score},
     )
     if target == "paused":
-        state.paused_at = _now()
-        state.paused_reason = (
-            f"Risk score {state.score} reached the pause threshold ({settings.monitor_pause_score})"
+        enter_pause(
+            state,
+            reason=(
+                f"Risk score {state.score} reached the pause threshold "
+                f"({settings.monitor_pause_score})"
+            ),
         )
-        state.case_file = {"status": "pending"}
         session.add(
             SecurityAlert(
                 id=uuid.uuid4(),

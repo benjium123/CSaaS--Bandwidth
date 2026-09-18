@@ -708,6 +708,11 @@ async def daily_report(op: Reviewer, days: int = Query(default=1, ge=1, le=30)) 
 # --------------------------------------------------------------------------------------
 # P44: per-account monitoring for an operator with hundreds of customers
 # --------------------------------------------------------------------------------------
+#: How many rows a `needs_decision` scan will look at before giving up. Recommendations are
+#: rare by design, so this is generous; if it is ever hit, the queue is the problem.
+_DECISION_SCAN_CAP = 5000
+
+
 class ReviewRequestIn(BaseModel):
     #: How far back to look. Defaults to MONITOR_REVIEW_WINDOW_DAYS.
     days: int | None = Field(default=None, ge=1, le=365)
@@ -739,9 +744,14 @@ async def accounts(
     wants to see the whole book. Paged, filterable, and ordered so the accounts that need a
     human come first: those with a pending recommendation, then by score.
     """
+    # OUTER join from Org, not inner from OrgMonitoring: a monitoring row is only created when
+    # something happens, so an inner join lists only customers that have already tripped a
+    # signal - which is the queue endpoint again, and hides the quiet majority this endpoint
+    # exists to show. Every customer appears; those with no row read as normal/0.
     stmt = (
         sa.select(OrgMonitoring, Org)
-        .join(Org, Org.id == OrgMonitoring.org_id)
+        .select_from(Org)
+        .outerjoin(OrgMonitoring, OrgMonitoring.org_id == Org.id)
         .execution_options(**{ALLOW_UNSCOPED_KEY: True})
     )
     if level:
@@ -757,31 +767,46 @@ async def accounts(
             )
         )
     ).scalar_one()
-    rows = (
-        await op.session.execute(
-            stmt.order_by(OrgMonitoring.score.desc(), Org.name.asc()).limit(limit).offset(offset)
-        )
-    ).all()
+    # `needs_decision` lives inside a JSON column, which cannot be filtered portably across
+    # SQLite and PostgreSQL, so it is filtered in Python. That means paginating AFTER the
+    # filter, not before - otherwise "show me what is waiting on me" returns only the waiting
+    # accounts that happen to fall in the first page, which at 1000 customers is usually none.
+    scan = stmt.order_by(OrgMonitoring.score.desc().nullslast(), Org.name.asc())
+    if not needs_decision:
+        scan = scan.limit(limit).offset(offset)
+    else:
+        scan = scan.limit(_DECISION_SCAN_CAP)
+    rows = (await op.session.execute(scan)).all()
 
     items = []
     for state, org in rows:
-        recommendation = (state.case_file or {}).get("recommendation")
+        recommendation = (
+            monitor_score.recommended_level(state)
+            and (state.case_file or {}).get(monitor_score.PENDING_ACTION)
+            if state is not None
+            else None
+        )
         if needs_decision and not recommendation:
             continue
         items.append(
             {
                 "org_id": str(org.id),
                 "name": org.name,
-                "level": state.level,
-                "score": state.score,
+                "level": state.level if state is not None else "normal",
+                "score": state.score if state is not None else 0,
                 # The whole point of the no-auto-action policy: what the monitor WOULD do,
                 # sitting here waiting for a person rather than already done.
                 "recommendation": recommendation,
                 "needs_decision": bool(recommendation),
-                "reviewed_at": _iso(state.reviewed_at),
-                "level_changed_at": _iso(state.level_changed_at),
+                "reviewed_at": _iso(state.reviewed_at) if state is not None else None,
+                "level_changed_at": (
+                    _iso(state.level_changed_at) if state is not None else None
+                ),
             }
         )
+    if needs_decision:
+        total = len(items)
+        items = items[offset : offset + limit]
     return {
         "accounts": items,
         "total": int(total or 0),
@@ -859,11 +884,16 @@ async def decide_recommendation(
     applied = None
     if payload.action == "apply":
         before = state.level
-        state.level = recommended
-        state.level_changed_at = _now()
         if recommended == "paused":
-            state.paused_at = state.paused_at or _now()
-            state.paused_reason = f"Operator applied the monitor's recommendation: {payload.note}"
+            # Through the SHARED path, so an operator-applied pause leaves exactly the state an
+            # automatic one does - including case_file["status"], which is what makes the
+            # sweeper write the evidence pack and email the owners.
+            monitor_score.enter_pause(
+                state, reason=f"Operator applied the monitor's recommendation: {payload.note}"
+            )
+        else:
+            state.level = recommended
+            state.level_changed_at = _now()
         applied = recommended
         audit_svc.record(
             op.session,

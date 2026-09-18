@@ -141,7 +141,7 @@ async def review_account(
             "level": state.level,
             "score": state.score,
             # What the monitor WOULD do. Present precisely because it has not done it.
-            "recommendation": (state.case_file or {}).get("recommendation"),
+            "recommendation": (state.case_file or {}).get(monitor_score.PENDING_ACTION),
             "paused_reason": state.paused_reason,
         },
         "window_days": window,
@@ -220,7 +220,9 @@ async def review_account(
         state = await monitor_score.get_state(session, org_id, create=True)
         report["monitor"]["score"] = state.score
         report["monitor"]["level"] = state.level
-        report["monitor"]["recommendation"] = (state.case_file or {}).get("recommendation")
+        report["monitor"]["recommendation"] = (state.case_file or {}).get(
+            monitor_score.PENDING_ACTION
+        )
     report["signals_added"] = new_signals
 
     # The one-line answer, so nobody has to add it up themselves.

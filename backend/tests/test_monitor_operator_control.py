@@ -70,7 +70,9 @@ async def test_a_pausing_score_only_recommends_when_auto_action_is_off(session, 
     assert state.paused_at is None
     rec = monitor_score.recommended_level(state)
     assert rec == "paused", state.case_file
-    assert (state.case_file or {}).get("recommendation", {}).get("score") == state.score
+    assert (state.case_file or {}).get(monitor_score.PENDING_ACTION, {}).get("score") == (
+        state.score
+    )
 
 
 async def test_the_same_score_does_restrict_when_auto_action_is_on(session, auto_action):
