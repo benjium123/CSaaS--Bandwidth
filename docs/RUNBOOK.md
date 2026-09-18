@@ -542,6 +542,46 @@ pauses campaigns, hangs up live calls, emails the owners.
 Run `scripts/monitor_exam.py --labels` before and after. Don't ship a change that lowers the
 catch rate or raises false alarms.
 
+## Diagnosing a stuck or failing test run
+
+Techniques that cost hours to work out the first time.
+
+**Is it slow or is it stopped?** Sample the process's CPU twice, ten seconds apart:
+`Get-Process -Id <pid> | Select CPU`. A run doing database work shows a few seconds of CPU
+per ten elapsed; a deadlocked one shows exactly 0.00. A `-q` progress line only advances
+every 72 tests, so "stuck at 10%" usually is not.
+
+**A hung run on PostgreSQL** is almost always two sessions blocking on the same row. From
+`psql`: `SELECT pid, state, wait_event, age(clock_timestamp(), xact_start), query FROM
+pg_stat_activity WHERE state <> 'idle'`, then `SELECT pg_blocking_pids(<blocked pid>)`. A
+backend sitting `idle in transaction / ClientRead` is holding the lock and waiting for its
+own client, which in a single-threaded pytest means it can never be released. Usual cause:
+a test opens a second session, writes a conflicting row and only FLUSHES it. Commit instead
+- SQLite serialises writes and hides this, PostgreSQL cannot.
+
+**Naming a failing test from a progress line.** Each `-q` line is 72 characters, so an `F`
+at position N of line L is test `(L-1)*72 + N`. `pytest --collect-only -q` lists tests in
+execution order, so that index names it without rerunning anything.
+
+**The suite is ~4x slower on PostgreSQL** (about 5.7s per test versus 1.5s on SQLite; ~3.3
+hours for the full suite versus 50 minutes). That is the difference between a per-PR check
+and a nightly job. It is client-side waiting on round trips, not CPU.
+
+**Timezone-dependent failures.** Tests that write a NAIVE datetime into a
+`DateTime(timezone=True)` column pass on SQLite (which stores those naive anyway) and behave
+differently on PostgreSQL, which reads the value in the session timezone. The failure
+profile depends on the sign of the machine's UTC offset, so it is invisible in UTC CI and
+intermittent elsewhere. Always write aware datetimes in tests.
+
+**Stopping a run.** Killing the wrapper does not kill the child: check
+`Get-CimInstance Win32_Process -Filter "Name='python.exe'"` after every stop, and again
+before starting anything, or two suites end up sharing a machine and no failure can be
+attributed. The same applies to an embedded PostgreSQL - killing the script skips its
+cleanup and leaves a postmaster holding its data directory.
+
+**Run one thing at a time.** Concurrent suites make every failure unattributable, and a
+green result produced while sharing a machine is weaker evidence than one produced alone.
+
 ## Incident quick-checks
 
 No `journalctl` here - everything runs in Docker, so:
