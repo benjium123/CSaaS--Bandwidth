@@ -159,7 +159,11 @@ PostgreSQL), `2c8b757` (runbook).
    race IS now observed. Both signatories had written that racing it required two browsers;
    that was wrong, and the reason is worth keeping: `consume_challenge` runs BEFORE
    verification, so the claim can be raced with a credential that is merely well-formed — no
-   crypto and no browser needed. Raced four times: exactly one winner each time, never two.
+   crypto and no browser needed. Raced four times: exactly one winner each time, never two —
+   but **observed on SQLite, which serialises writers**, so exactly-one-winner there is
+   necessary evidence and not sufficient. On PostgreSQL, where writers genuinely contend, the
+   conditional UPDATE's row locking remains reasoning. docs/WEBAUTHN_E2E.md carries the same
+   caveat at its own §80.
    Still unobserved: simultaneous requests against a step-up row, and against the
    idle-session revoke. Those two remain code inspection plus sequential execution on
    PostgreSQL.
