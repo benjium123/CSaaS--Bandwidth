@@ -65,7 +65,7 @@ async def traffic_summary(session: AsyncSession, org_id: uuid.UUID, since: datet
         "outbound_texts": by_direction.get("outbound", {}).get("messages", 0),
         "outbound_recipients": by_direction.get("outbound", {}).get("recipients", 0),
         "inbound_texts": by_direction.get("inbound", {}).get("messages", 0),
-        "calls": {d: n for d, n in calls},
+        "calls": dict(calls),
     }
 
 
