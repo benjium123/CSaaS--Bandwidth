@@ -50,13 +50,47 @@ async def _probe_db() -> str:
         return "down"
 
 
-async def _probe_redis(redis_url: str) -> str:
-    """No redis client dependency exists in this app (nothing in it talks to redis today -
-    see config.py's REDIS_URL). A raw TCP PING is the cheapest honest probe that needs no
-    new library: connect, write the RESP inline command, read the reply, close.
+async def _probe_redis(settings) -> str:  # noqa: ANN001 - Settings
+    """Can THIS APP use Redis - not just "is something listening on that port".
+
+    The old probe was a raw TCP PING, and its docstring said "nothing in this app talks to
+    redis today". Both stopped being true: session revocation (`services/session_cache.py`),
+    rate limits (`rate_limit.py`), OIDC login state and SAML assertion replay protection
+    (`services/oidc.py`, `services/saml.py`) all go through the Python client now, and every
+    one of them catches its own exceptions and falls back to a PER-PROCESS store. So a wrong
+    password, or an image built without the `redis` package, degrades the platform to
+    per-process state silently - while production boot validation (REDIS_URL is set), the
+    running container, and this endpoint all report healthy. Three green signals and none of
+    the behaviour.
+
+    Worse in the old form: it counted a `-NOAUTH` reply as "up" on the grounds that any RESP
+    reply proves the server is speaking. That is exactly the failure this needs to catch.
+
+    So: issue a real PING through the app's own client. "degraded" means the server answered
+    the socket but this app cannot use it - the state that used to read as "up".
     """
-    if not redis_url:
+    if not settings.redis_url:
         return "unconfigured"
+    from app.services.session_cache import _redis_client
+
+    client = _redis_client(settings)
+    if client is not None:
+        try:
+            await asyncio.wait_for(client.ping(), timeout=_PROBE_TIMEOUT)
+            return "up"
+        except Exception:
+            # Authenticated PING failed. Separate "the server is gone" from "the server is
+            # there and we cannot use it", because the fixes are different ones.
+            return "degraded" if await _redis_reachable(settings.redis_url) else "down"
+    # No client library in this image. The URL is configured and the server may be perfectly
+    # healthy; nothing in this app can reach it.
+    return "degraded" if await _redis_reachable(settings.redis_url) else "down"
+
+
+async def _redis_reachable(redis_url: str) -> bool:
+    """Raw TCP PING: is a redis-speaking server on the other end at all? No auth, no client
+    library - this exists to tell a dead server apart from an unusable one.
+    """
     try:
         parts = urlsplit(redis_url)
         host = parts.hostname or "localhost"
@@ -72,14 +106,12 @@ async def _probe_redis(redis_url: str) -> str:
             writer.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
-        # Opus review: ANY RESP reply means the server is reachable and speaking the
-        # protocol - a "+PONG" success and a "-NOAUTH ..." / "-ERR ..." error (e.g. this
-        # deployment requires a password we did not send) are BOTH "up". Only a genuine
-        # connection failure/timeout (caught below) or a dead socket (empty read = EOF,
-        # data == b"") means "down".
-        return "up" if data[:1] in (b"+", b"-") else "down"
+        # ANY RESP reply means a redis is on the other end: "+PONG" and a "-NOAUTH ..." /
+        # "-ERR ..." both prove the server is there and speaking. A connection
+        # failure/timeout (caught below) or a dead socket (empty read = EOF) does not.
+        return data[:1] in (b"+", b"-")
     except Exception:
-        return "down"
+        return False
 
 
 async def _probe_media_plane(livekit) -> str:  # noqa: ANN001 - LiveKitApi | None
@@ -149,7 +181,7 @@ async def status(request: Request) -> dict:
             livekit = getattr(app.state, "livekit", None)
 
             db_state = await _probe_db()
-            redis_state = await _probe_redis(settings.redis_url)
+            redis_state = await _probe_redis(settings)
             media_plane_state = await _probe_media_plane(livekit)
             carriers = _carrier_states(registry)
 

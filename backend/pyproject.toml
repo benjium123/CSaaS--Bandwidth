@@ -35,6 +35,14 @@ dependencies = [
     "pillow>=10.0",
     "maxminddb>=2.6",
     "signxml>=5.1",
+    # NOT optional, despite every call site tolerating its absence. Session revocation, rate
+    # limits, OIDC login state and SAML assertion replay protection all fall back to a
+    # PER-PROCESS store when `import redis` fails - and every one of those fallbacks is
+    # silent. Production boot already refuses to start without REDIS_URL and prod compose
+    # already runs the server, so an image built without this package satisfies every check
+    # while using none of the shared state. It was present only in requirements.lock, which
+    # the Dockerfile prefers but explicitly falls back FROM when no lock has been generated.
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]
