@@ -393,3 +393,67 @@ async def test_event_visible_unknown_event_type_is_fail_closed_for_non_admins():
 
     ping_event = {"type": "ping"}
     assert await _event_visible(ping_event, member_access, org_id, user_id) is True
+
+
+async def test_unknown_grant_role_grants_nothing_rather_than_read_only(client, session):
+    """An unrecognised grant role must resolve to NO access, not to viewer.
+
+    The resolver used to say `if role == "member": ... else: viewer`, so anything that was
+    not exactly "member" became read-only in silence. Today routes/inboxes.py validates
+    writes against INBOX_GRANT_ROLES, so the value can only arrive from outside that
+    route - but the real trap is the next person to ADD a role: put "manager" in
+    INBOX_GRANT_ROLES and they would have landed in the viewer bucket, able to see a line
+    and not send on it, with nothing logged and nothing raised. `role` is String(8) with
+    no CHECK constraint, so "membar" had the same silent outcome.
+
+    This asserts the unknown role grants nothing AT ALL - `can_view` is the half that the
+    old behaviour got wrong, so checking only `can_use` would pass against the bug.
+    """
+    token = await register_and_login(client, "iaX@example.com")
+    org = await create_org(client, token, "Org IAX")
+    org_id = uuid.UUID(org["id"])
+    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, token, org_id, E164_B)
+
+    await register_and_login(client, "memberX@example.com")
+    set_org_context(session, org_id)
+    user = await users_repo.get_by_email(session, "memberX@example.com")
+    inbox_a = await _inbox_for(session, E164_A)
+    inbox_b = await _inbox_for(session, E164_B)
+
+    # Written directly: the HTTP route would (correctly) refuse this value.
+    session.add(
+        InboxGrant(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            inbox_id=inbox_a.id,
+            grantee_type="user",
+            grantee_id=user.id,
+            role="manager",  # not in INBOX_GRANT_ROLES
+        )
+    )
+    # A real grant alongside it, so the test proves the bad row is ignored rather than
+    # the whole resolve failing - one malformed row must not take a user's other lines
+    # down with it.
+    session.add(
+        InboxGrant(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            inbox_id=inbox_b.id,
+            grantee_type="user",
+            grantee_id=user.id,
+            role="member",
+        )
+    )
+    await session.commit()
+
+    access = await resolve_access(session, user.id, [])
+
+    assert not access.is_admin
+    # The unknown role grants nothing - not send, and not even read.
+    assert not access.can_use(E164_A)
+    assert not access.can_view(E164_A)
+    assert E164_A not in access.viewer_e164s
+    # The valid grant beside it still works.
+    assert access.can_use(E164_B)
+    assert access.can_view(E164_B)
