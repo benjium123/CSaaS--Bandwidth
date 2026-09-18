@@ -456,8 +456,15 @@ pauses campaigns, hangs up live calls, emails the owners.
 
 ## Enterprise auth go-live (P42)
 
-1. **Redis.** Production refuses to start without `REDIS_URL`. Rate limits, SSO state and
-   the SAML replay store live there, shared by every worker.
+1. **Redis.** Production refuses to start without `REDIS_URL`. Rate limits, SSO state, the
+   SAML replay store and the session-revocation cache live there, shared by every worker -
+   and LiveKit keeps its SIP trunk and dispatch-rule state in the same instance, so calling
+   breaks without it too. Every one of those falls back to a PER-PROCESS store when Redis is
+   unreachable, silently and by design (a cache outage must not lock users out). `--workers 1`
+   in the image hides the consequences today; the fallbacks also reset on every deploy, so a
+   SAML assertion captured before a restart can be replayed after it inside its validity
+   window. Check `/status` after deploying, not just that the container is up - see
+   **`redis: degraded`** under Incident quick-checks.
 2. **Email (Resend).** `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=587`, `SMTP_USERNAME=resend`,
    `SMTP_PASSWORD=<Resend API key>`, `SMTP_FROM=security@<your verified domain>`. Production
    refuses plaintext SMTP. Password resets, invites, lockouts and security notices use it.
@@ -614,6 +621,34 @@ docker inspect -f '{{.State.Health.Status}}' csaas-api-1
 works without the database. Everything else (redis down, a carrier's breaker open, the
 media plane unreachable) degrades the platform without taking the whole thing down, and
 shows as `degraded`.
+
+**`redis: degraded` is not a soft warning.** It means a redis answered the socket but this
+app could not run a `PING` through its own client, and every Redis-backed feature has
+therefore fallen back to a per-process store: rate limits, the session-revocation cache, SSO
+login state and the SAML assertion replay store. Nothing will turn red, no request will fail,
+and the container's own healthcheck stays healthy - the platform just quietly stops sharing
+the state it is supposed to share. Three causes, in order of how often they bite:
+
+```bash
+# 1. wrong or missing password. CSAAS_REDIS_PASSWORD must match in /opt/csaas/.env (the api
+#    reads it into REDIS_URL) and in the redis container's own --requirepass.
+docker compose -f deploy/docker-compose.prod.yml exec redis \
+  redis-cli -a "$CSAAS_REDIS_PASSWORD" --no-auth-warning ping   # expect PONG
+
+# 2. the client library is missing from the image. `redis` is a declared dependency, but an
+#    image built from the Dockerfile's no-lock fallback path would not have it - and every
+#    call site treats "no client" as "use the in-process store", without an error anywhere.
+docker compose -f deploy/docker-compose.prod.yml exec api python -c "import redis; print(redis.__version__)"
+
+# 3. redis is out of memory. maxmemory-policy is noeviction on purpose (LiveKit's SIP state
+#    is in there and must not be evicted), so a full redis returns OOM on writes.
+docker compose -f deploy/docker-compose.prod.yml exec redis \
+  redis-cli -a "$CSAAS_REDIS_PASSWORD" --no-auth-warning info memory | grep -E "used_memory_human|maxmemory_human"
+```
+
+`redis: down` means nothing answered the socket at all - the container is stopped, or
+`REDIS_URL` points somewhere wrong. Treat `degraded` as the more urgent of the two: `down`
+is obvious and someone will notice, `degraded` looks like a working system.
 
 ## Log locations
 
