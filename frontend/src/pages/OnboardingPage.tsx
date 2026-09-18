@@ -33,9 +33,14 @@ import "@/components/onboarding/onboarding.css";
  *    while it is in flight this renders a skeleton - no ticks, no crosses, no status. A
  *    stepper asserts where someone is in a process, and asserting that from a value that has
  *    not arrived is the failure this codebase keeps finding.
- * 2. THE STEPPER IS ONLY MOUNTED IN `draft` AND `needs_info`. `missing` is `[]` in every
- *    other status, so a stepper rendered elsewhere would tick every step green vacuously -
- *    and beside a rejection that is a completed checklist celebrating a refusal.
+ * 2. THE STEPPER IS ONLY MOUNTED IN `draft` AND `needs_info` - and the reason is a coupling
+ *    worth stating, because `[]` is not self-explanatory. The serializer SHORT-CIRCUITS the
+ *    field (`kyc.py:214`: `missing_for_submission(...) if profile.status in ("draft",
+ *    "needs_info") else []`), so outside those two statuses `[]` means NOT COMPUTED, not
+ *    "nothing left to do". A stepper rendered elsewhere would tick every step green off an
+ *    absence - and beside a rejection, that is a completed checklist celebrating a refusal.
+ *    If `missing` ever becomes populated in `submitted`, this guard must be revisited
+ *    deliberately rather than a stepper appearing there by surprise.
  * 3. A BUTTON IS ONLY SHOWN WHERE THE SERVER WOULD ACCEPT THE CALL. See `Reverification`:
  *    only the person themselves may repeat their own ID check, so offering everyone a
  *    button offers most people a dead end.

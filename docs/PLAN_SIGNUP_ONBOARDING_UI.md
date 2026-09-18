@@ -341,3 +341,59 @@ reopen this, and should be refused on those grounds.
 
 Frontend is mine; the backend session keeps `backend/`. Items 1 and 3 above are theirs to
 build if the operator agrees. Both sessions review the state table before implementation.
+
+## Open items for the owner of `app/services/kyc_tick.py` and `app/api/routes/kyc.py`
+
+Written down because the session that owns those files (the trust-and-safety one that landed
+`be5fe72`) was not running when the onboarding UI shipped in `94cc350`, so this could not be
+handed over directly. Neither item is live today; both are latent.
+
+### 1. `redone` fails OPEN on a missing `verified_at` (`kyc_tick.py:99`)
+
+```python
+redone = owners and all(
+    p.status == "verified" and (_aware(p.verified_at) or started) >= started for p in owners
+)
+```
+
+A person marked `verified` with a null `verified_at` yields `(None or started) >= started`
+→ `True`, and so counts as having re-verified **inside this window**. The question the check
+asks is "did they prove it *again*, in this window", and a missing proof-time is not proof.
+
+The adjacent line is the same idiom pointing the other way:
+`started = _aware(profile.next_reverification_at) or now` falls back to `now` and is
+fail-*closed*, because nothing in the past can then satisfy it. Two `or` fallbacks, one line
+apart, opposite safety directions; only the second is defensible.
+
+Suggested: `_aware(p.verified_at) is not None and _aware(p.verified_at) >= started`.
+
+Probably unreachable today — a transition to `verified` presumably always stamps
+`verified_at` — so this is latent, not live.
+
+**If you tighten it, the client mirror in `OnboardingPage.staleOwners` needs the same edit in
+the same commit.** It deliberately reproduces the current fail-open branch (`if
+(!p.verified_at) return false;`) so that client and server agree. A client that disagrees
+with the server about staleness is worse than both agreeing on something slightly wrong —
+but a one-sided fix creates exactly the divergence the mirroring was there to avoid.
+
+### 2. `next_reverification_at` immutability across the window — wanted: a test
+
+`OnboardingPage.staleOwners` relies on `next_reverification_at` still holding the **original**
+cutoff for as long as the profile sits in `reverification_due`. That holds today: it is
+written in exactly one place, `kyc_tick.py:108`, on re-approval, and nothing touches it during
+the window. Verified by the monitoring session independently.
+
+The invariant is *"the cutoff is immutable for the duration of the reverification window"*,
+and it is the kind of property a well-meaning refactor breaks by "refreshing" the date — at
+which point the client's staleness test silently diverges from the server's with nothing going
+red. The test belongs in `backend/`, with whoever owns the file; a test written by the session
+that does not own the code it pins is a test nobody maintains.
+
+### Note on the `is_you` field this UI depends on
+
+`be5fe72` added `is_you` to `_person_out`. It immediately caught **four** real frontend
+defects where `is_user` ("linked to *some* account") was being read as "is you" — the worst
+redirected the signed-in browser into another owner's Stripe Identity session. The field was
+worth adding, and the reason none of the four was caught earlier is that `is_you` was on the
+wire but absent from the TypeScript `KycPerson` type, so `is_user` type-checked perfectly at
+all four sites. It is declared now.
