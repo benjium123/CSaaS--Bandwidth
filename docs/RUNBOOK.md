@@ -461,9 +461,11 @@ pauses campaigns, hangs up live calls, emails the owners.
    and LiveKit keeps its SIP trunk and dispatch-rule state in the same instance, so calling
    breaks without it too. Every one of those falls back to a PER-PROCESS store when Redis is
    unreachable, silently and by design (a cache outage must not lock users out). `--workers 1`
-   in the image hides the consequences today; the fallbacks also reset on every deploy, so a
-   SAML assertion captured before a restart can be replayed after it inside its validity
-   window. Check `/status` after deploying, not just that the container is up - see
+   in the image hides the consequences today. With more than one worker the two that bite are
+   the rate limiter (its ceiling multiplies by the worker count, and that number IS the control)
+   and session revocation (a revoked session stays valid on every other worker for up to 60s);
+   SSO logins fail rather than becoming unsafe, because the callback lands on a worker that
+   never issued the state. Check `/status` after deploying, not just that the container is up - see
    **`redis: degraded`** under Incident quick-checks.
 2. **Email (Resend).** `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=587`, `SMTP_USERNAME=resend`,
    `SMTP_PASSWORD=<Resend API key>`, `SMTP_FROM=security@<your verified domain>`. Production
