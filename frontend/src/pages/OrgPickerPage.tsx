@@ -9,7 +9,12 @@ export function OrgPickerPage() {
       <AuthPlate
         eyebrow="Signed in · Choose a workspace"
         title="Choose an organization"
-        lede="You belong to more than one. Everything you see next is scoped to the one you pick."
+        // Was "You belong to more than one." - which this page cheerfully said to an
+        // account that belongs to NONE. Found by signing in as a real membership-less
+        // account against a real backend, which is the sort of thing only running it
+        // catches. The lede now describes what the page DOES; how many workspaces the
+        // person has is the list's business, and the list waits until it knows.
+        lede="Everything you see next is scoped to the workspace you pick."
         footer={
           <button type="button" className="ex-link" onClick={logout}>
             Sign out

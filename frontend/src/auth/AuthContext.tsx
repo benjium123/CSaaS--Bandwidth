@@ -33,7 +33,16 @@ export function hasPermission(me: Me | null, orgId: string | null, permission: s
   // require_permission, so the affordance was always a lie rather than a door.
   if (!me || !orgId) return false;
   const membership = me.memberships.find((m) => m.org_id === orgId);
-  if (!membership || !membership.permissions) return true;
+  // Split from the fail-open below, because only one of these deserves it. "You are not a
+  // member of this workspace" is KNOWN absence of every permission, not absence of
+  // information - a stronger denial than the loading case above. It was previously
+  // unreachable only because App.tsx drops an orgId that is not in the memberships, i.e.
+  // this function's safety depended on a guard in a different file; completeSso is itself
+  // an example of a second org-setting path that behaved differently from the first.
+  if (!membership) return false;
+  // THIS fail-open is deliberate and stays: an undefined `permissions` means a backend that
+  // predates the field (P20 feature detection), not a member with no rights.
+  if (!membership.permissions) return true;
   return membership.permissions.includes(permission);
 }
 
@@ -268,6 +277,16 @@ export function AuthProvider({
         api.setAuth({ token: accessToken, orgId });
         // P42: the SSO callback also set the session cookie; accessToken is null then.
         setOrgId(orgId);
+        // This is the FOURTH path that changes the org, and it was the only one that did
+        // not clear the cache. That matters because cross-tenant safety here is a
+        // chokepoint rather than a property of the keys: most query keys do not contain the
+        // org, and are kept honest by wiping everything whenever the org changes. An SSO
+        // callback is in the AUTHENTICATED route table too, so someone sitting in workspace
+        // A with a warm cache can complete an SSO sign-in into workspace B in the same tab.
+        // The sharp entry is CAPABILITIES_QUERY_KEY: useGate() reads it to gate the nav rail
+        // and every settings section, so for a beat the console would answer permission
+        // questions with A's answers while the user is in B.
+        queryClient.clear();
         const next = await loadMe();
         if (!next) {
           logout();
@@ -278,7 +297,7 @@ export function AuthProvider({
         return loginError(err);
       }
     },
-    [api, loadMe, logout],
+    [api, loadMe, logout, queryClient],
   );
 
   const selectOrg = React.useCallback(

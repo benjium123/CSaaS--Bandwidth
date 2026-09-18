@@ -28,7 +28,7 @@ const ME: Me = {
  * masking whether `queryClient.clear()` actually ran. The test seeds/reads the cache
  * directly via the `queryClient` handle instead. */
 function Probe() {
-  const { logout, selectOrg } = useAuth();
+  const { logout, selectOrg, completeSso } = useAuth();
   return (
     <div>
       <button type="button" onClick={logout}>
@@ -37,13 +37,23 @@ function Probe() {
       <button type="button" onClick={() => selectOrg("org-2")}>
         Switch org
       </button>
+      <button type="button" onClick={() => void completeSso(null, "org-2")}>
+        Complete SSO
+      </button>
     </div>
   );
 }
 
 function renderProbe(client = makeStubClient({ "/api/v1/auth/me": ME })) {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    // gcTime: Infinity, NOT 0, and this is load-bearing. `setQueryData` creates an entry
+    // with no observers, so under `gcTime: 0` it is garbage-collected the moment the test
+    // yields - and every assertion below then reads `undefined` whether or not
+    // `queryClient.clear()` ever ran. Under 0 all four of these tests pass with the
+    // clearing REMOVED: they cannot fail, so they prove nothing. Under Infinity the entry
+    // survives unless something deliberately clears it, which is the property being tested.
+    // This was found when a new test for an genuinely missing clear() passed anyway.
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   });
   render(
     <QueryClientProvider client={queryClient}>
@@ -71,6 +81,25 @@ describe("AuthContext cache hygiene", () => {
     queryClient.setQueryData(["probe"], "secret-org-1-data");
 
     await userEvent.click(screen.getByRole("button", { name: "Switch org" }));
+
+    expect(queryClient.getQueryData(["probe"])).toBeUndefined();
+  });
+
+  /**
+   * completeSso is the FOURTH path that changes the org, and the only one that was never
+   * added to this contract. It matters because the console's cross-tenant safety is a
+   * chokepoint: most of the 267 query keys do not contain the org, and are kept honest by
+   * clearing everything whenever the org changes. An SSO callback is reachable from the
+   * authenticated route table (App.tsx), so a signed-in user with a warm cache for
+   * workspace A can complete an SSO sign-in into workspace B in the same tab. The sharp
+   * one is CAPABILITIES_QUERY_KEY, which useGate() reads to gate the nav rail and every
+   * settings section - A's answers, under B's context.
+   */
+  it("clears every cached query when completeSso lands the user in a workspace", async () => {
+    const { queryClient } = renderProbe();
+    queryClient.setQueryData(["probe"], "secret-org-1-data");
+
+    await userEvent.click(screen.getByRole("button", { name: "Complete SSO" }));
 
     expect(queryClient.getQueryData(["probe"])).toBeUndefined();
   });
