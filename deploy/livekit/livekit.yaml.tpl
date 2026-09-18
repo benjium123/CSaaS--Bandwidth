@@ -37,10 +37,11 @@ logging:
   level: info
   json: true
 room:
-  # The backend creates outbound rooms explicitly and the SIP dispatch rule creates
-  # inbound ones; nothing legitimate needs implicit creation. With auto_create off, an
-  # over-broad or leaked join token cannot be used as a room-creation primitive.
-  auto_create: false
+  # The backend creates outbound rooms explicitly. Inbound rooms are created by
+  # livekit-sip JOINING under the dispatch rule - measured 2026-09-18: with auto_create
+  # off every inbound call died ("bad handshake 404", 486 to the carrier). Join tokens
+  # are short-lived and minted only by the backend and livekit-sip, so this stays on.
+  auto_create: true
 # Webhooks: LiveKit posts room/participant lifecycle to the backend, signed with the same
 # API key/secret (Authorization: JWT whose sha256 claim hashes the body).
 webhook:
