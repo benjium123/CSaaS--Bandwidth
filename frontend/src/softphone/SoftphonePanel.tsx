@@ -328,11 +328,15 @@ export function SoftphonePanel() {
 
   if (!expanded && softphone.incoming.length === 0 && !softphone.activeCall) {
     return (
-      <div className="fixed bottom-4 right-4 z-50">
+      // App.tsx renders this OUTSIDE the Shell's `dark` wrapper (:55 vs :67), so it was
+      // reading the light :root tokens inside a dark app - which is why the launcher was a
+      // navy circle. It now carries the console scope itself: same palette as the inbox it
+      // belongs to, and verdigris, the colour reserved here for a live line.
+      <div className="console-surface dark fixed bottom-4 right-4 z-50">
         <Button
           type="button"
           size="icon"
-          className="h-12 w-12 rounded-full shadow-lg"
+          className="cx-call h-12 w-12 rounded-full shadow-lg"
           aria-label="Open softphone"
           onClick={() => setExpanded(true)}
         >
@@ -344,7 +348,7 @@ export function SoftphonePanel() {
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-50 w-80 rounded-lg border border-border bg-background shadow-xl"
+      className="console-surface dark fixed bottom-4 right-4 z-50 w-80 rounded-lg border border-border bg-background shadow-xl"
       aria-label="Softphone"
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2">

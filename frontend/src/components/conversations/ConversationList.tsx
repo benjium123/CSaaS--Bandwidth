@@ -492,17 +492,17 @@ export function ConversationList({
                     type="button"
                     onClick={() => onSelect(conversation.contact_e164)}
                     aria-current={selected ? "true" : undefined}
-                    className={cn(
-                      "flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-muted",
-                      selected && "bg-muted",
-                    )}
+                    className="cx-row flex w-full items-center gap-2.5 px-3 py-2 text-left"
                   >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground">
+                    <span className="cx-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-semibold">
                       {initialsFor(title)}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
-                        <span className="flex min-w-0 items-center gap-1">
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          {/* Unread is carried by the dot AND the weight/colour of the
+                              name, never by colour alone. */}
+                          {unread && <span className="cx-unread-dot" aria-hidden="true" />}
                           {conversation.important && (
                             <Star
                               aria-label="Important"
@@ -511,16 +511,16 @@ export function ConversationList({
                           )}
                           <span
                             className={cn(
-                              "truncate text-sm",
+                              "truncate text-[0.8125rem]",
                               unread
-                                ? "font-bold text-foreground"
-                                : "font-medium text-foreground",
+                                ? "font-semibold text-foreground"
+                                : "font-medium text-foreground/85",
                             )}
                           >
                             {title}
                           </span>
                         </span>
-                        <span className="shrink-0 text-[11px] text-muted-foreground">
+                        <span className="cx-num shrink-0 text-[0.625rem] text-muted-foreground">
                           {relativeTime(conversation.last_event_at)}
                         </span>
                       </span>

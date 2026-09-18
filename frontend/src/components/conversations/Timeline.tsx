@@ -89,12 +89,16 @@ function MessageTimelineItemView({ item, api }: { item: MessageTimelineItem; api
       <div
         title={item.route_reason ?? undefined}
         className={cn(
-          "max-w-[75%] space-y-1 rounded-lg px-3 py-2 text-sm",
+          "cx-msg space-y-1",
           scheduled
-            ? "border border-dashed border-border bg-muted text-foreground"
+            ? "border-dashed border-border bg-muted text-foreground"
             : outbound
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-foreground",
+              ? "cx-msg-out"
+              : "cx-msg-in",
+          // A failed message is the one thing in a thread someone must not scroll past:
+          // it now carries the danger edge on the bubble itself, not just a line of red
+          // text inside an otherwise ordinary-looking message.
+          item.failure_reason_public && "cx-msg-fail",
         )}
       >
         {item.route_reason && <span className="sr-only">{item.route_reason}</span>}
@@ -122,7 +126,7 @@ function MessageTimelineItemView({ item, api }: { item: MessageTimelineItem; api
           </p>
         )}
         {links.length > 0 && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="cx-num text-[0.625rem] text-muted-foreground">
             {clicks === 0
               ? "Link not opened yet"
               : clicks === 1
@@ -148,7 +152,7 @@ function MessageTimelineItemView({ item, api }: { item: MessageTimelineItem; api
             )}
           </div>
         )}
-        <div className="flex items-center justify-end gap-2 text-[11px] opacity-70">
+        <div className="cx-meta flex items-center justify-end gap-2">
           <span>{relativeTime(item.occurred_at)}</span>
           {outbound && !scheduled && (
             <span title={tick.label} aria-label={tick.label}>
@@ -277,7 +281,7 @@ function CallTimelineItemView({
       <div className="min-w-0 flex-1">
         <p className="font-medium">{label}</p>
         {item.duration_seconds !== null && item.duration_seconds > 0 && (
-          <p className="text-xs text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
+          <p className="cx-num text-[0.6875rem] text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
         )}
         {item.recording && (
           <CallRecordingPlayer
@@ -299,7 +303,7 @@ function CallTimelineItemView({
           </div>
         )}
       </div>
-      <span className="ml-auto shrink-0 self-start text-[11px] text-muted-foreground">
+      <span className="cx-num ml-auto shrink-0 self-start text-[0.625rem] text-muted-foreground">
         {relativeTime(item.occurred_at)}
       </span>
     </div>
@@ -312,12 +316,12 @@ function VoicemailTimelineItemView({ item, api }: { item: VoicemailTimelineItem;
       <div className="flex items-center gap-2">
         <Voicemail className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="font-medium">Voicemail</span>
-        <span className="ml-auto text-[11px] text-muted-foreground">
+        <span className="cx-num ml-auto text-[0.625rem] text-muted-foreground">
           {relativeTime(item.occurred_at)}
         </span>
       </div>
       {item.duration_seconds !== null && item.duration_seconds > 0 && (
-        <p className="mt-1 text-xs text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
+        <p className="cx-num mt-1 text-[0.6875rem] text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
       )}
       {item.transcript && (
         <p className="mt-2 whitespace-pre-wrap break-words text-xs text-muted-foreground">
@@ -354,7 +358,7 @@ function NoteTimelineItemView({ item }: { item: NoteTimelineItem }) {
       <div className="flex items-center gap-2">
         <Pill tone="warning">Note</Pill>
         <span className="font-medium">{item.author_name}</span>
-        <span className="ml-auto text-[11px] text-muted-foreground">
+        <span className="cx-num ml-auto text-[0.625rem] text-muted-foreground">
           {relativeTime(item.occurred_at)}
         </span>
       </div>
@@ -506,7 +510,7 @@ export function Timeline({
 
         {groups.map((group) => (
           <section key={group.date} className="space-y-2">
-            <div className="sticky top-0 z-10 bg-background py-1 text-center text-[11px] font-medium text-muted-foreground">
+            <div className="cx-daybreak cx-label sticky top-0 z-10 py-2 backdrop-blur-sm">
               {group.label}
             </div>
             {group.items.map((item) => {

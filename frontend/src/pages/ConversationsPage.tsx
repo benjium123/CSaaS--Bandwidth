@@ -25,6 +25,9 @@ import { InboxColumn, type InboxColumnSelection } from "@/components/conversatio
 import { ScheduledDrawer } from "@/components/conversations/ScheduledDrawer";
 import { Button, Sheet } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import "@fontsource-variable/archivo/wdth.css";
+import "@fontsource-variable/martian-mono/wght.css";
+import "@/components/conversations/consoleTheme.css";
 
 /** Item 2: the list is kept fresh two ways - a background poll while the tab is visible
  * (TanStack Query pauses `refetchInterval` in the background by default, so this alone
@@ -413,7 +416,10 @@ export function ConversationsPage() {
   );
 
   return (
-    <div className="dark grid h-full grid-cols-[minmax(0,1fr)] bg-background text-foreground lg:grid-cols-[220px_minmax(0,1fr)_300px]">
+    // The contact panel narrows from 300 to 272 and the inbox rail from 220 to 208: at
+    // 1280 the thread - the thing the person is actually reading - had the least room of
+    // the three, which is the wrong way round. Those 40px go to the conversation.
+    <div className="console-surface dark grid h-full grid-cols-[minmax(0,1fr)] bg-background text-foreground lg:grid-cols-[208px_minmax(0,1fr)_272px]">
       {isBelowSm ? (
         <>
           <div className="sm:hidden bg-background p-2">
@@ -441,7 +447,15 @@ export function ConversationsPage() {
         inboxColumnElement
       )}
 
-      <main className="grid min-w-0 grid-cols-[1fr] md:grid-cols-[320px_1fr]">
+      {/* `min-h-0` on BOTH this grid and the <section> below is load-bearing, and neither
+          works alone - measured at 1280x720, either one by itself leaves the page 1122px
+          tall and the composer 331px below the fold; only both together bring it back to
+          720. Grid and flex items default to `min-height: auto`, so the tall timeline grows
+          its row instead of scrolling inside it, and the whole app scrolls - taking the
+          conversation list with it and putting the reply box out of reach. Timeline itself
+          already has `min-h-0 flex-1 overflow-y-auto`; the constraint was missing on its
+          ancestors, which is why the symptom looked like "the timeline won't scroll". */}
+      <main className="grid min-h-0 min-w-0 grid-cols-[1fr] md:grid-cols-[320px_1fr]">
         <ConversationList
           items={items}
           selectedContactE164={urlContact}
@@ -467,7 +481,7 @@ export function ConversationsPage() {
           canComposeLoading={inboxesQuery.isLoading}
         />
 
-        <section className="flex min-w-0 flex-col bg-background">
+        <section className="cx-thread flex min-h-0 min-w-0 flex-col">
           {composeMode ? (
             <NewConversationPanel
               // Load-bearing key: the panel seeds its state on mount, so without a

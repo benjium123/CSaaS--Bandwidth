@@ -433,7 +433,9 @@ export function Composer({
         "space-y-2 p-3",
         mode === "note"
           ? "rounded-md border border-amber-500/40 bg-amber-500/10"
-          : "border-t border-border",
+          // The composer is the primary action on the primary screen and used to be a
+          // hairline away from being part of the timeline. It now sits on its own plane.
+          : "cx-composer",
       )}
     >
       <div role="tablist" aria-label="Message type" className="flex gap-2">
@@ -652,14 +654,14 @@ export function Composer({
               if (e.key.startsWith("Arrow")) syncCaret(e);
             }}
             onKeyDown={handleTextareaKeyDown}
-            className="flex max-h-40 min-h-9 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
+            className="cx-input flex max-h-40 min-h-9 w-full resize-y px-3 py-2 text-sm placeholder:text-muted-foreground"
           />
 
           {/* Reply mode only: a note is never sent anywhere, so a segment count under it
               would be answering a question nobody asked - and one that costs money in
               every other place it appears. */}
           {mode === "reply" && (
-            <p className="text-[11px] text-muted-foreground">
+            <p className="cx-num text-[0.625rem] text-muted-foreground">
               {segments.units} char{segments.units === 1 ? "" : "s"} · {segments.encoding} ·{" "}
               {segments.segments} segment{segments.segments === 1 ? "" : "s"}
             </p>
@@ -736,6 +738,7 @@ export function Composer({
 
         <Button
           type="submit"
+          className="cx-send"
           disabled={disabled || busy || noteMutation.isPending || uploading || !body.trim()}
         >
           {mode === "note" ? "Post note" : scheduledLocal ? "Schedule" : "Send"}

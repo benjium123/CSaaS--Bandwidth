@@ -1,0 +1,311 @@
+/**
+ * The console's working surfaces — the unified inbox.
+ *
+ * WHY THIS EXISTS: the product had two visual identities. The front door
+ * (src/auth/authTheme.css) was designed; the console a person actually lives in all day was
+ * raw neutral greys with no hierarchy, where inbound and outbound messages differed only by
+ * alignment. This closes that gap by extending the same palette and typography inward —
+ * ink, bone, copper for "us", verdigris for "live" — while deliberately leaving the
+ * ATMOSPHERE at the door. Glows and patchbay lattices belong on a screen you look at for
+ * fifteen seconds, not one you stare at for eight hours. Everything here is flat, dense and
+ * quiet.
+ *
+ * Scoped exactly like the auth theme: every rule sits under `.console-surface`, so nothing
+ * can reach the rest of the app. The doubled `.console-surface.console-surface` is for the
+ * same reason as before — the wrapper also carries `dark`, and two classes beat one
+ * whatever order Vite emits the stylesheets in.
+ *
+ * COLOUR CARRIES MEANING HERE, so it is rationed:
+ *   copper     — us: our outbound messages, the selected row, the primary action
+ *   verdigris  — live and confirmed: delivered, connected, unread-and-waiting
+ *   amber      — an SLA clock running down (already the console's warning colour)
+ *   red        — a delivery failure (already the console's danger colour)
+ * An inbox's own colour dot is USER data and is left alone; it is the one hue this file
+ * does not get to choose.
+ */
+
+.console-surface.console-surface {
+  --ex-ink: 197 30% 5%;
+  --ex-ink-raise: 197 22% 8%;
+  --ex-ink-high: 197 18% 12%;
+  --ex-bone: 40 26% 92%;
+  --ex-bone-dim: 40 10% 68%;
+  --ex-copper: 24 62% 52%;
+  --ex-copper-line: 24 45% 24%;
+  --ex-verdigris: 168 58% 46%;
+  --ex-danger: 6 74% 62%;
+
+  --background: var(--ex-ink);
+  --foreground: var(--ex-bone);
+  --muted: var(--ex-ink-high);
+  --muted-foreground: var(--ex-bone-dim);
+  --border: 197 16% 15%;
+  --primary: var(--ex-copper);
+  --primary-foreground: 197 40% 6%;
+  --destructive: var(--ex-danger);
+
+  font-family: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numerals ------------------------------------------------------------------
+ * A comms console is mostly numbers: E.164 numbers, timestamps, call durations, segment
+ * counts, SLA countdowns. In a proportional face they wobble and misalign down a column.
+ * Martian Mono with tabular figures makes a list of times scannable, and it is the single
+ * highest-value typographic change on this screen. */
+.cx-num {
+  font-family: "Martian Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.cx-label {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-size: 0.5625rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--ex-bone-dim));
+}
+
+/* Columns -------------------------------------------------------------------
+ * Three depths so the eye can tell the panes apart without heavy borders: the rails sit
+ * back, the thread comes forward. Borders are nearly invisible on purpose - depth does the
+ * separating, which keeps a five-column screen from reading as a spreadsheet. */
+.cx-rail {
+  background: hsl(197 32% 4%);
+}
+
+.cx-list {
+  background: hsl(var(--ex-ink));
+}
+
+.cx-thread {
+  background:
+    linear-gradient(180deg, hsl(var(--ex-ink-raise) / 0.55), hsl(var(--ex-ink-raise) / 0.25) 220px),
+    hsl(var(--ex-ink));
+}
+
+.cx-panel {
+  background: hsl(197 32% 4%);
+}
+
+/* Conversation rows ---------------------------------------------------------
+ * The selected row gets a copper spine rather than a fill, so selection survives being
+ * next to an unread row without the two fighting. */
+.cx-row {
+  position: relative;
+  transition: background-color 120ms ease;
+}
+
+.cx-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color 140ms ease;
+}
+
+.cx-row:hover {
+  background: hsl(var(--ex-ink-high) / 0.55);
+}
+
+.cx-row[aria-current="true"] {
+  background: hsl(var(--ex-ink-high) / 0.9);
+}
+
+.cx-row[aria-current="true"]::before {
+  background: hsl(var(--ex-copper));
+}
+
+/* An unread conversation is waiting on us: verdigris, the same "live" meaning it carries
+ * everywhere else. The dot is never the only signal - the title goes bone-bright too. */
+.cx-unread-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(var(--ex-verdigris));
+  box-shadow: 0 0 0 3px hsl(var(--ex-verdigris) / 0.14);
+  flex: none;
+}
+
+.cx-avatar {
+  background: linear-gradient(160deg, hsl(var(--ex-ink-high)), hsl(197 20% 10%));
+  border: 1px solid hsl(var(--ex-copper-line) / 0.55);
+  color: hsl(var(--ex-bone-dim));
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+}
+
+.cx-row[aria-current="true"] .cx-avatar {
+  border-color: hsl(var(--ex-copper) / 0.65);
+  color: hsl(var(--ex-bone));
+}
+
+/* Transcript ----------------------------------------------------------------
+ * Not chat-app bubbles. A message log that a business relies on reads better as a
+ * transcript: tight radius, a clear side, and OURS in copper so a thread can be scanned
+ * for "what did we say" without reading a word of it. */
+.cx-msg {
+  max-width: 34rem;
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+
+.cx-msg-in {
+  background: hsl(var(--ex-ink-high) / 0.85);
+  border-color: hsl(197 16% 16%);
+  color: hsl(var(--ex-bone));
+  border-top-left-radius: 1px;
+}
+
+.cx-msg-out {
+  background: hsl(var(--ex-copper) / 0.13);
+  border-color: hsl(var(--ex-copper) / 0.32);
+  color: hsl(40 30% 94%);
+  border-top-right-radius: 1px;
+}
+
+.cx-msg-note {
+  background: hsl(43 60% 50% / 0.1);
+  border-color: hsl(43 60% 50% / 0.35);
+  border-left-width: 2px;
+  color: hsl(43 40% 88%);
+}
+
+.cx-msg-fail {
+  border-color: hsl(var(--ex-danger) / 0.5);
+  background: hsl(var(--ex-danger) / 0.09);
+}
+
+.cx-meta {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.5625rem;
+  letter-spacing: 0.02em;
+  color: hsl(var(--ex-bone-dim) / 0.75);
+}
+
+/* A day divider that reads as a rule with a label, not as a floating pill. */
+.cx-daybreak {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: hsl(var(--ex-bone-dim) / 0.8);
+}
+
+.cx-daybreak::before,
+.cx-daybreak::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, transparent, hsl(197 16% 18%), transparent);
+}
+
+/* Composer ------------------------------------------------------------------
+ * This is the primary action on the primary screen and it was previously indistinguishable
+ * from the timeline above it. It now sits on its own plane with a copper top edge. */
+.cx-composer {
+  background: hsl(var(--ex-ink-raise));
+  border-top: 1px solid hsl(var(--ex-copper-line) / 0.7);
+  box-shadow: 0 -12px 28px -24px hsl(197 60% 2% / 0.9);
+}
+
+.console-surface .cx-input {
+  background: hsl(var(--ex-ink) / 0.75);
+  border: 1px solid hsl(197 16% 18%);
+  border-radius: 3px;
+  color: hsl(var(--ex-bone));
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.console-surface .cx-input:focus,
+.console-surface .cx-input:focus-visible {
+  outline: none;
+  border-color: hsl(var(--ex-verdigris) / 0.75);
+  box-shadow: 0 0 0 1px hsl(var(--ex-verdigris) / 0.35);
+}
+
+/* Actions -------------------------------------------------------------------
+ * Two verbs matter on this screen and they should not look the same as each other or as
+ * everything else: send a message (copper, the thing you do constantly) and place a call
+ * (verdigris, the thing that opens a live line). */
+.console-surface .cx-send {
+  background: linear-gradient(180deg, hsl(24 66% 56%), hsl(var(--ex-copper)));
+  color: hsl(197 45% 7%);
+  border: 0;
+  font-weight: 600;
+  border-radius: 3px;
+  transition: filter 140ms ease, box-shadow 140ms ease;
+}
+
+.console-surface .cx-send:not(:disabled):hover {
+  filter: brightness(1.08);
+  box-shadow: 0 8px 22px -14px hsl(var(--ex-copper));
+}
+
+.console-surface .cx-send:disabled {
+  opacity: 0.4;
+}
+
+.console-surface .cx-call {
+  color: hsl(168 55% 72%);
+  border: 1px solid hsl(var(--ex-verdigris) / 0.4);
+  background: hsl(var(--ex-verdigris) / 0.08);
+  border-radius: 3px;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.console-surface .cx-call:not(:disabled):hover {
+  background: hsl(var(--ex-verdigris) / 0.16);
+  border-color: hsl(var(--ex-verdigris) / 0.7);
+}
+
+/* Tabs and chips ------------------------------------------------------------ */
+.console-surface .cx-tab {
+  border-radius: 3px;
+  color: hsl(var(--ex-bone-dim));
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.console-surface .cx-tab[aria-selected="true"],
+.console-surface .cx-tab[data-active="true"] {
+  background: hsl(var(--ex-ink-high));
+  color: hsl(var(--ex-bone));
+  box-shadow: inset 0 -2px 0 hsl(var(--ex-copper) / 0.85);
+}
+
+.console-surface .cx-chip {
+  border-radius: 3px;
+  background: hsl(var(--ex-ink-high) / 0.9);
+  border: 1px solid hsl(197 16% 18%);
+  color: hsl(var(--ex-bone-dim));
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.console-surface .cx-chip:hover {
+  border-color: hsl(var(--ex-copper) / 0.5);
+  color: hsl(var(--ex-bone));
+}
+
+/* Empty state --------------------------------------------------------------- */
+.cx-empty {
+  color: hsl(var(--ex-bone-dim) / 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-surface *,
+  .console-surface *::before,
+  .console-surface *::after {
+    transition-duration: 1ms !important;
+    animation: none !important;
+  }
+}

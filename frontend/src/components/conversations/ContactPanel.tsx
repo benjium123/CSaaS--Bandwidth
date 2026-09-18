@@ -88,7 +88,7 @@ function EditableField({
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        <p className="cx-label">
           {label}
         </p>
         {status === "saving" && (
@@ -338,7 +338,7 @@ export function ContactPanel({
       aria-label="Contact panel"
     >
       <div className="flex flex-col items-center text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted text-lg font-semibold text-foreground">
+        <div className="cx-avatar flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold">
           {initialsFor(title)}
         </div>
         {contactId ? (
@@ -436,7 +436,7 @@ export function ContactPanel({
                   }}
                 />
                 <div className="space-y-1">
-                  <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  <p className="cx-label">
                     Phone
                   </p>
                   <div className="space-y-1">
