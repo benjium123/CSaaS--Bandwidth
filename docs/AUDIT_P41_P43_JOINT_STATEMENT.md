@@ -1,6 +1,9 @@
 # P41-P43 adversarial audit — joint closing statement
 
-Branch `p41-kyc`, 2026-09-18. 26 commits ahead of `origin/main`, **not pushed**.
+Branch `p41-kyc`, 2026-09-18. **Pushed** — `origin/p41-kyc` is at `8b6a1d8`, local 0 ahead,
+verified by re-fetching rather than from the push output. 34 commits ahead of `main`, which is
+untouched and unmerged. Written before the push; where an earlier sentence says "not pushed",
+read it as describing the state at signature.
 
 One session built P41-P43 (business verification, enterprise auth, AI safety monitoring). A
 second session audited it adversarially at the operator's request. This is both sessions'
@@ -94,7 +97,12 @@ PostgreSQL), `2c8b757` (runbook).
 - **Migrations: none needed.** No model or migration file changed in any commit, verified with
   `git status` as well as `git diff`, because a new migration is untracked and a diff cannot
   see it. Head remains `0051_monitoring.py`; the deploy is code-only.
-- **Nothing is pushed.** `origin/p41-kyc` is still at `b8deb65`.
+- **Pushed on 2026-09-18**, `b8deb65..8b6a1d8`, clean fast-forward, `main` untouched. This
+  changes the status of one commit and it is worth stating plainly: `270f7d1` — a third
+  session's abandoned SignalWire work, committed unchanged and **reviewed by nobody** — has
+  gone from local-and-unreviewed to **published-and-unreviewed**. Its test file has been
+  executed exactly once (passing, by the auditing session, inside an unrelated 108-test run);
+  nothing else about it has been read by either signatory. Publishing did not review it.
 
 ## (c) What remains unverified by anyone
 
