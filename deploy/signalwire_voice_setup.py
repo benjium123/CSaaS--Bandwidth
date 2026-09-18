@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import secrets
 import sys
 
@@ -129,7 +130,7 @@ async def main() -> int:
                     await sw_call(
                         "PUT",
                         f"/api/fabric/resources/swml_scripts/{scripts[name]['id']}",
-                        {"name": name, "contents": contents},
+                        {"name": name, "contents": json.dumps(contents)},
                     )
             else:
                 script_ids[name] = None
@@ -137,7 +138,7 @@ async def main() -> int:
                     made = await sw_call(
                         "POST",
                         "/api/fabric/resources/swml_scripts",
-                        {"name": name, "contents": contents, "script_type": "calling"},
+                        {"name": name, "contents": json.dumps(contents), "script_type": "calling"},
                     )
                     script_ids[name] = made["id"]
 
