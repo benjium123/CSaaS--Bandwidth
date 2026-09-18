@@ -1,6 +1,14 @@
 """Regression tests for BUGFIX_LEDGER_2026-09.md Area 2 (SMS/MMS pipeline), + 4.1
 (registration gate) and the message.received frontend-support event."""
 
+# P43 (audit): every datetime written into a DateTime(timezone=True) column in this
+# file is AWARE. Stripping tzinfo was invisible on SQLite (which stores those columns
+# naive anyway) but PostgreSQL reads a naive value in the session timezone, so the stored
+# instant moved by the machine's UTC offset: it failed the stale-recovery test on a
+# machine behind UTC, and on one ahead of UTC it would instead make the "not stale"
+# assertions unreachable - passing without testing anything. Never strip tzinfo to fit a
+# column type.
+
 from __future__ import annotations
 
 import uuid
@@ -128,7 +136,7 @@ async def test_release_held_messages_uses_message_carrier(monkeypatch, session):
     bandwidth = FakeCarrier(name="bandwidth")
     plivo = FakeCarrier(name="plivo")
     registry = CarrierRegistry({"bandwidth": bandwidth, "plivo": plivo}, primary="bandwidth")
-    moment = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    moment = datetime.now(timezone.utc) - timedelta(minutes=1)
 
     set_org_context(session, org_id)
     thread_bw = _thread(org_id, OUR, THEIRS)
@@ -197,7 +205,7 @@ async def test_d4_release_held_messages_resolves_the_orgs_db_backed_carrier(
         time.monotonic(),
     )
     try:
-        moment = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+        moment = datetime.now(timezone.utc) - timedelta(minutes=1)
         set_org_context(session, org_id)
         thread = _thread(org_id, OUR, THEIRS)
         session.add(thread)
@@ -347,7 +355,7 @@ async def test_bulk_sends_do_not_use_active_conversation_carveout(monkeypatch, s
         Message(
             id=uuid.uuid4(), org_id=org_id, thread_id=thread.id, direction="inbound",
             status="received", from_e164=THEIRS, to_e164=OUR, body="hello", media=[],
-            carrier="bandwidth", created_at=late.replace(tzinfo=None) - timedelta(hours=1),
+            carrier="bandwidth", created_at=late - timedelta(hours=1),
         )
     )
     await session.commit()
@@ -491,7 +499,7 @@ async def test_recover_stale_queued_resends_once_then_fails(session):
     await session.flush()
     fake = FakeCarrier(name="bandwidth")
     registry = CarrierRegistry({"bandwidth": fake}, primary="bandwidth")
-    stale_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=11)
+    stale_time = datetime.now(timezone.utc) - timedelta(minutes=11)
 
     set_org_context(session, org_id)
     thread_one = _thread(org_id, OUR, THEIRS)
@@ -536,7 +544,7 @@ async def test_recover_stale_queued_ignores_fresh_queued_messages(session):
     fresh = Message(
         id=uuid.uuid4(), org_id=org_id, thread_id=thread.id, direction="outbound",
         status="queued", from_e164=OUR, to_e164=THEIRS, body="fresh", media=[],
-        carrier="bandwidth", created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        carrier="bandwidth", created_at=datetime.now(timezone.utc),
     )
     session.add(fresh)
     await session.commit()
