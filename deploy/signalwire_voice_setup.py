@@ -99,7 +99,10 @@ async def main() -> int:
     if not (s.livekit_url and s.livekit_api_secret.get_secret_value()):
         print("LIVEKIT_* is not set", file=sys.stderr)
         return 2
-    sip_domain = space.replace(".signalwire.com", ".sip.signalwire.com")
+    # The project's SIP endpoint domain carries a per-project identifier
+    # (<space>-<id>.sip.signalwire.com); "<space>.sip.signalwire.com" answers 404
+    # "Domain unavailable". Read it from the SIP profile instead of guessing.
+    sip_domain = ""
 
     sw = httpx.AsyncClient(
         base_url=f"https://{space}",
@@ -119,6 +122,12 @@ async def main() -> int:
         return r.json() if r.content else {}
 
     try:
+        profile = await sw_call("GET", "/api/relay/rest/sip_profile")
+        sip_domain = str(profile.get("domain") or "") if isinstance(profile, dict) else ""
+        if not sip_domain:
+            print("ABORT: SIP profile has no domain", file=sys.stderr)
+            return 1
+
         # ---- 1 + 2: SWML scripts ---------------------------------------------------------
         scripts = {
             (x.get("display_name") or x.get("name")): x
