@@ -3,6 +3,7 @@ import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  MessageSquare,
   PhoneMissed,
   Play,
   Voicemail,
@@ -450,8 +451,15 @@ export function Timeline({
 
   if (!enabled) {
     return (
-      <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
-        Select a conversation
+      // The one empty state that remains, and the only one placed where the eye actually
+      // lands. It says what to do next rather than describing the current absence.
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <MessageSquare className="h-7 w-7 text-[hsl(var(--ex-copper)/0.55)]" aria-hidden="true" />
+        <p className="text-sm text-muted-foreground">Select a conversation</p>
+        <p className="cx-empty max-w-[22rem] text-xs leading-relaxed">
+          Pick someone on the left to read the whole history — every text, call and
+          voicemail — and reply or ring them from the same place.
+        </p>
       </div>
     );
   }

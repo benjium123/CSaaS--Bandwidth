@@ -128,7 +128,7 @@ function FilterMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/10"
+        className="cx-chip flex items-center gap-1 px-2.5 py-1 text-[0.6875rem] font-medium"
       >
         {label}
         <ChevronDown className="h-3 w-3" />
@@ -414,12 +414,7 @@ export function ConversationList({
             type="button"
             aria-selected={tab === "chats"}
             onClick={() => onTabChange("chats")}
-            className={cn(
-              "flex-1 rounded-md px-3 py-1.5 text-sm font-medium",
-              tab === "chats"
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
+            className="cx-tab flex-1 px-3 py-1.5 text-[0.8125rem] font-semibold"
           >
             Chats
           </button>
@@ -428,12 +423,7 @@ export function ConversationList({
             type="button"
             aria-selected={tab === "calls"}
             onClick={() => onTabChange("calls")}
-            className={cn(
-              "flex-1 rounded-md px-3 py-1.5 text-sm font-medium",
-              tab === "calls"
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
+            className="cx-tab flex-1 px-3 py-1.5 text-[0.8125rem] font-semibold"
           >
             Calls
           </button>
@@ -458,7 +448,7 @@ export function ConversationList({
           placeholder="Search"
           value={q}
           onChange={(e) => onQChange(e.target.value)}
-          className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-muted-foreground"
+          className="cx-input mt-2 h-8 w-full px-2 text-xs placeholder:text-muted-foreground"
         />
       </div>
 

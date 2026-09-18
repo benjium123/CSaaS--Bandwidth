@@ -193,14 +193,15 @@ export function ConversationHeader({
 
   if (!conversation) {
     return (
+      // Deliberately empty rather than a second "Select a conversation": with nothing
+      // chosen, the header, the timeline and the contact panel each said their own version
+      // of "nothing selected" - three messages answering one question. The timeline keeps
+      // the message because it owns the space the eye lands on; this keeps only the bar so
+      // the layout does not jump when a conversation is picked.
       <div
-        className={cn(
-          "flex h-14 items-center border-b border-border bg-background px-3 text-sm text-muted-foreground",
-          className,
-        )}
-      >
-        Select a conversation
-      </div>
+        className={cn("h-14 border-b border-border", className)}
+        aria-hidden="true"
+      />
     );
   }
 

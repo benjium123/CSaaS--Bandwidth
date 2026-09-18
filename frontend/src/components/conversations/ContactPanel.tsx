@@ -245,13 +245,13 @@ export function ContactPanel({
 
   if (!conversation) {
     return (
+      // Quiet, not silent: the panel keeps its place so the grid does not reflow when a
+      // conversation is chosen, but it no longer competes with the timeline's empty state
+      // for the same sentence.
       <div
-        className={cn(
-          "flex h-full items-center justify-center bg-background px-3 text-sm text-muted-foreground",
-          className,
-        )}
+        className={cn("cx-panel flex h-full items-center justify-center px-3", className)}
       >
-        No contact selected
+        <span className="cx-empty text-xs">No contact selected</span>
       </div>
     );
   }

@@ -197,7 +197,7 @@ export function InboxColumn({
   return (
     <aside
       className={cn(
-        "flex h-full w-[220px] shrink-0 flex-col border-r border-border bg-background text-foreground",
+        "cx-rail flex h-full w-[208px] shrink-0 flex-col border-r border-border text-foreground",
         className,
       )}
       aria-label="Inbox column"
@@ -234,10 +234,7 @@ export function InboxColumn({
                 size="sm"
                 aria-current={selection.kind === "all" ? "true" : undefined}
                 onClick={() => onSelect({ kind: "all" })}
-                className={cn(
-                  "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
-                  selection.kind === "all" && "bg-muted",
-                )}
+                className="cx-row w-full justify-start rounded-[3px] px-2 py-1.5 text-left text-xs text-foreground"
               >
                 All conversations
               </Button>
@@ -256,10 +253,7 @@ export function InboxColumn({
                     size="sm"
                     aria-current={selected ? "true" : undefined}
                     onClick={() => onSelect({ kind: "inbox", inboxId: inbox.id })}
-                    className={cn(
-                      "w-full justify-start rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted",
-                      selected && "bg-muted",
-                    )}
+                    className="cx-row w-full justify-start rounded-[3px] px-2 py-1.5 text-left text-xs text-foreground"
                   >
                     {/* Tailwind cannot express a runtime colour - inline style is the
                         only correct way to draw the per-inbox dot. */}
@@ -277,7 +271,7 @@ export function InboxColumn({
                             ? "Only the most recent unread conversations are counted"
                             : undefined
                         }
-                        className="bg-muted text-foreground"
+                        className="cx-num bg-[hsl(var(--ex-verdigris)/0.16)] text-[hsl(168_55%_72%)]"
                       >
                         {unreadTruncated ? `${count}+` : count}
                       </Badge>
