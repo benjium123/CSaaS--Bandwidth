@@ -147,6 +147,36 @@ async def add_signal(
     return state
 
 
+def recommend(state: OrgMonitoring, level: str, *, reason: str) -> None:
+    """Record what the monitor WOULD have done, without doing it.
+
+    Lives in `case_file` rather than a new column so this needs no migration, and beside the
+    evidence an operator is already reading rather than in a second place they have to know
+    about. A recommendation is replaced, never accumulated: the current one is the only one
+    that matters, and a queue of stale recommendations is the review load this exists to cut.
+    """
+    case = dict(state.case_file or {})
+    case["recommendation"] = {
+        "level": level,
+        "reason": reason,
+        "at": _now().isoformat(),
+        "score": state.score,
+    }
+    state.case_file = case
+
+
+def recommended_level(state: OrgMonitoring) -> str | None:
+    rec = (state.case_file or {}).get("recommendation") or {}
+    level = rec.get("level")
+    return level if level in LEVEL_ORDER else None
+
+
+def clear_recommendation(state: OrgMonitoring) -> None:
+    case = dict(state.case_file or {})
+    case.pop("recommendation", None)
+    state.case_file = case
+
+
 async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitoring) -> None:
     state.score = await current_score(session, settings, state)
     target = level_for(settings, state.score)
@@ -158,6 +188,44 @@ async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitor
         return  # only an operator ends a pause
     if target == state.level:
         return
+
+    # OPERATOR POLICY (MONITOR_AUTO_ACTION, default off): the AI detects, a human decides.
+    # It may still raise its own scrutiny on its own - `watch` restricts nothing, it only
+    # makes calls get reviewed - but it may not throttle or stop a paying customer. Anything
+    # at `restricted` or above becomes a RECOMMENDATION an operator applies or rejects.
+    #
+    # The argument AGAINST this, recorded because it is a real cost and not a straw man: a
+    # scam campaign keeps sending until a human looks, and the harm is immediate while the
+    # action was reversible. That trade is the operator's to make, and they have made it.
+    if not settings.monitor_auto_action and LEVEL_ORDER[target] >= LEVEL_ORDER["restricted"]:
+        recommend(state, target, reason=f"Risk score {state.score}")
+        audit_svc.record(
+            session,
+            state.org_id,
+            action="monitor.level_recommended",
+            target_type="org",
+            target_id=str(state.org_id),
+            detail={"from": state.level, "recommended": target, "score": state.score},
+        )
+        session.add(
+            SecurityAlert(
+                id=uuid.uuid4(),
+                kind="monitor_action_recommended",
+                org_id=state.org_id,
+                status="open",
+                detail={
+                    "recommended": target,
+                    "current": state.level,
+                    "score": state.score,
+                    "note": "Automatic action is off; an operator must decide.",
+                },
+            )
+        )
+        log.warning(
+            "monitor_recommended", org_id=str(state.org_id), level=target, score=state.score
+        )
+        return
+
     before = state.level
     state.level = target
     state.level_changed_at = _now()

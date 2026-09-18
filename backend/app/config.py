@@ -329,6 +329,19 @@ class Settings(BaseSettings):
     monitor_watch_score: int = 30
     monitor_restrict_score: int = 60
     monitor_pause_score: int = 100
+    #: OPERATOR POLICY: when off (the default), the monitor DETECTS but never restricts.
+    #: Escalation to `watch` still happens automatically because it throttles nothing - it
+    #: only makes calls get reviewed. Anything at `restricted` or above becomes a
+    #: recommendation an operator applies or rejects. Turning this ON restores automatic
+    #: enforcement, which stops a scam campaign sooner at the cost of acting on a paying
+    #: customer without a human in the loop.
+    monitor_auto_action: bool = False
+    #: Window an ON-DEMAND thorough review looks back over, versus the 24h the hourly sweep
+    #: uses. An operator asking for a full review wants history, not the last day.
+    monitor_review_window_days: int = 30
+    #: Cap on AI calls a single on-demand review may make, so one click cannot spend an
+    #: unbounded amount on one account.
+    monitor_review_max_ai_calls: int = 25
     monitor_signal_window_days: int = 30
     #: Daily caps while restricted (when the business has no lower limit of its own).
     monitor_restricted_daily_texts: int = 200

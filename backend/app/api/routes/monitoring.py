@@ -703,3 +703,201 @@ async def daily_report(op: Reviewer, days: int = Query(default=1, ge=1, le=30)) 
         "ai_tokens": {"in": tokens_in, "out": tokens_out},
         "health": latest,
     }
+
+
+# --------------------------------------------------------------------------------------
+# P44: per-account monitoring for an operator with hundreds of customers
+# --------------------------------------------------------------------------------------
+class ReviewRequestIn(BaseModel):
+    #: How far back to look. Defaults to MONITOR_REVIEW_WINDOW_DAYS.
+    days: int | None = Field(default=None, ge=1, le=365)
+    #: True (the default) reviews EVERY campaign. False reproduces what the hourly sweep
+    #: would have seen, which is how you tell "the sweep missed it" from "it was not there".
+    thorough: bool = True
+
+
+class DecisionIn2(BaseModel):
+    #: apply = do what the monitor recommended. reject = discard it and leave the account be.
+    action: str = Field(pattern="^(apply|reject)$")
+    note: str = Field(min_length=3, max_length=500)
+
+
+@ops_router.get("/accounts")
+async def accounts(
+    request: Request,
+    op: Reviewer,
+    level: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    needs_decision: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    """EVERY customer with its own monitor, not just the ones above `normal`.
+
+    The queue at `GET ""` deliberately shows only accounts that have tripped something, which
+    is right for triage but wrong for an operator running a book of 100-1000 customers who
+    wants to see the whole book. Paged, filterable, and ordered so the accounts that need a
+    human come first: those with a pending recommendation, then by score.
+    """
+    stmt = (
+        sa.select(OrgMonitoring, Org)
+        .join(Org, Org.id == OrgMonitoring.org_id)
+        .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    )
+    if level:
+        if level not in monitor_score.LEVEL_ORDER:
+            raise ValidationFailedError(f"Unknown level: {level}")
+        stmt = stmt.where(OrgMonitoring.level == level)
+    if q:
+        stmt = stmt.where(Org.name.ilike(f"%{q.strip()}%"))
+    total = (
+        await op.session.execute(
+            sa.select(sa.func.count()).select_from(stmt.subquery()).execution_options(
+                **{ALLOW_UNSCOPED_KEY: True}
+            )
+        )
+    ).scalar_one()
+    rows = (
+        await op.session.execute(
+            stmt.order_by(OrgMonitoring.score.desc(), Org.name.asc()).limit(limit).offset(offset)
+        )
+    ).all()
+
+    items = []
+    for state, org in rows:
+        recommendation = (state.case_file or {}).get("recommendation")
+        if needs_decision and not recommendation:
+            continue
+        items.append(
+            {
+                "org_id": str(org.id),
+                "name": org.name,
+                "level": state.level,
+                "score": state.score,
+                # The whole point of the no-auto-action policy: what the monitor WOULD do,
+                # sitting here waiting for a person rather than already done.
+                "recommendation": recommendation,
+                "needs_decision": bool(recommendation),
+                "reviewed_at": _iso(state.reviewed_at),
+                "level_changed_at": _iso(state.level_changed_at),
+            }
+        )
+    return {
+        "accounts": items,
+        "total": int(total or 0),
+        "limit": limit,
+        "offset": offset,
+        # Shown so an operator is never guessing whether the monitor is acting on its own.
+        "auto_action": bool(request.app.state.settings.monitor_auto_action),
+    }
+
+
+@ops_router.post("/orgs/{org_id}/review")
+async def review_now(
+    org_id: uuid.UUID, payload: ReviewRequestIn, request: Request, op: Reviewer
+) -> dict:
+    """Run a thorough review of ONE account, right now, because an operator asked.
+
+    Records what it finds as signals so the score reflects the review, and takes NO action:
+    with MONITOR_AUTO_ACTION off, reaching a restricting score produces a recommendation for
+    a human, never a restriction. Deliberately available to a Reviewer rather than an Admin -
+    looking harder at an account is not a privileged action; acting on it is.
+    """
+    from app.services import audit as audit_svc
+    from app.services import monitor_review
+
+    settings = request.app.state.settings
+    report = await monitor_review.review_account(
+        op.session, settings, org_id, days=payload.days, thorough=payload.thorough
+    )
+    set_org_context(op.session, org_id)
+    audit_svc.record(
+        op.session,
+        org_id,
+        action="monitor.reviewed_on_demand",
+        target_type="org",
+        target_id=str(org_id),
+        actor_user_id=op.user.id,
+        detail={
+            "window_days": report["window_days"],
+            "thorough": payload.thorough,
+            "campaigns": len(report["campaigns"]),
+            "ai_calls": report["ai"]["calls"],
+            "signals_added": report["signals_added"],
+        },
+    )
+    state = await monitor_score.get_state(op.session, org_id, create=True)
+    state.reviewed_by = op.user.id
+    state.reviewed_at = _now()
+    await op.session.commit()
+    return report
+
+
+@ops_router.post("/orgs/{org_id}/decision")
+async def decide_recommendation(
+    org_id: uuid.UUID, payload: DecisionIn2, request: Request, op: Admin
+) -> dict:
+    """Apply or reject what the monitor recommended. This is the human decision.
+
+    Admin, not Reviewer, and behind the same `recent_2fa` step-up as unpause and suspend:
+    applying a recommendation restricts a paying customer, which is exactly the class of
+    action the no-auto-action policy exists to keep in human hands.
+    """
+    from app.services import audit as audit_svc
+
+    await check_step_up(
+        request, op.session, op.user, kind="recent_2fa", action="monitor_decision"
+    )
+    set_org_context(op.session, org_id)
+    state = await monitor_score.get_state(op.session, org_id, create=False)
+    if state is None:
+        raise NotFoundError("This account has no monitoring state")
+    recommended = monitor_score.recommended_level(state)
+    if recommended is None:
+        raise ConflictError("There is no recommendation to decide on")
+
+    applied = None
+    if payload.action == "apply":
+        before = state.level
+        state.level = recommended
+        state.level_changed_at = _now()
+        if recommended == "paused":
+            state.paused_at = state.paused_at or _now()
+            state.paused_reason = f"Operator applied the monitor's recommendation: {payload.note}"
+        applied = recommended
+        audit_svc.record(
+            op.session,
+            org_id,
+            action="monitor.recommendation_applied",
+            target_type="org",
+            target_id=str(org_id),
+            actor_user_id=op.user.id,
+            detail={"from": before, "to": recommended, "note": payload.note},
+        )
+    else:
+        audit_svc.record(
+            op.session,
+            org_id,
+            action="monitor.recommendation_rejected",
+            target_type="org",
+            target_id=str(org_id),
+            actor_user_id=op.user.id,
+            detail={"rejected": recommended, "note": payload.note},
+        )
+    # Either way the recommendation is spent. A rejected one must not reappear on the next
+    # recompute as if nobody had looked, so the score is cleared to the decision point -
+    # the same mechanism `unpause` uses to stop old signals re-pausing an account.
+    monitor_score.clear_recommendation(state)
+    if payload.action == "reject":
+        state.cleared_before = _now()
+        state.score = 0
+    state.reviewed_by = op.user.id
+    state.reviewed_at = _now()
+    await op.session.commit()
+    return {
+        "org_id": str(org_id),
+        "decision": payload.action,
+        "applied_level": applied,
+        "level": state.level,
+        "score": state.score,
+    }

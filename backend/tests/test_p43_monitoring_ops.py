@@ -40,6 +40,13 @@ OUR = "+15125550100"
 def ops_settings():
     return make_settings(
         monitor_enforced=True,
+        # These suites exercise the ENFORCEMENT mechanism (a pause blocks traffic, writes a
+        # case file, is appealable, is undone by an operator). The product default is now
+        # detect-only - MONITOR_AUTO_ACTION off, so a restricting score only RECOMMENDS and a
+        # human decides - so these opt into automatic action to keep testing the mechanism
+        # they were written for. The detect-only policy has its own tests in
+        # tests/test_monitor_operator_control.py.
+        monitor_auto_action=True,
         bandwidth_webhook_username=WEBHOOK_USER,
         bandwidth_webhook_password=WEBHOOK_PASS,
     )
