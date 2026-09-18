@@ -214,6 +214,18 @@ describe("OpsPage", () => {
     expect(await screen.findByText(/for platform operators only/)).toBeInTheDocument();
   });
 
+  // Same shape as the StepUpDialog null-state guard above, on a second surface: `me` is
+  // null until /auth/me answers, so `!me?.is_platform_operator` was true during load and a
+  // genuine operator was told the console was not for them. Holding /auth/me unresolved
+  // forever is what makes this able to fail - the refusal must not be rendered from a value
+  // that is merely unloaded.
+  it("does not tell an operator the console is not for them while /auth/me is in flight", async () => {
+    const client = makeStubClient({ "/api/v1/auth/me": new Promise(() => {}) as never });
+    renderWithProviders(<OpsPage />, client);
+    expect(await screen.findByText(/Checking your access/)).toBeInTheDocument();
+    expect(screen.queryByText(/for platform operators only/)).toBeNull();
+  });
+
   it("shows the review queue to operators", async () => {
     const client = makeStubClient({
       "/api/v1/auth/me": { ...ME, is_platform_operator: true },

@@ -573,7 +573,20 @@ export function OpsPage() {
   const [tab, setTab] = React.useState("queue");
   const [openOrg, setOpenOrg] = React.useState<string | null>(null);
 
-  if (!me?.is_platform_operator) {
+  // `!me?.is_platform_operator` is true while /auth/me is still in flight, so this told a
+  // genuine operator that the console was not for them - a negative claim rendered from a
+  // value that was merely unloaded. The refusal now waits until `me` is known, and the
+  // interim says what it is actually doing. See components/auth/AuthShell.tsx's header for
+  // the general rule: rendering ON truth is safe, rendering on FALSITY is not.
+  if (me == null) {
+    return (
+      <div className="p-6">
+        <Spinner label="Checking your access" />
+      </div>
+    );
+  }
+
+  if (!me.is_platform_operator) {
     return (
       <div className="p-6">
         <Card><p className="text-sm">The operator console is for platform operators only.</p></Card>
