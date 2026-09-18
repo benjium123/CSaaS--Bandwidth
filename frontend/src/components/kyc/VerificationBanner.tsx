@@ -31,7 +31,7 @@ export function VerificationBanner() {
           <p className="mt-0.5 text-sm text-muted-foreground">{copy.body}</p>
         </div>
         {actionable && (
-          <Button type="button" onClick={() => navigate("/settings/verification")}>
+          <Button type="button" onClick={() => navigate("/onboarding")}>
             {profileQ.data.status === "draft" ? "Get verified" : "Open verification"}
           </Button>
         )}

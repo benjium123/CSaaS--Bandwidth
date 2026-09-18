@@ -266,7 +266,10 @@ function PeopleStep({ profile, editable }: { profile: KycProfile; editable: bool
       method: "POST",
       json: { return_url: window.location.href },
     });
-    if (person.is_user) {
+    // `is_you`, not `is_user`: `is_user` only says this person is linked to SOME account in
+    // the workspace. Redirecting THIS browser on that would send you into another owner's
+    // Stripe session - you would be photographed as them.
+    if (person.is_you) {
       window.location.assign(res.url);
     } else {
       setLink({ person: person.full_name, url: res.url });
@@ -287,7 +290,7 @@ function PeopleStep({ profile, editable }: { profile: KycProfile; editable: bool
                 <p className="text-sm">
                   {p.full_name}
                   {p.ownership_percent != null ? ` · ${p.ownership_percent}%` : ""}
-                  {p.is_user ? " · you" : ""}
+                  {p.is_you ? " · you" : ""}
                 </p>
                 <Pill tone={PERSON_STATUS[p.status].tone}>{PERSON_STATUS[p.status].label}</Pill>
                 {p.last_error && <p className="text-xs text-muted-foreground">{p.last_error}</p>}
@@ -303,7 +306,7 @@ function PeopleStep({ profile, editable }: { profile: KycProfile; editable: bool
               </div>
               {p.status !== "verified" && p.status !== "processing" && (
                 <Button type="button" size="sm" onClick={() => verify.mutate(p)} disabled={verify.isPending}>
-                  {p.is_user ? "Verify my ID" : "Get their ID link"}
+                  {p.is_you ? "Verify my ID" : "Get their ID link"}
                 </Button>
               )}
             </li>

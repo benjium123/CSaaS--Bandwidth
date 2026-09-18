@@ -1,0 +1,267 @@
+import { describe, expect, it } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { OnboardingPage } from "@/pages/OnboardingPage";
+import { SignUpPage } from "@/pages/SignUpPage";
+import type { KycPerson, KycProfile, KycStatus } from "@/api/kyc";
+import { makeStubClient, renderWithProviders } from "@/test/harness";
+
+/**
+ * The verification journey.
+ *
+ * Every test here is written so that it CAN fail. Where a screen's job is to hide something,
+ * the test asserting the absence is paired with one asserting the presence on the same
+ * component - an `expect(queryBy...).toBeNull()` on its own passes just as happily when the
+ * component throws, renders nothing, or was renamed out from under it.
+ */
+
+const ME = {
+  id: "u1",
+  email: "ops@acme.co",
+  full_name: "Ops",
+  second_factor_required: false,
+  memberships: [
+    {
+      org_id: "org-1",
+      org_name: "Acme",
+      org_slug: "acme",
+      role_name: "admin",
+      permissions: ["org:read", "org:update"],
+    },
+  ],
+  permissions: ["org:read", "org:update"],
+};
+
+function person(over: Partial<KycPerson> = {}): KycPerson {
+  return {
+    id: "p1",
+    role: "owner",
+    full_name: "Jane Smith",
+    email: null,
+    ownership_percent: 100,
+    is_user: false,
+    is_you: false,
+    status: "not_started",
+    verified_name: null,
+    document_country: null,
+    verified_at: null,
+    last_error: null,
+    residential_address: null,
+    ...over,
+  };
+}
+
+function profile(status: KycStatus, over: Partial<KycProfile> = {}): KycProfile {
+  return {
+    status,
+    business: {
+      country: null, legal_name: null, dba_name: null, entity_type: null,
+      registration_number: null, tax_id: null, incorporation_date: null,
+      registered_address: null, operating_address: null, website: null,
+      business_email: null, business_phone: null,
+    },
+    use_case: null,
+    use_case_pending: null,
+    persons: [],
+    documents: [],
+    checks: {},
+    agreement: { current_version: "1", accepted_version: null, accepted_at: null },
+    missing: [],
+    info_request: null,
+    submitted_at: null,
+    decided_at: null,
+    decision_reason: null,
+    limits: null,
+    deposit_required_cents: null,
+    next_reverification_at: null,
+    ...over,
+  };
+}
+
+function render(p: KycProfile) {
+  return renderWithProviders(
+    <OnboardingPage />,
+    makeStubClient({ "/api/v1/auth/me": ME, "/api/v1/kyc/profile": p }),
+  );
+}
+
+describe("OnboardingPage — the stepper is mounted only where `missing` means something", () => {
+  // The PAIR. `missing` is [] in every status except draft/needs_info, so a stepper rendered
+  // anywhere else would tick all six steps green off an empty array. The first test proves
+  // the stepper can appear at all; the second proves it does not appear where [] is a fact
+  // about the payload rather than an achievement. Neither is meaningful without the other.
+  it("renders the steps in draft", async () => {
+    render(profile("draft", { missing: ["legal_name", "owner", "agreement"] }));
+    expect(await screen.findByText("Your business")).toBeTruthy();
+    expect(screen.getByText("Agreement")).toBeTruthy();
+  });
+
+  it("renders no steps when rejected, though `missing` is empty there too", async () => {
+    render(profile("rejected", { decision_reason: "Unregistered entity." }));
+    // Anchored on the screen having actually rendered, so the absence below is an absence
+    // in a real tree rather than in a tree that never mounted.
+    expect(await screen.findByText("We couldn't verify this business")).toBeTruthy();
+    expect(screen.queryByText("Your business")).toBeNull();
+    expect(screen.queryByText("Agreement")).toBeNull();
+  });
+});
+
+describe("OnboardingPage — counts come from the server's list", () => {
+  it("counts only the keys a step owns, and marks the rest done", async () => {
+    render(profile("draft", { missing: ["legal_name", "website", "agreement"] }));
+    // Two business keys, one agreement key, nothing for the other four steps.
+    expect(await screen.findByText("2 left")).toBeTruthy();
+    expect(screen.getByText("1 left")).toBeTruthy();
+    expect(screen.getAllByText("Done")).toHaveLength(4);
+  });
+
+  it("offers submission only when the server says nothing is missing", async () => {
+    render(profile("draft", { missing: [] }));
+    expect(await screen.findByRole("button", { name: "Submit for review" })).toBeTruthy();
+  });
+
+  it("withholds submission while anything is missing", async () => {
+    render(profile("draft", { missing: ["agreement"] }));
+    expect(await screen.findByText("1 left")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Submit for review" })).toBeNull();
+  });
+});
+
+describe("OnboardingPage — the reviewer's words are not paraphrased", () => {
+  it("renders info_request verbatim in needs_info", async () => {
+    const note = "Your utility bill is older than 90 days. Send one from the last quarter.";
+    render(profile("needs_info", { missing: ["proof_of_address"], info_request: note }));
+    // textContent equality, not toHaveTextContent: that does substring matching and would
+    // pass with our own copy wrapped around the reviewer's.
+    const el = await screen.findByText(note);
+    expect(el.textContent?.trim()).toBe(note);
+  });
+
+  it("renders decision_reason verbatim when rejected, with no way to retry", async () => {
+    const why = "The registration number does not match any active entity.";
+    render(profile("rejected", { decision_reason: why }));
+    const el = await screen.findByText(why);
+    expect(el.textContent?.trim()).toContain(why);
+    // No transition leaves `rejected`, so any of these would be a control that resolves to
+    // nothing. Paired with the assertion above, which proves the screen rendered.
+    expect(screen.queryByRole("button", { name: /appeal|retry|try again|resubmit/i })).toBeNull();
+  });
+});
+
+describe("OnboardingPage — reverification offers a button only where the call would work", () => {
+  // The stale test is the whole point. A profile moves to `reverification_due` WITHOUT
+  // touching person rows, so every owner is still `verified`; a filter on status alone
+  // returns nobody and the screen silently offers nothing. These three cases differ only in
+  // who the owner is, and each expects a different control.
+  const LAST_YEAR = "2025-09-01T00:00:00+00:00";
+  const DUE = "2026-09-01T00:00:00+00:00";
+
+  it("offers me my own re-check when the stale owner is me", async () => {
+    render(
+      profile("reverification_due", {
+        next_reverification_at: DUE,
+        persons: [person({ is_user: true, is_you: true, status: "verified", verified_at: LAST_YEAR })],
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "Re-check my ID" })).toBeTruthy();
+  });
+
+  it("names another member's owner without a button, because only they can start it", async () => {
+    render(
+      profile("reverification_due", {
+        next_reverification_at: DUE,
+        persons: [person({ is_user: true, is_you: false, status: "verified", verified_at: LAST_YEAR })],
+      }),
+    );
+    expect(await screen.findByText(/Waiting on Jane Smith/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Re-check my ID" })).toBeNull();
+  });
+
+  it("offers a link for an owner with no account, which anyone with org:update may raise", async () => {
+    render(
+      profile("reverification_due", {
+        next_reverification_at: DUE,
+        persons: [person({ is_user: false, is_you: false, status: "verified", verified_at: LAST_YEAR })],
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "Get their link" })).toBeTruthy();
+    expect(screen.queryByText(/Waiting on Jane Smith/)).toBeNull();
+  });
+
+  it("treats an owner who re-checked AFTER the cutoff as done", async () => {
+    render(
+      profile("reverification_due", {
+        next_reverification_at: DUE,
+        persons: [
+          person({ is_you: true, status: "verified", verified_at: "2026-09-02T00:00:00+00:00" }),
+        ],
+      }),
+    );
+    expect(await screen.findByText(/confirming it now/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Re-check my ID" })).toBeNull();
+  });
+});
+
+describe("OnboardingPage — the waiting and approved screens claim only what they know", () => {
+  it("shows no estimate while a reviewer has it", async () => {
+    render(profile("in_review", { submitted_at: "2026-09-10T00:00:00+00:00" }));
+    expect(await screen.findByText("With a reviewer")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("states the starting limits rather than an unqualified all-clear", async () => {
+    render(
+      profile("approved", {
+        decided_at: "2026-09-12T00:00:00+00:00",
+        limits: { daily_texts: 500 },
+      }),
+    );
+    expect(await screen.findByText("What you start with")).toBeTruthy();
+    expect(screen.getByText("daily texts")).toBeTruthy();
+    expect(screen.getByText("500")).toBeTruthy();
+  });
+
+  it("says a use-case change is still pending rather than letting it read as saved", async () => {
+    render(
+      profile("approved", {
+        use_case_pending: {
+          description: "Appointment reminders", vertical: "healthcare",
+          who_you_contact: "patients", list_source: "bookings",
+          monthly_calls: 100, monthly_texts: 900, destination_countries: ["US"],
+        },
+      }),
+    );
+    expect(await screen.findByText(/is with a\s+reviewer/)).toBeTruthy();
+  });
+
+  it("gives no suspension reason, because the payload carries none", async () => {
+    render(profile("suspended"));
+    expect(await screen.findByText("This account is suspended")).toBeTruthy();
+    expect(screen.getByText(/emailed the account owners/)).toBeTruthy();
+  });
+});
+
+describe("SignUpPage — the consumer-domain hint is a courtesy, not a gate", () => {
+  it("warns on a personal address but leaves the form submittable", async () => {
+    renderWithProviders(<SignUpPage />, makeStubClient({ "/api/v1/auth/me": ME }));
+    await userEvent.type(screen.getByLabelText("Work email"), "someone@gmail.com");
+    await userEvent.type(screen.getByLabelText("Your name"), "Someone");
+    await userEvent.type(screen.getByLabelText("Password"), "correct horse battery staple");
+    expect(screen.getByText(/looks like a personal address/)).toBeTruthy();
+    // The server is the authority. If our list is ever wrong about a legitimate domain, a
+    // locked button would be an unappealable client-side refusal.
+    await waitFor(() => {
+      const btn = screen.getByRole("button", { name: "Create account" }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(false);
+    });
+  });
+
+  it("does not warn on a company address", async () => {
+    renderWithProviders(<SignUpPage />, makeStubClient({ "/api/v1/auth/me": ME }));
+    await userEvent.type(screen.getByLabelText("Work email"), "someone@acme.co");
+    expect(screen.queryByText(/looks like a personal address/)).toBeNull();
+    // Paired with the assertion above: proves the form is mounted and the hint simply is
+    // not showing, rather than the whole screen having failed to render.
+    expect(screen.getByRole("button", { name: "Create account" })).toBeTruthy();
+  });
+});

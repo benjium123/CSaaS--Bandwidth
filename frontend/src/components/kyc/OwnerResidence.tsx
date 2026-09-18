@@ -113,7 +113,7 @@ export function OwnerResidence({
   return (
     <div className="space-y-2 rounded-md bg-muted/40 p-3">
       <p className="text-xs font-medium">
-        Where {person.is_user ? "you live" : `${person.full_name} lives`} now
+        Where {person.is_you ? "you live" : `${person.full_name} lives`} now
       </p>
       <p className="text-xs text-muted-foreground">
         Your ID's address can be out of date, so we ask for your current home

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { ConversationsPage } from "@/pages/ConversationsPage";
 import { ContactsPage } from "@/pages/ContactsPage";
@@ -27,6 +27,8 @@ import { SecureAccountPage } from "@/pages/SecureAccountPage";
 import { OpsPage } from "@/pages/OpsPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "@/pages/PasswordResetPages";
 import { RecoverAccountPage } from "@/pages/RecoverAccountPage";
+import { SignUpPage } from "@/pages/SignUpPage";
+import { OnboardingPage } from "@/pages/OnboardingPage";
 import { PasskeyGraceBanner } from "@/components/security/PasskeyGraceBanner";
 
 /**
@@ -72,6 +74,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 export function App() {
   const { me, orgId, ready } = useAuth();
+  const location = useLocation();
 
   if (!ready) return <Spinner label="Starting" />;
 
@@ -82,6 +85,7 @@ export function App() {
         <Route path="/auth/sso/callback" element={<SsoCallbackPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/signup" element={<SignUpPage />} />
         <Route path="/recover" element={<RecoverAccountPage />} />
         <Route path="/report" element={<ReportNumberPage />} />
         <Route path="*" element={<LoginPage />} />
@@ -109,6 +113,13 @@ export function App() {
     }
     return <OrgPickerPage />;
   }
+
+  // The verification journey is its own full-screen surface rather than a page inside the
+  // console shell: it is the continuation of signing up, and it carries the same Exchange
+  // furniture as /signup and the second-factor wall, so the three read as one journey.
+  // Deliberately NOT an interstitial - an open application does not stop the rest of the
+  // workspace working, and the screen itself says so.
+  if (location.pathname === "/onboarding") return <OnboardingPage />;
 
   return (
     <Shell>

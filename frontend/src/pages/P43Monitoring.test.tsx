@@ -103,7 +103,10 @@ describe("OwnerResidence", () => {
       full_name: "Jane Smith",
       email: null,
       ownership_percent: 100,
+      // Linked to an account, but NOT the viewer - the case that tells `is_user` and
+      // `is_you` apart, and the one the heading assertion below pins.
       is_user: true,
+      is_you: false,
       status: "verified",
       verified_name: "Jane Smith",
       document_country: "US",
@@ -136,6 +139,9 @@ describe("OwnerResidence", () => {
       />,
       client,
     );
+    // Third person, because Jane is not the viewer. Reverting this to `is_user` would
+    // address another owner as "you" and send them into her ID session.
+    expect(screen.getByText("Where Jane Smith lives now")).toBeTruthy();
     expect(screen.getByText("Not accepted")).toBeTruthy();
     expect(screen.getByText("The document is older than 90 days.")).toBeTruthy();
     const file = new File(["%PDF-1.4"], "bill.pdf", { type: "application/pdf" });

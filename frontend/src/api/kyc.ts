@@ -54,7 +54,14 @@ export type KycPerson = {
   full_name: string;
   email: string | null;
   ownership_percent: number | null;
+  /** This person is linked to SOME account in the workspace. NOT "this person is you". */
   is_user: boolean;
+  /**
+   * This person IS the signed-in viewer. The only field that answers "may I act for them?":
+   * only the person themselves may repeat their own ID check once verified, and an API key is
+   * nobody, so this is false for every person when the caller is a key.
+   */
+  is_you: boolean;
   status: "not_started" | "pending" | "processing" | "verified" | "requires_input" | "canceled";
   verified_name: string | null;
   document_country: string | null;
