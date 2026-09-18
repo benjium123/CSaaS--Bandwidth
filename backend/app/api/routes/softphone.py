@@ -13,6 +13,7 @@ from typing import Annotated
 import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, Depends, Request, WebSocket
+from sqlalchemy.exc import SQLAlchemyError
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +33,7 @@ from app.services import inbox_access as inbox_access_svc
 from app.services.inbox_access import InboxAccess
 from app.voice_plane.livekit_api import mint_access_token
 from app.voice_plane.service import CALL_ROOM_PREFIX
+from app.voice_plane.service import room_trunks as voice_plane_trunks
 
 router = APIRouter(tags=["softphone"])
 log = structlog.get_logger("softphone")
@@ -93,7 +95,7 @@ async def softphone_token(
     settings: Settings = request.app.state.settings
     if getattr(request.app.state, "livekit", None) is None:
         raise FeatureUnavailableError("LiveKit is not configured")
-    if not settings.livekit_sip_outbound_trunk_id:
+    if not voice_plane_trunks(settings):
         # (finding 12) same gate as POST /calls via="room" - a deploy with no outbound
         # trunk configured yet cannot back this feature either.
         raise FeatureUnavailableError("No LiveKit SIP outbound trunk is configured")
@@ -174,6 +176,35 @@ async def _ws_org_from_cookie(
     return org_id, user.id, list(role.permissions or [])
 
 
+async def _expire_idle_session(sid: uuid.UUID, now) -> None:  # noqa: ANN001
+    """Mark an idled-out session revoked, so it is signed out everywhere and not just here.
+
+    Takes ``now`` from the caller rather than reading the clock: this module imports
+    datetime only inside functions, and a module-level ``datetime.now`` here would be a
+    NameError swallowed by the except below - a fix that silently does nothing.
+
+    Uses its own short-lived session, NOT the caller's: that one belongs to a long-lived
+    websocket, and writing through it would hold a transaction open across the socket's
+    network waits. Conditional on ``revoked_at IS NULL`` so a concurrent revoke wins once.
+    A database failure is logged and swallowed because the caller closes the socket either
+    way; a coding error is NOT swallowed.
+    """
+    from app.models import Session as IdentitySession
+
+    try:
+        async with get_sessionmaker()() as own:
+            await own.execute(
+                sa.update(IdentitySession)
+                .where(IdentitySession.id == sid, IdentitySession.revoked_at.is_(None))
+                .values(revoked_at=now)
+            )
+            await own.commit()
+    except asyncio.CancelledError:
+        raise
+    except SQLAlchemyError:
+        log.warning("ws_idle_revoke_failed", session_id=str(sid))
+
+
 async def _ws_org_policy_allows(
     session: AsyncSession,
     settings: Settings,
@@ -202,9 +233,30 @@ async def _ws_org_policy_allows(
     if session_row is not None:
         created = aware(session_row.created_at)
         seen = aware(session_row.last_seen_at) or created
-        if org.session_idle_minutes and now - seen > timedelta(minutes=org.session_idle_minutes):
+        # The PLATFORM limits are the floor and a workspace may only tighten them. Both are
+        # resolved here in one place because keeping the platform rule in the handshake
+        # (_ws_org_from_cookie) and only the org rule here is exactly how an open socket came
+        # to outlive the platform idle timeout by up to the absolute session lifetime.
+        # A falsy org value means "unset", NOT "expire immediately".
+        idle_minutes = settings.session_idle_minutes
+        if org.session_idle_minutes:
+            idle_minutes = min(idle_minutes, org.session_idle_minutes)
+        max_hours = settings.session_max_hours
+        if org.session_max_hours:
+            max_hours = min(max_hours, org.session_max_hours)
+        if now - seen > timedelta(minutes=idle_minutes):
+            # Revoke ONLY when the platform floor is what ran out: "signed out after
+            # inactivity" means signed out everywhere, exactly as auth/deps.py
+            # _authenticate_cookie does. A workspace's tighter policy refuses THIS
+            # workspace and must never end the account-wide session - that is why
+            # _enforce_org_session_policy raises without touching revoked_at.
+            if now - seen > timedelta(minutes=settings.session_idle_minutes):
+                await _expire_idle_session(session_row.id, now)
             return False
-        if org.session_max_hours and now - created > timedelta(hours=org.session_max_hours):
+        # Today this is a no-op: sessions are minted with expires_at = created +
+        # SESSION_MAX_HOURS (services/identity.py) and get_live_session already enforces it.
+        # It bites only after an operator LOWERS the setting, which is the right direction.
+        if now - created > timedelta(hours=max_hours):
             return False
     if org.ip_allowlist and not identity_svc.ip_in_allowlist(
         client_ip(websocket), org.ip_allowlist

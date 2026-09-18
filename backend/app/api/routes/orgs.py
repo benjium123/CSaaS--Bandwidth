@@ -536,6 +536,19 @@ async def create_invite(
             sa.select(Role).where(Role.org_id == ctx.org.id, Role.name == payload.role_name)
         )
     ).scalar_one_or_none()
+    # C1 (audit): the SAME containment rule update_member applies. Without it a member
+    # holding only members:invite could invite a second address of their own AS ADMIN and
+    # operate from it - escalation by proxy, with update_member's own guard bypassed. The
+    # selfie step-up below is not a substitute: it proves WHO is asking, never that they may
+    # grant this role, and it is skipped entirely when KYC_ENFORCED is off.
+    # Consequence, deliberately accepted: a role may only invite what it holds itself, so a
+    # narrow "inviter" role must carry the permissions it hands out (e.g. agent's + invite).
+    if invited_role is not None and not _role_assignable_by(ctx.role, invited_role):
+        raise PermissionDeniedError(
+            "You cannot invite someone to a role with more permissions than your own. "
+            "Ask an owner or admin to send this invitation, or to add those permissions "
+            "to your role."
+        )
     if invited_role is not None and _privileged_grant_action(invited_role) is not None:
         await check_org_selfie_step_up(request, ctx, action="admin_grant")
     invite, raw = await invites_svc.create_invite(

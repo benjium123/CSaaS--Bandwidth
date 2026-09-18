@@ -13,6 +13,7 @@ from app.auth.deps import OrgContext, require_permission
 from app.compliance import service as svc
 from app.errors import ValidationFailedError
 from app.models import FEDERAL_WINDOW_END, FEDERAL_WINDOW_START, ConsentEvent, DncEntry
+from app.services import phone_region
 
 router = APIRouter(prefix="/api/v1/compliance", tags=["compliance"])
 
@@ -73,7 +74,8 @@ async def list_consent(
 ) -> list[ConsentOut]:
     stmt = sa.select(ConsentEvent).order_by(ConsentEvent.created_at.desc()).limit(limit)
     if contact:
-        stmt = stmt.where(ConsentEvent.contact_e164 == to_e164(contact))
+        region = await phone_region.strict_for_org(ctx.session, ctx.org.id, contact)
+        stmt = stmt.where(ConsentEvent.contact_e164 == to_e164(contact, region))
     rows = (await ctx.session.execute(stmt)).scalars().all()
     return [
         ConsentOut(
@@ -94,7 +96,12 @@ async def opt_out(
     payload: NumberIn,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> dict:
-    e164 = to_e164(payload.e164)
+    # Consent is stored against ONE number: read a bare national number in this workspace's
+    # country, and refuse rather than guess when we don't know it yet. Storing +1 for a UK
+    # contact leaves the real number unsuppressed while the console says "opted out".
+    e164 = to_e164(
+        payload.e164, await phone_region.strict_for_org(ctx.session, ctx.org.id, payload.e164)
+    )
     await svc.record_consent(
         ctx.session,
         ctx.org.id,
@@ -147,7 +154,9 @@ async def add_dnc(
     payload: NumberIn,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> dict:
-    e164 = to_e164(payload.e164)
+    e164 = to_e164(
+        payload.e164, await phone_region.strict_for_org(ctx.session, ctx.org.id, payload.e164)
+    )
     entry = await svc.add_dnc(
         ctx.session,
         ctx.org.id,
@@ -164,7 +173,8 @@ async def remove_dnc(
     e164: str,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> None:
-    await svc.remove_dnc(ctx.session, ctx.org.id, to_e164(e164), ctx.actor_user_id)
+    region = await phone_region.strict_for_org(ctx.session, ctx.org.id, e164)
+    await svc.remove_dnc(ctx.session, ctx.org.id, to_e164(e164, region), ctx.actor_user_id)
     await ctx.session.commit()
 
 

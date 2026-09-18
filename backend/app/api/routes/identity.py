@@ -66,7 +66,23 @@ class SsoOut(BaseModel):
     idp_entity_id: str = ""
     idp_sso_url: str = ""
     idp_cert_set: bool = False
+    #: P43 (audit): the pinned IdP certificate is NOT validated at sign-in (that would lock
+    #: the workspace out), so its expiry is surfaced here and as a security alert instead.
+    idp_cert_expires_at: datetime | None = None
+    idp_cert_expired: bool = False
     group_roles: dict[str, str] = {}
+
+
+def _cert_expiry(value) -> datetime | None:  # noqa: ANN001
+    from app.services import saml as saml_svc
+
+    return saml_svc.certificate_valid_until(str(value)) if value else None
+
+
+def _cert_expired(value) -> bool:  # noqa: ANN001
+    from app.services import saml as saml_svc
+
+    return saml_svc.certificate_expired(str(value)) if value else False
 
 
 class SecurityPolicyOut(BaseModel):
@@ -152,6 +168,8 @@ def _sso_out(org: Org) -> SsoOut | None:
         idp_entity_id=str(sso.get("idp_entity_id") or ""),
         idp_sso_url=str(sso.get("idp_sso_url") or ""),
         idp_cert_set=bool(sso.get("idp_x509_cert")),
+        idp_cert_expires_at=_cert_expiry(sso.get("idp_x509_cert")),
+        idp_cert_expired=_cert_expired(sso.get("idp_x509_cert")),
         group_roles={
             str(k): str(v) for k, v in (sso.get("group_roles") or {}).items()
         }
@@ -312,9 +330,21 @@ async def list_org_login_events(
     # P42: password / passkey sign-ins happen before a workspace is chosen, so they carry
     # no org_id - an admin must still see their members' sign-ins (and failures).
     members = sa.select(OrgMembership.user_id).where(OrgMembership.org_id == ctx.org.id)
+    # LoginEvent, Session and SecurityAlert all carry an org_id WITHOUT being TenantScoped,
+    # so db/base.py's automatic filter never applies to them and this WHERE is the ONLY org
+    # boundary. The membership clause must therefore be restricted to events that have no
+    # org of their own: org_id IS NULL is exactly "signed in before a workspace was chosen"
+    # (every complete_login caller omits org_id except the SSO one). Without that guard an
+    # admin here also sees a shared member's sign-ins to OTHER workspaces - ip, user agent
+    # and risk flags - in JSON and in bulk through ?format=csv.
     stmt = (
         sa.select(LoginEvent)
-        .where(sa.or_(LoginEvent.org_id == ctx.org.id, LoginEvent.user_id.in_(members)))
+        .where(
+            sa.or_(
+                LoginEvent.org_id == ctx.org.id,
+                sa.and_(LoginEvent.org_id.is_(None), LoginEvent.user_id.in_(members)),
+            )
+        )
         .order_by(LoginEvent.at.desc())
         .limit(limit)
     )
@@ -525,6 +555,9 @@ async def update_security_policy(
             if sso_update.get("idp_x509_cert"):
                 from app.services import saml as saml_svc
 
+                # Refused here, where the admin can paste a fresh one - never at sign-in,
+                # which would lock the workspace out (services/saml.py explains the split).
+                saml_svc.check_certificate_usable(sso_update["idp_x509_cert"])
                 merged["idp_x509_cert"] = saml_svc.certificate_pem(sso_update["idp_x509_cert"])
             if "group_roles" in sso_update and sso_update["group_roles"] is not None:
                 merged["group_roles"] = {

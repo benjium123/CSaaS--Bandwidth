@@ -142,6 +142,9 @@ async def report_number(
     await enforce_rate_limit(request, f"report-number:{ip}")
     from app.api.routes.numbers import to_e164
 
+    # No region is threaded through here ON PURPOSE: this route is unauthenticated, so there
+    # is no workspace whose country could resolve a bare national number. The raw string is
+    # kept when parsing fails, because a report we can't normalise is still worth having.
     try:
         e164 = to_e164(payload.number) or payload.number.strip()
     except Exception:  # noqa: BLE001 - a malformed number is still accepted and stored

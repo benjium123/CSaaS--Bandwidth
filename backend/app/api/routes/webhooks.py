@@ -678,7 +678,7 @@ async def stripe_webhook(
         )
 
     payload = await request.body()
-    event = stripe_client.verify_webhook_any(
+    event, secret_source = stripe_client.verify_webhook_any(
         request.app.state.settings,
         payload,
         stripe_signature,
@@ -688,6 +688,15 @@ async def stripe_webhook(
     # changed, so a failed handler leaves no row and Stripe's retry is processed normally.
     event_id = event.get("id")
     event_type = str(event.get("type") or "")
+    # P43 (audit): the Identity endpoint's secret signs Identity events and nothing else.
+    # The billing secret still signs anything, because with no separate Identity endpoint
+    # configured Stripe legitimately delivers identity.* to the main one - but the reverse
+    # (an Identity secret vouching for a refund or a payment) is never legitimate.
+    if secret_source == "identity" and not event_type.startswith("identity."):
+        log.warning("stripe_webhook_secret_mismatch", event_type=event_type)
+        raise UnauthenticatedError(
+            "We could not verify that this came from our payment provider."
+        )
     if event_id:
         from datetime import datetime, timezone
 

@@ -343,11 +343,17 @@ async def retrieve_verification_outcome(settings, verification_session_id: str) 
     }
 
 
-def verify_webhook_any(settings, payload: bytes, signature: str) -> dict:
-    """verify_webhook against STRIPE_WEBHOOK_SECRET, then STRIPE_IDENTITY_WEBHOOK_SECRET
-    when one is configured (a separate Stripe endpoint for Identity events)."""
+def verify_webhook_any(settings, payload: bytes, signature: str) -> tuple[dict, str]:
+    """Verify against STRIPE_WEBHOOK_SECRET, then STRIPE_IDENTITY_WEBHOOK_SECRET when one is
+    configured (a separate Stripe endpoint for Identity events).
+
+    Returns (event, source) where source is "billing" or "identity". The caller MUST use it:
+    the two endpoints exist so their blast radii stay separate, and accepting either secret
+    for any event type means whoever holds the Identity secret can forge billing events
+    (refunds, payment_intent.succeeded) too.
+    """
     try:
-        return verify_webhook(settings, payload, signature)
+        return verify_webhook(settings, payload, signature), "billing"
     except (UnauthenticatedError, FeatureUnavailableError):
         identity_secret = settings.stripe_identity_webhook_secret.get_secret_value().strip()
         if not identity_secret:
@@ -357,7 +363,7 @@ def verify_webhook_any(settings, payload: bytes, signature: str) -> dict:
     except ImportError as exc:
         raise FeatureUnavailableError("Card payments are not set up yet.") from exc
     try:
-        return stripe.Webhook.construct_event(payload, signature, identity_secret)
+        return stripe.Webhook.construct_event(payload, signature, identity_secret), "identity"
     except Exception as exc:
         log.warning("stripe_identity_webhook_verification_failed", error=str(exc))
         raise UnauthenticatedError(

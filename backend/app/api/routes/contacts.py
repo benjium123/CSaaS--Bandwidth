@@ -29,7 +29,7 @@ from app.models import (
 )
 from app.services import audit as audit_svc
 from app.services import contact_lifecycle as lifecycle_svc
-from app.services import contact_visibility
+from app.services import contact_visibility, phone_region
 from app.services import contacts as svc
 from app.services import privacy as privacy_svc
 
@@ -246,7 +246,11 @@ async def _out(ctx: OrgContext, c: Contact) -> ContactOut:
 
 async def _sync_phones(ctx: OrgContext, contact: Contact, phones: list[PhoneIn]) -> None:
     """Diff current vs submitted, re-linking threads for every number added."""
-    normalized = [(to_e164(p.e164), p.label, p.is_primary) for p in phones]
+    # A number typed without a + is read in the WORKSPACE's country, not always as US
+    # (services/phone_region.py): "2079460958" is London for a UK customer and Maine for
+    # an American one, and guessing wrong stores a stranger's number.
+    region = await phone_region.for_org(ctx.session, ctx.org.id)
+    normalized = [(to_e164(p.e164, region), p.label, p.is_primary) for p in phones]
     seen = {e for e, _, _ in normalized}
 
     existing = list(

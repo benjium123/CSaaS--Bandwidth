@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -926,9 +926,12 @@ def test_risk_rules():
     from app.services import kyc_risk
 
     settings = make_settings()
+    # Pin the clock: kyc_risk works in UTC, so building the date from the LOCAL date made
+    # this test fail for part of every day on any machine behind UTC (age came out 31).
+    today = datetime.now(timezone.utc).date()
     profile = KycProfile(
         country="US",
-        incorporation_date=date.today() - timedelta(days=30),
+        incorporation_date=today - timedelta(days=30),
         business_email="founder@gmail.com",
         use_case={
             "vertical": "crypto",
@@ -943,7 +946,7 @@ def test_risk_rules():
             kind="website", result="pass", summary="", detail={"domain_age_days": 20}
         )
     }
-    tier, reasons = kyc_risk.evaluate(settings, profile, [], checks)
+    tier, reasons = kyc_risk.evaluate(settings, profile, [], checks, today=today)
     assert tier == "high"
     text = " ".join(reasons)
     for fragment in (

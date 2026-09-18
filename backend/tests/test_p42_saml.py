@@ -71,8 +71,14 @@ def _reset():
 
 @pytest.fixture
 async def browser(engine):
+    # These tests drive the ACS over http://test, so the SameSite=None; Secure flow cookie
+    # could never ride along; session_cookie_secure=False turns the browser binding off for
+    # them. The binding itself is covered by test_p43_saml_flow_binding.py over https.
     settings = make_settings(
-        public_base_url=BASE, public_web_url=BASE, sso_require_verified_domain=True
+        public_base_url=BASE,
+        public_web_url=BASE,
+        sso_require_verified_domain=True,
+        session_cookie_secure=False,
     )
     application = create_app(settings)
     transport = httpx.ASGITransport(app=application)

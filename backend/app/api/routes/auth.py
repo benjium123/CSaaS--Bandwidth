@@ -212,6 +212,11 @@ async def login(
     # used to enumerate which emails have accounts.
     if user is None:
         hash_password(payload.password)
+        # P43 (audit): an unknown address locks out the same way a real one does, so the
+        # 423 can't be read as "this address has an account". Checked AFTER the throwaway
+        # hash so the timing shape is unchanged, and BEFORE the failure is recorded so the
+        # count matches a real account's at the same point.
+        await lockout.ensure_unknown_email_not_locked(session, settings, payload.email)
         await _log_and_fail(
             session,
             UnauthenticatedError("Incorrect email or password"),

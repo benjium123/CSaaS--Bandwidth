@@ -520,6 +520,11 @@ pauses campaigns, hangs up live calls, emails the owners.
 5. **Watch mode first (recommended).** For the first days set `MONITOR_PAUSE_SCORE=100000` and
    `MONITOR_RESTRICT_SCORE=100000` so nobody is paused while you check `/ops` > Monitoring for
    false alarms; texts are still screened. Then set them back to 100 / 60.
+   These scores are the ONLY correct way to soften the monitor. `MONITOR_ENFORCED=false`
+   stops the monitor acting (no new signals, pauses or caps) but no longer releases accounts
+   that are already paused - a flag flip used to put every paused scammer back on the carrier
+   while the console still said "paused". To release one, unpause it in `/ops` > Monitoring;
+   that works with the monitor switched off.
 6. **Applications already in review.** They can't be approved until each owner adds a home
    address and a proof of address (the documents check says so). Use "Ask for more info" - the
    AI decision pack pre-fills the request.

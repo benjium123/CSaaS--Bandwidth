@@ -80,7 +80,13 @@ class Settings(BaseSettings):
     # from Stripe.
     stripe_webhook_secret: SecretStr = SecretStr("")
     # P24: ISO currency code used when creating Stripe price objects.
+    #: P43 (audit): the rate card and every stored amount are USD by construction - there is
+    #: no currency column anywhere and no conversion step - so setting this to anything else
+    #: would charge USD-derived numbers in another currency. Refused at boot unless someone
+    #: deliberately accepts that with the flag below.
     stripe_price_currency: str = "usd"
+    #: Only set this once amounts are actually denominated in stripe_price_currency.
+    allow_non_usd_pricing: bool = False
     # P24: where a customer lands after completing a top-up. Empty derives from
     # public_web_url.
     stripe_success_url: str = ""
@@ -384,6 +390,13 @@ class Settings(BaseSettings):
 
         if _empty(self.jwt_secret):
             problems.append("JWT_SECRET is required (generate: openssl rand -hex 32)")
+        if self.stripe_price_currency.strip().lower() != "usd" and not self.allow_non_usd_pricing:
+            problems.append(
+                f"STRIPE_PRICE_CURRENCY is {self.stripe_price_currency!r} but every rate and "
+                "balance in this system is denominated in USD with no conversion step, so "
+                "customers would be charged USD amounts labelled as that currency. Set "
+                "ALLOW_NON_USD_PRICING=true only once the rate card is actually in it."
+            )
         if _empty(self.session_secret):
             problems.append("SESSION_SECRET is required (generate: openssl rand -hex 32)")
 

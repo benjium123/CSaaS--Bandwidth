@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 import structlog
@@ -139,10 +139,20 @@ def update_business(settings: Settings, profile: KycProfile, data: dict) -> None
                 "We can currently verify businesses registered in "
                 f"{countries_phrase(settings.kyc_country_list)} only"
             )
+        if country != profile.country:
+            # Bare national numbers are parsed in this country from now on.
+            from app.services import phone_region
+
+            phone_region.forget(profile.org_id)
         data["country"] = country
     if data.get("entity_type") is not None and data["entity_type"] not in KYC_ENTITY_TYPES:
         raise ValidationFailedError(f"Business type must be one of {', '.join(KYC_ENTITY_TYPES)}")
-    if data.get("incorporation_date") is not None and data["incorporation_date"] > date.today():
+    # UTC, like kyc_risk: a local date would refuse (or accept) a valid date for part of
+    # every day depending on the server's timezone.
+    if (
+        data.get("incorporation_date") is not None
+        and data["incorporation_date"] > datetime.now(timezone.utc).date()
+    ):
         raise ValidationFailedError("The incorporation date cannot be in the future")
     for field in (
         "country",

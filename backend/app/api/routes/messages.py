@@ -18,6 +18,7 @@ from app.services import inbox_access as inbox_access_svc
 from app.services import links as links_svc
 from app.services import media as media_svc
 from app.services import messaging as svc
+from app.services import phone_region
 from app.services.sender import select_sender
 
 router = APIRouter(prefix="/api/v1", tags=["messaging"])
@@ -151,7 +152,10 @@ async def send(
     end to end, so a client that must already handle DLR-driven failure reads one uniform
     resource rather than branching on HTTP status.
     """
-    to_norm = to_e164(payload.to)
+    # Parsed in the workspace's own country when the caller typed a bare national number.
+    # `payload.from_` below needs no region: it is one of the org's OWN numbers, which
+    # always arrive from the carrier in full E.164.
+    to_norm = to_e164(payload.to, await phone_region.for_org(ctx.session, ctx.org.id))
     registry = getattr(request.app.state, "carriers", None)
 
     # One query, two uses: whether this contact has been spoken to decides both if a

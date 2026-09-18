@@ -42,6 +42,7 @@ from app.services import inbox_access as inbox_access_svc
 from app.services import inbox_sla as inbox_sla_svc
 from app.services import links as links_svc
 from app.services import notifications as notifications_svc
+from app.services import phone_region
 
 router = APIRouter(prefix="/api/v1", tags=["conversations"])
 
@@ -1161,8 +1162,11 @@ async def conversation_timeline(
 ) -> TimelineResponse:
     # P16 Opus review point 8: normalize the same way messages.py does before gating or
     # querying - a caller-supplied number format must not slip past the P15 check.
-    contact_e164 = to_e164(contact_e164)
-    our_e164 = to_e164(our_e164)
+    # The contact's number may be typed bare, so read it in the workspace's country; our own
+    # number always arrives as full E.164 (it came from a carrier), so the region is inert.
+    region = await phone_region.for_org(ctx.session, ctx.org.id)
+    contact_e164 = to_e164(contact_e164, region)
+    our_e164 = to_e164(our_e164, region)
 
     # P16 Opus review point 1: call/voicemail events additionally require calls:read.
     has_calls_read = ctx.role.grants("calls:read")

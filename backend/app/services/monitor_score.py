@@ -195,13 +195,25 @@ async def refusal(
     session: AsyncSession, settings: Settings, org_id: uuid.UUID, kind: str
 ) -> str | None:
     """Telephony gate hook: ``account_paused`` / ``daily_limit_reached`` or None."""
-    if not settings.monitor_enforced or kind == "number":
+    if kind == "number":
         return None
     state = await get_state(session, org_id, create=False)
+    # An EXISTING pause is honoured even with the monitor switched OFF. MONITOR_ENFORCED
+    # governs whether the monitor ACTS - new signals, new pauses, the restricted tier's
+    # daily caps - and never whether a pause already in force is obeyed. Before this the
+    # flag released every paused account the moment it was flipped (a rollout rollback, one
+    # worker with a stale env, a staging config copied to prod), while the ops queue and the
+    # customer's own banner both still said "paused"; it also made "only an operator ends a
+    # pause" untrue, since a config flag ended one.
+    # To SOFTEN the monitor, move MONITOR_PAUSE_SCORE / MONITOR_RESTRICT_SCORE - not this
+    # flag. The way out if the monitor ever mass-pauses is the per-org operator unpause,
+    # which stays reachable with the flag off because the ops routes are not flag-gated.
+    if state is not None and state.level == "paused":
+        return "account_paused"
+    if not settings.monitor_enforced:
+        return None
     if state is None or state.level in ("normal", "watch"):
         return None
-    if state.level == "paused":
-        return "account_paused"
     now = _now()
     if kind == "sms":
         sent = (

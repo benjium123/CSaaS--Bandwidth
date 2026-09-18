@@ -68,6 +68,71 @@ async def ensure_not_locked(session: AsyncSession, user: User) -> None:
         )
 
 
+async def ensure_unknown_email_not_locked(
+    session: AsyncSession, settings: Settings, email: str, *, now: datetime | None = None
+) -> None:
+    """P43 (audit): an address with NO account must lock exactly like one that has an account.
+
+    Otherwise the lock is an account-existence oracle: ten wrong passwords answer 423 for a
+    real address and 401 for a made-up one, which is precisely the enumeration the login
+    handler pays for a throwaway argon2 hash to prevent. There is no row to keep and nobody
+    to email here - the failures are already recorded as LoginEvents with user_id NULL, so
+    the same lock can be derived from them and discarded.
+    """
+    now = now or _now()
+    threshold = settings.lockout_threshold
+    if threshold <= 0:
+        return
+    # 24h of history, because that is how long a real account's escalation LEVEL survives
+    # (register_failure resets level only when the last lock is more than a day old).
+    times = [
+        _aware(at) or now
+        for at in (
+            (
+                await session.execute(
+                    sa.select(LoginEvent.at)
+                    .where(
+                        LoginEvent.user_id.is_(None),
+                        sa.func.lower(LoginEvent.email) == email.strip().lower(),
+                        LoginEvent.outcome.in_(FAILURE_OUTCOMES),
+                        LoginEvent.at >= now - timedelta(hours=24),
+                    )
+                    .order_by(LoginEvent.at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+    ]
+    # Replay the same state machine register_failure runs for a real account: failures count
+    # from max(window start, end of the previous lock), crossing the threshold starts a lock,
+    # and each lock doubles the duration. Deriving the lock from the window alone was not
+    # enough - by round two the first round's failures have aged out of the window, so the
+    # duration reset to the base while a real account's had doubled, and the remaining
+    # minutes in the message became the account-existence oracle all over again.
+    window = timedelta(minutes=settings.lockout_window_minutes)
+    level = 0
+    last_end: datetime | None = None
+    pending: list[datetime] = []
+    for at in times:
+        floor = at - window
+        if last_end is not None and last_end > floor:
+            floor = last_end
+        pending = [t for t in pending if t >= floor]
+        pending.append(at)
+        if len(pending) >= threshold:
+            duration = min(timedelta(minutes=settings.lockout_base_minutes * (2**level)), MAX_LOCK)
+            level += 1
+            last_end = at + duration
+            pending = []
+    if last_end is None or last_end <= now:
+        return
+    minutes = max(1, int((last_end - now).total_seconds() // 60) + 1)
+    raise AccountLockedError(
+        f"Too many failed attempts. Try again in {minutes} minutes or reset your password."
+    )
+
+
 async def register_failure(
     session: AsyncSession,
     settings: Settings,

@@ -30,7 +30,7 @@ from app.api.routes.enterprise_sso import SCIM_TOKEN_PREFIX, hash_scim_token
 from app.auth.security import hash_password
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_session
-from app.models import Org, OrgMembership, Role, ScimToken, User
+from app.models import Org, OrgMembership, Role, ScimToken, SecurityAlert, User
 from app.rate_limit import enforce_rate_limit
 from app.services import account_security, sso_provisioning
 from app.services import audit as audit_svc
@@ -225,6 +225,10 @@ async def _deprovision(ctx: ScimContext, user: User, membership: OrgMembership, 
     )
     await ctx.session.commit()
     await account_security.mark_revoked(ctx.settings, revoked)
+
+
+#: Kept in step with sso_provisioning.PRIVILEGED_PERMISSIONS and orgs._privileged_grant_action.
+PRIVILEGED_SCIM_PERMISSIONS = frozenset({"org:billing", "members:update", "roles:write"})
 
 
 async def _default_role(ctx: ScimContext) -> Role:
@@ -556,6 +560,34 @@ async def patch_group(
             if kind == "add" and membership.role_id != role.id:
                 membership.role_id = role.id
                 changes.append({"user": user.email, "role": role.name})
+                # No session revoke here, unlike the remove branch and unlike
+                # orgs.py::update_member: this branch only ever WIDENS what someone may do,
+                # and the role is re-read from the membership on every request, so an
+                # existing session picks the new role up immediately. Revoking would sign
+                # people out of a promotion for no security gain. (Narrowing is the case
+                # that must not linger, and that is the remove branch below.)
+                if set(role.permissions or []) & PRIVILEGED_SCIM_PERMISSIONS:
+                    # P43 (audit): a directory sync may grant this - an owner configured it
+                    # behind a step-up - but never silently. Same alert the new-member path
+                    # opens in sso_provisioning.
+                    ctx.session.add(
+                        SecurityAlert(
+                            id=uuid.uuid4(),
+                            kind="sso_privileged_role_granted",
+                            org_id=ctx.org.id,
+                            user_id=user.id,
+                            status="open",
+                            detail={
+                                "email": user.email,
+                                "role": role.name,
+                                "protocol": "scim",
+                                "note": (
+                                    "A directory sync moved this person into a privileged "
+                                    "role."
+                                ),
+                            },
+                        )
+                    )
             elif kind == "remove" and membership.role_id == role.id and role.id != default_role.id:
                 membership.role_id = default_role.id
                 changes.append({"user": user.email, "role": default_role.name})

@@ -136,6 +136,50 @@ def certificate_pem(value: str) -> str:
     return load_certificate(value).public_bytes(Encoding.PEM).decode()
 
 
+def certificate_valid_until(value: str) -> datetime | None:
+    """When the pinned IdP certificate stops being valid, or None if it can't be read."""
+    try:
+        cert = load_certificate(value)
+    except ValidationFailedError:
+        return None
+    not_after = cert.not_valid_after_utc
+    return not_after if not_after.tzinfo else not_after.replace(tzinfo=timezone.utc)
+
+
+def certificate_expired(value: str, *, now: datetime | None = None) -> bool:
+    until = certificate_valid_until(value)
+    return until is not None and until <= (now or datetime.now(timezone.utc))
+
+
+def check_certificate_usable(value: str) -> None:
+    """Refuse a certificate that is already expired (or not yet valid) AT SAVE TIME.
+
+    Deliberately not enforced at sign-in: signxml is given this certificate as a pinned
+    key, not a chain to validate, and refusing an expired one mid-flight would lock a whole
+    workspace out of SSO exactly when nobody can paste a new one - with enforce on there may
+    be no password way back in. So the admin is stopped here, where they can fix it, and a
+    certificate that expires later is surfaced as an alert instead (routes/saml.py).
+    """
+    cert = load_certificate(value)
+    now = datetime.now(timezone.utc)
+    not_before = cert.not_valid_before_utc
+    not_after = cert.not_valid_after_utc
+    if not_before.tzinfo is None:
+        not_before = not_before.replace(tzinfo=timezone.utc)
+    if not_after.tzinfo is None:
+        not_after = not_after.replace(tzinfo=timezone.utc)
+    if not_after <= now:
+        raise ValidationFailedError(
+            f"That identity provider certificate expired on {not_after.date().isoformat()}. "
+            "Paste the current one from your identity provider."
+        )
+    if not_before > now:
+        raise ValidationFailedError(
+            f"That identity provider certificate is not valid until "
+            f"{not_before.date().isoformat()}."
+        )
+
+
 def metadata_xml(settings: Settings, org: Org) -> str:
     entity = quoteattr(sp_entity_id(settings, org))
     acs = quoteattr(acs_url(settings, org))

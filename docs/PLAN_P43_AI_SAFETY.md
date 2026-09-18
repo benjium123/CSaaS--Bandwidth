@@ -106,10 +106,34 @@ appeal, AI case file with quotes, operator 2FA step-up, unpause, suspend + ban),
 labels, canary. Exam library now 50 cases incl. 12 UK: 25/25 caught, 0/25 false alarms.
 Stripe ID, carrier delivery and call audio were simulated (no local credentials).
 
+Adversarial audit (a second session, 2026-09-17) found four more, all fixed: an open events
+websocket never re-checked the PLATFORM idle timeout, so an unattended console kept streaming
+events for hours after "signed out after inactivity"; the workspace login-event list returned a
+shared member's sign-ins to OTHER workspaces (ip, device, risk flags, and in bulk via CSV);
+`MONITOR_ENFORCED=false` silently RELEASED every already-paused account instead of only
+stopping new pauses; and `test_risk_rules` was timezone-dependent (UTC vs local date), which
+also affected the "incorporation date in the future" guard. Plus two SAML hardening changes
+(expired IdP certificate refused at save time and surfaced as an alert at sign-in; the SAML
+response bound to the browser that started it) and the Stripe Identity webhook secret no longer
+accepted for billing events. The audit CLEARED the SAML core, tenant isolation across all 21
+unscoped query sites, operator document access, IdP-group-to-role mapping and step-up scoping.
+
 Bugs found and fixed by this run: UK recipients were checked against US quiet hours (daytime
 texts held until the evening); the weekly exam and hourly canary held a database transaction
 open for minutes; the ops queue lacked the AI recommendation; operators without a workspace
 could not open /ops; digits in a workspace name were read as a phone number.
+
+## Two decisions for the operator, now that GB is live (not code bugs)
+- **The rate card has no destination dimension.** `spend.resolve_rate` keys on (provider,
+  metric) only, so a text or call to +44 costs and prices exactly like a US domestic one, and
+  `DEFAULT_TRAFFIC_MARKUP_BPS` is a flat multiplier on a destination-blind cost. UK domestic
+  and international termination rates differ substantially, so the margin on UK traffic is
+  whatever the difference happens to be. Adding a destination dimension is real work.
+- **The platform is single-currency by construction.** `ProviderRate.currency` is USD, the
+  billing models carry no currency column, and nothing converts. Setting
+  `STRIPE_PRICE_CURRENCY=gbp` would therefore charge USD-derived amounts labelled GBP - so
+  that configuration is now REFUSED at boot unless `ALLOW_NON_USD_PRICING=true` is set
+  deliberately. Staying single-currency is a fine decision; doing it by accident is not.
 
 ## Not done / limits
 - Paid US registry: none under $0.50/lookup was confirmed; a provider can be added behind

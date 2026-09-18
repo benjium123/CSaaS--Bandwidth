@@ -25,6 +25,7 @@ from app.services import inbox as inbox_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services import messaging as messaging_svc
 from app.services import notifications as notifications_svc
+from app.services import phone_region
 
 router = APIRouter(prefix="/api/v1", tags=["inbox"])
 
@@ -256,8 +257,9 @@ async def mark_read_pair(
     the (our_e164, contact_e164) thread first (same helper the send/inbound paths use),
     then marks it read - after which conversations.py::_call_unread respects the new
     last_read_at exactly like it already does for a message-backed pair."""
-    our_e164 = to_e164(payload.our_e164)
-    contact_e164 = to_e164(payload.contact_e164)
+    region = await phone_region.for_org(ctx.session, ctx.org.id)
+    our_e164 = to_e164(payload.our_e164, region)
+    contact_e164 = to_e164(payload.contact_e164, region)
 
     # 5(a): our_e164 must be a number this org actually owns - otherwise this endpoint
     # would happily fabricate a thread under a number nobody in the org can see.
@@ -316,8 +318,9 @@ async def mark_important_pair(
     exactly (same normalize / OrgNumber-exists / access-resolve / existing-Call-or-
     Message precondition / upsert_thread sequence) so a call-only pair can be starred
     the same way it can be marked read."""
-    our_e164 = to_e164(payload.our_e164)
-    contact_e164 = to_e164(payload.contact_e164)
+    region = await phone_region.for_org(ctx.session, ctx.org.id)
+    our_e164 = to_e164(payload.our_e164, region)
+    contact_e164 = to_e164(payload.contact_e164, region)
 
     number = (
         await ctx.session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == our_e164))
