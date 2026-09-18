@@ -155,9 +155,14 @@ PostgreSQL), `2c8b757` (runbook).
    delegates correctly to the library with every expected parameter. Nobody has run these
    flows against real hardware, a real browser or a security key; jsdom has no WebAuthn, so
    the browser half is unexercised by construction.
-3. **Concurrency in the auth paths.** No test issues simultaneous requests against a WebAuthn
-   challenge, a step-up row, or the idle-session revoke; those fixes are verified by code
-   inspection plus sequential execution on PostgreSQL.
+3. **Concurrency in the auth paths — NARROWED 18 Sept, not closed.** The WebAuthn challenge
+   race IS now observed. Both signatories had written that racing it required two browsers;
+   that was wrong, and the reason is worth keeping: `consume_challenge` runs BEFORE
+   verification, so the claim can be raced with a credential that is merely well-formed — no
+   crypto and no browser needed. Raced four times: exactly one winner each time, never two.
+   Still unobserved: simultaneous requests against a step-up row, and against the
+   idle-session revoke. Those two remain code inspection plus sequential execution on
+   PostgreSQL.
 4. **Secret handling beyond the code.** argon2id parameters (t=3, m=64MiB, p=4), pinned JWT
    algorithms with nothing disabled, Fernet error handling and the SHA-256-over-256-bit-random
    API key choice were all verified by reading. Nobody checked where `CREDENTIALS_MASTER_KEY`
