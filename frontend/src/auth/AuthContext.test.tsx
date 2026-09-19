@@ -136,23 +136,84 @@ describe("AuthContext cache hygiene", () => {
 });
 
 describe("hasPermission", () => {
-  it("fails open when the membership has no permissions array yet (not rolled out)", () => {
-    expect(hasPermission(ME, "org-1", "calls:place")).toBe(true);
+  /** The real /auth/me shape: permissions top-level, memberships WITHOUT the field. */
+  function meWith(permissions?: string[]): Me {
+    return {
+      id: "u1",
+      email: "a@example.com",
+      full_name: "A",
+      ...(permissions ? { permissions } : {}),
+      memberships: [{ org_id: "org-1", org_name: "Org 1", org_slug: "org-1", role_name: "owner" }],
+    };
+  }
+
+  // THE REGRESSION. Verified live against the running backend: MembershipOut has no
+  // `permissions` key and never has had one, so the old `if (!membership.permissions)
+  // return true` was UNCONDITIONAL - hasPermission answered `true` for every permission
+  // string, for anyone who was a member of the org. A user whose top-level list is empty
+  // has NO permissions; that is known absence, not absence of information.
+  it("fails CLOSED for a member whose top-level permission list is empty", () => {
+    const me = meWith([]);
+    expect(me.memberships[0].permissions).toBeUndefined();
+    expect(hasPermission(me, "org-1", "members:write")).toBe(false);
   });
 
-  it("is authoritative once permissions are present", () => {
-    expect(hasPermission(ME, "org-2", "calls:place")).toBe(true);
-    expect(hasPermission(ME, "org-2", "numbers:write")).toBe(false);
+  // Pairs with the test above so it cannot pass vacuously: the same shape with a
+  // non-empty top-level list must still grant the permission it actually contains.
+  it("reads the top-level permissions when the membership has none", () => {
+    const me = meWith(["members:write"]);
+    expect(hasPermission(me, "org-1", "members:write")).toBe(true);
+    expect(hasPermission(me, "org-1", "org:update")).toBe(false);
+  });
+
+  it("prefers a per-membership permissions array when the server does send one", () => {
+    const me = meWith(["members:write"]);
+    me.memberships[0].permissions = ["calls:place"];
+    expect(hasPermission(me, "org-1", "calls:place")).toBe(true);
+    // The top-level list must NOT leak through once the membership is authoritative.
+    expect(hasPermission(me, "org-1", "members:write")).toBe(false);
+  });
+
+  it("fails CLOSED when neither list is present at all", () => {
+    expect(hasPermission(meWith(), "org-1", "calls:place")).toBe(false);
+  });
+
+  // Realistic owner payload: an EXPANDED list of explicit strings with no "*" wildcard,
+  // so a plain includes() is the right test. Pinned here because "improving" this into
+  // wildcard matching, without the server actually sending "*", denies everything.
+  it("matches explicit strings from a realistic owner payload (no wildcard)", () => {
+    const me = meWith([
+      "calls:place",
+      "calls:read",
+      "calls:supervise",
+      "campaigns:manage",
+      "roles:write",
+      "members:update",
+      "settings:read",
+      "settings:write",
+      "contacts:write",
+      "org:read",
+    ]);
+    expect(me.permissions).not.toContain("*");
+    expect(hasPermission(me, "org-1", "roles:write")).toBe(true);
+    expect(hasPermission(me, "org-1", "compliance:manage")).toBe(false);
   });
 
   // The expectation here is INVERTED from what it originally asserted, deliberately. It
   // used to pin `true` for both, i.e. it pinned the defect: a null `me` means /auth/me has
   // not answered, which is "unknown", and answering "permitted" to unknown showed admin
-  // affordances on every page load. The feature-detection fail-open above is a different
-  // case and is untouched - there, the backend HAS answered and simply predates the
-  // `permissions` field.
+  // affordances on every page load.
   it("fails closed when we do not know yet - no user loaded, or no org selected", () => {
     expect(hasPermission(null, "org-1", "calls:place")).toBe(false);
     expect(hasPermission(ME, null, "calls:place")).toBe(false);
+  });
+
+  it("fails closed when the selected org is not one of the memberships", () => {
+    expect(hasPermission(meWith(["calls:place"]), "org-nope", "calls:place")).toBe(false);
+  });
+
+  it("is authoritative for a membership that does carry permissions", () => {
+    expect(hasPermission(ME, "org-2", "calls:place")).toBe(true);
+    expect(hasPermission(ME, "org-2", "numbers:write")).toBe(false);
   });
 });

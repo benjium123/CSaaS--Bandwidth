@@ -142,6 +142,13 @@
   box-shadow: 0 0 0 3px hsl(var(--ex-verdigris) / 0.12);
   font-size: 0.75rem;
 }
+/* Waiting: deliberately NOT a treatment of its own. Verdigris on this page means verified,
+   and a step nobody has looked at yet must not borrow any part of that - so it keeps the
+   plain numeral and only dims, which is what "not applicable yet" looks like. */
+.auth-surface .ob-step.is-waiting .ob-node {
+  color: hsl(var(--ex-bone-dim) / 0.7);
+  border-color: hsl(var(--ex-copper-line) / 0.6);
+}
 
 .auth-surface .ob-step-text {
   min-width: 0;
@@ -177,6 +184,17 @@
 
 .auth-surface .ob-step-tag.is-done {
   color: hsl(var(--ex-verdigris));
+}
+.auth-surface .ob-step-tag.is-waiting {
+  /* Bone, not copper and certainly not verdigris: this reads as an aside, not a verdict. */
+  color: hsl(var(--ex-bone-dim) / 0.75);
+  letter-spacing: 0.08em;
+}
+.auth-surface .ob-waiting-note {
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: hsl(var(--ex-bone-dim));
 }
 
 /* Body ---------------------------------------------------------------------- */

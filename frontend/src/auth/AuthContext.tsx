@@ -7,16 +7,30 @@ export type Membership = {
   org_name: string;
   org_slug: string;
   role_name: string;
-  /** P20 RBAC: effective permission strings for this membership. Optional - rolls out
-   * server-side independently of this file, so every reader must feature-detect
-   * (undefined = backend hasn't shipped it yet for this membership = don't restrict). */
+  /** NOT SENT BY THE SERVER, and never has been. Verified against a live `/auth/me`:
+   * MembershipOut's keys are exactly org_id, org_name, org_slug, role_name,
+   * identity_verification. The real permission list arrives TOP-LEVEL on `Me`
+   * (see `Me.permissions`). This field is kept only so that a server which later starts
+   * sending per-membership permissions is honoured without a client change - it must
+   * never be treated as the only source, because today it is always undefined. */
   permissions?: string[];
 };
 
-/** Feature-detected permission gate (P20): `undefined` permissions means the backend
- * hasn't started sending them for this membership yet - fail OPEN (don't restrict)
- * rather than lock users out of actions they've always had. Once `permissions` is
- * present, it is authoritative. */
+/** Permission gate. The list comes from `me.permissions` (top-level on /auth/me);
+ * `membership.permissions` is honoured first if a server ever starts sending it, but has
+ * never been sent, so it cannot be the only source. When NEITHER is present we fail
+ * CLOSED - the same direction api/capabilities.ts:53 already chose for the same absent
+ * field. It used to fail OPEN here "for a backend that predates the field", which made
+ * the branch unconditional: hasPermission returned true for every permission string for
+ * anyone who was a member of the org, so ~18 gated controls (role editing and member 2FA
+ * reset on TeamPage, contact merge and GDPR erase, data retention, softphone placing)
+ * were shown to people who then got a 403 on click.
+ *
+ * The server sends an EXPANDED list of explicit strings - an owner gets 34 of them - and
+ * there is NO "*" wildcard entry. A plain `includes()` is therefore correct and complete.
+ * Do not "improve" this into wildcard/prefix matching without re-checking the server
+ * first: matching a "*" that is never sent buys nothing, and a prefix rule would grant
+ * permissions the server does not. */
 export function hasPermission(me: Me | null, orgId: string | null, permission: string): boolean {
   // "We have not asked yet" is NOT "allowed". `me` is null until /auth/me answers, so
   // returning true here made all eleven call sites render admin affordances - role editing
@@ -33,21 +47,26 @@ export function hasPermission(me: Me | null, orgId: string | null, permission: s
   // require_permission, so the affordance was always a lie rather than a door.
   if (!me || !orgId) return false;
   const membership = me.memberships.find((m) => m.org_id === orgId);
-  // Split from the fail-open below, because only one of these deserves it. "You are not a
+  // Split from the two guards around it because it is a different kind of absence. "You are not a
   // member of this workspace" is KNOWN absence of every permission, not absence of
   // information - a stronger denial than the loading case above. It was previously
   // unreachable only because App.tsx drops an orgId that is not in the memberships, i.e.
   // this function's safety depended on a guard in a different file; completeSso is itself
   // an example of a second org-setting path that behaved differently from the first.
   if (!membership) return false;
-  // THIS fail-open is deliberate and stays: an undefined `permissions` means a backend that
-  // predates the field (P20 feature detection), not a member with no rights.
-  if (!membership.permissions) return true;
-  return membership.permissions.includes(permission);
+  // Per-membership first (aspirational - never populated today), then the top-level list,
+  // which is where the server actually puts them. No list at all is KNOWN absence of
+  // rights, not missing information: fail closed.
+  const perms = membership.permissions ?? me.permissions;
+  if (!perms) return false;
+  return perms.includes(permission);
 }
 
 export type Me = {
-  /** Effective permissions of the current membership (top-level on /auth/me). */
+  /** Effective permissions for the current org membership - the REAL source, sent
+   * top-level on /auth/me (Membership.permissions is not sent). An expanded list of
+   * explicit strings, no "*" wildcard; optional only because /auth/me is typed loosely
+   * here, and undefined is treated as "no permissions" by hasPermission. */
   permissions?: string[];
   id: string;
   email: string;

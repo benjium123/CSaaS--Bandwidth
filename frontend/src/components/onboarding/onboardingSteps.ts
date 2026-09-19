@@ -7,10 +7,11 @@
  * ever locked, because locking would assert a backend rule that does not exist — and two
  * browser tabs would disprove it.
  *
- * A step's completeness is the server's answer, not ours: a step is done when none of its
- * `missing` keys are in the profile's `missing` array. We never recompute that. `missing`
- * is the same list `POST /kyc/submit` is judged on, and a second implementation in the
- * browser is a rule written twice and true in one place.
+ * A step's outstanding work is the server's answer, not ours: its `missing` keys, filtered.
+ * We never recompute what is filled in - `missing` is the same list `POST /kyc/submit` is
+ * judged on, and a second implementation in the browser is a rule written twice and true in
+ * one place. But an EMPTY filter is not automatically a completion, because `missing`
+ * under-reports the per-owner keys; see `stepStateFor`.
  *
  * `missing` is only populated while the status is `draft` or `needs_info`. In every other
  * status it is `[]` — which is a fact about the payload and NOT evidence of completeness,
@@ -82,9 +83,71 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
   },
 ];
 
-/** Outstanding `missing` keys for one step. Empty means the SERVER considers it done. */
+/** Outstanding `missing` keys for one step. NOT on its own a verdict - see `stepStateFor`. */
 export function outstandingFor(step: OnboardingStep, missing: string[]): string[] {
   return missing.filter(step.owns);
+}
+
+/**
+ * THE THIRD STATE, and the reason it has to exist.
+ *
+ * `missing` under-reports. Three of its keys - `id_verification`, `proof_of_address`,
+ * `residential_address` - are PER OWNER, so the server cannot emit them until an owner
+ * person row exists. A brand-new profile comes back with eighteen keys and none of those
+ * three: there is nobody to check, not somebody who has been checked.
+ *
+ * So for those steps an ABSENCE is not evidence. Reading it as one is how "Prove it's you"
+ * came to render a green tick and the word "Done" on a workspace that had done nothing - a
+ * claim about an identity check that had never been started, made out of a silence.
+ *
+ * A step may therefore only reach `done` on POSITIVE evidence: the server had the chance to
+ * name the key as outstanding and did not. Where that chance never arose the state is
+ * `waiting`, which is neither a tick nor a count, and says what it is waiting on.
+ *
+ * `business`, `use_case` and `agreement` are exempt because they always apply: those keys
+ * are computed for every profile in `draft`/`needs_info`, so there an absence IS evidence.
+ */
+export type StepState =
+  | { kind: "done" }
+  | { kind: "todo"; outstanding: string[] }
+  /** `outstanding` may still hold keys - a waiting step can have assessable work too. */
+  | { kind: "waiting"; label: string; outstanding: string[] };
+
+const NEEDS_AN_OWNER = "Add an owner first";
+
+/** Owners and beneficial owners - the roles the per-owner `missing` keys are computed for. */
+export function ownerCount(persons: { role: string }[]): number {
+  return persons.filter((p) => p.role === "owner" || p.role === "beneficial_owner").length;
+}
+
+export function stepStateFor(step: OnboardingStep, missing: string[], owners: number): StepState {
+  const outstanding = outstandingFor(step, missing);
+
+  switch (step.id) {
+    // Nothing to check until there is somebody to check. With no owners the server emits no
+    // `id_verification` at all, so `done` here could only ever be read out of a silence.
+    case "identity":
+      if (owners === 0) return { kind: "waiting", label: NEEDS_AN_OWNER, outstanding };
+      break;
+
+    // Half of this step - the proof of address - is per owner. The business document can be
+    // uploaded now and is still reported, but the step cannot be called done while the other
+    // half is unassessable.
+    case "documents":
+      if (owners === 0) return { kind: "waiting", label: NEEDS_AN_OWNER, outstanding };
+      break;
+
+    // `done` needs an owner to exist, not merely the absence of the `owner` key.
+    case "owners":
+      if (outstanding.length > 0) return { kind: "todo", outstanding };
+      if (owners === 0) return { kind: "waiting", label: NEEDS_AN_OWNER, outstanding };
+      return { kind: "done" };
+
+    default:
+      break;
+  }
+
+  return outstanding.length > 0 ? { kind: "todo", outstanding } : { kind: "done" };
 }
 
 /**

@@ -5,7 +5,8 @@ import { missingLabel, useKycProfile, type KycPerson, type KycProfile } from "@/
 import {
   ONBOARDING_STEPS,
   firstIncomplete,
-  outstandingFor,
+  ownerCount,
+  stepStateFor,
   type StepId,
 } from "@/components/onboarding/onboardingSteps";
 import {
@@ -44,6 +45,10 @@ import "@/components/onboarding/onboarding.css";
  * 3. A BUTTON IS ONLY SHOWN WHERE THE SERVER WOULD ACCEPT THE CALL. See `Reverification`:
  *    only the person themselves may repeat their own ID check, so offering everyone a
  *    button offers most people a dead end.
+ * 4. A TICK IS POSITIVE EVIDENCE, NEVER AN ABSENCE. `missing` cannot name the per-owner
+ *    keys before an owner exists, so a step whose work is per-owner renders `waiting` on an
+ *    empty profile rather than "Done". See `stepStateFor` - this page once told a workspace
+ *    that had done nothing that its identity check was complete.
  */
 export function OnboardingPage() {
   const { api, me, orgId } = useAuth();
@@ -124,6 +129,9 @@ function Wizard({
   onOpen: (hash?: string) => void;
 }) {
   const missing = profile.missing;
+  // The per-owner `missing` keys do not exist until an owner does, so how many owners there
+  // are is part of reading `missing` correctly - not a second opinion about it.
+  const owners = ownerCount(profile.persons);
   const [open, setOpen] = React.useState<StepId | null>(() => firstIncomplete(missing));
   const ready = missing.length === 0;
 
@@ -155,13 +163,20 @@ function Wizard({
 
         <ol className="ob-steps">
           {ONBOARDING_STEPS.map((step, i) => {
-            const outstanding = outstandingFor(step, missing);
-            const done = outstanding.length === 0;
+            const state = stepStateFor(step, missing, owners);
+            const done = state.kind === "done";
+            const waiting = state.kind === "waiting";
+            const outstanding = done ? [] : state.outstanding;
             const isOpen = open === step.id;
             return (
               <li
                 key={step.id}
-                className={cn("ob-step ex-rise", done && "is-done", isOpen && "is-open")}
+                className={cn(
+                  "ob-step ex-rise",
+                  done && "is-done",
+                  waiting && "is-waiting",
+                  isOpen && "is-open",
+                )}
                 style={{ ["--d" as string]: 100 + i * 55 + "ms" }}
               >
                 <button
@@ -170,6 +185,8 @@ function Wizard({
                   aria-expanded={isOpen}
                   onClick={() => setOpen(isOpen ? null : step.id)}
                 >
+                  {/* A waiting step keeps the numeral. The tick is the one mark on this page
+                      that asserts a check happened, so it is spent only on evidence. */}
                   <span className="ob-node" aria-hidden="true">
                     {done ? "✓" : String(i + 1).padStart(2, "0")}
                   </span>
@@ -178,9 +195,12 @@ function Wizard({
                     <span className="ob-step-blurb">{step.blurb}</span>
                   </span>
                   {/* Counted from the server's own list, never from our idea of what is
-                      filled in - this is the same list POST /kyc/submit is judged on. */}
-                  <span className={cn("ob-step-tag", done && "is-done")}>
-                    {done ? "Done" : outstanding.length + " left"}
+                      filled in - this is the same list POST /kyc/submit is judged on. And
+                      NO count while waiting: the count would only cover the half that can
+                      be assessed, so "1 left" would read as nearly finished on a step whose
+                      real work has not been looked at yet. */}
+                  <span className={cn("ob-step-tag", done && "is-done", waiting && "is-waiting")}>
+                    {done ? "Done" : waiting ? state.label : outstanding.length + " left"}
                   </span>
                 </button>
 
@@ -192,14 +212,24 @@ function Wizard({
                       </p>
                     ) : (
                       <>
-                        <ul className="ob-todo">
-                          {outstanding.map((key) => (
-                            <li key={key}>{missingLabel(key)}</li>
-                          ))}
-                        </ul>
-                        <AuthButton type="button" onClick={() => onOpen(step.id)}>
-                          {step.id === "identity" ? "Start the ID check" : "Fill this in"}
-                        </AuthButton>
+                        {waiting && (
+                          <p className="ob-waiting-note">
+                            We can't check this yet - there's no owner on the application for
+                            it to belong to. Add one under Owners and this opens up.
+                          </p>
+                        )}
+                        {outstanding.length > 0 && (
+                          <>
+                            <ul className="ob-todo">
+                              {outstanding.map((key) => (
+                                <li key={key}>{missingLabel(key)}</li>
+                              ))}
+                            </ul>
+                            <AuthButton type="button" onClick={() => onOpen(step.id)}>
+                              {step.id === "identity" ? "Start the ID check" : "Fill this in"}
+                            </AuthButton>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
