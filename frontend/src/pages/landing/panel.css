@@ -10,7 +10,7 @@
   position: relative;
   overflow: hidden;
   border: 1px solid hsl(var(--lp-rule, var(--ex-copper-line)) / 0.85);
-  border-radius: 4px;
+  border-radius: var(--cx-r-lg, 18px);
   background: linear-gradient(
     180deg,
     hsl(var(--ex-ink-raise) / 0.97),
@@ -211,7 +211,7 @@
 .lps-bubble {
   max-width: 32ch;
   padding: 0.4375rem 0.625rem;
-  border-radius: 3px;
+  border-radius: var(--cx-r-xs, 10px);
   font-size: 0.8125rem;
   line-height: 1.5;
   overflow-wrap: anywhere;

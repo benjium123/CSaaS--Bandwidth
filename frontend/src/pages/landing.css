@@ -188,7 +188,7 @@
 .lp a:focus-visible {
   outline: 2px solid hsl(var(--ex-verdigris));
   outline-offset: 3px;
-  border-radius: 2px;
+  border-radius: var(--cx-r-xs, 10px);
 }
 
 /* Sections ------------------------------------------------------------------ */
@@ -530,7 +530,7 @@
    * panel rather than as six cards floating apart. */
   background: hsl(var(--lp-rule) / 0.55);
   border: 1px solid hsl(var(--lp-rule) / 0.55);
-  border-radius: 4px;
+  border-radius: var(--cx-r-lg, 18px);
   overflow: hidden;
 }
 
@@ -682,7 +682,7 @@
 .lp-q-s:focus-visible {
   outline: 2px solid hsl(var(--ex-verdigris));
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--cx-r-xs, 10px);
 }
 
 /* The mark: two 1px bars, one of which is rotated away when the panel opens. */

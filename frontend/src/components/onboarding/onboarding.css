@@ -42,7 +42,7 @@
   border-left: 2px solid hsl(var(--ex-copper));
   background: hsl(var(--ex-copper) / 0.08);
   padding: 0.875rem 1rem;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--cx-r-md, 14px) var(--cx-r-md, 14px) 0;
   margin-bottom: 1.5rem;
 }
 
@@ -87,7 +87,7 @@
   position: relative;
   z-index: 0;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--cx-r-md, 14px);
   transition: border-color 200ms ease, background-color 200ms ease;
 }
 
@@ -106,7 +106,7 @@
   background: none;
   border: 0;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--cx-r-md, 14px);
 }
 
 .auth-surface .ob-step-head:focus-visible {
@@ -299,7 +299,7 @@
   border-left: 2px solid hsl(var(--ex-danger) / 0.8);
   background: hsl(var(--ex-danger) / 0.07);
   padding: 0.875rem 1rem;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--cx-r-md, 14px) var(--cx-r-md, 14px) 0;
   font-size: 0.875rem;
   line-height: 1.6;
   color: hsl(var(--ex-bone));
@@ -315,7 +315,7 @@
 
 .auth-surface .ob-skeleton-bar {
   height: 0.75rem;
-  border-radius: 2px;
+  border-radius: var(--cx-r-pill, 999px);
   background: linear-gradient(
     90deg,
     hsl(var(--ex-ink-high)),

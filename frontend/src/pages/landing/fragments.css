@@ -10,7 +10,7 @@
 
 .lpf {
   border: 1px solid hsl(var(--lp-rule) / 0.7);
-  border-radius: 3px;
+  border-radius: var(--cx-r-md, 14px);
   background: hsl(var(--ex-ink) / 0.55);
   box-shadow: 0 1px 2px hsl(223 30% 2% / 0.25) inset;
   padding: 0.625rem 0.6875rem;

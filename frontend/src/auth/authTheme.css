@@ -185,7 +185,7 @@
   position: relative;
   background: linear-gradient(180deg, hsl(var(--ex-ink-raise) / 0.96), hsl(var(--ex-ink) / 0.92));
   border: 1px solid hsl(var(--ex-copper-line) / 0.85);
-  border-radius: 4px;
+  border-radius: var(--cx-r-lg, 18px);
   box-shadow:
     0 1px 0 hsl(var(--ex-bone) / 0.05) inset,
     0 24px 60px -30px hsl(223 30% 2% / 0.9);
@@ -226,7 +226,7 @@
 .auth-surface .ex-input {
   height: 2.75rem;
   width: 100%;
-  border-radius: 3px;
+  border-radius: var(--cx-r-xs, 10px);
   border: 1px solid hsl(var(--ex-copper-line) / 0.7);
   border-bottom-color: hsl(var(--ex-copper) / 0.55);
   background: hsl(var(--ex-ink-raise) / 0.75);
@@ -272,7 +272,7 @@
   gap: 0.5rem;
   height: 2.75rem;
   padding: 0 1.1rem;
-  border-radius: 3px;
+  border-radius: var(--cx-r-xs, 10px);
   border: 1px solid transparent;
   font-size: 0.875rem;
   font-weight: 600;
@@ -392,7 +392,7 @@
 .auth-surface .ex-link:focus-visible {
   outline: 2px solid hsl(var(--ex-verdigris));
   outline-offset: 3px;
-  border-radius: 2px;
+  border-radius: var(--cx-r-xs, 10px);
 }
 
 /* Status --------------------------------------------------------------------
@@ -428,7 +428,7 @@
   border-left: 2px solid hsl(var(--ex-danger));
   background: hsl(var(--ex-danger) / 0.08);
   padding: 0.625rem 0.75rem;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--cx-r-md, 14px) var(--cx-r-md, 14px) 0;
   color: hsl(358 80% 84%);
   font-size: 0.8125rem;
   line-height: 1.5;
@@ -438,7 +438,7 @@
   border-left: 2px solid hsl(var(--ex-verdigris));
   background: hsl(var(--ex-verdigris) / 0.07);
   padding: 0.625rem 0.75rem;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--cx-r-md, 14px) var(--cx-r-md, 14px) 0;
   color: hsl(153 40% 84%);
   font-size: 0.8125rem;
   line-height: 1.55;
