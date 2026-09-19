@@ -410,7 +410,25 @@ describe("InboxColumn: the Lines group", () => {
     renderColumn({ onSelect });
 
     const nav = screen.getByRole("navigation", { name: "Inboxes" });
-    for (const button of within(nav).getAllByRole("button")) {
+    // Every button EXCEPT the per-line "Manage access to ..." control, which is not a row and
+    // does not select anything - it opens the access drawer.
+    //
+    // The loop used to click literally every button, and rendered no access control only
+    // because this fixture omits `inboxes:admin`.
+    //
+    // Measured, not assumed: removing this filter AND adding that capability still passes
+    // 31/31, because clicking the access button never calls `onSelect` and the assertion
+    // below only inspects `onSelect` calls. So this is not fixing a latent failure - it is
+    // stopping the loop from opening a drawer and firing its unstubbed queries as a side
+    // effect, which is noise rather than a red test. Keep it for that reason, not because
+    // the test would otherwise break.
+    //
+    // The teeth are unchanged either way: a re-added FILTER row is still clicked, and still
+    // fails the `kind` assertion below.
+    const rows = within(nav)
+      .getAllByRole("button")
+      .filter((b) => !/^Manage access to /.test(b.getAttribute("aria-label") ?? ""));
+    for (const button of rows) {
       await userEvent.click(button);
     }
 

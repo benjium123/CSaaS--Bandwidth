@@ -31,6 +31,10 @@ import {
 } from "@/components/ui/consoleChrome";
 import { Button, Input, Pill, Select, Spinner, type PillTone } from "@/components/ui/primitives";
 import { RoleMatrix } from "@/components/team/RoleMatrix";
+import {
+  MemberNumbersCell,
+  MemberNumbersPanel,
+} from "@/components/team/MemberNumbersPanel";
 import { cn } from "@/lib/utils";
 
 /* ── The console's list shape, from docs/design/console-reference.html ──────────────────
@@ -107,8 +111,15 @@ export function TeamPage() {
   const [roleSaved, setRoleSaved] = React.useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
 
+  /** Which member's numbers are expanded. One at a time: the panel is tall, and two of them
+   *  open at once turns the table into a wall. */
+  const [expandedUserId, setExpandedUserId] = React.useState<string | null>(null);
+
   const canEditRoles = hasPermission(me, orgId, "roles:write");
   const canResetMembers = hasPermission(me, orgId, "members:update");
+  /** Name, Email, Role, Numbers (+ Sign-in). One constant so the expanded row's colSpan
+   *  cannot drift away from the header when a column is added. */
+  const memberColumnCount = canResetMembers ? 5 : 4;
   const grantablePermissions = React.useCallback(
     (key: string) => hasPermission(me, orgId, key),
     [me, orgId],
@@ -270,12 +281,14 @@ export function TeamPage() {
                       <th className={HEAD}>Name</th>
                       <th className={HEAD}>Email</th>
                       <th className={HEAD}>Role</th>
+                      <th className={HEAD}>Numbers</th>
                       {canResetMembers && <th className={HEAD}>Sign-in</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {(members ?? []).map((member) => (
-                      <tr key={member.user_id} className={ROW}>
+                      <React.Fragment key={member.user_id}>
+                      <tr className={ROW}>
                         <td className={CELL_L}>
                           <span className="flex items-center gap-3">
                             <InitialsAvatar
@@ -287,10 +300,22 @@ export function TeamPage() {
                           </span>
                         </td>
                         <td className={cn(CELL, "text-muted-foreground")}>{member.email}</td>
+                        <td className={CELL}>
+                          <Pill tone="info">{member.role_name}</Pill>
+                        </td>
                         {/* Last cell in the row carries the right-hand radius, and which
                             cell that is depends on whether Sign-in is rendered at all. */}
                         <td className={canResetMembers ? CELL : CELL_R}>
-                          <Pill tone="info">{member.role_name}</Pill>
+                          <MemberNumbersCell
+                            userId={member.user_id}
+                            userName={member.full_name}
+                            expanded={expandedUserId === member.user_id}
+                            onToggle={() =>
+                              setExpandedUserId((prev) =>
+                                prev === member.user_id ? null : member.user_id,
+                              )
+                            }
+                          />
                         </td>
                         {canResetMembers && (
                           <td className={CELL_R}>
@@ -298,6 +323,17 @@ export function TeamPage() {
                           </td>
                         )}
                       </tr>
+                      {expandedUserId === member.user_id && (
+                        <tr className={ROW}>
+                          <td className={cn(CELL, "rounded-md")} colSpan={memberColumnCount}>
+                            <MemberNumbersPanel
+                              userId={member.user_id}
+                              userName={member.full_name}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
