@@ -17,6 +17,14 @@ export type Plan = {
 
 export const INCLUDED_LABELS: Record<string, string> = {
   sms_segments: "SMS segments",
+  // The seeded plans use `voice_minutes` and `numbers`; these two were missing, so they
+  // fell through to the `key.replace(/_/g, " ")` path and rendered lowercase next to
+  // properly-cased siblings. The fallback is still correct for an operator-added metric -
+  // it must never drop an allowance it has no label for - but a metric we ship should be
+  // spelled properly here.
+  voice_minutes: "Voice minutes",
+  numbers: "Phone numbers",
+  // Kept for operator-defined plans that may use these spellings.
   mms_messages: "MMS messages",
   call_minutes: "Call minutes",
   phone_numbers: "Phone numbers",

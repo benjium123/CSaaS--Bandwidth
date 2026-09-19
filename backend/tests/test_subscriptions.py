@@ -9,7 +9,16 @@ import sqlalchemy as sa
 from app.api.routes import billing as billing_routes
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import AccountNotVerifiedError, PermissionDeniedError
-from app.models import SUBSCRIPTION_STATUSES, Org, Plan, Subscription, is_entitled
+from app.models import (
+    SUBSCRIPTION_STATUSES,
+    Org,
+    OrgMembership,
+    Plan,
+    Role,
+    Subscription,
+    is_entitled,
+)
+from app.repositories import users as users_repo
 from app.services import plans as plans_svc
 from app.services import stripe_client, telephony_access
 from tests.conftest import auth_headers, create_org, make_settings, register_and_login
@@ -698,3 +707,267 @@ async def test_past_due_still_has_access(client, session):
     await _give_subscription(session, org_id, "past_due")
 
     assert await telephony_access.refusal(session, settings, org_id, "sms") is None
+
+
+# ----------------------------------------------------------------------------------
+# Startup bootstrap of the sample catalogue (app/main.py lifespan)
+# ----------------------------------------------------------------------------------
+async def _plan_codes(session) -> set[str]:
+    session.expire_all()
+    return set(
+        (
+            await session.execute(
+                sa.select(Plan.code).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalars()
+    )
+
+
+async def _load_plan(session, code: str) -> Plan:
+    session.expire_all()
+    return (
+        await session.execute(
+            sa.select(Plan)
+            .where(Plan.code == code)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one()
+
+
+async def _run_startup(monkeypatch) -> None:
+    """Boot the REAL app through its lifespan, so these tests exercise the wiring in
+    app/main.py rather than calling the seeder themselves.
+
+    init_engine/dispose_engine are stubbed out for the duration: the lifespan would
+    otherwise replace the fixture's engine with a second, empty in-memory SQLite database
+    (StaticPool gives each engine its own) and then dispose it, so the seeding under test
+    would land somewhere the assertions cannot see. Everything else in the lifespan - and
+    in particular the bootstrap call itself - runs untouched.
+    """
+    from app import main as main_module
+
+    application = main_module.create_app(make_settings())
+    monkeypatch.setattr(main_module, "init_engine", lambda *a, **kw: None)
+    monkeypatch.setattr(main_module, "dispose_engine", _anoop)
+    async with application.router.lifespan_context(application):
+        pass
+
+
+async def _anoop(*args, **kwargs) -> None:
+    return None
+
+
+async def test_app_startup_seeds_the_three_sample_plans(engine, session, monkeypatch):
+    assert await _plan_codes(session) == set()
+
+    await _run_startup(monkeypatch)
+
+    assert await _plan_codes(session) == {"starter", "standard", "professional"}
+
+
+async def test_app_startup_twice_still_leaves_exactly_three_plans(
+    engine, session, monkeypatch
+):
+    await _run_startup(monkeypatch)
+    await _run_startup(monkeypatch)
+
+    count = (
+        await session.execute(
+            sa.select(sa.func.count(Plan.code)).execution_options(
+                **{ALLOW_UNSCOPED_KEY: True}
+            )
+        )
+    ).scalar_one()
+    assert count == 3
+
+
+async def test_app_startup_does_not_revert_an_operator_pricing_edit(
+    engine, session, monkeypatch
+):
+    """The deploy-reverts-pricing regression: an operator sets a real price and a real
+    Stripe price id, the service redeploys, and the placeholders must NOT come back."""
+    await _run_startup(monkeypatch)
+
+    starter = await _load_plan(session, "starter")
+    starter.name = "Starter (Operator)"
+    starter.monthly_price_micros = 29_000_000
+    starter.stripe_price_id = "price_live_starter"
+    starter.included = {"sms_segments": 777, "voice_minutes": 300, "numbers": 1, "seats": 3}
+    starter.is_active = False
+    await session.commit()
+
+    await _run_startup(monkeypatch)
+
+    starter = await _load_plan(session, "starter")
+    assert starter.name == "Starter (Operator)"
+    assert starter.monthly_price_micros == 29_000_000
+    assert starter.stripe_price_id == "price_live_starter"
+    assert starter.included["sms_segments"] == 777
+    assert starter.is_active is False
+    assert await _plan_codes(session) == {"starter", "standard", "professional"}
+
+
+async def test_startup_seeding_failure_does_not_stop_the_app_booting(
+    engine, session, monkeypatch
+):
+    """Logged-and-continued, not fatal: a catalogue that cannot be written must not take
+    auth, messaging and webhooks down with it."""
+
+    async def boom(_session):
+        raise RuntimeError("plans table is not there yet")
+
+    monkeypatch.setattr(plans_svc, "seed_sample_plans", boom)
+
+    await _run_startup(monkeypatch)
+
+    assert await _plan_codes(session) == set()
+
+
+# ------------------------------------------------------------------------------------
+# GET /api/v1/billing/plans - the catalogue the frontend plan picker reads
+# ------------------------------------------------------------------------------------
+PLAN_CONTRACT_FIELDS = {
+    "code",
+    "name",
+    "included",
+    "overage_rates",
+    "monthly_price_micros",
+    "stripe_price_id",
+    "is_active",
+}
+
+
+async def _scoped_member(client, session, org_id, email, permissions):
+    """A second user in the org holding EXACTLY `permissions` - never "*"."""
+    token = await register_and_login(client, email)
+    set_org_context(session, org_id)
+    user = await users_repo.get_by_email(session, email)
+    role = Role(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        name=f"scoped-{uuid.uuid4().hex[:8]}",
+        permissions=list(permissions),
+    )
+    session.add(role)
+    await session.flush()
+    session.add(
+        OrgMembership(id=uuid.uuid4(), org_id=org_id, user_id=user.id, role_id=role.id)
+    )
+    await session.commit()
+    return token
+
+
+async def _set_plan_fields(session, code, **fields):
+    plan = (
+        await session.execute(
+            sa.select(Plan)
+            .where(Plan.code == code)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one()
+    for key, value in fields.items():
+        setattr(plan, key, value)
+    await session.commit()
+
+
+async def test_plans_endpoint_returns_the_catalogue_in_the_deliberate_order(
+    client, session
+):
+    token = await register_and_login(client, "plans-list@example.com")
+    org = await create_org(client, token, "Plans List Org")
+    org_id = uuid.UUID(org["id"])
+    await _seed_plans(session)
+
+    r = await client.get("/api/v1/billing/plans", headers=auth_headers(token, org_id))
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # starter, standard, professional - the ladder, not alphabetical (which would put
+    # professional first) and not insertion order.
+    assert [row["code"] for row in body] == ["starter", "standard", "professional"]
+    assert [row["name"] for row in body] == ["Starter", "Standard", "Professional"]
+    for row in body:
+        assert set(row) == PLAN_CONTRACT_FIELDS
+        assert isinstance(row["included"], dict)
+        assert isinstance(row["overage_rates"], dict)
+        assert isinstance(row["monthly_price_micros"], int)
+        assert isinstance(row["is_active"], bool)
+    starter = body[0]
+    assert starter["included"]["sms_segments"] == 500
+    assert starter["overage_rates"]["voice_minutes"] == 12_000
+
+
+async def test_plans_endpoint_returns_plans_with_and_without_a_stripe_price_id(
+    client, session
+):
+    """The pair that stops the null case passing vacuously: one plan priced, one not,
+    and BOTH must come back with stripe_price_id verbatim."""
+    token = await register_and_login(client, "plans-price-ids@example.com")
+    org = await create_org(client, token, "Plans Price Ids Org")
+    org_id = uuid.UUID(org["id"])
+    await _seed_plans(session)
+    await _set_plan_fields(session, "standard", stripe_price_id="price_live_standard")
+
+    r = await client.get("/api/v1/billing/plans", headers=auth_headers(token, org_id))
+
+    assert r.status_code == 200, r.text
+    by_code = {row["code"]: row for row in r.json()}
+    assert set(by_code) == {"starter", "standard", "professional"}
+
+    # Not filtered out, not coerced to "": the field is present and is null.
+    assert "stripe_price_id" in by_code["starter"]
+    assert by_code["starter"]["stripe_price_id"] is None
+    assert "stripe_price_id" in by_code["professional"]
+    assert by_code["professional"]["stripe_price_id"] is None
+    # ... and the configured one survives intact.
+    assert by_code["standard"]["stripe_price_id"] == "price_live_standard"
+
+
+async def test_plans_endpoint_returns_inactive_plans_flagged_not_hidden(client, session):
+    token = await register_and_login(client, "plans-inactive@example.com")
+    org = await create_org(client, token, "Plans Inactive Org")
+    org_id = uuid.UUID(org["id"])
+    await _seed_plans(session)
+    await _set_plan_fields(session, "professional", is_active=False)
+
+    r = await client.get("/api/v1/billing/plans", headers=auth_headers(token, org_id))
+
+    assert r.status_code == 200, r.text
+    by_code = {row["code"]: row for row in r.json()}
+    assert set(by_code) == {"starter", "standard", "professional"}
+    assert by_code["professional"]["is_active"] is False
+    assert by_code["starter"]["is_active"] is True
+
+
+async def test_plans_endpoint_is_gated_on_settings_read(client, session):
+    token = await register_and_login(client, "plans-perm-owner@example.com")
+    org = await create_org(client, token, "Plans Permission Org")
+    org_id = uuid.UUID(org["id"])
+    await _seed_plans(session)
+
+    denied_token = await _scoped_member(
+        client, session, org_id, "plans-perm-denied@example.com", ["calls:read"]
+    )
+    denied = await client.get(
+        "/api/v1/billing/plans", headers=auth_headers(denied_token, org_id)
+    )
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["error"]["code"] == "permission_denied"
+
+    allowed_token = await _scoped_member(
+        client, session, org_id, "plans-perm-allowed@example.com", ["settings:read"]
+    )
+    allowed = await client.get(
+        "/api/v1/billing/plans", headers=auth_headers(allowed_token, org_id)
+    )
+    assert allowed.status_code == 200, allowed.text
+    assert [row["code"] for row in allowed.json()] == [
+        "starter",
+        "standard",
+        "professional",
+    ]
+
+
+async def test_plans_endpoint_requires_authentication(client):
+    r = await client.get("/api/v1/billing/plans")
+    assert r.status_code in (401, 403), r.text

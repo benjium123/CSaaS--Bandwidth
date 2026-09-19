@@ -406,3 +406,31 @@ async def seed_sample_plans(session: AsyncSession) -> list[str]:
     if created:
         log.info("plans.sample_plans_seeded", codes=created)
     return created
+
+
+async def bootstrap_sample_plans() -> list[str]:
+    """Startup hook: seed the sample catalogue, on its own session, NEVER raising.
+
+    Called once from the app lifespan (app/main.py). Safe on every boot because
+    `seed_sample_plans` only inserts codes that are absent - an operator's edited prices and
+    Stripe price ids are never touched, so a redeploy cannot quietly revert pricing.
+
+    Failure is logged and swallowed, deliberately. The catalogue feeds a plan picker; missing
+    it degrades one screen. Making it fatal would take auth, messaging, calls and webhooks
+    offline - and crash-loop the API - because a placeholder row could not be written, or
+    because the deploy reached this before its migration. The error is logged at error level
+    with the traceback so it is alertable rather than silent.
+
+    Returns the codes created (empty when nothing was needed, and also when seeding failed).
+    """
+    from app.db.session import get_sessionmaker
+
+    try:
+        async with get_sessionmaker()() as session:
+            created = await seed_sample_plans(session)
+            if created:
+                await session.commit()
+            return created
+    except Exception:
+        log.exception("plans.sample_plans_seed_failed")
+        return []

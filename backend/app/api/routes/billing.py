@@ -26,6 +26,7 @@ from app.errors import (
 from app.models import Call, CreditLedgerEntry, PaymentMethod, Plan
 from app.services import ai_usage, credits, stripe_client
 from app.services import audit as audit_svc
+from app.services import plans as plans_svc
 from app.services import spend as spend_svc
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
@@ -409,6 +410,56 @@ async def patch_auto_recharge(
     )
     await ctx.session.commit()
     return ctx.org.credit_auto_recharge
+
+
+def _plan_sort_key(plan: Plan) -> tuple[int, int, str]:
+    """Catalogue order: the seeded tiers first, in SAMPLE_PLAN_CODES order (starter,
+    standard, professional - the meaningful ladder, which is neither alphabetical nor
+    insertion order), then any operator-added plan after them, cheapest first and code
+    as the final tiebreak so the list is fully deterministic."""
+    try:
+        rank = plans_svc.SAMPLE_PLAN_CODES.index(plan.code)
+    except ValueError:
+        rank = len(plans_svc.SAMPLE_PLAN_CODES)
+    return (rank, int(plan.monthly_price_micros or 0), plan.code)
+
+
+@router.get("/plans")
+async def list_plans(
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+) -> list[dict]:
+    """The plan catalogue the picker renders. Read-only, no org data, no cost.
+
+    ``settings:read`` and not ``org:billing``: this is a catalogue read, exactly like
+    ``/rates`` above, and any member should be able to see what the packages are.
+    ``org:billing`` is the permission for SPENDING (top-ups, checkout) and is identity
+    gated, so putting it here would make a non-owner pass an ID check just to look at
+    a price list.
+
+    Inactive plans ARE returned, with ``is_active`` telling the truth: the client
+    renders them as not purchasable rather than hiding them, so a customer on a
+    retired plan still sees the plan they are on instead of a gap.
+
+    ``stripe_price_id`` is passed through verbatim, INCLUDING NULL. It is how the
+    client decides a plan can be bought at all; a plan without one must still appear
+    and be shown as not purchasable. Dropping those rows - every seeded plan today -
+    would render an empty picker that looked perfectly healthy.
+    """
+    # `plans` is platform-wide, not tenant-scoped, so no org filter applies here.
+    rows = (await ctx.session.execute(sa.select(Plan))).scalars().all()
+
+    return [
+        {
+            "code": plan.code,
+            "name": plan.name,
+            "included": dict(plan.included or {}),
+            "overage_rates": dict(plan.overage_rates or {}),
+            "monthly_price_micros": int(plan.monthly_price_micros or 0),
+            "stripe_price_id": plan.stripe_price_id,
+            "is_active": bool(plan.is_active),
+        }
+        for plan in sorted(rows, key=_plan_sort_key)
+    ]
 
 
 @router.get("/rates")

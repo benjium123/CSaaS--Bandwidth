@@ -62,6 +62,7 @@ from app.events.bus import EventBus
 from app.logging import configure_logging
 from app.providers.registry import build_registry
 from app.providers.registry_org import CarrierRegistryProxy
+from app.services import plans as plans_svc
 from app.storage.base import build_store
 from app.voice_plane import service as voice_service
 
@@ -89,6 +90,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         _log_provider_report(settings)
         init_engine(settings.database_url)
+        # The sample plan catalogue. Idempotent per row and it never rewrites an existing
+        # plan, so it is safe on every boot; it never raises, so a DB blip or a migration
+        # that has not run yet cannot stop the API from serving. See
+        # services/plans.bootstrap_sample_plans.
+        await plans_svc.bootstrap_sample_plans()
         # None when Bandwidth is not configured — the app must still boot and serve
         # /healthz. Sending then answers 503 carrier_not_configured.
         # P17: wrapped so a request with an org context resolving to DB credentials
