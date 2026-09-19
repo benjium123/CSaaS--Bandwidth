@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, hasPermission, useAuth, type Me } from "./AuthContext";
 import { makeStubClient } from "@/test/harness";
+import { OrgPickerPage } from "@/pages/OrgPickerPage";
 
 const ME: Me = {
   id: "u1",
@@ -395,4 +397,161 @@ describe("selectOrg re-fetches /auth/me for the org it switched to", () => {
     expect(sink.current!.me).toBeNull();
     expect(hasPermission(sink.current!.me, "org-2", A_ONLY)).toBe(false);
   });
+});
+
+/**
+ * A list of one is not a choice. Signing up creates a workspace and makes the signer its
+ * owner, so the screen immediately after the most important funnel in the product was a
+ * picker containing exactly one thing to click. AuthProvider now selects it.
+ *
+ * `AppLike` reproduces App.tsx's `if (!orgId) return <OrgPickerPage />` branch and nothing
+ * else - the assertions are about whether the PICKER is reached, which is that branch's
+ * whole content, and rendering the real <App /> would drag in the console shell, the
+ * softphone and the router table for a question none of them answer.
+ */
+describe("single-membership auto-select", () => {
+  const base = { id: "u1", email: "a@example.com", full_name: "A" };
+  const ORG_1 = { org_id: "org-1", org_name: "Org 1", org_slug: "org-1", role_name: "owner" };
+  const ORG_2 = { org_id: "org-2", org_name: "Org 2", org_slug: "org-2", role_name: "member" };
+
+  const SOLO: Me = { ...base, permissions: ["org:read"], memberships: [ORG_1] };
+  const TWO: Me = { ...base, permissions: ["org:read"], memberships: [ORG_1, ORG_2] };
+  const NONE: Me = { ...base, memberships: [] };
+  const OPERATOR_NONE: Me = { ...NONE, is_platform_operator: true };
+
+  const PICKER = "Choose an organization";
+
+  function AppLike() {
+    const { me, orgId, ready } = useAuth();
+    if (!ready) return <div>Starting</div>;
+    if (!me) return <div>Signed out</div>;
+    if (!orgId) return <OrgPickerPage />;
+    return <div data-testid="console">console:{orgId}</div>;
+  }
+
+  /** Samples `client.auth.orgId` at REQUEST time - the value authHeaders() would put in
+   * X-Org-Id - so a refetch issued with the wrong org in scope is visible, and so the
+   * initial load (null) can be told apart from an auto-select refetch ("org-1"). */
+  function clientFor(payload: Me, storedOrgId: string | null = null) {
+    const seenOrgIds: (string | null)[] = [];
+    const client = makeStubClient({
+      "/api/v1/auth/me": () => {
+        seenOrgIds.push(client.auth.orgId);
+        return payload;
+      },
+      "/api/v1/auth/logout": {},
+    });
+    client.setAuth({ orgId: storedOrgId });
+    return { client, seenOrgIds };
+  }
+
+  async function renderAppLike(client: ReturnType<typeof makeStubClient>) {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    await act(async () => {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider client={client}>
+            <MemoryRouter>
+              <AppLike />
+            </MemoryRouter>
+          </AuthProvider>
+        </QueryClientProvider>,
+      );
+    });
+    return { queryClient };
+  }
+
+  const meCalls = (client: ReturnType<typeof makeStubClient>) =>
+    client.calls.filter((c) => c.path === "/api/v1/auth/me").length;
+
+  it("selects the only membership instead of showing a picker of one", async () => {
+    const { client, seenOrgIds } = clientFor(SOLO);
+    await renderAppLike(client);
+
+    expect(screen.queryByText(PICKER)).toBeNull();
+    expect(screen.getByTestId("console").textContent).toBe("console:org-1");
+    // Not merely React state: `api.auth.orgId` is what authHeaders reads, so this is what
+    // every subsequent request is actually scoped to.
+    expect(client.auth.orgId).toBe("org-1");
+    // Exactly two: the initial load, then selectOrg's refetch - and the refetch carried the
+    // NEW org, which is the per-org permission list that path exists to get right.
+    expect(seenOrgIds).toEqual([null, "org-1"]);
+  });
+
+  /** The pair that stops the test above passing vacuously: the picker is CORRECT here and
+   * must still appear, with nothing chosen on the user's behalf. */
+  it("leaves the picker alone when there is more than one membership", async () => {
+    const { client, seenOrgIds } = clientFor(TWO);
+    await renderAppLike(client);
+
+    expect(screen.getByText(PICKER)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Org 1/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Org 2/ })).toBeTruthy();
+    expect(screen.queryByTestId("console")).toBeNull();
+    expect(client.auth.orgId).toBeNull();
+    expect(seenOrgIds).toEqual([null]);
+  });
+
+  /** ...and the picker must still WORK when reached deliberately - a two-org user switching. */
+  it("still lets a two-org user pick, and that pick is a real org switch", async () => {
+    const { client, seenOrgIds } = clientFor(TWO);
+    await renderAppLike(client);
+
+    await act(async () => {
+      await userEvent.click(screen.getByRole("button", { name: /Org 2/ }));
+    });
+
+    expect(screen.getByTestId("console").textContent).toBe("console:org-2");
+    expect(client.auth.orgId).toBe("org-2");
+    expect(seenOrgIds).toEqual([null, "org-2"]);
+  });
+
+  /** Zero memberships is NOT one membership: nothing is auto-selected, the picker keeps
+   * saying so, and - the trap - nothing spins. */
+  it("does not crash or loop for an account with no memberships", async () => {
+    const { client, seenOrgIds } = clientFor(NONE);
+    await renderAppLike(client);
+
+    expect(screen.getByText("You are not a member of any organization yet.")).toBeTruthy();
+    expect(client.auth.orgId).toBeNull();
+    expect(seenOrgIds).toEqual([null]);
+
+    // A loop would show up as further /auth/me calls once the queues drain.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(meCalls(client)).toBe(1);
+  });
+
+  /** P43: a platform operator deliberately belongs to no workspace, and App.tsx lets them
+   * reach /ops without one. Auto-select must not change that - they still land on the
+   * picker surface, which is what offers the operator console. */
+  it("keeps the membership-less platform operator on the picker/ops path", async () => {
+    const { client, seenOrgIds } = clientFor(OPERATOR_NONE);
+    await renderAppLike(client);
+
+    expect(screen.getByText(PICKER)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open the operator console" })).toBeTruthy();
+    expect(client.auth.orgId).toBeNull();
+    expect(seenOrgIds).toEqual([null]);
+  });
+
+  /** A returning single-org user already has the org in storage. The effect must not fire
+   * for them: that would be a second /auth/me and a cache clear on every page load. */
+  it("does not re-fire when an org is already selected", async () => {
+    const { client, seenOrgIds } = clientFor(SOLO, "org-1");
+    await renderAppLike(client);
+
+    expect(screen.getByTestId("console").textContent).toBe("console:org-1");
+    // One call only: the initial load, already scoped to the stored org. No auto-select.
+    expect(seenOrgIds).toEqual(["org-1"]);
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(meCalls(client)).toBe(1);
+  });
+
 });

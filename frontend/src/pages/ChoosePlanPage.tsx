@@ -20,7 +20,7 @@ const quantityFormatter = new Intl.NumberFormat("en-US");
 
 function PlansSkeleton() {
   return (
-    <AuthSurface>
+    <AuthSurface wide>
       <div className="cp-page">
         <div className="cp-skeleton" aria-busy="true" aria-label="Loading plans">
           <span className="cp-skeleton-card" />
@@ -54,7 +54,7 @@ export function ChoosePlanPage({
 
   if (plansQuery.isError) {
     return (
-      <AuthSurface>
+      <AuthSurface wide>
         <div className="cp-page">
           <AuthAlert>
             {plansQuery.error instanceof Error ? plansQuery.error.message : NO_MESSAGE}
@@ -71,7 +71,7 @@ export function ChoosePlanPage({
   const plans = plansQuery.data;
 
   return (
-    <AuthSurface>
+    <AuthSurface wide>
       <div className="cp-page">
         <header className="cp-head">
           <div className="ex-label">Billing</div>

@@ -371,6 +371,48 @@ export function AuthProvider({
     [api, queryClient],
   );
 
+  /**
+   * A list of one is not a choice. Signing up creates a workspace and makes you its owner,
+   * so the first screen after the single most important funnel in the product was a picker
+   * containing exactly one thing to click. When there is precisely one membership and no org
+   * is selected, select it.
+   *
+   * Here, in the provider, rather than in App.tsx or OrgPickerPage: `orgId` is this file's
+   * state and `selectOrg` is this file's function, so this is the one place that can set the
+   * org through the SAME path every other caller uses (see selectOrg's comment - divergence
+   * between the org-setting paths is what left completeSso without a cache clear). It also
+   * keeps App.tsx's routing table, including the platform-operator branch, untouched.
+   *
+   * useLayoutEffect, not useEffect, so the selection lands in the same commit-to-paint gap:
+   * App.tsx renders <OrgPickerPage /> for one render either way, but with a layout effect
+   * the re-render happens before the browser paints, so the picker is never actually seen.
+   *
+   * Cannot loop, and needs no `hasRun` flag: it only proceeds while `orgId` is null, and
+   * selectOrg sets `orgId` synchronously (before it awaits anything), so the next run of this
+   * effect is already blocked. StrictMode's double-invoked MOUNT effects cannot reach the
+   * selection either, because `ready` is false and `me` is null at mount - this only does
+   * anything on the later render where the first /auth/me has landed, and update effects are
+   * invoked once.
+   *
+   * Zero memberships and two-or-more memberships both fall through to the picker, which is
+   * correct for both - an operator with no workspace still reaches /ops exactly as before.
+   */
+  React.useLayoutEffect(() => {
+    if (!ready || !me || orgId) return;
+    // P41: this account cannot do anything until it has a second factor, and App.tsx shows
+    // SecureAccountPage instead of the picker - so there is no dead step to remove yet, and
+    // firing here would only spend a request. SecureAccountPage calls refreshMe() when the
+    // factor is added, which changes `me` and re-runs this.
+    if (me.second_factor_required) return;
+    if (me.memberships.length !== 1) return;
+    const only = me.memberships[0].org_id;
+    // The full selectOrg, not a bare setOrgId, even though its /auth/me refetch is a second
+    // call right behind the first. See the report/commit note: the refetch is not free but it
+    // is the only thing that keeps this from becoming a fifth, subtly-different org-setting
+    // path (cache clear, header ordering, per-org permission list).
+    void selectOrg(only);
+  }, [ready, me, orgId, selectOrg]);
+
   const value: AuthValue = {
     api,
     me,

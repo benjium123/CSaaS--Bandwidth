@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { AuthSurface } from "@/components/auth/AuthShell";
 import { ChoosePlanPage } from "@/pages/ChoosePlanPage";
 import type { Plan } from "@/api/plans";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
@@ -176,5 +179,69 @@ describe("ChoosePlanPage", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(message);
     expect(screen.queryByText(/something went wrong/i)).toBeNull();
+  });
+});
+
+/**
+ * The layout the page sits in.
+ *
+ * WHAT THESE CANNOT DO: vitest runs with `css: false`, so no assertion here can see the
+ * overflow that prompted this change - jsdom lays nothing out and choosePlan.css is never
+ * parsed. These pin the two structural facts the fix rests on, and the browser check is
+ * still a separate, manual job.
+ *
+ * Each absence is paired with a presence on an ORDINARY AuthSurface in the same file, so
+ * a typo that made the aside's headline unfindable would fail the pair rather than let
+ * the absence pass vacuously.
+ */
+describe("ChoosePlanPage sits in the wide AuthSurface, not the two-column one", () => {
+  const ASIDE_HEADLINE = "on one line.";
+
+  it("an ordinary AuthSurface renders the aside headline", () => {
+    const { container } = renderWithProviders(
+      <AuthSurface>
+        <p>ordinary page body</p>
+      </AuthSurface>,
+      makeStubClient({ "/api/v1/auth/me": ME }),
+    );
+
+    expect(screen.getByText("ordinary page body")).toBeTruthy();
+    expect(container.textContent).toContain(ASIDE_HEADLINE);
+  });
+
+  it("the loaded plan page renders no aside content", async () => {
+    const { container } = renderPlans([plan({ code: "starter", name: "Starter" })]);
+
+    expect(await screen.findByText("Starter")).toBeTruthy();
+    expect(container.textContent).not.toContain(ASIDE_HEADLINE);
+  });
+
+  it("the pending and error states render no aside content either", async () => {
+    const pending = renderPendingPlans();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Loading plans")).toBeInTheDocument();
+    });
+    expect(pending.container.textContent).not.toContain(ASIDE_HEADLINE);
+    pending.unmount();
+
+    const failed = renderErrorPlans("Plans are temporarily unavailable.");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Plans are temporarily unavailable.");
+    expect(failed.container.textContent).not.toContain(ASIDE_HEADLINE);
+  });
+
+  it("the theme toggle is still reachable on the wide page", async () => {
+    renderPlans([plan({ code: "starter", name: "Starter" })]);
+
+    expect(await screen.findByText("Starter")).toBeTruthy();
+    expect(screen.getAllByRole("button").some((b) => /theme|dark|light/i.test(b.getAttribute("aria-label") ?? b.textContent ?? ""))).toBe(true);
+  });
+
+  it("choosePlan.css contains no viewport-unit breakout", () => {
+    // vitest's root is the frontend package, and `import.meta.url` here is a dev-server
+    // URL rather than a file one, so resolve from the root explicitly.
+    const css = readFileSync(resolve(process.cwd(), "src/pages/choosePlan.css"), "utf8");
+    expect(css).toContain(".cp-plans");
+    expect(css.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/\d*vw\b|margin-inline/);
   });
 });

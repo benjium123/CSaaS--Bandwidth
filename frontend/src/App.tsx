@@ -129,6 +129,17 @@ export function App() {
   // workspace working, and the screen itself says so.
   if (location.pathname === "/onboarding") return <OnboardingPage />;
 
+  // `/plans` joins it, and this was a bug I could only see in a browser. ChoosePlanPage is
+  // built on AuthSurface, so routing it INSIDE the Shell rendered an auth surface within the
+  // console: a light page inside the dark chrome, with the marketing aside's wordmark
+  // bleeding in beside the sidebar. Worse, its breakout is sized in `vw`, and inside the
+  // Shell the available width is the viewport MINUS the sidebar - so the third plan card was
+  // clipped off the right edge and the page scrolled sideways. Both symptoms, one cause: the
+  // page was always an Exchange surface and was being asked to live in console furniture.
+  // It belongs beside /onboarding - the screen before it in the journey, and the screen that
+  // links here.
+  if (location.pathname === "/plans") return <ChoosePlanPage />;
+
   return (
     <Shell>
       <Routes>
@@ -146,10 +157,6 @@ export function App() {
         <Route path="/ops" element={<OpsPage />} />
         <Route path="/report" element={<ReportNumberPage />} />
 
-        {/* Plan selection. Inside the Shell rather than on the auth surface: by the time
-            anyone sees this they have a workspace and are signed in, and it must stay
-            escapable - choosing a plan is a task, not a wall. */}
-        <Route path="/plans" element={<ChoosePlanPage />} />
         <Route path="/settings" element={<SettingsIndexRedirect />} />
         <Route path="/settings/:section" element={<SettingsPage />} />
 

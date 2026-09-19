@@ -3,13 +3,13 @@
  * Everything is scoped under `.auth-surface .cp-page`, using only the design tokens from
  * authTheme.css. No new colours, no remote assets, no ad-hoc Tailwind arbitrary values:
  * the plan grid lives here instead of in JSX.
+ *
+ * This file used to widen itself with a negative-margin breakout sized in `100vw`. It
+ * does not any more, and must not again: the element it was escaping was a column of
+ * roughly 58% of the viewport, so vw arithmetic overflowed the document and printed the
+ * cards on top of the aside's headline. Width is the layout's job now - ChoosePlanPage
+ * asks AuthSurface for it with `wide`, and this grid simply fills its container.
  */
-
-.auth-surface .cp-page {
-  --cp-w: min(64rem, calc(100vw - 2.5rem));
-  width: var(--cp-w);
-  margin-inline: calc((100% - var(--cp-w)) / 2);
-}
 
 /* Head ---------------------------------------------------------------------- */
 .auth-surface .cp-page .cp-head {
@@ -148,7 +148,7 @@
   to { background-position: -200% 0; }
 }
 
-/* Desktop grid: break out of the narrow auth column only when useful. */
+/* Desktop grid: one column on a phone, three once the container has room for them. */
 @media (min-width: 52rem) {
   .auth-surface .cp-page .cp-plans,
   .auth-surface .cp-page .cp-skeleton {

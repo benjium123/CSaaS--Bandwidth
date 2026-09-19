@@ -48,10 +48,23 @@ function delay(step: number): React.CSSProperties {
 export function AuthSurface({
   children,
   aside,
+  wide = false,
 }: {
   children: React.ReactNode;
   /** Replaced wholesale by `/report`, which is a public safety form, not a sign-in. */
   aside?: React.ReactNode;
+  /**
+   * An honest way to be wide, for a page whose content genuinely does not fit the 27rem
+   * form column - the plan comparison, which is three cards side by side.
+   *
+   * It drops the aside (its `lg:w-[42%]` is exactly the space such a page needs, and a
+   * price table has no use for a marketing column beside it) and widens `<main>`'s cap.
+   * It does NOT move the content out of its own container: the previous attempt sized a
+   * negative-margin breakout in `100vw` while sitting in a column that was ~58% of the
+   * viewport, so the cards landed on top of the aside's headline. A page that needs room
+   * asks the surface for room.
+   */
+  wide?: boolean;
 }) {
   const { theme, toggle } = useSurfaceTheme();
   return (
@@ -73,9 +86,17 @@ export function AuthSurface({
       <div className="absolute right-4 top-4 z-30 lg:right-6 lg:top-6">
         <ThemeToggle theme={theme} onToggle={toggle} />
       </div>
-      {aside === undefined ? <AuthAside /> : aside}
-      <main className="flex flex-1 items-center justify-center px-5 py-10 sm:px-8 lg:py-16">
-        <div className="w-full max-w-[27rem]">{children}</div>
+      {wide ? null : aside === undefined ? <AuthAside /> : aside}
+      <main
+        className={cn(
+          "flex flex-1 items-center justify-center px-5 py-10 sm:px-8 lg:py-16",
+          // The toggle is absolutely positioned at the top right of the SURFACE. In the
+          // default layout the form column is narrow and centred, so it never reaches it;
+          // a wide page does, so give it headroom to clear.
+          wide && "pt-16 sm:px-10 lg:pt-16",
+        )}
+      >
+        <div className={cn("w-full", wide ? "max-w-5xl" : "max-w-[27rem]")}>{children}</div>
       </main>
     </div>
   );
