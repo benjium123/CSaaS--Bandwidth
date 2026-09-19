@@ -121,7 +121,7 @@ export function RecoverAccountPage() {
         lede="For when the passkey and the authenticator app are both gone."
         footer={
           <>
-            <Link to="/" className="ex-link">
+            <Link to="/login" className="ex-link">
               Back to sign in
             </Link>
             {error ? (

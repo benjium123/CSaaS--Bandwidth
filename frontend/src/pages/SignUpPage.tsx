@@ -78,7 +78,7 @@ export function SignUpPage() {
         title="Start your workspace"
         lede="Numbers, texts and calls for your business. Set up takes a few minutes; you can send once your business is verified."
         footer={
-          <Link to="/" className="ex-link">
+          <Link to="/login" className="ex-link">
             Already have an account? Sign in
           </Link>
         }

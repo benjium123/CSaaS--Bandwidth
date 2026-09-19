@@ -82,14 +82,6 @@ function DialTone({ className }: { className?: string }) {
   );
 }
 
-/** Rows of a legend plate: what the platform does, stated as equipment specification. */
-const PLATE: { k: string; v: string }[] = [
-  { k: "Sign-in", v: "Passkeys · authenticator app · recovery codes" },
-  { k: "Enterprise", v: "SAML 2.0 · OIDC · SCIM user sync" },
-  { k: "Sessions", v: "HttpOnly cookie, idle and absolute limits" },
-  { k: "Numbers", v: "United States · United Kingdom" },
-];
-
 export function AuthAside() {
   return (
     <aside className="relative flex shrink-0 flex-col justify-between gap-10 border-b border-border/60 px-5 py-8 sm:px-8 lg:w-[42%] lg:max-w-xl lg:border-b-0 lg:border-r lg:py-16 lg:pl-14">
@@ -118,15 +110,6 @@ export function AuthAside() {
 
       <div className="ex-rise hidden lg:block" style={delay(3)}>
         <DialTone />
-        <hr className="ex-hairline my-6" />
-        <dl className="space-y-3">
-          {PLATE.map((row) => (
-            <div key={row.k} className="grid grid-cols-[7.5rem_1fr] items-baseline gap-3">
-              <dt className="ex-label">{row.k}</dt>
-              <dd className="text-[0.8125rem] leading-snug text-muted-foreground">{row.v}</dd>
-            </div>
-          ))}
-        </dl>
       </div>
     </aside>
   );

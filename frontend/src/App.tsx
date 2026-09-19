@@ -29,6 +29,7 @@ import { ForgotPasswordPage, ResetPasswordPage } from "@/pages/PasswordResetPage
 import { RecoverAccountPage } from "@/pages/RecoverAccountPage";
 import { SignUpPage } from "@/pages/SignUpPage";
 import { OnboardingPage } from "@/pages/OnboardingPage";
+import { LandingPage } from "@/pages/LandingPage";
 import { PasskeyGraceBanner } from "@/components/security/PasskeyGraceBanner";
 
 /**
@@ -85,6 +86,12 @@ export function App() {
         <Route path="/auth/sso/callback" element={<SsoCallbackPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        {/* The public face. `/` is the landing page and sign-in has moved to its own
+            path, so every "back to sign in" link points at /login. The `*` fallback stays
+            LoginPage: a deep link into the console by someone signed out should land on the
+            sign-in form, not on marketing. */}
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignUpPage />} />
         <Route path="/recover" element={<RecoverAccountPage />} />
         <Route path="/report" element={<ReportNumberPage />} />

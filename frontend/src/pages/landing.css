@@ -1,0 +1,385 @@
+/* The front of the product, in the Exchange language.
+ *
+ * Everything here is scoped under `.lp`, which is mounted inside `.auth-surface` so the
+ * palette in authTheme.css applies. No new colours: ink, bone, copper, verdigris, and the
+ * two families already loaded (Archivo Variable wide for nameplate voice, Martian Mono for
+ * labels). A landing page that invented its own palette would make the first click into the
+ * product a change of subject.
+ *
+ * The motif is a patch field - the jack panel of a manual exchange. It is drawn with two
+ * repeating gradients rather than an image, so it costs nothing, scales to any viewport and
+ * needs no CSP allowance.
+ */
+
+.lp {
+  position: relative;
+  /* Explicit width: the page is also mounted as a flex child in the design preview, where
+   * a block root would shrink to its content and silently collapse the 2-column hero. */
+  width: 100%;
+  min-height: 100%;
+  overflow-x: clip;
+}
+
+/* The patch field: a grid of copper jacks, far enough down that it reads as texture rather
+ * than pattern, fading out before it reaches the content it sits behind. */
+.lp::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle at center, hsl(var(--ex-copper) / 0.16) 1px, transparent 1.6px),
+    radial-gradient(circle at center, hsl(var(--ex-verdigris) / 0.1) 1px, transparent 1.6px);
+  background-size: 34px 34px, 34px 34px;
+  background-position: 0 0, 17px 17px;
+  mask-image: linear-gradient(180deg, hsl(0 0% 0% / 0.85), transparent 72%);
+}
+
+.lp > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Bar ----------------------------------------------------------------------- */
+.lp-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid hsl(var(--ex-copper-line) / 0.55);
+  background: hsl(var(--ex-ink) / 0.82);
+  backdrop-filter: blur(10px);
+}
+
+.lp-mark {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+}
+
+.lp-bar-links {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+/* Shell --------------------------------------------------------------------- */
+.lp-wrap {
+  width: 100%;
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+/* Hero ---------------------------------------------------------------------- */
+.lp-hero {
+  padding: 3.5rem 0 3rem;
+  display: grid;
+  gap: 2.5rem;
+}
+
+@media (min-width: 62rem) {
+  .lp-hero {
+    grid-template-columns: 1.05fr 0.95fr;
+    align-items: center;
+    padding: 5.5rem 0 4.5rem;
+    gap: 3.5rem;
+  }
+}
+
+.lp-h1 {
+  font-family: "Archivo Variable", system-ui, sans-serif;
+  font-stretch: 122%;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 0.98;
+  font-size: clamp(2.5rem, 7.5vw, 4.25rem);
+  color: hsl(var(--ex-bone));
+  text-wrap: balance;
+  margin: 1rem 0 0;
+}
+
+.lp-h1 em {
+  font-style: normal;
+  color: hsl(var(--ex-copper));
+}
+
+.lp-lede {
+  margin-top: 1.25rem;
+  max-width: 46ch;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: hsl(var(--ex-bone-dim));
+}
+
+.lp-cta {
+  margin-top: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.875rem;
+}
+
+.lp-note {
+  margin-top: 1.125rem;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: hsl(var(--ex-bone-dim) / 0.85);
+}
+
+/* The panel: a switchboard drawn in CSS, not a screenshot. Decorative, and marked
+ * aria-hidden in the markup - every claim it appears to make is made in real copy
+ * elsewhere on the page. */
+.lp-panel {
+  position: relative;
+  border: 1px solid hsl(var(--ex-copper-line) / 0.85);
+  border-radius: 4px;
+  background: linear-gradient(180deg, hsl(var(--ex-ink-raise) / 0.97), hsl(var(--ex-ink) / 0.9));
+  box-shadow:
+    0 1px 0 hsl(var(--ex-bone) / 0.05) inset,
+    0 30px 70px -34px hsl(197 60% 2% / 0.95);
+  overflow: hidden;
+}
+
+.lp-panel::before {
+  content: "";
+  position: absolute;
+  inset: -1px auto auto -1px;
+  height: 2px;
+  width: calc(100% + 2px);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--ex-copper) / 0.9) 18%,
+    hsl(var(--ex-verdigris) / 0.85) 52%,
+    hsl(var(--ex-copper) / 0.9) 82%,
+    transparent
+  );
+  animation: ex-charge 1.2s cubic-bezier(0.22, 0.8, 0.2, 1) 300ms both;
+}
+
+.lp-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.875rem;
+  border-bottom: 1px solid hsl(var(--ex-copper-line) / 0.6);
+}
+
+.lp-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.875rem;
+  border-bottom: 1px solid hsl(var(--ex-copper-line) / 0.35);
+}
+
+.lp-row:last-child {
+  border-bottom: 0;
+}
+
+.lp-row.is-on {
+  background: hsl(var(--ex-copper) / 0.06);
+}
+
+.lp-who {
+  font-size: 0.8125rem;
+  color: hsl(var(--ex-bone));
+  line-height: 1.3;
+}
+
+.lp-prev {
+  display: block;
+  margin-top: 0.1875rem;
+  font-size: 0.75rem;
+  color: hsl(var(--ex-bone-dim));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lp-when {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-size: 0.5625rem;
+  letter-spacing: 0.1em;
+  color: hsl(var(--ex-bone-dim) / 0.8);
+}
+
+/* Sections ------------------------------------------------------------------ */
+.lp-sec {
+  padding: 3.25rem 0;
+  border-top: 1px solid hsl(var(--ex-copper-line) / 0.45);
+}
+
+.lp-sec-grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+/* Grid items default to min-width:auto, so a long cell in the right-hand column pushes the
+ * column wider than the wrap and the text runs off the page. */
+.lp-sec-grid > * {
+  min-width: 0;
+}
+
+@media (min-width: 52rem) {
+  .lp-sec-grid {
+    grid-template-columns: 14rem 1fr;
+    gap: 3rem;
+  }
+}
+
+.lp-h2 {
+  font-family: "Archivo Variable", system-ui, sans-serif;
+  font-stretch: 118%;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  font-size: clamp(1.5rem, 3.4vw, 2rem);
+  color: hsl(var(--ex-bone));
+  margin: 0.5rem 0 0;
+}
+
+.lp-body {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  color: hsl(var(--ex-bone-dim));
+  max-width: 54ch;
+}
+
+.lp-body + .lp-body {
+  margin-top: 0.875rem;
+}
+
+.lp-body b {
+  color: hsl(var(--ex-bone));
+  font-weight: 500;
+}
+
+/* Lines: the access model, as a rack of labelled strips rather than three cards. */
+.lp-lines {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.lp-line {
+  display: grid;
+  grid-template-columns: 5.25rem 7.5rem 1fr;
+  align-items: baseline;
+  gap: 0.875rem;
+  padding: 0.8125rem 0;
+  border-top: 1px dotted hsl(var(--ex-copper-line) / 0.8);
+  font-size: 0.875rem;
+  color: hsl(var(--ex-bone-dim));
+}
+
+.lp-line:last-child {
+  border-bottom: 1px dotted hsl(var(--ex-copper-line) / 0.8);
+}
+
+.lp-line dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.lp-line dt {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-size: 0.5625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--ex-copper));
+}
+
+/* Steps: numerals on a rule, not a row of boxes. */
+.lp-steps {
+  margin-top: 1.5rem;
+  counter-reset: lp;
+  display: grid;
+  gap: 0;
+}
+
+.lp-step {
+  display: grid;
+  grid-template-columns: 2.75rem 1fr;
+  gap: 1rem;
+  padding: 1.125rem 0;
+  border-top: 1px solid hsl(var(--ex-copper-line) / 0.5);
+}
+
+.lp-step:last-child {
+  border-bottom: 1px solid hsl(var(--ex-copper-line) / 0.5);
+}
+
+.lp-step-n {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  color: hsl(var(--ex-copper));
+  padding-top: 0.125rem;
+}
+
+.lp-step-t {
+  font-size: 0.9375rem;
+  color: hsl(var(--ex-bone));
+  line-height: 1.35;
+}
+
+.lp-step-b {
+  margin-top: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: hsl(var(--ex-bone-dim));
+  max-width: 52ch;
+}
+
+/* Close --------------------------------------------------------------------- */
+.lp-close {
+  padding: 4rem 0 3rem;
+  border-top: 1px solid hsl(var(--ex-copper-line) / 0.45);
+  text-align: center;
+}
+
+.lp-close .lp-cta {
+  justify-content: center;
+}
+
+.lp-foot {
+  border-top: 1px solid hsl(var(--ex-copper-line) / 0.45);
+  padding: 1.5rem 0 2.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: hsl(var(--ex-bone-dim) / 0.8);
+}
+
+.lp-foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+}
+
+/* Arrival ------------------------------------------------------------------- */
+.lp-rise {
+  animation: ex-rise 700ms cubic-bezier(0.22, 0.85, 0.25, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-rise,
+  .lp-panel::before {
+    animation: none;
+  }
+}

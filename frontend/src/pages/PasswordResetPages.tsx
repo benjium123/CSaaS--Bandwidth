@@ -50,7 +50,7 @@ export function ForgotPasswordPage() {
             : "We will send a link to the address on the account. It can be used once."
         }
         footer={
-          <Link to="/" className="ex-link">
+          <Link to="/login" className="ex-link">
             Back to sign in
           </Link>
         }
@@ -135,7 +135,7 @@ export function ResetPasswordPage() {
             : "A long passphrase - three or four unrelated words - beats a short clever one."
         }
         footer={
-          <Link to="/" className="ex-link">
+          <Link to="/login" className="ex-link">
             Back to sign in
           </Link>
         }

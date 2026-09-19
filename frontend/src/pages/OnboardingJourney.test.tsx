@@ -3,6 +3,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 import { SignUpPage } from "@/pages/SignUpPage";
+import { LandingPage } from "@/pages/LandingPage";
 import type { KycPerson, KycProfile, KycStatus } from "@/api/kyc";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
 
@@ -263,5 +264,60 @@ describe("SignUpPage — the consumer-domain hint is a courtesy, not a gate", ()
     // Paired with the assertion above: proves the form is mounted and the hint simply is
     // not showing, rather than the whole screen having failed to render.
     expect(screen.getByRole("button", { name: "Create account" })).toBeTruthy();
+  });
+});
+
+describe("LandingPage — the public face", () => {
+  function renderLanding() {
+    return renderWithProviders(<LandingPage />, makeStubClient({ "/api/v1/auth/me": ME }));
+  }
+
+  it("leads with the proposition and offers both doors", () => {
+    renderLanding();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("on one line.");
+    // Both paths, because `/` is now marketing and sign-in has moved to `/login`. If those
+    // ever point at `/` again the link resolves to this page and the door is a mirror.
+    const start = screen.getAllByRole("link", { name: /Start your workspace/ })[0];
+    expect(start.getAttribute("href")).toBe("/signup");
+    expect(screen.getAllByRole("link", { name: "Sign in" })[0].getAttribute("href")).toBe("/login");
+  });
+
+  it("states the verification order up front rather than in fine print", () => {
+    renderLanding();
+    // Someone who cannot pass business verification should learn it here, not after six
+    // forms. Paired with the price assertion below: both are claims-discipline, and an
+    // absence test alone would pass on a blank page.
+    expect(screen.getByText(/Calling and texting switch on once your business is/)).toBeTruthy();
+  });
+
+  it("quotes no price, because none has been decided", () => {
+    const { container } = renderLanding();
+    expect(screen.getByText(/bought from the console after approval/)).toBeTruthy();
+    // A number on the landing page is a promise the checkout would have to break.
+    expect(container.textContent).not.toMatch(/[$£€]\s?\d/);
+    expect(container.textContent).not.toMatch(/\bper month\b|\/mo\b/);
+  });
+
+  it("makes no social-proof claim we cannot support", () => {
+    const { container } = renderLanding();
+    expect(container.textContent).not.toMatch(/trusted by|customers|join \d|rated/i);
+  });
+});
+
+describe("AuthAside — the equipment spec rows are gone", () => {
+  it("keeps the aside but carries none of the removed specification copy", () => {
+    // The pair: the aside must still RENDER (first assertion), or the four absences below
+    // would pass on a page that failed to mount and prove nothing at all.
+    renderWithProviders(<SignUpPage />, makeStubClient({ "/api/v1/auth/me": ME }));
+    expect(screen.getByText(/Communications software for teams that answer the phone/)).toBeTruthy();
+
+    for (const gone of [
+      "Passkeys · authenticator app · recovery codes",
+      "SAML 2.0 · OIDC · SCIM user sync",
+      "HttpOnly cookie, idle and absolute limits",
+      "United States · United Kingdom",
+    ]) {
+      expect(screen.queryByText(gone)).toBeNull();
+    }
   });
 });
