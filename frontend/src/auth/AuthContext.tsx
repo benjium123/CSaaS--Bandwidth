@@ -62,6 +62,28 @@ export function hasPermission(me: Me | null, orgId: string | null, permission: s
   return perms.includes(permission);
 }
 
+/** Ownership gate - "is this caller the OWNER of this workspace?".
+ *
+ * Ownership cannot be read from the permission list, and this is the reason the helper
+ * exists at all: the server EXPANDS the owner's "*" role into all 34 explicit permission
+ * strings before sending them, so an owner and a non-owner ADMIN holding the same string
+ * are indistinguishable to hasPermission() above. The only place ownership is visible is
+ * `membership.role_name`.
+ *
+ * FAIL CLOSED exactly the way hasPermission does, and for the same reasons: `me` is null
+ * until /auth/me answers, so "we have not asked yet" is not "yes". The visible effect of
+ * denying instead is that an owner-only tab appears a beat late rather than appearing and
+ * vanishing - the safe direction, and self-correcting.
+ *
+ * The server is the real gate: it enforces ownership on the endpoint itself, so this only
+ * decides what to render, never what is permitted. */
+export function isOwner(me: Me | null, orgId: string | null): boolean {
+  if (!me || !orgId) return false;
+  const membership = me.memberships.find((m) => m.org_id === orgId);
+  if (!membership) return false;
+  return membership.role_name === "owner";
+}
+
 export type Me = {
   /** Effective permissions for the current org membership - the REAL source, sent
    * top-level on /auth/me (Membership.permissions is not sent). An expanded list of

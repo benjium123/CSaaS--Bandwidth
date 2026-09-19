@@ -78,15 +78,31 @@ function renderSettings({
   org = ORG,
   providerAccounts = [],
   memberCount = 1,
+  roleName = "owner",
+  meStub,
 }: {
   initialEntries?: string[];
   permissions?: string[];
   org?: { id: string; name: string; slug: string };
   providerAccounts?: unknown[];
   memberCount?: number;
+  /** Ownership is read from the membership, so the role name is what these tests vary.
+   *  A non-owner admin still holds the same permission strings. */
+  roleName?: string;
+  /** Stub the /auth/me response outright (e.g. an Error) to exercise `me === null`. */
+  meStub?: unknown;
 } = {}) {
+  // With no options this clone is structurally identical to ME, so existing call sites
+  // behave exactly as before; only the membership's role_name ever differs.
+  const me: unknown =
+    meStub !== undefined
+      ? meStub
+      : {
+          ...ME,
+          memberships: [{ ...ME.memberships[0], role_name: roleName }],
+        };
   const client = makeStubClient({
-    "/api/v1/auth/me": ME,
+    "/api/v1/auth/me": me,
     "/api/v1/me/capabilities": {
       permissions,
       org: { has_provider: false, has_number: false, member_count: memberCount, registration_state: "none" },
@@ -252,5 +268,73 @@ describe("SettingsPage", () => {
     renderSettings({ initialEntries: ["/settings/billing?tab=dashboard"] });
 
     expect(await screen.findByText("Dashboard page")).toBeInTheDocument();
+  });
+
+  it("shows Billing & usage and Business verification to the workspace owner", async () => {
+    // The default identity is the workspace owner. Both of these sections also need their
+    // permission string (org:read / settings:read), which this identity holds.
+    renderSettings({ initialEntries: ["/settings/workspace"] });
+
+    const nav = await screen.findByRole("navigation", { name: "Settings" });
+    expect(within(nav).getByText("Billing & usage")).toBeInTheDocument();
+    expect(within(nav).getByText("Business verification")).toBeInTheDocument();
+  });
+
+  it("hides Billing & usage and Business verification from a non-owner admin who holds settings:read and org:read", async () => {
+    // The whole difficulty: this identity holds org:read AND settings:read - the same
+    // permission strings the owner holds after the server expands the owner's "*" role.
+    // Only role_name separates them, so the permission gate alone would let it through.
+    renderSettings({ initialEntries: ["/settings/workspace"], roleName: "admin" });
+
+    const nav = await screen.findByRole("navigation", { name: "Settings" });
+    expect(within(nav).queryByText("Billing & usage")).not.toBeInTheDocument();
+    expect(within(nav).queryByText("Business verification")).not.toBeInTheDocument();
+    // Proves the filter removed the owner-only rows specifically rather than rendering an
+    // empty nav - a nav that failed to render would otherwise pass the negatives above.
+    expect(within(nav).getByText("Workspace")).toBeInTheDocument();
+    expect(within(nav).getByText("Providers")).toBeInTheDocument();
+  });
+
+  it("refuses a non-owner admin who deep-links to /settings/billing", async () => {
+    renderSettings({ initialEntries: ["/settings/billing"], roleName: "admin" });
+
+    expect(
+      await screen.findByText("You do not have access to this setting."),
+    ).toBeInTheDocument();
+    // A refusal, not a redirect - the URL must not move.
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/billing");
+    // The billing body must not have rendered: its sub-tabs only exist inside it.
+    expect(screen.queryByRole("tab", { name: "Usage" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Dashboard" })).not.toBeInTheDocument();
+  });
+
+  it("refuses a non-owner admin who deep-links to /settings/verification", async () => {
+    renderSettings({ initialEntries: ["/settings/verification"], roleName: "admin" });
+
+    expect(
+      await screen.findByText("You do not have access to this setting."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/verification");
+  });
+
+  it("renders no owner-only tab while `me` is still unknown (fail closed)", async () => {
+    // /auth/me fails, so `me` stays null while capabilities still resolve. Fail closed: a
+    // tab that flashes and vanishes is worse than a tab that appears a beat late, and
+    // "we have not asked yet" is not "yes".
+    renderSettings({ initialEntries: ["/settings/workspace"], meStub: new Error("unauthorized") });
+
+    const nav = await screen.findByRole("navigation", { name: "Settings" });
+    // Workspace proves the nav rendered and the gate is not still loading.
+    expect(within(nav).getByText("Workspace")).toBeInTheDocument();
+    expect(within(nav).queryByText("Billing & usage")).not.toBeInTheDocument();
+    expect(within(nav).queryByText("Business verification")).not.toBeInTheDocument();
+  });
+
+  it("refuses a deep link to /settings/billing while `me` is still unknown", async () => {
+    renderSettings({ initialEntries: ["/settings/billing"], meStub: new Error("unauthorized") });
+
+    expect(
+      await screen.findByText("You do not have access to this setting."),
+    ).toBeInTheDocument();
   });
 });

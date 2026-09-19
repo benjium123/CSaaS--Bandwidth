@@ -88,7 +88,11 @@ vi.mock("@/pages/OrgPickerPage", () => ({
 vi.mock("@/pages/AcceptInvitePage", () => ({
   AcceptInvitePage: () => <div>Accept invite page</div>,
 }));
-vi.mock("@/pages/settingsSections", () => ({
+// SettingsIndexRedirect imports canViewSettingsSection from this module too, so the mock
+// must spread the REAL module (and only override the section list) - a bare object mock
+// left canViewSettingsSection undefined and broke the /settings redirect test.
+vi.mock("@/pages/settingsSections", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/pages/settingsSections")>()),
   SETTINGS_SECTIONS: [
     { id: "workspace", label: "Workspace", permission: "org:read" },
     { id: "team", label: "Team", permission: "members:read" },

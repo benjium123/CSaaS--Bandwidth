@@ -939,7 +939,17 @@ async def test_plans_endpoint_returns_inactive_plans_flagged_not_hidden(client, 
     assert by_code["starter"]["is_active"] is True
 
 
-async def test_plans_endpoint_is_gated_on_settings_read(client, session):
+async def test_plans_endpoint_is_owner_only(client, session):
+    """DELIBERATE BEHAVIOUR CHANGE, formerly test_plans_endpoint_is_gated_on_settings_read.
+
+    The whole billing read surface (summary, ledger, usage, plans, rates, payment-methods)
+    moved from ``require_permission("settings:read")`` to ``require_owner``, because a
+    non-owner admin holds ``settings:read`` and could therefore read the entire billing
+    surface, saved cards included. The ``settings:read`` half of this test has been
+    INVERTED on purpose: that permission is no longer sufficient here. The refusal code
+    also changed from ``permission_denied`` to ``owner_only`` for the same reason - a
+    different dependency raises it.
+    """
     token = await register_and_login(client, "plans-perm-owner@example.com")
     org = await create_org(client, token, "Plans Permission Org")
     org_id = uuid.UUID(org["id"])
@@ -952,14 +962,22 @@ async def test_plans_endpoint_is_gated_on_settings_read(client, session):
         "/api/v1/billing/plans", headers=auth_headers(denied_token, org_id)
     )
     assert denied.status_code == 403, denied.text
-    assert denied.json()["error"]["code"] == "permission_denied"
+    assert denied.json()["error"]["code"] == "owner_only"
 
-    allowed_token = await _scoped_member(
+    # WAS 200 under settings:read. Now refused: holding settings:read is no longer enough
+    # to read the billing surface.
+    settings_read_token = await _scoped_member(
         client, session, org_id, "plans-perm-allowed@example.com", ["settings:read"]
     )
-    allowed = await client.get(
-        "/api/v1/billing/plans", headers=auth_headers(allowed_token, org_id)
+    scoped = await client.get(
+        "/api/v1/billing/plans", headers=auth_headers(settings_read_token, org_id)
     )
+    assert scoped.status_code == 403, scoped.text
+    assert scoped.json()["error"]["code"] == "owner_only"
+
+    # The owner half - without it a refusal-only test would pass even if the route were
+    # broken for everybody.
+    allowed = await client.get("/api/v1/billing/plans", headers=auth_headers(token, org_id))
     assert allowed.status_code == 200, allowed.text
     assert [row["code"] for row in allowed.json()] == [
         "starter",

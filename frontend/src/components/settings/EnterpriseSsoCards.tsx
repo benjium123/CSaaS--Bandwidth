@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/auth/AuthContext";
+import { isOwner, useAuth } from "@/auth/AuthContext";
 import { useGate } from "@/api/capabilities";
 import {
   SECURITY_POLICY_QUERY_KEY,
@@ -441,10 +441,10 @@ export function ScimTokensCard() {
   const gate = useGate();
   const qc = useQueryClient();
   const canRead = gate.can("members:update");
-  // Capabilities expand the owner's wildcard into every permission, so "owner only" is read
-  // from the membership. The server enforces it either way.
-  const canCreate =
-    me?.memberships.find((m) => m.org_id === orgId)?.role_name === "owner";
+  // Capabilities expand the owner's wildcard into every permission string, so an owner and
+  // a non-owner admin holding the same permission are indistinguishable to gate.can() -
+  // "owner only" has to be read from the membership. The server enforces it either way.
+  const canCreate = isOwner(me, orgId);
   const [name, setName] = React.useState("");
   const [created, setCreated] = React.useState<{
     token: string;

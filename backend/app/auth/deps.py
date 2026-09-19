@@ -393,6 +393,36 @@ def require_permission(permission: str):
     return _check
 
 
+async def require_owner(ctx: Annotated[OrgContext, Depends(get_current_org)]) -> OrgContext:
+    """The workspace OWNER. A plain dependency, used as ``Depends(require_owner)`` — not a
+    factory, because it takes no argument.
+
+    "Owner" means the role holding the WILDCARD permission, which is how every other gate
+    in this codebase asks the question (a role string, a membership flag or a hardcoded
+    email would answer a different question and drift from those gates). Refusal is ONE
+    403 ``owner_only`` for every failing case: the response must not reveal which of the
+    conditions was the one that failed.
+
+    API-key principals are refused OUTRIGHT — not merely on paper. ``_org_context_from_api_key``
+    already strips the wildcard out of the transient role it builds, so a key could not pass
+    the wildcard check today; the invariant is asserted locally anyway so this gate does not
+    depend on a defensive line in another function continuing to exist.
+
+    The P41 identity gate (``_require_verified_privileged_member``) is deliberately NOT run
+    here. ``identity_verification_state`` returns ``"not_applicable"`` for a wildcard role —
+    the owner is the verified person on the application itself — so chaining it would always
+    be a no-op that costs a query to learn an answer already known.
+    """
+    if (
+        ctx.api_key is None
+        and ctx.membership is not None
+        and ctx.role is not None
+        and WILDCARD_PERMISSION in (ctx.role.permissions or [])
+    ):
+        return ctx
+    raise PermissionDeniedError("Only the workspace owner can do this", code="owner_only")
+
+
 #: P41: once a business is approved, a NON-owner may only use these powers after their own
 #: ID + selfie check (operator decision: admin and billing roles are verified people).
 IDENTITY_GATED_PERMISSIONS = frozenset(

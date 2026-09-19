@@ -2,8 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/primitives";
 import { BANNER_PRIORITY, BannerSlot } from "@/components/shell/BannerSlot";
-import { useGate } from "@/api/capabilities";
-import { useAuth } from "@/auth/AuthContext";
+import { isOwner, useAuth } from "@/auth/AuthContext";
 import {
   PREPAID_EMPTY_COPY,
   WARNING_COPY,
@@ -37,10 +36,19 @@ function writeDismissedLevel(level: BalanceWarning): void {
 }
 
 export function LowBalanceBanner() {
-  const { api } = useAuth();
-  const gate = useGate();
+  const { api, me, orgId } = useAuth();
   const [dismissed, setDismissed] = useState<BalanceWarning | null>(readDismissedLevel);
-  const summaryQ = useBillingSummary(api, gate.can("settings:read"));
+  // Owner-only, deliberately: GET /api/v1/billing/summary is owner-only server-side, so this
+  // gates on ownership instead of gate.can("settings:read") (which a non-owner admin also
+  // holds) and fires NO request at all for anyone else - useBillingSummary's second argument
+  // is react-query's `enabled`. A non-owner sees nothing from this component: the frontend
+  // has no other readable source for the balance (/api/v1/me/capabilities, which every member
+  // can read, carries no credit signal), a non-owner cannot top up anyway, and a failed
+  // message already carries its own server-sourced failure_reason_public explanation at the
+  // point of failure. While `me` is null this is false too - the correct fail-closed
+  // direction: one extra beat before an owner's banner appears, never a 403 for a non-owner.
+  const owner = isOwner(me, orgId);
+  const summaryQ = useBillingSummary(api, owner);
   const navigate = useNavigate();
 
   if (summaryQ.isLoading || summaryQ.isError || summaryQ.data == null) return null;

@@ -1,7 +1,20 @@
 """P41 business verification - the customer side.
 
-Reading needs ``org:read``; changing the application needs ``org:update`` (owner and admin).
-Operators review applications through routes/ops.py, never through these routes.
+The business application is OWNER-ONLY, so every route that reads or edits it now requires
+``require_owner``. Operators review applications through routes/ops.py, never through these
+routes. The owner is the person who signs the application, so the owner is the person
+the platform is verifying.
+
+There is ONE deliberate exception, and it is the whole reason ``/me/verify``,
+``/persons/{person_id}/verify`` and ``/step-up`` stay open. Both
+``deps.py::IDENTITY_GATED_PERMISSIONS``
+and ``_require_verified_privileged_member`` refuse a NON-owner who has not completed their own
+ID + selfie check, so a non-owner admin locked out of every privileged permission would have
+NO path forward if their only route to that check were also owner-only. ``/me/verify`` and the
+step-up endpoints are that path, and locking them would be a permanent, self-inflicted lockout
+of the workspace's own admins. ``/persons/{person_id}/verify`` stays reachable for the same
+reason: ``services/kyc.py::start_person_verification`` already raises ``not_your_identity`` when
+the actor is not the person, so that self-check - not the role - is the boundary.
 """
 
 from __future__ import annotations
@@ -28,6 +41,7 @@ from app.auth.deps import (
     OrgContext,
     current_identity_session,
     get_current_user,
+    require_owner,
     require_permission,
 )
 from app.config import Settings, get_active_settings
@@ -252,7 +266,7 @@ async def _profile_out(
 
 
 @router.get("/profile")
-async def get_profile(ctx: Annotated[OrgContext, Depends(require_permission("org:read"))]) -> dict:
+async def get_profile(ctx: Annotated[OrgContext, Depends(require_owner)]) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     out = await _profile_out(ctx.session, profile, _viewer(ctx), owner=_is_owner(ctx))
     await ctx.session.commit()
@@ -263,7 +277,7 @@ async def get_profile(ctx: Annotated[OrgContext, Depends(require_permission("org
 async def put_business(
     payload: BusinessIn,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
     background: BackgroundTasks,
 ) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
@@ -286,7 +300,7 @@ async def put_business(
 async def put_use_case(
     payload: UseCaseIn,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     from app.auth.deps import check_step_up
 
@@ -309,7 +323,7 @@ async def put_use_case(
 @router.post("/persons", status_code=201)
 async def add_person(
     payload: PersonIn,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     user_id = None
@@ -344,7 +358,7 @@ async def set_person_address(
     person_id: uuid.UUID,
     payload: AddressIn,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
     background: BackgroundTasks,
 ) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
@@ -358,7 +372,7 @@ async def set_person_address(
 @router.delete("/persons/{person_id}", status_code=204)
 async def delete_person(
     person_id: uuid.UUID,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> Response:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     person = await kyc_svc.get_person(ctx.session, ctx.org.id, person_id)
@@ -394,7 +408,7 @@ async def start_person_verification(
 @router.post("/documents", status_code=201)
 async def upload_document(
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
     kind: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
     background: BackgroundTasks,
@@ -460,7 +474,7 @@ async def _run_automation(app, org_id: uuid.UUID, reviews_only: bool) -> None:
 async def delete_document(
     document_id: uuid.UUID,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> Response:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     if profile.status not in ("draft", "needs_info"):
@@ -475,7 +489,7 @@ async def delete_document(
 async def accept_agreement(
     payload: AgreementIn,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     if not payload.accept:
         raise ValidationFailedError("You must accept the agreement to continue")
@@ -495,7 +509,7 @@ async def accept_agreement(
 @router.post("/submit")
 async def submit(
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
     background: BackgroundTasks,
 ) -> dict:
     if ctx.membership is None:
@@ -524,7 +538,12 @@ async def verify_me(
     ctx: Annotated[OrgContext, Depends(require_permission("org:read"))],
 ) -> dict:
     """ID + selfie for the signed-in member (admins and billing staff of an approved
-    business, who need it before using those powers)."""
+    business, who need it before using those powers).
+
+    NOT owner-only, and that is the point: this is the ONE route a non-owner member has to
+    satisfy ``_require_verified_privileged_member``. Locking it to the owner would lock
+    every non-owner admin out of every privileged permission with no way forward.
+    """
     if ctx.membership is None:
         raise ValidationFailedError("API keys cannot be identity-verified")
     settings: Settings = request.app.state.settings
@@ -572,7 +591,7 @@ class LimitRequestIn(BaseModel):
 async def request_higher_limits(
     payload: LimitRequestIn,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     """Asks the operators for higher limits. Needs a fresh selfie: raising limits is what a
     hijacked or resold account asks for first."""

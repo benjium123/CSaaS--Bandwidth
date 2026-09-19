@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Navigate, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { hasPermission, useAuth } from "@/auth/AuthContext";
+import { hasPermission, isOwner, useAuth } from "@/auth/AuthContext";
 import { useGate } from "@/api/capabilities";
 import { DataRetentionCard } from "@/components/settings/DataRetentionCard";
 import { CreditsSection } from "@/components/billing/CreditsSection";
@@ -35,7 +35,11 @@ import { AppointmentsPage } from "@/pages/AppointmentsPage";
 import { PlatformPage } from "@/pages/PlatformPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { VerifyBusinessPage } from "@/pages/VerifyBusinessPage";
-import { SETTINGS_SECTIONS, type SettingsSectionId } from "./settingsSections";
+import {
+  canViewSettingsSection,
+  SETTINGS_SECTIONS,
+  type SettingsSectionId,
+} from "./settingsSections";
 import { INBOX_RAIL_PATHS, useRailNav } from "@/components/shell/Sidebar";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 
@@ -436,7 +440,11 @@ export function SettingsPage() {
   const { theme } = useSurfaceTheme();
   const { section } = useParams<{ section: string }>();
   const gate = useGate();
-  const { me } = useAuth();
+  const { me, orgId } = useAuth();
+  // Ownership, not permission: the owner's "*" role is expanded into every permission
+  // string server-side, so an owner and an admin look identical to gate.can(). Read it from
+  // the membership (see isOwner). Fail-closed while `me` is null.
+  const owner = isOwner(me, orgId);
   const { items: railItems } = useRailNav();
   const current = SETTINGS_SECTIONS.find((s) => s.id === section);
 
@@ -462,7 +470,7 @@ export function SettingsPage() {
     return <Navigate to="/settings/workspace" replace />;
   }
 
-  const canView = !gate.isLoading && gate.can(current.permission);
+  const canView = !gate.isLoading && canViewSettingsSection(current, gate.can, owner);
 
   return (
     <div className={cn(surfaceThemeClass(theme), "flex h-full flex-col overflow-hidden sm:flex-row")}>
@@ -474,7 +482,7 @@ export function SettingsPage() {
           <Spinner label="Loading settings" />
         ) : (
           <div className="flex flex-row gap-[3px] sm:flex-col">
-            {SETTINGS_SECTIONS.filter((s) => gate.can(s.permission)).map((s) => (
+            {SETTINGS_SECTIONS.filter((s) => canViewSettingsSection(s, gate.can, owner)).map((s) => (
               <NavLink
                 key={s.id}
                 to={`/settings/${s.id}`}

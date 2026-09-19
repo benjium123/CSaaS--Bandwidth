@@ -16,7 +16,12 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from app.auth.deps import OrgContext, check_org_selfie_step_up, require_permission
+from app.auth.deps import (
+    OrgContext,
+    check_org_selfie_step_up,
+    require_owner,
+    require_permission,
+)
 from app.errors import (
     FeatureUnavailableError,
     NotFoundError,
@@ -99,9 +104,13 @@ def _usage_range(
     return start_dt, end_dt
 
 
+# OWNER-ONLY, deliberately: a non-owner member calling this gets 403 ``owner_only``. This
+# route is polled app-wide by the console, so the refusal has to stay a well-formed 403
+# carrying that one STABLE code - never a 401, never a 500, and never a bare "forbidden"
+# that the console cannot distinguish from a dead session.
 @router.get("/summary")
 async def get_summary(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     balance = await credits.balance(ctx.session, ctx.org.id)
     reserved = await credits.outstanding_reserves(ctx.session, ctx.org.id)
@@ -144,7 +153,7 @@ async def get_summary(
 
 @router.get("/ledger")
 async def get_ledger(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
     limit: int = Query(50, ge=1),
     cursor: str | None = None,
 ) -> dict:
@@ -202,7 +211,7 @@ async def get_ledger(
 
 @router.get("/usage")
 async def get_usage(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
     start_date: Annotated[date | None, Query(alias="from")] = None,
     end_date: Annotated[date | None, Query(alias="to")] = None,
 ) -> dict:
@@ -225,7 +234,7 @@ async def get_usage(
 @router.get("/usage/calls/{call_id}")
 async def get_usage_call(
     call_id: uuid.UUID,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     call = (
         await ctx.session.execute(
@@ -426,15 +435,14 @@ def _plan_sort_key(plan: Plan) -> tuple[int, int, str]:
 
 @router.get("/plans")
 async def list_plans(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> list[dict]:
     """The plan catalogue the picker renders. Read-only, no org data, no cost.
 
-    ``settings:read`` and not ``org:billing``: this is a catalogue read, exactly like
-    ``/rates`` above, and any member should be able to see what the packages are.
-    ``org:billing`` is the permission for SPENDING (top-ups, checkout) and is identity
-    gated, so putting it here would make a non-owner pass an ID check just to look at
-    a price list.
+    Owner-only, because the catalogue only ever feeds the billing console. It is NOT
+    identity gated (``org:billing``) - looking at a price list must never make someone
+    pass an ID check - so ``require_owner`` is the right lock rather than the spending
+    permission.
 
     Inactive plans ARE returned, with ``is_active`` telling the truth: the client
     renders them as not purchasable rather than hiding them, so a customer on a
@@ -464,7 +472,7 @@ async def list_plans(
 
 @router.get("/rates")
 async def get_rates(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> list[dict]:
     # AI providers are present in DEFAULT_RATES_MICROS, but their metrics are scope
     # 'ai'. This customer rate sheet exposes only the AI metrics with customer prices.
@@ -503,7 +511,7 @@ async def get_rates(
 
 @router.get("/payment-methods")
 async def list_payment_methods(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> list[dict]:
     rows = (
         await ctx.session.execute(
