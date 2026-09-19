@@ -270,6 +270,12 @@ async def carrier_messaging(
     if svc.Outcome.RETRY in outcomes:
         response.status_code = 500
         return {"status": "retry"}
+    if carrier_name == "signalwire":
+        # SignalWire's Compatibility (LaML) webhooks expect an XML document back and log
+        # anything else as "12100 Document parse error" against the message - measured
+        # 2026-09-19: every ingested inbound text showed as "failed" on their side. An
+        # empty <Response/> is "received, nothing to reply".
+        return Response(content="<Response/>", media_type="application/xml")
     return {"status": "ok", "events": len(outcomes)}
 
 
