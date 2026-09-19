@@ -30,6 +30,7 @@ import { RecoverAccountPage } from "@/pages/RecoverAccountPage";
 import { SignUpPage } from "@/pages/SignUpPage";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 import { LandingPage } from "@/pages/LandingPage";
+import { ChoosePlanPage } from "@/pages/ChoosePlanPage";
 import { PasskeyGraceBanner } from "@/components/security/PasskeyGraceBanner";
 
 /**
@@ -145,6 +146,10 @@ export function App() {
         <Route path="/ops" element={<OpsPage />} />
         <Route path="/report" element={<ReportNumberPage />} />
 
+        {/* Plan selection. Inside the Shell rather than on the auth surface: by the time
+            anyone sees this they have a workspace and are signed in, and it must stay
+            escapable - choosing a plan is a task, not a wall. */}
+        <Route path="/plans" element={<ChoosePlanPage />} />
         <Route path="/settings" element={<SettingsIndexRedirect />} />
         <Route path="/settings/:section" element={<SettingsPage />} />
 

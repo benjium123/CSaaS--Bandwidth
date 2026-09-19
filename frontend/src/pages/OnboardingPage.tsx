@@ -87,7 +87,13 @@ export function OnboardingPage() {
     case "needs_info":
       return <Wizard profile={profile} onOpen={toVerification} />;
     case "approved":
-      return <Approved profile={profile} onContinue={() => navigate("/inbox")} />;
+      return (
+        <Approved
+          profile={profile}
+          onContinue={() => navigate("/inbox")}
+          onChoosePlan={() => navigate("/plans")}
+        />
+      );
     case "rejected":
       return <Rejected profile={profile} />;
     case "suspended":
@@ -252,7 +258,15 @@ function Waiting({ profile }: { profile: KycProfile }) {
 
 /* ────────────────────────────────────────────────────── the outcomes ── */
 
-function Approved({ profile, onContinue }: { profile: KycProfile; onContinue: () => void }) {
+function Approved({
+  profile,
+  onContinue,
+  onChoosePlan,
+}: {
+  profile: KycProfile;
+  onContinue: () => void;
+  onChoosePlan: () => void;
+}) {
   const limits = profile.limits;
   const deposit = profile.deposit_required_cents;
   const hasLimits = limits != null && Object.keys(limits).length > 0;
@@ -301,7 +315,15 @@ function Approved({ profile, onContinue }: { profile: KycProfile; onContinue: ()
             </AuthNotice>
           )}
 
-          <AuthButton type="button" block onClick={onContinue}>
+          {/* The next act, and the reason it is the PRIMARY button here: approval is not
+              the end of the journey, it is the point at which buying becomes possible. The
+              inbox stays reachable as the quiet option so this is an invitation, not a
+              tollgate - the workspace already works, only calling and texting wait on a
+              plan. */}
+          <AuthButton type="button" block onClick={onChoosePlan}>
+            Choose a plan
+          </AuthButton>
+          <AuthButton type="button" tone="quiet" block onClick={onContinue}>
             Go to your inbox
           </AuthButton>
         </div>
