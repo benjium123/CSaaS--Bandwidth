@@ -32,6 +32,7 @@ from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import FeatureUnavailableError, PermissionDeniedError, ValidationFailedError
 from app.models import Org, OrgDomain, OrgMembership, Role, SecurityAlert, User
+from app.models.rbac import is_privileged_permissions
 from app.services import audit as audit_svc
 from app.services import identity as identity_svc
 from app.services import login_flow
@@ -166,11 +167,6 @@ async def domain_is_trusted(
         return True
     set_org_context(session, org.id)
     return domain in await verified_domains(session, org.id)
-
-
-#: Roles carrying any of these can reshape the workspace or spend its money; the same set
-#: routes/orgs.py::_privileged_grant_action gates behind a selfie for a human grantor.
-PRIVILEGED_PERMISSIONS = frozenset({"org:billing", "members:update", "roles:write"})
 
 
 async def _role_for_new_member(session: AsyncSession, org: Org, groups: list[str]) -> Role:
@@ -321,7 +317,7 @@ async def complete_sso_login(
         # an owner to configure (and changing that mapping already needs owner + 2FA +
         # selfie), but a directory sync must never mint that power SILENTLY. Ownership is
         # refused outright in _role_for_new_member; everything else is alerted here.
-        if set(role.permissions or []) & PRIVILEGED_PERMISSIONS:
+        if is_privileged_permissions(role.permissions):
             session.add(
                 SecurityAlert(
                     id=uuid.uuid4(),

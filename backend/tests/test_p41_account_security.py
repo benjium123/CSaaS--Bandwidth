@@ -28,7 +28,7 @@ DEVICE_B = "device-b-0123456789abcdef"
 @pytest.fixture
 def sec_settings():
     return make_settings(
-        require_2fa_all_users=True,
+        require_2fa_privileged_users=True,
         credential_encryption_key=Fernet.generate_key().decode(),
         public_web_url="https://console.example.test",
         app_env="test",
@@ -186,7 +186,7 @@ def test_production_refuses_optional_2fa():
     from app.errors import ConfigurationError
 
     with pytest.raises(ConfigurationError, match="REQUIRE_2FA_ALL_USERS"):
-        make_settings(app_env="production", require_2fa_all_users=False)
+        make_settings(app_env="production", require_2fa_privileged_users=False)
 
 
 # --------------------------------------------------------------------------------------

@@ -51,7 +51,7 @@ async def app_with_agent(engine):
         livekit_api_key="lk-test-key",
         livekit_api_secret="lk-test-secret-value-padded-to-32-bytes-plus",
         # P41: this fixture predates mandatory 2FA and business verification.
-        require_2fa_all_users=False,
+        require_2fa_privileged_users=False,
         kyc_enforced=False,
         # P42: these tests authenticate with bearer tokens and weak test passwords.
         auth_bearer_compat=True,

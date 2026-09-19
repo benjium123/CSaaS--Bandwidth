@@ -268,11 +268,16 @@ async def delete(
     if row is None or row.user_id != user.id:
         raise NotFoundError("Passkey not found")
     remaining = [p for p in await list_for_user(session, user.id) if p.id != row.id]
-    if settings.require_2fa_all_users and not remaining and not user.totp_enabled:
-        raise ValidationFailedError(
-            "This is your only second factor. Add an authenticator app or another passkey "
-            "before removing it.",
-            code="last_second_factor",
-        )
+    # P41: only a PRIVILEGED account is obliged to keep a factor; ordinary staff may remove
+    # their last passkey. See services/second_factor.py.
+    if not remaining and not user.totp_enabled:
+        from app.services import second_factor
+
+        if await second_factor.requires_second_factor(session, settings, user):
+            raise ValidationFailedError(
+                "Admins and owners must keep a second factor. Add an authenticator app or "
+                "another passkey before removing this one.",
+                code="last_second_factor",
+            )
     await session.delete(row)
     user.has_passkey = bool(remaining)

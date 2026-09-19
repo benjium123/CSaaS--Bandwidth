@@ -8,6 +8,7 @@ nothing but migrations. Normalize when custom roles ship.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -64,6 +65,22 @@ PERMISSIONS: tuple[str, ...] = (
 )
 
 WILDCARD = "*"
+
+#: A role that can change who else has access, or move money. Owners hold the wildcard;
+#: admins hold members:update and roles:write; agents hold none of it. This is the SINGLE
+#: source of truth - orgs.py, scim.py and sso_provisioning.py each used to keep their own
+#: hand-synchronised copy. Import this instead of re-declaring it.
+#:
+#: NOTE: services/passkey_policy.py deliberately keeps a DIFFERENT, narrower set (no
+#: roles:write) for who must use a phishing-resistant passkey. That is a separate product
+#: decision; do not collapse the two without deciding to widen the passkey mandate.
+PRIVILEGED_PERMISSIONS = frozenset({"org:billing", "members:update", "roles:write"})
+
+
+def is_privileged_permissions(perms: Iterable[str] | None) -> bool:
+    """True for a permission set that can grant access to others or spend money."""
+    granted = set(perms or [])
+    return WILDCARD in granted or bool(granted & PRIVILEGED_PERMISSIONS)
 
 SYSTEM_ROLES: dict[str, list[str]] = {
     "owner": [WILDCARD],

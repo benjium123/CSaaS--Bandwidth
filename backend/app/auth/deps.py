@@ -145,12 +145,16 @@ async def _finish_user(
     if not user.is_active:
         raise UnauthenticatedError("Invalid or expired token")
 
-    # P41: platform-wide mandatory second factor. Same narrow exempt list as the P25 org
-    # policy - enough to enrol a factor and see/revoke your own sessions, nothing else.
-    if (
-        settings.require_2fa_all_users
-        and not user.has_second_factor
-        and not _path_exempt_from_2fa(request.url.path)
+    # P41: mandatory second factor for PRIVILEGED accounts only (owner/admin in any org);
+    # ordinary staff may enrol one but are not blocked without it. Same narrow exempt list
+    # as the P25 org policy - enough to enrol a factor and see/revoke your own sessions.
+    #
+    # Order matters: the path check is free, must_enrol short-circuits on an account that
+    # already holds a factor, and only a factorless account ever reaches the role query.
+    from app.services import second_factor
+
+    if not _path_exempt_from_2fa(request.url.path) and await second_factor.must_enrol(
+        session, settings, user
     ):
         raise PermissionDeniedError(
             "Set up an authenticator app or a passkey to continue",

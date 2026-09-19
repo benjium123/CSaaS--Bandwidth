@@ -13,8 +13,8 @@ from typing import Annotated
 import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, Depends, Request, WebSocket
-from sqlalchemy.exc import SQLAlchemyError
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import OrgContext, get_current_user, require_permission
@@ -30,6 +30,7 @@ from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import identity as identity_svc
 from app.services import inbox_access as inbox_access_svc
+from app.services import second_factor
 from app.services.inbox_access import InboxAccess
 from app.voice_plane.livekit_api import mint_access_token
 from app.voice_plane.service import CALL_ROOM_PREFIX
@@ -165,7 +166,7 @@ async def _ws_org_from_cookie(
     user = await users_repo.get_by_id(session, row.user_id)
     if user is None or not user.is_active:
         return None
-    if settings.require_2fa_all_users and not user.has_second_factor:
+    if await second_factor.must_enrol(session, settings, user):
         return None
     found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
     if found is None:
@@ -299,7 +300,7 @@ async def _ws_recheck(
     user = await users_repo.get_by_id(session, user_id)
     if user is None or not user.is_active:
         return None
-    if settings.require_2fa_all_users and not user.has_second_factor:
+    if await second_factor.must_enrol(session, settings, user):
         return None
     found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user_id)
     if found is None:
@@ -368,8 +369,9 @@ async def resolve_ws_org(
     user = await users_repo.get_by_id(session, user_id)
     if user is None or not user.is_active:
         return None
-    # P41: the same mandatory-second-factor rule the HTTP path enforces in auth/deps.py.
-    if settings.require_2fa_all_users and not user.has_second_factor:
+    # P41: the same mandatory-second-factor rule the HTTP path enforces in auth/deps.py -
+    # privileged accounts only, so an agent without a factor still gets their softphone.
+    if await second_factor.must_enrol(session, settings, user):
         return None
 
     found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)

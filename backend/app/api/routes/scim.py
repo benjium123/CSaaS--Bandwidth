@@ -31,6 +31,7 @@ from app.auth.security import hash_password
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_session
 from app.models import Org, OrgMembership, Role, ScimToken, SecurityAlert, User
+from app.models.rbac import is_privileged_permissions
 from app.rate_limit import enforce_rate_limit
 from app.services import account_security, sso_provisioning
 from app.services import audit as audit_svc
@@ -225,10 +226,6 @@ async def _deprovision(ctx: ScimContext, user: User, membership: OrgMembership, 
     )
     await ctx.session.commit()
     await account_security.mark_revoked(ctx.settings, revoked)
-
-
-#: Kept in step with sso_provisioning.PRIVILEGED_PERMISSIONS and orgs._privileged_grant_action.
-PRIVILEGED_SCIM_PERMISSIONS = frozenset({"org:billing", "members:update", "roles:write"})
 
 
 async def _default_role(ctx: ScimContext) -> Role:
@@ -566,7 +563,7 @@ async def patch_group(
                 # existing session picks the new role up immediately. Revoking would sign
                 # people out of a promotion for no security gain. (Narrowing is the case
                 # that must not linger, and that is the remove branch below.)
-                if set(role.permissions or []) & PRIVILEGED_SCIM_PERMISSIONS:
+                if is_privileged_permissions(role.permissions):
                     # P43 (audit): a directory sync may grant this - an owner configured it
                     # behind a step-up - but never silently. Same alert the new-member path
                     # opens in sso_provisioning.

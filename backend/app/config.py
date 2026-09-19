@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pydantic import SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.errors import ConfigurationError
@@ -47,6 +47,11 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",  # later-phase vars must not break boot
         case_sensitive=False,
+        # Load-bearing alongside extra="ignore": a field with a validation_alias would
+        # otherwise reject construction by field name AND have the keyword silently dropped,
+        # so a caller passing require_2fa_privileged_users=False would quietly get the
+        # default True. Fail-loud is not available here, so allow the field name.
+        populate_by_name=True,
     )
 
     # ---------------- core ----------------
@@ -95,10 +100,22 @@ class Settings(BaseSettings):
     stripe_cancel_url: str = ""
 
     # ---------------- P41 trust & safety ----------------
-    #: Every human user must hold a second factor (authenticator app or passkey) before any
-    #: route other than enrolment answers. Production refuses false (validator below);
-    #: the test suite turns it off so pre-P41 tests keep exercising plain password login.
-    require_2fa_all_users: bool = True
+    #: Master switch for the mandatory second factor. When on, a user who holds a PRIVILEGED
+    #: role (owner/admin - see models/rbac.is_privileged_permissions) in any org must hold an
+    #: authenticator app or passkey before any route other than enrolment answers. Ordinary
+    #: staff may enrol one but are not obliged to; the decision is made live from current
+    #: roles in services/second_factor.py, never stored. Production refuses false (validator
+    #: below); the test suite turns it off so pre-P41 tests keep exercising password login.
+    #:
+    #: Renamed from require_2fa_all_users when the rule stopped applying to all users. The
+    #: old REQUIRE_2FA_ALL_USERS env var is still read so a live deployment does not silently
+    #: fall back to the default on the next restart.
+    require_2fa_privileged_users: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "REQUIRE_2FA_PRIVILEGED_USERS", "REQUIRE_2FA_ALL_USERS"
+        ),
+    )
     #: Telephony (texting, calling, number orders) is refused for an org whose business
     #: verification is not approved. Tests turn it off; see services/telephony_access.py.
     kyc_enforced: bool = True
@@ -548,10 +565,12 @@ class Settings(BaseSettings):
                     "REDIS_URL is required in production - rate limits and session revocation "
                     "must be shared by every worker"
                 )
-            if not self.require_2fa_all_users:
+            if not self.require_2fa_privileged_users:
                 problems.append(
-                    "REQUIRE_2FA_ALL_USERS must be true in production - every account "
-                    "needs an authenticator app or passkey"
+                    "REQUIRE_2FA_PRIVILEGED_USERS (formerly REQUIRE_2FA_ALL_USERS) must be "
+                    "true in production - owners, admins and anyone who can change access "
+                    "or billing needs an authenticator app or passkey. Ordinary staff are "
+                    "not obliged to hold one."
                 )
             if self.loopback_carrier_enabled:
                 problems.append(

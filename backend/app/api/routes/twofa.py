@@ -36,7 +36,7 @@ from app.errors import (
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
-from app.services import account_security, lockout, login_flow, session_tokens
+from app.services import account_security, lockout, login_flow, second_factor, session_tokens
 
 router = APIRouter(prefix="/api/v1/auth/2fa", tags=["auth"])
 
@@ -242,10 +242,15 @@ async def disable(
     if not user.totp_enabled or not user.totp_secret:
         raise ValidationFailedError("Two-factor auth is not enabled")
 
-    if settings.require_2fa_all_users and not user.has_passkey:
+    # P41: only a PRIVILEGED account (owner/admin in any org) is obliged to keep a factor.
+    # Ordinary staff may turn the authenticator app off. requires_second_factor, not
+    # must_enrol: the question is the obligation, not whether a factor exists right now.
+    if not user.has_passkey and await second_factor.requires_second_factor(
+        session, settings, user
+    ):
         raise ValidationFailedError(
-            "Every account needs a second factor. Add a passkey before turning off the "
-            "authenticator app.",
+            "Admins and owners must keep a second factor. Add a passkey before turning off "
+            "the authenticator app.",
             code="last_second_factor",
         )
 

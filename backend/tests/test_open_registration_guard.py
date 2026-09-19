@@ -42,7 +42,7 @@ def _prod(**overrides) -> dict:
         "database_url": "postgresql+asyncpg://user:pass@db/csaas",
         "cors_origins": "https://app.realco.test",
         "redis_url": "redis://localhost:6379/0",
-        "require_2fa_all_users": True,
+        "require_2fa_privileged_users": True,
     }
     base.update(overrides)
     return base

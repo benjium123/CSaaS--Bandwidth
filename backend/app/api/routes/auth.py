@@ -34,7 +34,7 @@ from app.services import defaults as defaults_svc
 from app.services import identity as identity_svc
 from app.services import invites as invites_svc
 from app.services import kyc as kyc_svc
-from app.services import lockout, login_flow, passkey_policy, password_policy
+from app.services import lockout, login_flow, passkey_policy, password_policy, second_factor
 from app.services import operators as operators_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -373,11 +373,12 @@ async def login(
     token = await login_flow.complete_login(
         session, settings, request, user, second_factor=False, response=response
     )
-    # P41: with REQUIRE_2FA_ALL_USERS on, this token only reaches enrolment routes until a
-    # factor exists (auth/deps.py gate); the flag tells the console to go straight there.
+    # P41: for a PRIVILEGED account with no factor this token only reaches enrolment routes
+    # until one exists (auth/deps.py gate); the flag tells the console to go straight there.
+    # For ordinary staff it is False and the console lands them in the product as normal.
     return TokenOut(
         access_token=token,
-        requires_2fa_enrollment=settings.require_2fa_all_users,
+        requires_2fa_enrollment=await second_factor.must_enrol(session, settings, user),
     )
 
 
@@ -389,6 +390,12 @@ async def me(
     x_org_id: Annotated[str | None, Header(alias="X-Org-Id")] = None,
 ) -> MeOut:
     rows = await orgs_repo.list_memberships_for_user(session, user.id)
+    # P41: computed here, from the roles this user holds RIGHT NOW, so promoting an agent to
+    # admin flips it on at once. Reuses `rows` rather than re-querying, and is read before the
+    # loop below starts switching org context.
+    second_factor_required = not user.has_second_factor and second_factor.required_from_roles(
+        request.app.state.settings, [role for _org, role in rows]
+    )
     permissions: list[str] = []
     if x_org_id:
         try:
@@ -443,9 +450,7 @@ async def me(
         has_passkey=user.has_passkey,
         is_platform_operator=operator is not None,
         operator_role=operator.role if operator is not None else None,
-        second_factor_required=bool(
-            request.app.state.settings.require_2fa_all_users and not user.has_second_factor
-        ),
+        second_factor_required=second_factor_required,
         passkey_required=bool(
             request.app.state.settings.require_passkey_for_privileged
             and user.passkey_required_since is not None

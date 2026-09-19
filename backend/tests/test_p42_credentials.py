@@ -32,7 +32,7 @@ NEW_PASSWORD = "violet-harbour-lantern-92"
 @pytest.fixture
 def p42_settings():
     return make_settings(
-        require_2fa_all_users=True,
+        require_2fa_privileged_users=True,
         credential_encryption_key=Fernet.generate_key().decode(),
         public_web_url="https://console.example.test",
         password_min_length=12,
