@@ -1,0 +1,339 @@
+/* The verification journey, in the console's language.
+ *
+ * Only what AuthShell does not already own. Every colour is a token from authTheme.css so
+ * there is one palette to change, and every value here is scoped under `.auth-surface` so
+ * nothing leaks into the console's own theme.
+ *
+ * The one motif: a rail running down the left of the step list, with each step's
+ * node sitting on it. It is drawn with a gradient on the list rather than a border on each
+ * item, so the line is continuous through the gaps and reads as one run of wire.
+ */
+
+.auth-surface .ob-wrap {
+  width: 100%;
+  max-width: 34rem;
+}
+
+/* Head ---------------------------------------------------------------------- */
+.auth-surface .ob-title {
+  font-family: "Onest Variable", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.05;
+  font-size: 1.75rem;
+  margin-top: 0.625rem;
+  color: hsl(var(--ex-bone));
+}
+
+.auth-surface .ob-lede {
+  margin-top: 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: hsl(var(--ex-bone-dim));
+  max-width: 44ch;
+}
+
+.auth-surface .ob-head {
+  margin-bottom: 1.75rem;
+}
+
+/* The reviewer's request ----------------------------------------------------- */
+.auth-surface .ob-request {
+  border-left: 2px solid hsl(var(--ex-copper));
+  background: hsl(var(--ex-copper) / 0.08);
+  padding: 0.875rem 1rem;
+  border-radius: 0 var(--cx-r-md, 14px) var(--cx-r-md, 14px) 0;
+  margin-bottom: 1.5rem;
+}
+
+.auth-surface .ob-request-body {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: hsl(var(--ex-bone));
+  white-space: pre-wrap;
+}
+
+/* The rail ------------------------------------------------------------------- */
+.auth-surface .ob-steps {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* One continuous filament behind the nodes. Stops short at both ends so it reads as a
+ * run of wire between the first and last step rather than a full-height border. */
+.auth-surface .ob-steps::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 1.625rem;
+  top: 1.75rem;
+  bottom: 1.75rem;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    hsl(var(--ex-copper-line)) 8%,
+    hsl(var(--ex-copper-line)) 92%,
+    transparent
+  );
+}
+
+.auth-surface .ob-step {
+  position: relative;
+  z-index: 0;
+  border: 1px solid transparent;
+  border-radius: var(--cx-r-md, 14px);
+  transition: border-color 200ms ease, background-color 200ms ease;
+}
+
+.auth-surface .ob-step.is-open {
+  border-color: hsl(var(--ex-copper-line) / 0.85);
+  background: linear-gradient(180deg, hsl(var(--ex-ink-raise) / 0.9), hsl(var(--ex-ink) / 0.6));
+}
+
+.auth-surface .ob-step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.875rem;
+  width: 100%;
+  padding: 0.75rem 0.875rem;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  border-radius: var(--cx-r-md, 14px);
+}
+
+.auth-surface .ob-step-head:focus-visible {
+  outline: 2px solid hsl(var(--ex-copper));
+  outline-offset: 2px;
+}
+
+/* The node sits ON the rail, so it needs the surface colour behind it to break the line. */
+.auth-surface .ob-node {
+  /* Above the rail, with an opaque fill, so each node punches a hole in the wire. */
+  position: relative;
+  z-index: 2;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-top: 0.0625rem;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--ex-copper-line));
+  background: hsl(var(--ex-ink));
+  font-variant-numeric: tabular-nums;
+  font-size: 0.5625rem;
+  letter-spacing: 0.04em;
+  color: hsl(var(--ex-bone-dim));
+  transition: color 240ms ease, border-color 240ms ease, box-shadow 240ms ease;
+}
+
+.auth-surface .ob-step.is-done .ob-node {
+  color: hsl(var(--ex-verdigris));
+  border-color: hsl(var(--ex-verdigris) / 0.7);
+  box-shadow: 0 0 0 3px hsl(var(--ex-verdigris) / 0.12);
+  font-size: 0.75rem;
+}
+/* Waiting: deliberately NOT a treatment of its own. The green on this page means verified,
+   and a step nobody has looked at yet must not borrow any part of that - so it keeps the
+   plain numeral and only dims, which is what "not applicable yet" looks like. */
+.auth-surface .ob-step.is-waiting .ob-node {
+  color: hsl(var(--ex-bone-dim) / 0.7);
+  border-color: hsl(var(--ex-copper-line) / 0.6);
+}
+
+.auth-surface .ob-step-text {
+  min-width: 0;
+  flex: 1;
+  display: block;
+}
+
+.auth-surface .ob-step-title {
+  display: block;
+  font-size: 0.9375rem;
+  line-height: 1.3;
+  color: hsl(var(--ex-bone));
+}
+
+.auth-surface .ob-step-blurb {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: hsl(var(--ex-bone-dim));
+}
+
+.auth-surface .ob-step-tag {
+  flex: none;
+  margin-top: 0.1875rem;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.5625rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--ex-copper));
+  white-space: nowrap;
+}
+
+.auth-surface .ob-step-tag.is-done {
+  color: hsl(var(--ex-verdigris));
+}
+.auth-surface .ob-step-tag.is-waiting {
+  /* Bone, not the accent and certainly not the green: this reads as an aside, not a verdict. */
+  color: hsl(var(--ex-bone-dim) / 0.75);
+  letter-spacing: 0.08em;
+}
+.auth-surface .ob-waiting-note {
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: hsl(var(--ex-bone-dim));
+}
+
+/* Body ---------------------------------------------------------------------- */
+.auth-surface .ob-step-body {
+  padding: 0 0.875rem 1rem 3.25rem;
+  animation: ob-open 320ms cubic-bezier(0.22, 0.85, 0.25, 1) both;
+}
+
+@keyframes ob-open {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.auth-surface .ob-todo {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.auth-surface .ob-todo li {
+  position: relative;
+  padding-left: 0.875rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: hsl(var(--ex-bone-dim));
+}
+
+.auth-surface .ob-todo li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.5rem;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: hsl(var(--ex-copper) / 0.85);
+}
+
+.auth-surface .ob-done-note,
+.auth-surface .ob-plain {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: hsl(var(--ex-bone-dim));
+}
+
+/* Submit -------------------------------------------------------------------- */
+.auth-surface .ob-submit {
+  margin-top: 1.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid hsl(var(--ex-copper-line) / 0.5);
+}
+
+.auth-surface .ob-submit-copy {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: hsl(var(--ex-bone-dim));
+  margin-bottom: 0.875rem;
+}
+
+.auth-surface .ob-count {
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--ex-copper));
+}
+
+/* Outcomes ------------------------------------------------------------------ */
+.auth-surface .ob-limits ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.auth-surface .ob-limits li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.8125rem;
+  color: hsl(var(--ex-bone-dim));
+  border-bottom: 1px dotted hsl(var(--ex-copper-line) / 0.6);
+  padding-bottom: 0.3125rem;
+}
+
+.auth-surface .ob-limits li b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-size: 0.75rem;
+  color: hsl(var(--ex-bone));
+}
+
+.auth-surface .ob-quote {
+  border-left: 2px solid hsl(var(--ex-danger) / 0.8);
+  background: hsl(var(--ex-danger) / 0.07);
+  padding: 0.875rem 1rem;
+  border-radius: 0 var(--cx-r-md, 14px) var(--cx-r-md, 14px) 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: hsl(var(--ex-bone));
+  white-space: pre-wrap;
+}
+
+/* Loading ------------------------------------------------------------------- */
+.auth-surface .ob-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.auth-surface .ob-skeleton-bar {
+  height: 0.75rem;
+  border-radius: var(--cx-r-pill, 999px);
+  background: linear-gradient(
+    90deg,
+    hsl(var(--ex-ink-high)),
+    hsl(var(--ex-ink-raise)),
+    hsl(var(--ex-ink-high))
+  );
+  background-size: 200% 100%;
+  animation: ob-sheen 1.4s ease-in-out infinite;
+}
+
+@keyframes ob-sheen {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-surface .ob-step-body,
+  .auth-surface .ob-skeleton-bar {
+    animation: none;
+  }
+}

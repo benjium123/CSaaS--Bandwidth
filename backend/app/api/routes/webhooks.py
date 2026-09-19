@@ -26,14 +26,13 @@ from app.providers import registry_org
 from app.providers.bandwidth import webhooks as bw_webhooks
 from app.providers.telnyx.voice import TelnyxVoiceCommandError
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
-from app.services import assistant_dispatch
+from app.services import assistant_dispatch, credits, didit_client, stripe_client
 from app.services import calling_settings as calling_settings_svc
 from app.services import calls as calls_svc
-from app.services import credits
 from app.services import credentials as credential_svc
 from app.services import messaging as svc
 from app.services import routing_exec as routing_exec_svc
-from app.services import stripe_client
+from app.services import subscriptions as subscriptions_svc
 from app.services import supervisor as supervisor_svc
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
@@ -344,7 +343,11 @@ def _outbound_answer_commands(call, org, *, needs_pause: bool) -> list[VoiceComm
     needs the Pause.
     """
     commands: list[VoiceCommand] = []
-    if org is not None and calling_settings_svc.announcement_enabled(org):
+    # P43: a call recorded for safety monitoring ALWAYS tells the other side first, even
+    # when the business turned its own announcement off (two-party consent states).
+    if org is not None and (
+        calling_settings_svc.announcement_enabled(org) or (call.extra or {}).get("monitor")
+    ):
         commands.append(Speak(text=calling_settings_svc.announcement_text_for(org)))
     if call.extra.get("record"):
         commands.append(StartRecording())
@@ -651,7 +654,73 @@ async def livekit_webhook(
     except Exception:  # noqa: BLE001 - the ack must not depend on a dispatch
         log.exception("assistant_dispatch_hook_failed", event_type=event.get("event"))
 
+    # P43: monitored softphone calls get the silent call-monitor listener.
+    try:
+        from app.services import monitor_calls
+
+        await monitor_calls.on_livekit_event(
+            session, request.app.state.livekit, settings, event
+        )
+    except Exception:  # noqa: BLE001 - monitoring must never fail the webhook ack
+        log.exception("call_monitor_hook_failed", event_type=event.get("event"))
+
     return JSONResponse(status_code=200, content={"status": "ok"})
+
+
+@router.post("/didit")
+async def didit_webhook(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """P44: Didit identity verification results.
+
+    Authenticity, freshness and idempotency are all settled before any KYC state moves:
+    didit_client.verify_webhook proves the payload (not just the envelope) came from Didit
+    and is inside the replay window, and the event ledger below makes a retried delivery a
+    no-op. Didit retries at ~1 and ~4 minutes on 5xx/404/timeout and then stops, so a
+    handler that raises leaves no ledger row and the retry is processed normally.
+    """
+    payload_bytes = await request.body()
+    payload = didit_client.verify_webhook(
+        request.app.state.settings, payload_bytes, request.headers
+    )
+
+    event_id = payload.get("event_id")
+    if event_id:
+        from datetime import datetime, timezone
+
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models import IdentityWebhookEvent
+
+        ledger_id = f"didit:{event_id}"[:320]
+        if await session.get(IdentityWebhookEvent, ledger_id) is not None:
+            return Response(status_code=204)
+        try:
+            async with session.begin_nested():
+                session.add(
+                    IdentityWebhookEvent(
+                        id=ledger_id,
+                        provider="didit",
+                        event_type=str(payload.get("webhook_type") or "")[:128] or None,
+                        received_at=datetime.now(timezone.utc),
+                    )
+                )
+                await session.flush()
+        except IntegrityError:
+            return Response(status_code=204)
+    else:
+        # A payload with no event_id cannot be deduplicated, so it is processed without a
+        # ledger row rather than dropped - exactly what the Stripe endpoint does. The
+        # handlers below are themselves write-idempotent (a verified person stays
+        # verified), which is what keeps that safe.
+        log.warning("didit_webhook_without_event_id", session=str(payload.get("session_id")))
+
+    from app.services import kyc as kyc_svc
+
+    await kyc_svc.handle_didit_event(session, request.app.state.settings, payload)
+    await session.commit()
+    return Response(status_code=204)
 
 
 @router.post("/stripe")
@@ -666,13 +735,65 @@ async def stripe_webhook(
         )
 
     payload = await request.body()
-    event = stripe_client.verify_webhook(
+    event, secret_source = stripe_client.verify_webhook_any(
         request.app.state.settings,
         payload,
         stripe_signature,
     )
 
-    if event.get("type") != "payment_intent.succeeded":
+    # P41: durable replay protection. The ledger row commits with whatever the event
+    # changed, so a failed handler leaves no row and Stripe's retry is processed normally.
+    event_id = event.get("id")
+    event_type = str(event.get("type") or "")
+    # P43 (audit): the Identity endpoint's secret signs Identity events and nothing else.
+    # The billing secret still signs anything, because with no separate Identity endpoint
+    # configured Stripe legitimately delivers identity.* to the main one - but the reverse
+    # (an Identity secret vouching for a refund or a payment) is never legitimate.
+    if secret_source == "identity" and not event_type.startswith("identity."):
+        log.warning("stripe_webhook_secret_mismatch", event_type=event_type)
+        raise UnauthenticatedError(
+            "We could not verify that this came from our payment provider."
+        )
+    if event_id:
+        from datetime import datetime, timezone
+
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models import StripeEvent
+
+        if await session.get(StripeEvent, event_id) is not None:
+            return Response(status_code=204)
+        try:
+            async with session.begin_nested():
+                session.add(
+                    StripeEvent(
+                        id=str(event_id)[:255],
+                        type=event_type[:128],
+                        received_at=datetime.now(timezone.utc),
+                    )
+                )
+                await session.flush()
+        except IntegrityError:
+            return Response(status_code=204)
+
+    if event_type.startswith("identity.verification_session."):
+        from app.services import kyc as kyc_svc
+
+        await kyc_svc.handle_identity_event(session, request.app.state.settings, event)
+        await session.commit()
+        return Response(status_code=204)
+
+    if event_type in subscriptions_svc.HANDLED_EVENT_TYPES:
+        # Replay protection is the StripeEvent ledger above - a second delivery of the same
+        # event id already returned 204 and never reached here, so the handler itself does
+        # not need (and must not add) a second idempotency key.
+        await subscriptions_svc.handle_event(session, event)
+        await session.commit()
+        return Response(status_code=204)
+
+    if event_type != "payment_intent.succeeded":
+        if event_id:
+            await session.commit()
         return Response(status_code=204)
 
     intent = event.get("data", {}).get("object", {})

@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.compliance import gate, registration
+from app.compliance import service as compliance_svc
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import (
     ComplianceBlockedError,
@@ -52,7 +53,7 @@ from app.providers.domain import (
     UnknownEvent,
 )
 from app.providers.segments import estimate
-from app.services import contact_visibility, messaging_errors, telephony_billing
+from app.services import contact_visibility, messaging_errors, telephony_access, telephony_billing
 from app.services import credentials as credential_svc
 from app.services import links as links_svc
 from app.services.contacts import resolve_or_create_contact
@@ -280,6 +281,8 @@ async def send_message(
         _check_media_size(carrier, assets)
 
     est = estimate(body)
+    # P41: business verification / suspension / daily limits, before the credit gate.
+    await telephony_access.require_telephony_allowed(session, org_id, "sms")
     # Prepaid hard gate: refuse before anything is written or sent. Priced on the
     # carrier the plan will try first (the dispatch-time re-check covers failover).
     await telephony_billing.require_sms_credit(
@@ -329,6 +332,13 @@ async def send_message(
         thread_id=thread.id,
         direction="outbound",
         status="queued",
+        # P43: only the platform's own standard STOP/START/HELP replies skip the AI text
+        # guard; a reply text the business edited is screened like any other text.
+        moderation_state=(
+            "exempt"
+            if exemption and await compliance_svc.is_standard_auto_reply(session, org_id, body)
+            else None
+        ),
         from_e164=from_e164,
         to_e164=to_e164,
         body=body,
@@ -344,6 +354,21 @@ async def send_message(
     # P28 link tracking. Done AFTER the row is flushed, never before: short_links.
     # message_id is a real foreign key, and creating the links first would let an
     # autoflush insert them while the message they point at does not exist yet.
+    # P43: tracked links replace every URL with our own short link, which would hide the
+    # real destination from the safety check at dispatch. Screen the ORIGINAL text first;
+    # only a text that passes gets its links tracked (a held/blocked one keeps its real links
+    # so the second look and the operator see them).
+    if track_links and public_web_url and (message.body or "").strip():
+        from app.services import monitor_text
+
+        monitor_settings = telephony_access._settings_of(session)
+        if monitor_settings.monitor_enforced and message.moderation_state is None:
+            pre_screen = await monitor_text.screen(session, monitor_settings, org_id, message)
+            set_org_context(session, org_id)
+            if pre_screen.action == "allow":
+                message.moderation_state = "allowed"
+            else:
+                track_links = False
     if track_links and public_web_url and (message.body or "").strip():
         session.add(message)
         await session.flush()
@@ -524,6 +549,10 @@ async def dispatch_with_failover(
         await session.commit()
 
         last = await _dispatch_to_carrier(session, org_id, carrier, last, media_urls)
+        # P43: a text held or blocked by the safety check (or refused by an account gate)
+        # is not a carrier failure - don't try other carriers or trip their breakers.
+        if last.status != "accepted" and last.moderation_state in ("held", "blocked"):
+            return last
         if last.status == "accepted":
             breaker.record_success()
             # 2.5: a failover win that changed from_e164 must repoint the conversation to
@@ -569,6 +598,35 @@ async def _dispatch_to_carrier(
     # campaign messages reach here without passing send_message's early check, and the
     # balance may have run out since. Refused as data (like a carrier rejection),
     # without ever calling the carrier.
+    # P41: verification / suspension re-checked at the moment of sending - an account
+    # suspended while messages sat scheduled or held must not send them.
+    refused = await telephony_access.telephony_allowed(session, org_id, "sms_dispatch")
+    if refused is not None:
+        set_org_context(session, org_id)
+        message = await session.get(Message, message.id)
+        message.last_carrier_error = None
+        message.status = "rejected"
+        message.hold_until = None
+        message.error_code = refused
+        message.error_detail = "Account not allowed to send"
+        message.failure_reason_public = telephony_access.REFUSAL_PUBLIC_TEXT.get(
+            refused, "Not sent - this account cannot text right now."
+        )
+        await session.commit()
+        return message
+    # P43: the AI text guard, after the account-level gates and before any carrier.
+    from app.services import monitor_text
+
+    monitor_settings = telephony_access._settings_of(session)
+    screening = await monitor_text.screen(session, monitor_settings, org_id, message)
+    set_org_context(session, org_id)
+    if screening.action in ("hold", "block"):
+        return await monitor_text.apply_hold_or_block(
+            session, monitor_settings, org_id, message, screening
+        )
+    if message.moderation_state is None and monitor_settings.monitor_enforced:
+        message = await session.get(Message, message.id)
+        message.moderation_state = "allowed"
     if not await telephony_billing.can_send_sms(session, org_id, message):
         set_org_context(session, org_id)
         message = await session.get(Message, message.id)
@@ -1321,6 +1379,8 @@ async def recover_stale_queued(
             Message.status == "queued",
             Message.hold_until.is_(None),
             Message.created_at <= bind_moment - timedelta(minutes=STALE_QUEUED_MINUTES),
+            # P43: a text held by the safety check is waiting on purpose, not crashed.
+            sa.or_(Message.moderation_state.is_(None), Message.moderation_state != "held"),
         )
         .limit(SWEEPER_BATCH_LIMIT)
         .execution_options(**{ALLOW_UNSCOPED_KEY: True})

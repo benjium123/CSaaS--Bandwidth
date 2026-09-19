@@ -71,38 +71,47 @@ export function BillingLedger() {
 
       {hasRows ? (
         <>
-          <table className="w-full text-sm">
-            <caption className="sr-only">Activity</caption>
-            <thead>
-              <tr>
-                <th className="text-left font-medium">When</th>
-                <th className="text-left font-medium">What happened</th>
-                <th className="text-left font-medium">Note</th>
-                <th className="text-left font-medium">Amount</th>
-                <th className="text-left font-medium">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((entry) => (
-                <tr key={entry.id}>
-                  <td>{new Date(entry.created_at).toLocaleString()}</td>
-                  <td>{entryTypeLabel(entry.entry_type)}</td>
-                  <td>{entry.note ?? "—"}</td>
-                  <td
-                    className={entry.amount_micros < 0 ? "text-destructive" : undefined}
-                  >
-                    {formatCredits(entry.amount_micros)}
-                  </td>
-                  <td>{formatCredits(entry.balance_after_micros)}</td>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-sm">
+              <caption className="sr-only">Activity</caption>
+              <thead>
+                <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+                  <th className="px-3 py-2.5 font-medium">When</th>
+                  <th className="px-3 py-2.5 font-medium">What happened</th>
+                  <th className="px-3 py-2.5 font-medium">Note</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Amount</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Balance</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {rows.map((entry) => (
+                  <tr key={entry.id}>
+                    <td className="px-3 py-2.5">{new Date(entry.created_at).toLocaleString()}</td>
+                    <td className="px-3 py-2.5">{entryTypeLabel(entry.entry_type)}</td>
+                    <td className="px-3 py-2.5">{entry.note ?? "—"}</td>
+                    <td
+                      className={
+                        entry.amount_micros < 0
+                          ? "px-3 py-2.5 text-right text-destructive"
+                          : "px-3 py-2.5 text-right"
+                      }
+                    >
+                      {formatCredits(entry.amount_micros)}
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      {formatCredits(entry.balance_after_micros)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {nextCursor != null ? (
             <Button
               type="button"
               variant="outline"
+              className="mt-3"
               disabled={ledgerQuery.isFetching}
               onClick={() => setCursor(nextCursor)}
             >

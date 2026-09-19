@@ -119,3 +119,21 @@ def test_narrower_window_is_respected():
     assert not evaluate(
         "+12145550100", window_start="09:00", window_end="17:00", now=now
     ).allowed
+
+
+def test_uk_recipients_use_uk_time():
+    """P43: a UK number is checked against London time, not every US zone."""
+    assert resolve_zones("+442079460100") == ("Europe/London",)
+    assert "Europe/London" in resolve_zones("+447911123456")
+    # 13:00 in London (BST) - a normal daytime reminder goes straight out
+    midday = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+    assert evaluate("+442079460100", now=midday).allowed
+    # 22:30 in London - held until 08:00 London the next morning
+    late = datetime(2026, 9, 17, 21, 30, tzinfo=timezone.utc)
+    result = evaluate("+442079460100", now=late)
+    assert not result.allowed
+    assert result.not_before == datetime(2026, 9, 18, 7, 0, tzinfo=timezone.utc)
+
+
+def test_unparseable_non_us_number_stays_conservative():
+    assert resolve_zones("+999123") == ALL_US_ZONES

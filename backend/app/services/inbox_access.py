@@ -21,10 +21,13 @@ import uuid
 from dataclasses import dataclass
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Department, DepartmentMember, Inbox, InboxGrant, OrgNumber
 from app.models.rbac import WILDCARD
+
+log = structlog.get_logger("inbox_access")
 
 
 @dataclass(frozen=True)
@@ -107,8 +110,31 @@ async def resolve_access(
     for role, e164 in rows:
         if role == "member":
             member.add(e164)
-        else:
+        elif role == "viewer":
             viewer.add(e164)
+        else:
+            # An unrecognised grant role grants NOTHING, loudly.
+            #
+            # This branch used to be the `else` for "viewer", which meant any value that
+            # was not exactly "member" silently resolved to read-only. Today that is only
+            # reachable by writing the row outside routes/inboxes.py (which validates
+            # against INBOX_GRANT_ROLES) - but the trap is the next person to ADD a role.
+            # Put "manager" in INBOX_GRANT_ROLES and they would land here: able to see a
+            # line and not send on it, with no error anywhere. That gets reported as a UI
+            # bug and hunted for in the frontend.
+            #
+            # `role` is String(8) with no CHECK constraint and no enum, so nothing else in
+            # the stack catches a typo either - "membar" would have been read-only in
+            # silence. Denying rather than raising keeps one bad row from 500-ing every
+            # gated request for that user, and the log is what makes it findable.
+            log.warning(
+                "inbox_grant.unknown_role",
+                role=role,
+                e164=e164,
+                actor_user_id=str(actor_user_id),
+                detail="grant ignored; add the role to resolve_access when adding it to "
+                "INBOX_GRANT_ROLES",
+            )
     # member beats viewer on conflict - grants only ever ADD capability.
     viewer -= member
 

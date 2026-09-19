@@ -8,6 +8,7 @@ GET /api/v1/routing/carriers). Cheap probes, cached in-process for CACHE_SECONDS
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 
 import httpx
@@ -244,9 +245,13 @@ async def test_status_reraises_when_there_is_no_stale_cache_to_fall_back_on(
 # ==================================================================================
 # Redis probe: any RESP reply (success OR error) means reachable.
 # ==================================================================================
-async def test_redis_probe_treats_a_resp_error_reply_as_up():
+async def test_a_resp_error_reply_proves_the_server_is_reachable():
     """A redis that demands auth we did not send answers "-NOAUTH ..." - that is a real,
-    reachable redis, not a down one. Only a connection failure/timeout is down."""
+    reachable redis, not a down one. Only a connection failure/timeout means nothing is there.
+
+    This used to assert the STATUS was "up", which is how a Redis the app cannot authenticate
+    to reported healthy while every Redis-backed feature silently ran per-process. Reachability
+    is still exactly what this proves; it now feeds `degraded` rather than `up`."""
 
     async def handle(reader, writer):
         await reader.readline()
@@ -257,11 +262,11 @@ async def test_redis_probe_treats_a_resp_error_reply_as_up():
     server = await asyncio.start_server(handle, "127.0.0.1", 0)
     host, port = server.sockets[0].getsockname()[:2]
     async with server:
-        result = await status_routes._probe_redis(f"redis://{host}:{port}/0")
-    assert result == "up"
+        result = await status_routes._redis_reachable(f"redis://{host}:{port}/0")
+    assert result is True
 
 
-async def test_redis_probe_treats_pong_as_up():
+async def test_a_pong_reply_proves_the_server_is_reachable():
     async def handle(reader, writer):
         await reader.readline()
         writer.write(b"+PONG\r\n")
@@ -271,11 +276,86 @@ async def test_redis_probe_treats_pong_as_up():
     server = await asyncio.start_server(handle, "127.0.0.1", 0)
     host, port = server.sockets[0].getsockname()[:2]
     async with server:
-        result = await status_routes._probe_redis(f"redis://{host}:{port}/0")
-    assert result == "up"
+        result = await status_routes._redis_reachable(f"redis://{host}:{port}/0")
+    assert result is True
 
 
-async def test_redis_probe_is_down_on_connection_failure():
+async def test_nothing_listening_is_not_reachable():
     # Nothing listening on this port - a connection attempt must fail fast, not hang.
-    result = await status_routes._probe_redis("redis://127.0.0.1:1/0")
-    assert result == "down"
+    result = await status_routes._redis_reachable("redis://127.0.0.1:1/0")
+    assert result is False
+
+
+# ==================================================================================
+# Redis: the probe answers "can this app use it", not "is a port open"
+#
+# The old probe was a raw TCP PING that counted a `-NOAUTH` reply as "up", on the reasoning
+# that any RESP reply proves the server is speaking. That was written when nothing in the app
+# talked to Redis. Session revocation, rate limits, OIDC login state and SAML assertion replay
+# protection all go through the client now, and every one of them swallows its exceptions and
+# falls back to a PER-PROCESS store - so the exact failure the old probe called healthy is the
+# one that silently un-shares the platform's shared state.
+# ==================================================================================
+async def _resp_error_server(reply: bytes = b"-NOAUTH Authentication required.\r\n"):
+    """A socket that speaks RESP and refuses everything: reachable, unusable."""
+
+    async def handle(reader, writer):
+        try:
+            while await reader.read(1024):
+                writer.write(reply)
+                await writer.drain()
+        except Exception:
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1]
+
+
+async def _status_of(settings) -> dict:
+    application = create_app(settings)
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        return (await c.get("/status")).json()
+
+
+async def test_status_reports_redis_degraded_when_the_server_refuses_this_app(engine):
+    """A running Redis that rejects our credentials is the dangerous state: every Redis-backed
+    feature quietly falls back to per-process, and nothing else notices. It must not read
+    as "up" - the whole point of the failure is that the server IS answering."""
+    server, port = await _resp_error_server()
+    try:
+        body = await _status_of(make_settings(redis_url=f"redis://127.0.0.1:{port}/0"))
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert body["components"]["redis"] == "degraded"
+    assert body["status"] == "degraded"
+
+
+async def test_status_reports_redis_down_when_nothing_is_listening(engine):
+    """Separate from "degraded" on purpose: a dead server and a server we cannot authenticate
+    to need different fixes, and an operator reading this at 2am should not have to guess."""
+    # Bind and immediately release, so the port is almost certainly free and definitely not
+    # a redis: a hardcoded port could collide with something real on the host.
+    probe = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    port = probe.sockets[0].getsockname()[1]
+    probe.close()
+    await probe.wait_closed()
+
+    body = await _status_of(make_settings(redis_url=f"redis://127.0.0.1:{port}/0"))
+    assert body["components"]["redis"] == "down"
+
+
+async def test_the_redis_client_library_is_actually_installed():
+    """`_redis_client` returns None on ImportError, and every caller treats None as "use the
+    in-process store". An image built without the package therefore passes production boot
+    validation (REDIS_URL is set), runs, and serves - on per-process session revocation, rate
+    limits and SAML replay state. It was declared only in requirements.lock, which the
+    Dockerfile prefers but explicitly falls back FROM when no lock has been generated."""
+    from app.services.session_cache import _redis_client
+
+    assert _redis_client(make_settings(redis_url="redis://127.0.0.1:6379/0")) is not None

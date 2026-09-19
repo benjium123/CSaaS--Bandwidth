@@ -19,6 +19,14 @@ class Org(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     slug: Mapped[str] = mapped_column(sa.String(63), nullable=False, unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    #: P42: stricter-than-platform session timeouts for this workspace (NULL = platform).
+    session_idle_minutes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    session_max_hours: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    #: P42: accept this workspace's SSO sessions as phishing-resistant for privileged roles
+    #: (the identity provider enforces MFA).
+    trust_idp_mfa: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
     # P22: who may see a contact record. 'everyone' (default; pre-P22 behaviour),
     # 'department' (own + my departments' contacts), 'owner' (own + teams I lead).
     # contacts:read_all bypasses all three. Enforced by services/contact_visibility.py.
@@ -66,9 +74,12 @@ class Org(Base, TimestampMixin):
     calling_settings: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
     # Prepaid telephony hard gate (migration 0041). When true, outbound SMS/MMS, outbound
     # calls and number orders draw from the prepaid credit balance and are refused when
-    # it cannot cover them; inbound traffic and number rental are charged.
+    # it cannot cover them; inbound traffic and number rental are charged. ON by default
+    # since migration 0055 (pay-as-you-go credits are the money gate); platform ops can
+    # switch a specific org off, and repositories/orgs.create_org_with_owner is what
+    # stamps telephony_prepaid_since for a new org.
     telephony_prepaid: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+        sa.Boolean, nullable=False, default=True, server_default=sa.true()
     )
     #: When the gate was last switched on - calls that started before it are never billed.
     telephony_prepaid_since: Mapped[datetime | None] = mapped_column(

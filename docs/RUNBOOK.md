@@ -399,10 +399,15 @@ Checks:
 - Text the 682 number from a phone → thread appears in the inbox within seconds; `docker logs csaas-api-1` shows a verified webhook, no `signature_mismatch`.
 - Send from the 682 number to the operator's phone → received, and shows **delivered** within ~10 s, not just sent.
 - Repeat both for 469.
-- Call the 682 number → the "not yet configured for inbound calls" announcement, webhook verified. Expected.
 
-### What calls do on these numbers today
-A call arriving on either SignalWire number gets the platform's existing "not yet configured for inbound calls" announcement and hangs up (`routes/webhooks.py:130-134`). SignalWire has no trunk into LiveKit, and whether it can place outbound calls from an external SIP server is undocumented; the trunk spike is P40. Setting the voice webhook now is still right: the call is logged and verified.
+### Calling on these numbers (P40)
+Calls go SignalWire <-> livekit-sip <-> LiveKit rooms, same as Telnyx: the softphone, the dialer and the AI assistant all work from a signalwire number, and the call is billed at the signalwire rate card. A call from a number on a carrier with no trunk still uses the Telnyx trunk, as before. Setup: `deploy/livekit/README.md` step 5c.
+
+Checks after setup:
+- Softphone -> call your mobile FROM +1 682 423 1003 -> it rings, the caller id reads 682 423 1003, audio both ways. `docker logs csaas-api-1` has no `livekit_dial` error; the Calls page shows carrier **signalwire**.
+- Call the 682 number from a mobile -> the call rings in the console (`lk room list` shows a `call-` room). Answer it; audio both ways.
+- Repeat for 469.
+- Outbound fails with 401/407 in `docker logs csaas-livekit-sip-1` -> wrong trunk username/password. Inbound never arrives -> the number's call handler is not the inbound SWML script, or UDP 5060 is blocked.
 
 Rollback: unset the four `SIGNALWIRE_*` values and redeploy. Delete the numbers from the Numbers page. The code changes are additive and inert without credentials.
 
@@ -444,6 +449,183 @@ A warn or critical raises ONE in-app notification per day to the workspace's own
 The rollup runs hourly from the sweeper for today and yesterday, so a card can be up to an hour behind the first texts. On a sqlite dev box the sweeper has to be running or no rows are written.
 
 ---
+## Trust & safety go-live (P41)
+
+Order matters - do these before switching enforcement on.
+
+1. **Stripe Identity.** In the Stripe dashboard enable Identity. Add the webhook events
+   `identity.verification_session.verified`, `.requires_input`, `.processing`, `.canceled`
+   to the existing endpoint `https://<api>/api/v1/webhooks/stripe` (or a separate endpoint,
+   then set `STRIPE_IDENTITY_WEBHOOK_SECRET`). `STRIPE_SECRET_KEY` needs Identity read access
+   with verified outputs.
+2. **Keys.** `CREDENTIALS_MASTER_KEY` must be set (business documents are encrypted with it).
+   Optional: `COMPANIES_HOUSE_API_KEY` (free, UK registry), `GEOLITE2_DIR` (free MaxMind
+   GeoLite2 Country + ASN files), `SMTP_HOST` + `SMTP_FROM` (alert and decision emails).
+3. **Deploy.** `alembic upgrade head` applies 0044 + 0045. 0045 marks every existing org
+   `approved` (reason `grandfathered`), so live traffic keeps flowing.
+4. **Operators.** Each reviewer signs in once, adds a passkey or authenticator app, then:
+   `docker compose exec api python scripts/make_operator.py grant you@company.com admin`
+   (`reviewer` for people who only review). The console is at `/ops` in the web app.
+5. **First sweep.** The sweeper downloads the sanctions lists and Tor exit list within its
+   first pass after start (needs outbound HTTPS). Until then the sanctions check answers
+   `error` and approvals are blocked - that is intended.
+6. **Enforce.** `REQUIRE_2FA_ALL_USERS=true` and `KYC_ENFORCED=true` (both default on).
+   Users without a second factor are sent to "Secure your account" on next sign-in.
+7. **Smoke test.** Create a test workspace, complete verification with Stripe test-mode
+   documents, approve it from `/ops`, send one text, then suspend it and confirm the owner's
+   session ends and texting answers `account_suspended`.
+
+### Reviewing an application
+- Queue: `/ops` > Review queue. High-risk applications show why.
+- US and Canada registry: look the business up (Secretary of State / Corporations Canada),
+  paste the page link, press "Registry: confirmed" or "not found".
+- High risk: hold a short video call with the owner holding their ID, then "Record video call done".
+- Approve is blocked until: every owner's ID is verified, sanctions and ban-list checks
+  pass, registry is recorded, and (high risk) the video call is recorded.
+- Reject with "also ban identifiers" puts the company number, domains, emails, card
+  fingerprints, devices and verified people on the ban list.
+
+### Suspending
+`/ops` > application > reason > "Suspend account now" (admin operators; asks for a fresh
+passkey/authenticator check). Ends sessions, revokes API keys, cancels scheduled texts,
+pauses campaigns, hangs up live calls, emails the owners.
+
+## Enterprise auth go-live (P42)
+
+1. **Redis.** Production refuses to start without `REDIS_URL`. Rate limits, SSO state, the
+   SAML replay store and the session-revocation cache live there, shared by every worker -
+   and LiveKit keeps its SIP trunk and dispatch-rule state in the same instance, so calling
+   breaks without it too. Every one of those falls back to a PER-PROCESS store when Redis is
+   unreachable, silently and by design (a cache outage must not lock users out). `--workers 1`
+   in the image hides the consequences today. With more than one worker the two that bite are
+   the rate limiter (its ceiling multiplies by the worker count, and that number IS the control)
+   and session revocation (a revoked session stays valid on every other worker for up to 60s);
+   SSO logins fail rather than becoming unsafe, because the callback lands on a worker that
+   never issued the state. Check `/status` after deploying, not just that the container is up - see
+   **`redis: degraded`** under Incident quick-checks.
+2. **Email (Resend).** `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=587`, `SMTP_USERNAME=resend`,
+   `SMTP_PASSWORD=<Resend API key>`, `SMTP_FROM=security@<your verified domain>`. Production
+   refuses plaintext SMTP. Password resets, invites, lockouts and security notices use it.
+3. **Proxy.** `TRUSTED_PROXY_COUNT=1` behind the single nginx. If a load balancer also sits in
+   front, set 2 - a wrong value lets callers fake their IP (IP allowlists, lockout, risk).
+4. **Deploy.** `alembic upgrade head` applies 0046-0049. Reload nginx (new `limit_req` paths
+   and console CSP).
+5. **Cookie cut-over.** First deploy with `AUTH_BEARER_COMPAT=true` so open console tabs keep
+   working; the console switches to cookies on next load. After a day, set it to `false`
+   and restart. Scripts should use API keys, never user tokens.
+6. **Passkeys.** Owners, admins, billing and operators see a banner for
+   `PASSKEY_GRACE_DAYS` (14), then must sign in with a passkey. Tell them before deploying.
+7. **SSO customers already on OIDC.** SSO stops signing people in until the workspace
+   verifies its domain: Settings > Security > Verified domains > add the TXT record >
+   "Check DNS". Password sign-in keeps working meanwhile (enforcement pauses too).
+8. **Smoke test.** Forgot password -> email -> reset -> sign in still asks for the second
+   factor. Ten wrong passwords -> "account locked" email -> unlock from `/ops`.
+
+### Setting up SAML for a customer
+- Customer verifies their domain first (above).
+- Settings > Security > SAML single sign-on shows the Entity ID, ACS URL and metadata URL to
+  paste into Okta / Entra ID / Google. NameID or an `email` attribute must be the email;
+  optional `displayName` and `groups`. Signing: SHA-256; sign the assertion (preferred) or
+  the response. Encryption off.
+- Paste the IdP entity ID, sign-in URL and signing certificate, save. Test with
+  `https://<web>/api/v1/auth/sso/<slug>/start` (the normal "Sign in with SSO" link).
+- Refusals are logged as `saml_login_refused` with a `reason` (e.g. `wrong_audience`,
+  `expired`, `replayed`, `unsigned`).
+
+### Setting up SCIM (user sync)
+- The workspace owner creates a token in Settings > Security > User sync (needs a fresh
+  2FA check). Base URL `https://<api>/scim/v2`, auth "Bearer token".
+- People can only be created on the workspace's verified domains. Deactivating someone in
+  the IdP removes them from the workspace and ends their sessions at once. Owners can't be
+  removed or re-roled through SCIM. Revoke a token in the same card.
+
+### Locked out / lost factors
+- Lockout: `/ops` > Users > search email > Unlock (admin operator, fresh 2FA).
+- Agent lost their phone: a workspace admin uses "Reset 2FA" on the member.
+- Owner/admin lost everything: "Lost access" on the sign-in page -> ID + selfie matching
+  their verified identity. If that fails, operator "Reset 2FA" in `/ops` after checking
+  identity out of band (video call with ID). Every reset is audited and emailed.
+
+## AI safety go-live (P43)
+
+1. **DeepSeek key.** `DEEPSEEK_API_KEY=sk-...` in the server `.env` (the key needs the `sk-`
+   prefix). Check it: `docker compose exec api python scripts/monitor_exam.py` - expect PASSED
+   (catch rate >= 95%, false alarms <= 3%). Add DeepSeek to the privacy policy / customer
+   agreement as a data processor before switching monitoring on.
+2. **Deploy.** `alembic upgrade head` applies 0050 + 0051. New Python deps: pillow, pypdfium2.
+3. **UK registry (free).** Register at developer.company-information.service.gov.uk, create a
+   REST API key, set `COMPANIES_HOUSE_API_KEY`. Without it UK companies are confirmed from their
+   uploaded documents only. (Businesses can verify from `KYC_COUNTRIES=US,GB`; Canada is off
+   for now - add `CA` and `ISED_API_KEY` to switch it back on.)
+4. **Call listener.** Rebuild and start the `call-monitor` service from
+   `deploy/livekit/docker-compose.livekit.yml` (same image as the AI agent; needs
+   `DEEPGRAM_API_KEY` and `ELEVENLABS_API_KEY`). Smoke test: place a softphone call from a new
+   workspace, hear the announcement, hang up after 30 s, and within ~3 minutes the call shows a
+   review in `/ops` > Monitoring. `DEEPGRAM_API_KEY` is also needed for recorded carrier calls.
+5. **Watch mode first (recommended).** For the first days set `MONITOR_PAUSE_SCORE=100000` and
+   `MONITOR_RESTRICT_SCORE=100000` so nobody is paused while you check `/ops` > Monitoring for
+   false alarms; texts are still screened. Then set them back to 100 / 60.
+   These scores are the ONLY correct way to soften the monitor. `MONITOR_ENFORCED=false`
+   stops the monitor acting (no new signals, pauses or caps) but no longer releases accounts
+   that are already paused - a flag flip used to put every paused scammer back on the carrier
+   while the console still said "paused". To release one, unpause it in `/ops` > Monitoring;
+   that works with the monitor switched off.
+6. **Applications already in review.** They can't be approved until each owner adds a home
+   address and a proof of address (the documents check says so). Use "Ask for more info" - the
+   AI decision pack pre-fills the request.
+
+### Every day (5 minutes)
+- `/ops` > Monitoring: the canary and exam pills must be green. Red = open the
+  `monitor_health` alert; if DeepSeek is down, texts from new accounts are waiting, not lost.
+- Flagged accounts: open each paused one, read the AI case file and the business's explanation,
+  then "False alarm - unpause" or "Confirmed - suspend and ban". Both teach the monitor.
+- Held texts: release or block anything the second look couldn't decide.
+- Review queue: open each application, read the AI decision pack, click approve / ask for info /
+  reject.
+
+### Changing a prompt, the model or the rules
+Run `scripts/monitor_exam.py --labels` before and after. Don't ship a change that lowers the
+catch rate or raises false alarms.
+
+## Diagnosing a stuck or failing test run
+
+Techniques that cost hours to work out the first time.
+
+**Is it slow or is it stopped?** Sample the process's CPU twice, ten seconds apart:
+`Get-Process -Id <pid> | Select CPU`. A run doing database work shows a few seconds of CPU
+per ten elapsed; a deadlocked one shows exactly 0.00. A `-q` progress line only advances
+every 72 tests, so "stuck at 10%" usually is not.
+
+**A hung run on PostgreSQL** is almost always two sessions blocking on the same row. From
+`psql`: `SELECT pid, state, wait_event, age(clock_timestamp(), xact_start), query FROM
+pg_stat_activity WHERE state <> 'idle'`, then `SELECT pg_blocking_pids(<blocked pid>)`. A
+backend sitting `idle in transaction / ClientRead` is holding the lock and waiting for its
+own client, which in a single-threaded pytest means it can never be released. Usual cause:
+a test opens a second session, writes a conflicting row and only FLUSHES it. Commit instead
+- SQLite serialises writes and hides this, PostgreSQL cannot.
+
+**Naming a failing test from a progress line.** Each `-q` line is 72 characters, so an `F`
+at position N of line L is test `(L-1)*72 + N`. `pytest --collect-only -q` lists tests in
+execution order, so that index names it without rerunning anything.
+
+**The suite is ~4x slower on PostgreSQL** (about 5.7s per test versus 1.5s on SQLite; ~3.3
+hours for the full suite versus 50 minutes). That is the difference between a per-PR check
+and a nightly job. It is client-side waiting on round trips, not CPU.
+
+**Timezone-dependent failures.** Tests that write a NAIVE datetime into a
+`DateTime(timezone=True)` column pass on SQLite (which stores those naive anyway) and behave
+differently on PostgreSQL, which reads the value in the session timezone. The failure
+profile depends on the sign of the machine's UTC offset, so it is invisible in UTC CI and
+intermittent elsewhere. Always write aware datetimes in tests.
+
+**Stopping a run.** Killing the wrapper does not kill the child: check
+`Get-CimInstance Win32_Process -Filter "Name='python.exe'"` after every stop, and again
+before starting anything, or two suites end up sharing a machine and no failure can be
+attributed. The same applies to an embedded PostgreSQL - killing the script skips its
+cleanup and leaves a postmaster holding its data directory.
+
+**Run one thing at a time.** Concurrent suites make every failure unattributable, and a
+green result produced while sharing a machine is weaker evidence than one produced alone.
 
 ## Incident quick-checks
 
@@ -477,6 +659,34 @@ docker inspect -f '{{.State.Health.Status}}' csaas-api-1
 works without the database. Everything else (redis down, a carrier's breaker open, the
 media plane unreachable) degrades the platform without taking the whole thing down, and
 shows as `degraded`.
+
+**`redis: degraded` is not a soft warning.** It means a redis answered the socket but this
+app could not run a `PING` through its own client, and every Redis-backed feature has
+therefore fallen back to a per-process store: rate limits, the session-revocation cache, SSO
+login state and the SAML assertion replay store. Nothing will turn red, no request will fail,
+and the container's own healthcheck stays healthy - the platform just quietly stops sharing
+the state it is supposed to share. Three causes, in order of how often they bite:
+
+```bash
+# 1. wrong or missing password. CSAAS_REDIS_PASSWORD must match in /opt/csaas/.env (the api
+#    reads it into REDIS_URL) and in the redis container's own --requirepass.
+docker compose -f deploy/docker-compose.prod.yml exec redis \
+  redis-cli -a "$CSAAS_REDIS_PASSWORD" --no-auth-warning ping   # expect PONG
+
+# 2. the client library is missing from the image. `redis` is a declared dependency, but an
+#    image built from the Dockerfile's no-lock fallback path would not have it - and every
+#    call site treats "no client" as "use the in-process store", without an error anywhere.
+docker compose -f deploy/docker-compose.prod.yml exec api python -c "import redis; print(redis.__version__)"
+
+# 3. redis is out of memory. maxmemory-policy is noeviction on purpose (LiveKit's SIP state
+#    is in there and must not be evicted), so a full redis returns OOM on writes.
+docker compose -f deploy/docker-compose.prod.yml exec redis \
+  redis-cli -a "$CSAAS_REDIS_PASSWORD" --no-auth-warning info memory | grep -E "used_memory_human|maxmemory_human"
+```
+
+`redis: down` means nothing answered the socket at all - the container is stopped, or
+`REDIS_URL` points somewhere wrong. Treat `degraded` as the more urgent of the two: `down`
+is obvious and someone will notice, `degraded` looks like a working system.
 
 ## Log locations
 

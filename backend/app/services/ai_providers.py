@@ -49,7 +49,7 @@ PLATFORM_KEY_ENV_NAMES: dict[str, str] = {
 DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-flash",
     "groq": "llama-3.3-70b-versatile",
     "google": "gemini-1.5-flash",
 }

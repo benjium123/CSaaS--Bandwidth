@@ -89,9 +89,46 @@ def make_settings(**overrides) -> Settings:
         # endpoint. Production refuses this flag outright (config.validate), so it can
         # never be why a live instance is open; invite tests override it to False.
         "allow_open_registration": True,
+        # P41: pre-P41 tests log in with a password only and send/dial from orgs that
+        # never went through business verification. P41 tests opt back in explicitly.
+        "require_2fa_all_users": False,
+        "kyc_enforced": False,
+        # Prepaid telephony is ON by default in production (migration 0055). Pre-existing
+        # tests create orgs with a zero credit balance and expect to be able to text and
+        # call, so the suite opts out; tests/test_prepaid_telephony.py turns the gate on
+        # explicitly per org.
+        "telephony_prepaid_default": False,
+        # P42: no network in tests; pre-P42 tests register 10-character passwords.
+        "hibp_enabled": False,
+        "password_min_length": 10,
+        # P42: pre-P42 tests authenticate with bearer JWTs and expect 24 h sessions.
+        "auth_bearer_compat": True,
+        "session_max_hours": 24,
+        "require_passkey_for_privileged": False,
+        "api_key_max_days": 0,
+        # P25 SSO tests configure a domain without DNS verification.
+        "sso_require_verified_domain": False,
+        # P43: never call the real DeepSeek from tests, whatever the developer's .env holds.
+        "deepseek_api_key": "",
+        "ai_guard_enabled": False,
+        # P43: pre-P43 tests send texts and place calls without the traffic monitor.
+        "monitor_enforced": False,
     }
     base.update(overrides)
     return Settings(**base)
+
+
+@pytest.fixture(autouse=True)
+def _active_settings():
+    """P41: services without a request read enforcement flags from the active settings
+    (app.config.get_active_settings). Pin them to the test defaults for every test, so a
+    service called directly - before or without create_app - never falls back to the
+    developer's .env, where KYC_ENFORCED defaults to on."""
+    from app import config
+
+    config.set_active_settings(make_settings())
+    yield
+    config._active_settings = None
 
 
 @pytest.fixture
@@ -151,6 +188,35 @@ async def register_and_login(
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
+
+
+async def mark_recent_2fa(session, email: str) -> None:
+    """P43: make the user's newest sign-in session count as a fresh second-factor proof,
+    for routes behind a ``recent_2fa`` step-up."""
+    from datetime import datetime, timezone
+
+    import sqlalchemy as sa
+
+    from app.models import Session as IdentitySession
+    from app.models import User
+
+    user = (
+        await session.execute(
+            sa.select(User)
+            .where(sa.func.lower(User.email) == email.lower())
+            .execution_options(allow_unscoped=True)
+        )
+    ).scalar_one()
+    live = (
+        await session.execute(
+            sa.select(IdentitySession)
+            .where(IdentitySession.user_id == user.id)
+            .order_by(IdentitySession.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    live.second_factor_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 def auth_headers(token: str, org_id: uuid.UUID | str | None = None) -> dict:

@@ -32,7 +32,11 @@ least as much UI as it adds.
 | 20 | P37a-d Managed telephony (Telnyx sub-accounts, reseller) | docs/PLAN_P37_MANAGED_TELEPHONY.md | 0042, 0043 | P37a built 2026-09-11; P37c allowance engine built 2026-09-15 (inert until plans are seeded); P37b next |
 | 21 | P39 SignalWire numbers live (texting) | docs/PLAN_P39_SIGNALWIRE_LIVE.md | none | built 2026-09-16, awaiting operator go-live steps |
 | 22 | P38 AI worker deployed + port ranges widened | docs/PLAN_P38_AGENT_WORKER.md | none | built 2026-09-16, awaiting operator keys + ufw + deploy |
-| 23 | P41 messaging health | docs/PLAN_P41_MESSAGING_HEALTH.md | 0044 | built 2026-09-16, awaiting deploy + dashboard-side receipt URLs |
+| 23 | P41 messaging health | docs/PLAN_P41_MESSAGING_HEALTH.md | 0044_messaging_health | built 2026-09-16, LIVE |
+| 24 | P41 Trust & safety: mandatory 2FA + passkeys, login risk, business KYC (Stripe Identity), telephony gate, suspension, ban list, operator console | docs/PLAN_P41_KYC.md | 0044_account_security, 0045 | built + tested 2026-09-16; merged to main, NOT yet deployed (operator steps in RUNBOOK "Trust & safety go-live (P41)") |
+| 25 | P42 Enterprise auth: password reset/policy, recovery, lockout, cookie sessions + timeouts, Redis rate limits, passkeys for privileged roles, verified domains, SAML 2.0, SCIM 2.0, API key hardening | docs/PLAN_P42_ENTERPRISE_AUTH.md | 0046-0049 | built + tested 2026-09-17; merged to main, NOT yet deployed (RUNBOOK "Enterprise auth go-live (P42)") |
+| 26 | P43 AI safety: 13 auth/KYC bug fixes, DeepSeek Flash safety AI, hands-off verification (AI document reading, proof of address, free registries, AI decision pack), AI text guard, call monitoring + listener worker, risk score + auto-pause, exam + canary | docs/PLAN_P43_AI_SAFETY.md | 0050, 0051 | built + tested 2026-09-17; merged to main, NOT yet deployed (RUNBOOK "AI safety go-live (P43)") |
+| 27 | P45 Console redesign + flat pay-as-you-go pricing + owner-only billing | docs/design/console-reference.html | 0054, 0055 | built + tested 2026-09-19; merged to main, NOT yet deployed |
 
 External inputs still owed by the operator: valid Bandwidth API credentials + application
 callbacks (see session notes 2026-09-09), Bandwidth account upgrade (trial 402), Stripe keys

@@ -8,6 +8,7 @@ the two could disagree, and the flag is the one that would be wrong.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -295,6 +296,41 @@ async def _org_name(session: AsyncSession, org_id: uuid.UUID) -> str:
 
 def _interpolate(text: str, org_name: str, help_contact: str) -> str:
     return text.replace("{org}", org_name).replace("{help_contact}", help_contact or "support")
+
+
+async def is_standard_auto_reply(session: AsyncSession, org_id: uuid.UUID, body: str) -> bool:
+    """P43: is this exactly one of the PLATFORM's default STOP/START/HELP replies? Only those
+    skip the AI text guard - a business can edit its reply texts (and its help contact), and
+    an edited reply must be screened like any other text."""
+    from app.models.compliance import ComplianceSettings
+
+    settings = await get_settings(session, org_id)
+    org_name = await _org_name(session, org_id)
+    from app.services import monitor_rules
+
+    if monitor_rules.extract_links(org_name) or _PHONE_LIKE.search(org_name):
+        return False  # the workspace name is customer-controlled too (a link or phone number)
+    for column in ("optout_text", "optin_text", "help_text"):
+        default = ComplianceSettings.__table__.c[column].default
+        template = getattr(default, "arg", None)
+        if not isinstance(template, str):
+            continue
+        help_contact = settings.help_contact if column == "help_text" else ""
+        if column == "help_text" and help_contact and not _plain_contact(help_contact):
+            continue  # a help contact that is a link or free text must be screened
+        if _interpolate(template, org_name, help_contact) == body:
+            return True
+    return False
+
+
+#: five or more digits in a row (spaces, dots, dashes and brackets allowed between them)
+_PHONE_LIKE = re.compile(r"(?:\d[\s().-]{0,2}){4,}\d")
+
+
+def _plain_contact(value: str) -> bool:
+    import re
+
+    return bool(re.fullmatch(r"[\w.+-]+@[\w-]+(\.[\w-]+)+|\+?[\d\s().-]{7,20}", value.strip()))
 
 
 async def auto_reply_body(

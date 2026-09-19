@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_active_settings
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ConflictError
 from app.models import Org, OrgMembership, Role
@@ -41,7 +43,18 @@ async def create_org_with_owner(session: AsyncSession, *, name: str, owner_id: u
         if n > 1000:  # pragma: no cover - pathological
             raise ConflictError("Could not allocate a unique org slug")
 
-    org = Org(id=uuid.uuid4(), name=name.strip(), slug=slug)
+    # New orgs default to the pay-as-you-go prepaid gate. The `since` stamp is set in the
+    # same breath because _billable_org_filter() in telephony_billing requires it to be
+    # non-NULL: an org with the flag on but no `since` would be gated on outbound yet its
+    # finished calls would never be billed - a silent revenue hole.
+    prepaid = bool(get_active_settings().telephony_prepaid_default)
+    org = Org(
+        id=uuid.uuid4(),
+        name=name.strip(),
+        slug=slug,
+        telephony_prepaid=prepaid,
+        telephony_prepaid_since=datetime.now(timezone.utc) if prepaid else None,
+    )
     session.add(org)
     await session.flush()
 

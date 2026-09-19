@@ -64,6 +64,26 @@ from app.models.contacts import (
     ThreadLabel,
 )
 from app.models.contacts_pro import ERASURE_STATUSES, ErasureRequest, RetentionPolicy, SavedView
+from app.models.credentials import (
+    ACCOUNT_AUDIT_ACTIONS,
+    AccountAuditEntry,
+    AccountLockout,
+    PasswordResetToken,
+    RecoveryCode,
+)
+from app.models.enterprise_sso import OrgDomain, ScimToken
+from app.models.monitoring import (
+    CALL_REVIEW_STATUSES,
+    MODERATION_STATES,
+    MONITOR_LEVELS,
+    CallReview,
+    MonitorHealth,
+    MonitorLabel,
+    MonitorSignal,
+    NumberReport,
+    OrgMonitoring,
+    TextVerdict,
+)
 from app.models.identity import LOGIN_OUTCOMES, LoginEvent, Session
 from app.models.inbox_pro import NOTIFICATION_KINDS, Notification, ThreadNote
 from app.models.inboxes import (
@@ -82,6 +102,29 @@ from app.models.integrations import (
     IntegrationSyncLog,
 )
 from app.models.invites import Invite
+from app.models.kyc import (
+    FRAUD_IDENTIFIER_KINDS,
+    KYC_CHECK_KINDS,
+    KYC_CHECK_RESULTS,
+    KYC_DOCUMENT_KINDS,
+    KYC_EDITABLE_STATUSES,
+    KYC_ENTITY_TYPES,
+    KYC_PERSON_ROLES,
+    KYC_PERSON_STATUSES,
+    KYC_RISK_TIERS,
+    KYC_STATUSES,
+    KYC_TELEPHONY_STATUSES,
+    STEP_UP_ACTIONS,
+    STEP_UP_STATUSES,
+    FraudIdentifier,
+    IdentityWebhookEvent,
+    KycCheck,
+    KycDocument,
+    KycPerson,
+    KycProfile,
+    KycStepUp,
+    StripeEvent,
+)
 from app.models.links import LinkClick, ShortLink
 from app.models.messaging import (
     EVENT_TO_STATUS,
@@ -154,6 +197,24 @@ from app.models.reports import (
 )
 from app.models.routing import RoutingPolicy
 from app.models.scheduling import Appointment, KbChunk, KbDocument
+from app.models.security import (
+    LOGIN_RISK_FLAGS,
+    OPERATOR_ROLES,
+    SECURITY_ALERT_KINDS,
+    SECURITY_ALERT_STATUSES,
+    WEBAUTHN_PURPOSES,
+    LoginDevice,
+    PlatformOperator,
+    SecurityAlert,
+    UserPasskey,
+    WebauthnChallenge,
+)
+from app.models.subscriptions import (
+    ENTITLED_SUBSCRIPTION_STATUSES,
+    SUBSCRIPTION_STATUSES,
+    Subscription,
+    is_entitled,
+)
 from app.models.spend import (
     DEFAULT_RATES_MICROS,
     SPEND_METRICS,
@@ -167,6 +228,54 @@ from app.models.user import User
 from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
 
 __all__ = [
+    "OrgDomain",
+    "CALL_REVIEW_STATUSES",
+    "MODERATION_STATES",
+    "MONITOR_LEVELS",
+    "CallReview",
+    "MonitorHealth",
+    "MonitorLabel",
+    "MonitorSignal",
+    "NumberReport",
+    "OrgMonitoring",
+    "TextVerdict",
+    "ScimToken",
+    "ACCOUNT_AUDIT_ACTIONS",
+    "AccountAuditEntry",
+    "AccountLockout",
+    "PasswordResetToken",
+    "RecoveryCode",
+    "FRAUD_IDENTIFIER_KINDS",
+    "KYC_CHECK_KINDS",
+    "KYC_CHECK_RESULTS",
+    "KYC_DOCUMENT_KINDS",
+    "KYC_EDITABLE_STATUSES",
+    "KYC_ENTITY_TYPES",
+    "KYC_PERSON_ROLES",
+    "KYC_PERSON_STATUSES",
+    "KYC_RISK_TIERS",
+    "KYC_STATUSES",
+    "KYC_TELEPHONY_STATUSES",
+    "STEP_UP_ACTIONS",
+    "STEP_UP_STATUSES",
+    "FraudIdentifier",
+    "IdentityWebhookEvent",
+    "KycCheck",
+    "KycDocument",
+    "KycPerson",
+    "KycProfile",
+    "KycStepUp",
+    "StripeEvent",
+    "LOGIN_RISK_FLAGS",
+    "OPERATOR_ROLES",
+    "SECURITY_ALERT_KINDS",
+    "SECURITY_ALERT_STATUSES",
+    "WEBAUTHN_PURPOSES",
+    "LoginDevice",
+    "PlatformOperator",
+    "SecurityAlert",
+    "UserPasskey",
+    "WebauthnChallenge",
     "TELEPHONY_ACCOUNT_STATUSES",
     "TelephonyAccount",
     "Brand",
@@ -246,6 +355,10 @@ __all__ = [
     "InvoiceLine",
     "Plan",
     "PlanAllowance",
+    "ENTITLED_SUBSCRIPTION_STATUSES",
+    "SUBSCRIPTION_STATUSES",
+    "Subscription",
+    "is_entitled",
     "DEFAULT_NOTIFICATION_PREFS",
     "NOTIFICATION_PREF_KEYS",
     "PushSubscription",

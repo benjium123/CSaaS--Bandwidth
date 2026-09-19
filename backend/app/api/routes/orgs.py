@@ -9,16 +9,23 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import OrgContext, get_current_user, require_permission
+from app.auth.deps import (
+    OrgContext,
+    check_org_selfie_step_up,
+    get_current_user,
+    require_permission,
+)
+from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import WILDCARD, Invite, OrgMembership, Role, User
 from app.repositories import orgs as orgs_repo
+from app.services import account_security, contact_visibility
 from app.services import audit as audit_svc
 from app.services import calling_settings as calling_settings_svc
-from app.services import contact_visibility
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
+from app.services import kyc as kyc_svc
 from app.services import retention as retention_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
@@ -73,14 +80,35 @@ class CallingSettingsIn(BaseModel):
     dispositions: list[str] | None = None
 
 
+def _privileged_grant_action(role: Role) -> str | None:
+    perms = set(role.permissions or [])
+    if WILDCARD in perms:
+        return "ownership_transfer"
+    if perms & {"org:billing", "members:update", "roles:write"}:
+        return "admin_grant"
+    return None
+
+
 @router.post("", response_model=OrgOut, status_code=201)
 async def create_org(
     payload: OrgCreateIn,
+    request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OrgOut:
+    settings = request.app.state.settings
+    # P41: one workspace in verification at a time - applying for many businesses at once
+    # is how a banned operator probes which identity gets through.
+    if settings.kyc_enforced and await kyc_svc.unverified_orgs_owned_by(session, user.id):
+        raise ConflictError(
+            "Finish verifying your current business before creating another workspace",
+            code="kyc_pending_elsewhere",
+        )
     org = await orgs_repo.create_org_with_owner(session, name=payload.name, owner_id=user.id)
     await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
+    # P41: every new workspace starts unverified; telephony waits for approval.
+    set_org_context(session, org.id)
+    await kyc_svc.get_or_create_profile(session, org.id)
     await session.commit()
     return OrgOut(id=org.id, name=org.name, slug=org.slug)
 
@@ -321,6 +349,7 @@ def _role_assignable_by(actor_role: Role, target_role: Role) -> bool:
 @router.delete("/current/members/{user_id}", status_code=204)
 async def remove_member(
     user_id: uuid.UUID,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("members:remove"))],
 ) -> Response:
     row = (
@@ -360,7 +389,13 @@ async def remove_member(
         target_id=str(user_id),
         detail={"user_id": str(user_id)},
     )
+    # P42: leaving a workspace ends every session - a removed person must not keep a live
+    # login (which could still reach other workspaces' data they are about to lose too).
+    revoked = await account_security.revoke_sessions(
+        ctx.session, request.app.state.settings, user_id, revoked_by=ctx.actor_user_id or user_id
+    )
     await ctx.session.commit()
+    await account_security.mark_revoked(request.app.state.settings, revoked)
     return Response(status_code=204)
 
 
@@ -368,6 +403,7 @@ async def remove_member(
 async def update_member(
     user_id: uuid.UUID,
     payload: MemberUpdateIn,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("members:update"))],
 ) -> MemberOut:
     row = (
@@ -397,6 +433,10 @@ async def update_member(
         raise PermissionDeniedError(
             "You cannot assign a role with more permissions than your own"
         )
+    # P41: handing out owner or admin/billing power needs a fresh selfie from the grantor.
+    action = _privileged_grant_action(new_role)
+    if action is not None and new_role.id != current_role.id:
+        await check_org_selfie_step_up(request, ctx, action=action)
 
     if current_role.name == "owner" and new_role.name != "owner":
         owner_count = (
@@ -424,7 +464,14 @@ async def update_member(
         target_id=str(user_id),
         detail={"user_id": str(user_id), "role_name": new_role.name},
     )
+    # P42: a role change takes effect on a fresh sign-in, never on a session minted under
+    # the old role.
+    revoked = await account_security.revoke_sessions(
+        ctx.session, request.app.state.settings, user_id, revoked_by=ctx.actor_user_id or user_id
+    )
     await ctx.session.commit()
+    await account_security.mark_revoked(request.app.state.settings, revoked)
+    set_org_context(ctx.session, ctx.org.id)
     return MemberOut(
         user_id=user.id, email=user.email, full_name=user.full_name, role_name=new_role.name
     )
@@ -484,6 +531,26 @@ async def create_invite(
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("members:invite"))],
 ) -> InviteCreatedOut:
+    invited_role = (
+        await ctx.session.execute(
+            sa.select(Role).where(Role.org_id == ctx.org.id, Role.name == payload.role_name)
+        )
+    ).scalar_one_or_none()
+    # C1 (audit): the SAME containment rule update_member applies. Without it a member
+    # holding only members:invite could invite a second address of their own AS ADMIN and
+    # operate from it - escalation by proxy, with update_member's own guard bypassed. The
+    # selfie step-up below is not a substitute: it proves WHO is asking, never that they may
+    # grant this role, and it is skipped entirely when KYC_ENFORCED is off.
+    # Consequence, deliberately accepted: a role may only invite what it holds itself, so a
+    # narrow "inviter" role must carry the permissions it hands out (e.g. agent's + invite).
+    if invited_role is not None and not _role_assignable_by(ctx.role, invited_role):
+        raise PermissionDeniedError(
+            "You cannot invite someone to a role with more permissions than your own. "
+            "Ask an owner or admin to send this invitation, or to add those permissions "
+            "to your role."
+        )
+    if invited_role is not None and _privileged_grant_action(invited_role) is not None:
+        await check_org_selfie_step_up(request, ctx, action="admin_grant")
     invite, raw = await invites_svc.create_invite(
         ctx.session,
         org_id=ctx.org.id,
@@ -491,12 +558,35 @@ async def create_invite(
         role_name=payload.role_name,
         created_by=ctx.actor_user_id,
     )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="invite.created",
+        target_type="invite",
+        target_id=str(invite.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={"email": payload.email, "role_name": payload.role_name},
+    )
     await ctx.session.commit()
-    base = (getattr(request.app.state.settings, "public_base_url", "") or "").rstrip("/")
+    settings = request.app.state.settings
+    base = (settings.public_web_url or settings.public_base_url or "").rstrip("/")
+    accept_url = f"{base}/accept-invite?token={raw}"
+    # P42: the invitation goes straight to the invited address, so the link never has to
+    # pass through chat or a shared inbox.
+    from app.services import mailer
+
+    await mailer.send(
+        settings,
+        [payload.email],
+        f"You're invited to {ctx.org.name} on {settings.app_name}",
+        f"You were invited to join {ctx.org.name} as {payload.role_name}.\n\n"
+        f"Accept the invitation (the link works once and expires in 7 days):\n{accept_url}",
+    )
     return InviteCreatedOut(
         **_invite_out(invite).model_dump(),
         token=raw,
-        accept_url=f"{base}/accept-invite?token={raw}",
+        accept_url=accept_url,
     )
 
 
@@ -512,5 +602,110 @@ async def revoke_invite(
         raise ConflictError("That invitation has already been used")
     if invite.revoked_at is None:
         invite.revoked_at = datetime.now(timezone.utc)
+        audit_svc.record(
+            ctx.session,
+            ctx.org.id,
+            action="invite.revoked",
+            target_type="invite",
+            target_id=str(invite.id),
+            actor_user_id=ctx.actor_user_id,
+            actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        )
         await ctx.session.commit()
     return _invite_out(invite)
+
+
+# ----------------------------------------------------------------------------------
+# P42: admin reset of a member's sign-in factors, and deactivation
+# ----------------------------------------------------------------------------------
+PRIVILEGED_PERMISSIONS = {"org:billing", "members:update", "roles:write"}
+
+
+def _is_privileged(role: Role) -> bool:
+    perms = set(role.permissions or [])
+    return WILDCARD in perms or bool(perms & PRIVILEGED_PERMISSIONS)
+
+
+async def _resettable_member(ctx: OrgContext, user_id: uuid.UUID) -> User:
+    """A member whose factors this workspace may reset: not privileged, not an operator, and
+    a member of THIS workspace only. An account is global, so resetting someone who also
+    works elsewhere would let one workspace weaken another's security."""
+    from app.db.base import ALLOW_UNSCOPED_KEY
+    from app.services import operators as operators_svc
+
+    if ctx.membership is None:
+        raise PermissionDeniedError("A signed-in person must do this")
+    if user_id == ctx.membership.user_id:
+        raise PermissionDeniedError("Use account recovery for your own account")
+    # JUSTIFIED allow_unscoped: must see the target's memberships in EVERY workspace.
+    rows = (
+        await ctx.session.execute(
+            sa.select(OrgMembership, Role)
+            .join(Role, Role.id == OrgMembership.role_id)
+            .where(OrgMembership.user_id == user_id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    set_org_context(ctx.session, ctx.org.id)
+    if not any(m.org_id == ctx.org.id for m, _ in rows):
+        raise NotFoundError("Member not found")
+    if len(rows) > 1:
+        raise PermissionDeniedError(
+            "This person also belongs to another workspace. Ask them to use account recovery.",
+            code="member_in_other_workspace",
+        )
+    if _is_privileged(rows[0][1]):
+        raise PermissionDeniedError(
+            "Owners, admins and billing members recover their own account with an ID check.",
+            code="privileged_member",
+        )
+    if await operators_svc.is_operator(ctx.session, user_id):
+        raise PermissionDeniedError("Platform operators cannot be reset from a workspace")
+    target = await ctx.session.get(User, user_id)
+    if target is None:
+        raise NotFoundError("Member not found")
+    return target
+
+
+@router.post("/current/members/{user_id}/reset-2fa", status_code=204)
+async def reset_member_factors(
+    user_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("members:update"))],
+) -> Response:
+    from app.auth.deps import check_step_up
+
+    settings = request.app.state.settings
+    actor = await ctx.session.get(User, ctx.membership.user_id) if ctx.membership else None
+    if actor is None:
+        raise PermissionDeniedError("A signed-in person must do this")
+    await check_step_up(request, ctx.session, actor, kind="recent_2fa", action="member_reset")
+    set_org_context(ctx.session, ctx.org.id)
+    target = await _resettable_member(ctx, user_id)
+    cleared = await account_security.clear_second_factors(ctx.session, target)
+    revoked = await account_security.revoke_sessions(
+        ctx.session, settings, target.id, revoked_by=actor.id
+    )
+    account_security.audit(
+        ctx.session, target.id, "factors.reset_by_admin", actor_user_id=actor.id, request=request,
+        detail={**cleared, "org_id": str(ctx.org.id)},
+    )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="member.factors_reset",
+        target_type="user",
+        target_id=str(target.id),
+        actor_user_id=actor.id,
+        detail=cleared,
+    )
+    await ctx.session.commit()
+    await account_security.mark_revoked(settings, revoked)
+    await account_security.notify_now(
+        settings,
+        target.email,
+        "Your sign-in methods were reset",
+        f"An admin of {ctx.org.name} reset your passkeys and authenticator app. Sign in with "
+        "your password and set up a new passkey or authenticator app.",
+    )
+    return Response(status_code=204)

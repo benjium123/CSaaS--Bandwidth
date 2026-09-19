@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -33,6 +34,29 @@ class User(Base, TimestampMixin):
     totp_enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
     # Blocks replay of a code that was just accepted.
     totp_last_used_step: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+    #: P41: denormalised "has at least one passkey" so the per-request 2FA gate in
+    #: auth/deps.py never needs a query. Maintained only by services/passkeys.py.
+    has_passkey: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+
+    #: P42: after an identity recovery, sensitive (step-up) actions stay blocked until this
+    #: time - a stolen account recovered by an attacker cannot immediately be emptied.
+    step_up_blocked_until: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    #: P42: first time this account was seen with owner/admin/billing/operator power; the
+    #: passkey grace period counts from here (services/passkey_policy.py).
+    passkey_required_since: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+
+    @property
+    def has_second_factor(self) -> bool:
+        return bool(self.totp_enabled or self.has_passkey)
     # P31: {mention, assignment, new_inbound, missed_call, sla_breach, digest: bool}; NULL =
     # every toggle on (models/push.py::DEFAULT_NOTIFICATION_PREFS).
     notification_prefs: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)

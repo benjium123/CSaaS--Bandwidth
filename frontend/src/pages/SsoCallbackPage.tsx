@@ -6,7 +6,26 @@
 import * as React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Spinner } from "@/components/ui/primitives";
+import {
+  AuthAlert,
+  AuthButton,
+  AuthPlate,
+  AuthSurface,
+  Lamp,
+} from "@/components/auth/AuthShell";
+
+function ssoErrorMessage(code: string | null): string {
+  switch (code) {
+    case "sso_domain_unverified":
+      return "Your workspace has not verified its email domain yet, so single sign-on is switched off. Ask your admin, or sign in with your password.";
+    case "sso_domain_mismatch":
+      return "This account's email address is not allowed to sign in to that workspace.";
+    case "account_locked":
+      return "This account is disabled. Contact your workspace admin.";
+    default:
+      return "We could not complete that sign-in. Start again from the sign-in page.";
+  }
+}
 
 export function SsoCallbackPage() {
   const [params] = useSearchParams();
@@ -14,6 +33,9 @@ export function SsoCallbackPage() {
   const state = params.get("state");
   const error = params.get("error");
   const errorDescription = params.get("error_description");
+  // P42 SAML: the backend already verified the response and set the session cookie, then
+  // sent the browser here with only the workspace id.
+  const samlOrgId = params.get("saml") === "1" ? params.get("org_id") : null;
 
   const { api, completeSso } = useAuth();
   const navigate = useNavigate();
@@ -26,15 +48,27 @@ export function SsoCallbackPage() {
     exchangedRef.current = true;
 
     async function run() {
-      if (error || !code || !state) {
+      if (error || ((!code || !state) && !samlOrgId)) {
         setStatus("error");
-        setMessage("We could not complete that sign-in. Start again from the sign-in page.");
+        setMessage(ssoErrorMessage(error));
         return;
       }
 
+      if (samlOrgId) {
+        const res = await completeSso(null, samlOrgId);
+        if (res.kind === "ok") {
+          navigate("/inbox", { replace: true });
+        } else {
+          setStatus("error");
+          setMessage(res.kind === "error" ? res.message : ssoErrorMessage(null));
+        }
+        return;
+      }
+      if (!code || !state) return;
+
       try {
         const data = await api.request<{
-          access_token: string;
+          access_token: string | null;
           token_type: string;
           org_id: string;
         }>(
@@ -62,26 +96,46 @@ export function SsoCallbackPage() {
     }
 
     void run();
-  }, [api, code, completeSso, error, navigate, state]);
+  }, [api, code, completeSso, error, navigate, samlOrgId, state]);
+
+  if (status === "working") {
+    return (
+      <AuthSurface>
+        <div className="ex-rise" role="status" aria-live="polite">
+          <Lamp state="wait">Finishing sign-in</Lamp>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Your identity provider has answered. Handing you over to your workspace.
+          </p>
+        </div>
+      </AuthSurface>
+    );
+  }
 
   return (
-    <div className="flex min-h-full items-center justify-center p-6">
-      {status === "working" ? (
-        <Spinner label="Finishing sign-in" />
-      ) : (
-        <div className="w-full max-w-sm space-y-4 rounded-lg border border-border p-6">
-          <h1 className="text-lg font-semibold">Sign-in failed</h1>
-          <p role="alert" className="text-sm text-destructive">
-            {message}
-          </p>
-          {errorDescription && (
+    <AuthSurface>
+      <AuthPlate
+        eyebrow="Single sign-on"
+        title="Sign-in failed"
+        footer={
+          errorDescription ? (
+            // The identity provider's own words, kept separate from ours and never
+            // rewritten - it is the only party that knows what it objected to.
             <p className="text-xs text-muted-foreground">{errorDescription}</p>
-          )}
-          <Button type="button" variant="outline" onClick={() => navigate("/", { replace: true })}>
+          ) : undefined
+        }
+      >
+        <div className="space-y-4">
+          <AuthAlert>{message}</AuthAlert>
+          <AuthButton
+            type="button"
+            tone="quiet"
+            block
+            onClick={() => navigate("/", { replace: true })}
+          >
             Back to sign in
-          </Button>
+          </AuthButton>
         </div>
-      )}
-    </div>
+      </AuthPlate>
+    </AuthSurface>
   );
 }

@@ -106,7 +106,10 @@ async def test_login_creates_session_row(client, session):
     ).scalars().all()
     assert len(rows) == 1
     row = rows[0]
-    assert row.ip == "203.0.113.9"
+    # P42: nginx appends the real peer as the LAST entry; anything before it is whatever the
+    # caller sent and must not be trusted (it used to be, which let a fake header walk past
+    # an org IP allowlist).
+    assert row.ip == "10.0.0.1"
     assert row.user_agent == "z" * 255
 
 

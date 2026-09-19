@@ -50,6 +50,14 @@ async def app_with_agent(engine):
         bandwidth_webhook_password=WEBHOOK_PASS,
         livekit_api_key="lk-test-key",
         livekit_api_secret="lk-test-secret-value-padded-to-32-bytes-plus",
+        # P41: this fixture predates mandatory 2FA and business verification.
+        require_2fa_all_users=False,
+        kyc_enforced=False,
+        # P42: these tests authenticate with bearer tokens and weak test passwords.
+        auth_bearer_compat=True,
+        hibp_enabled=False,
+        password_min_length=10,
+        require_passkey_for_privileged=False,
     )
     application = create_app(settings)
     install_voice_carrier(application, FakeVoiceCarrier())

@@ -34,7 +34,7 @@ function DrawerMutationStatus({
 }) {
   if (mutation.isPending) {
     return (
-      <span className="flex items-center gap-1 text-[10px] text-neutral-500">
+      <span className="flex items-center gap-1 text-[10px] text-muted-foreground/75">
         <Loader2 className="h-3 w-3 animate-spin" />
         {pendingLabel}
       </span>
@@ -42,13 +42,13 @@ function DrawerMutationStatus({
   }
   if (mutation.isError) {
     return (
-      <span role="alert" className="text-[10px] text-red-400">
+      <span role="alert" className="text-[10px] text-destructive">
         {getErrorMessage(mutation.error)}
       </span>
     );
   }
   if (mutation.isSuccess) {
-    return <span className="text-[10px] text-green-400">{successLabel}</span>;
+    return <span className="text-[10px] text-[hsl(var(--cx-live))]">{successLabel}</span>;
   }
   return null;
 }
@@ -147,17 +147,17 @@ export function RatesDrawer({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/60" aria-hidden="true" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-black/50" aria-hidden="true" onClick={onClose} />
       <aside
         role="dialog"
         aria-modal="true"
         aria-label="Provider rates"
-        className="fixed right-0 top-0 z-50 h-full w-full max-w-3xl overflow-y-auto border-l border-neutral-800 bg-neutral-950 p-6 text-neutral-100"
+        className="fixed right-0 top-0 z-50 h-full w-full max-w-3xl overflow-y-auto rounded-l-xl border-l border-border bg-background p-6 text-foreground"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-neutral-50">Provider rates</h2>
-            <p className="text-sm text-neutral-400">
+            <h2 className="text-base font-semibold text-foreground">Provider rates</h2>
+            <p className="text-sm text-muted-foreground">
               Unit costs in dollars per message, minute, or number action.
             </p>
           </div>
@@ -167,33 +167,33 @@ export function RatesDrawer({
             variant="outline"
             size="sm"
             onClick={onClose}
-            className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+            className="bg-transparent px-3 py-1.5 text-xs text-foreground/85"
           >
             Close
           </Button>
         </div>
 
         {readOnly && (
-          <p className="mt-3 text-sm text-amber-400">
+          <p className="mt-3 rounded-lg border border-[hsl(var(--cx-flag)/0.35)] bg-[hsl(var(--cx-flag)/0.1)] px-3 py-2.5 text-sm text-[hsl(var(--cx-flag))]">
             Read-only: rate writes require settings:write.
           </p>
         )}
 
         {ratesQuery.isLoading ? (
-          <p className="mt-4 text-sm text-neutral-400">Loading rates…</p>
+          <p className="mt-4 text-sm text-muted-foreground">Loading rates…</p>
         ) : ratesQuery.isError ? (
-          <p role="alert" className="mt-4 text-sm text-red-400">
+          <p role="alert" className="mt-4 text-sm text-destructive">
             {getErrorMessage(ratesQuery.error)}
           </p>
         ) : (
           <table className="mt-4 w-full text-sm">
             <thead>
-              <tr className="border-b border-neutral-800 text-left text-xs text-neutral-400">
-                <th className="px-2 py-2 font-medium">Provider</th>
-                <th className="px-2 py-2 font-medium">Metric</th>
-                <th className="px-2 py-2 font-medium">Rate ($/unit)</th>
-                <th className="px-2 py-2 font-medium">Status</th>
-                <th className="px-2 py-2 font-medium">Actions</th>
+              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+                <th className="px-3 py-2.5 font-medium">Provider</th>
+                <th className="px-3 py-2.5 font-medium">Metric</th>
+                <th className="px-3 py-2.5 font-medium">Rate ($/unit)</th>
+                <th className="px-3 py-2.5 font-medium">Status</th>
+                <th className="px-3 py-2.5 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -203,10 +203,10 @@ export function RatesDrawer({
                 const invalid = isDraftInvalid(value);
                 const hintId = `${key}-hint`;
                 return (
-                  <tr key={key} className="border-b border-neutral-800">
-                    <td className="px-2 py-2 text-neutral-200">{row.provider}</td>
-                    <td className="px-2 py-2 text-neutral-300">{row.metric}</td>
-                    <td className="px-2 py-2">
+                  <tr key={key} className="border-b border-border">
+                    <td className="px-3 py-2.5 text-foreground/95">{row.provider}</td>
+                    <td className="px-3 py-2.5 text-foreground/85">{row.metric}</td>
+                    <td className="px-3 py-2.5">
                       <input
                         aria-label={`${row.provider} ${row.metric} rate`}
                         aria-invalid={invalid}
@@ -221,26 +221,26 @@ export function RatesDrawer({
                         disabled={readOnly || updateRates.isPending}
                         inputMode="decimal"
                         step="0.0001"
-                        className="h-9 w-28 rounded-md border border-neutral-700 bg-neutral-950 px-2 text-sm text-neutral-100 aria-[invalid=true]:border-red-800"
+                        className="h-9 w-28 rounded-md border border-border bg-background px-2 text-sm text-foreground aria-[invalid=true]:border-[hsl(var(--cx-danger))]"
                       />
                       {invalid && (
-                        <p id={hintId} className="mt-1 text-[10px] text-red-400">
+                        <p id={hintId} className="mt-1 text-[10px] text-destructive">
                           Enter a rate ≥ 0
                         </p>
                       )}
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2.5">
                       <span
                         className={
                           row.is_override
-                            ? "rounded-full bg-blue-950 px-2 py-0.5 text-xs text-blue-400"
-                            : "rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400"
+                            ? "rounded-full bg-[hsl(var(--cx-accent)/0.15)] px-2.5 py-0.5 text-xs text-[hsl(var(--cx-accent))]"
+                            : "rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground"
                         }
                       >
                         {row.is_override ? "override" : "default"}
                       </span>
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2.5">
                       <Button
                         type="button"
                         variant="ghost"
@@ -248,7 +248,7 @@ export function RatesDrawer({
                         aria-label={`Reset ${row.provider} ${row.metric} to default`}
                         onClick={() => handleReset(row)}
                         disabled={readOnly || updateRates.isPending}
-                        className="h-auto p-0 text-xs font-normal text-neutral-400 underline hover:bg-transparent hover:text-neutral-200"
+                        className="h-auto p-0 text-xs font-normal text-muted-foreground underline hover:bg-transparent hover:text-foreground/95"
                       >
                         Reset
                       </Button>
@@ -266,18 +266,18 @@ export function RatesDrawer({
             size="sm"
             onClick={handleSave}
             disabled={saveDisabled}
-            className="bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:opacity-90"
+            className="px-3 py-1.5 text-sm font-medium"
           >
             Save rates
           </Button>
           <DrawerMutationStatus mutation={updateRates} />
         </div>
 
-        <p className="mt-3 text-xs text-neutral-500">
+        <p className="mt-3 text-xs text-muted-foreground/75">
           Reset sends the default rate and keeps it as an override.
         </p>
 
-        <div className="mt-5 border-t border-neutral-800 pt-4">
+        <div className="mt-5 border-t border-border pt-4">
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
@@ -285,7 +285,7 @@ export function RatesDrawer({
               size="sm"
               onClick={handleRecalculate}
               disabled={readOnly || rollupDay.isPending}
-              className="border-neutral-700 bg-transparent px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+              className="bg-transparent px-3 py-1.5 text-xs text-foreground/85"
             >
               Recalculate today
             </Button>
@@ -295,7 +295,7 @@ export function RatesDrawer({
               successLabel="Recalculated"
             />
           </div>
-          <p className="mt-2 text-xs text-neutral-500">
+          <p className="mt-2 text-xs text-muted-foreground/75">
             New rates apply from the next hourly rollup; recalculate to apply now.
           </p>
         </div>

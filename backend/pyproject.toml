@@ -28,12 +28,31 @@ dependencies = [
     # zoneinfo has no tz database on Windows or slim containers; without this,
     # ZoneInfo("America/Chicago") raises and quiet hours cannot be evaluated.
     "tzdata>=2024.2",
+    # P41/P42 authentication: passkeys (WebAuthn), login country/network lookup, SAML SSO.
+    "webauthn>=3.0",
+    # P43: render scanned PDF pages so the safety AI can read KYC documents.
+    "pypdfium2>=4.30",
+    "pillow>=10.0",
+    "maxminddb>=2.6",
+    "signxml>=5.1",
+    # NOT optional, despite every call site tolerating its absence. Session revocation, rate
+    # limits, OIDC login state and SAML assertion replay protection all fall back to a
+    # PER-PROCESS store when `import redis` fails - and every one of those fallbacks is
+    # silent. Production boot already refuses to start without REDIS_URL and prod compose
+    # already runs the server, so an image built without this package satisfies every check
+    # while using none of the shared state. It was present only in requirements.lock, which
+    # the Dockerfile prefers but explicitly falls back FROM when no lock has been generated.
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    # A blocked test must FAIL, not hang: a two-session write conflict deadlocks for ever on
+    # PostgreSQL (SQLite serialises writes and never shows it), and without a watchdog the
+    # whole run sits there with no output. Cost an hour twice before it was diagnosed.
+    "pytest-timeout>=2.3",
     "ruff>=0.8",
 ]
 

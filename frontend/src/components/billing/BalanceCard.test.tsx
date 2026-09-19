@@ -24,13 +24,19 @@ const PAYMENT_METHODS = [
 ];
 
 function makeSummary(overrides: Record<string, unknown> = {}) {
-  return {
+  const base = {
     balance_micros: 12_345_678,
     reserved_micros: 0,
     warning: null,
     auto_recharge: null,
     last_topup: null,
     ...overrides,
+  } as Record<string, unknown> & { balance_micros: number; reserved_micros: number };
+  // available_micros mirrors the server's own max(balance - reserved, 0) unless a test
+  // states it outright, so a fixture cannot drift into a shape the server never sends.
+  return {
+    available_micros: Math.max(base.balance_micros - base.reserved_micros, 0),
+    ...base,
   };
 }
 
@@ -76,8 +82,57 @@ describe("BalanceCard", () => {
     );
     renderWithProviders(<BalanceCard />, reserveClient);
     expect(
-      await screen.findByText("$1.00 is on hold for calls in progress."),
+      await screen.findByText("$1.00 of your $12.35 balance is on hold for calls in progress."),
     ).toBeInTheDocument();
+  });
+
+  // The regression: the card used to headline balance_micros, which includes money already
+  // reserved for calls in flight, so it told the customer they could spend $50 while $20 of
+  // it was committed. The headline must be the server's available_micros.
+  it("headlines the available credit, not the raw balance, while a call holds a reserve", async () => {
+    const client = makeStubClient(
+      baseRoutes({
+        "/api/v1/billing/summary": makeSummary({
+          balance_micros: 50_000_000,
+          reserved_micros: 20_000_000,
+          available_micros: 30_000_000,
+        }),
+      }),
+    );
+    renderWithProviders(<BalanceCard />, client);
+
+    const headline = await screen.findByText("$30.00");
+    expect(headline.className).toContain("text-3xl");
+    // The raw balance may appear only inside the sentence that explains the hold. Every
+    // other "$50.00" on the card is the top-up preset button of that amount.
+    screen
+      .getAllByText("$50.00")
+      .forEach((element) => expect(element.closest("button")).not.toBeNull());
+    expect(
+      screen.getByText("$20.00 of your $50.00 balance is on hold for calls in progress."),
+    ).toBeInTheDocument();
+  });
+
+  // The pair for the test above: with nothing reserved the headline IS the balance, which
+  // proves the previous test passes because the reserve was subtracted and not because the
+  // headline happened to move.
+  it("headlines the full balance when nothing is reserved", async () => {
+    const client = makeStubClient(
+      baseRoutes({
+        // $60 rather than $50 only because "$50.00" is also a top-up preset button, and
+        // the headline has to be findable unambiguously.
+        "/api/v1/billing/summary": makeSummary({
+          balance_micros: 60_000_000,
+          reserved_micros: 0,
+          available_micros: 60_000_000,
+        }),
+      }),
+    );
+    renderWithProviders(<BalanceCard />, client);
+
+    const headline = await screen.findByText("$60.00");
+    expect(headline.className).toContain("text-3xl");
+    expect(screen.queryByText(/is on hold for calls in progress/)).not.toBeInTheDocument();
   });
 
   it("posts a preset top-up and calls the injected checkout redirect", async () => {

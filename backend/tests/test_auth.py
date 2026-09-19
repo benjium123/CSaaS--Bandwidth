@@ -14,7 +14,12 @@ async def test_register_login_me(client):
     r = await client.get("/api/v1/auth/me", headers=auth_headers(token))
     assert r.status_code == 200
     assert r.json()["email"] == "alice@example.com"
-    assert r.json()["memberships"] == []
+    # A self-serve signup now leaves registration owning a workspace (auth.py::register),
+    # so /me reports exactly one membership where it used to report none. The count is the
+    # assertion that matters: two would mean signup created a workspace on top of one the
+    # account already had.
+    assert len(r.json()["memberships"]) == 1
+    assert r.json()["memberships"][0]["role_name"] == "owner"
 
 
 async def test_wrong_password_is_401(client):

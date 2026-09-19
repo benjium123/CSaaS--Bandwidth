@@ -41,7 +41,7 @@ from app.models import OrgNumber
 from app.models.voice import TERMINAL_LEG_STATUSES, Call, CallLeg
 from app.models.voice import VoiceEvent as VoiceEventRow
 from app.services import calls as calls_svc
-from app.services import telephony_billing
+from app.services import telephony_access, telephony_billing
 from app.voice_plane.livekit_api import (
     LiveKitApi,
     LiveKitApiError,
@@ -65,6 +65,34 @@ CALL_ROOM_PREFIX = "call-"
 #: DB round-trip when we already have the call id in hand; it is NEVER used to classify an
 #: incoming webhook event (see module docstring - that is attribute-based only).
 SIP_IDENTITY_PREFIX = "sip-"
+
+#: The carrier the original (single) outbound trunk dials through.
+DEFAULT_TRUNK_CARRIER = "telnyx"
+#: Every carrier that can have a trunk into livekit-sip.
+TRUNK_CARRIERS: tuple[str, ...] = (DEFAULT_TRUNK_CARRIER, "signalwire")
+
+
+def room_trunks(settings: Settings) -> dict[str, str]:
+    """P40: carrier -> LiveKit outbound trunk id, only for trunks that are configured.
+
+    A call dials out through the trunk of the carrier that owns its caller-id number,
+    because a carrier refuses (or rewrites) a caller id it does not own."""
+    trunks = {
+        DEFAULT_TRUNK_CARRIER: settings.livekit_sip_outbound_trunk_id,
+        "signalwire": getattr(settings, "livekit_sip_signalwire_trunk_id", ""),
+    }
+    return {carrier: trunk for carrier, trunk in trunks.items() if trunk}
+
+
+def trunk_for_carrier(settings: Settings, carrier: str) -> tuple[str, str] | None:
+    """(carrier, trunk id) to dial a number on `carrier` with. A carrier without its own
+    trunk falls back to the default trunk - the behaviour before P40."""
+    trunks = room_trunks(settings)
+    if carrier in trunks:
+        return carrier, trunks[carrier]
+    if DEFAULT_TRUNK_CARRIER in trunks:
+        return DEFAULT_TRUNK_CARRIER, trunks[DEFAULT_TRUNK_CARRIER]
+    return None
 
 #: In-flight background outbound-dial tasks (B2), held here so nothing garbage-collects
 #: them mid-flight the way an unreferenced asyncio.Task can be. Tests await
@@ -139,21 +167,35 @@ async def start_room_call(
     leg/call land on "failed" with the detail recorded, and this function returns normally
     rather than raising.
     """
+    from_number = (
+        await session.execute(sa.select(OrgNumber.carrier).where(OrgNumber.e164 == from_e164))
+    ).first()
+    route = trunk_for_carrier(
+        settings, from_number.carrier if from_number is not None else DEFAULT_TRUNK_CARRIER
+    )
+    trunk_carrier, trunk_id = route or (DEFAULT_TRUNK_CARRIER, "")
     call = Call(
         id=uuid.uuid4(),
         org_id=org_id,
         direction="outbound",
         contact_e164=to,
         our_e164=from_e164,
-        carrier="telnyx",
+        carrier=trunk_carrier,
         status="queued",
         tag=tag or None,
     )
     # Prepaid hard gate: refuse (402) before any row, room or dial exists, and hold the
     # first minutes. The hold rides this function's commit below.
+    await telephony_access.require_telephony_allowed(session, org_id, "call")
     await telephony_billing.require_call_credit(session, org_id, call)
     room = room_name_for_call(call.id)
     call.extra = {"via": "livekit", "room": room}
+    # P43: chosen for monitoring now; the listener joins when the phone side answers.
+    from app.services import monitor_calls
+
+    monitor_reason = await monitor_calls.choose(session, settings, org_id)
+    if monitor_reason is not None:
+        monitor_calls.mark(call, monitor_reason, record=False)
     sip_identity = f"{SIP_IDENTITY_PREFIX}{call.id}"
     leg = CallLeg(
         id=uuid.uuid4(),
@@ -169,6 +211,8 @@ async def start_room_call(
     session.add(call)
     session.add(leg)
     await session.flush()
+    if monitor_reason is not None:
+        await monitor_calls.queue_review(session, call, monitor_reason)
 
     try:
         await api.create_room(room)
@@ -197,6 +241,7 @@ async def start_room_call(
                 to=to,
                 from_e164=from_e164,
                 sip_identity=sip_identity,
+                trunk_id=trunk_id,
             ),
             name=f"dial-{call.id}",
         )
@@ -244,13 +289,14 @@ async def _dial_and_await_answer(
     to: str,
     from_e164: str,
     sip_identity: str,
+    trunk_id: str | None = None,
 ) -> None:
     """The background half of ``start_room_call`` (B2). Owns its OWN DB session - the
     sweeper's shape (app/services/sweeper.py), never the request's session, which is long
     gone by the time this coroutine resumes."""
     try:
         await api.create_sip_participant(
-            trunk_id=settings.livekit_sip_outbound_trunk_id,
+            trunk_id=trunk_id or settings.livekit_sip_outbound_trunk_id,
             call_to=to,
             room=room,
             from_number=from_e164,
@@ -392,6 +438,7 @@ async def transfer_room_call(
     sip_identity = (leg.extra or {}).get("sip_identity") if leg is not None else None
     if room is None or leg is None or not sip_identity:
         raise ConflictError("This call has no active leg to transfer")
+    await telephony_access.require_telephony_allowed(session, call.org_id, "call")
 
     await api.transfer_sip_participant(room=room, identity=sip_identity, transfer_to=to)
 
@@ -582,7 +629,12 @@ async def _create_inbound_room_call(
         direction="inbound",
         contact_e164=contact_number,
         our_e164=trunk_number,
-        carrier="telnyx",
+        # P40: a number on a carrier with its own trunk arrived over that trunk.
+        carrier=(
+            org_number.carrier
+            if org_number.carrier in TRUNK_CARRIERS
+            else DEFAULT_TRUNK_CARRIER
+        ),
         status="initiated",
         extra={"via": "livekit", "room": room},
     )

@@ -9,8 +9,16 @@ import { ChevronDown, X } from "lucide-react";
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+/**
+ * RADIUS: the reference has no generic button, so a button takes the radius of the
+ * reference element it is standing in for. The base is `.ln`/`.who`'s 12px - the softest
+ * value that still reads as a control rather than as a chip - and the icon size drops to
+ * `.icon-btn`'s 10px because a 36px square at 12px starts to look like a lozenge. The
+ * pill shapes (`.send`, `.call-btn`) are applied at the call site through `.cx-send` /
+ * `.cx-call`, and any caller passing `rounded-full` still wins: cn() is tailwind-merge.
+ */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1",
+  "inline-flex items-center justify-center gap-2 rounded-[var(--cx-r-sm,12px)] text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1",
   {
     variants: {
       variant: {
@@ -22,7 +30,7 @@ const buttonVariants = cva(
       size: {
         default: "h-9 px-4 py-2",
         sm: "h-8 px-3 text-xs",
-        icon: "h-9 w-9",
+        icon: "h-9 w-9 rounded-[var(--cx-r-xs,10px)]",
       },
     },
     defaultVariants: { variant: "default", size: "default" },
@@ -45,7 +53,9 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
     <input
       ref={ref}
       className={cn(
-        "flex h-9 w-full rounded-md border border-border bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2",
+        // 10px, the reference's smallest radius (`.nav-item`/`.icon-btn`). A 36px-tall
+      // field is the one place on the scale where more than that starts eating the text.
+      "flex h-9 w-full rounded-[var(--cx-r-xs,10px)] border border-border bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2",
         className,
       )}
       {...props}
@@ -64,7 +74,8 @@ export const Textarea = React.forwardRef<
   <textarea
     ref={ref}
     className={cn(
-      "flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2",
+      // A textarea is a box, not a field: it takes `.ln`'s 12px like the other boxes.
+      "flex w-full rounded-[var(--cx-r-sm,12px)] border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2",
       className,
     )}
     {...props}
@@ -82,7 +93,8 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
+        // The reference's `.ln-count`: a full pill, always, at any width.
+        "inline-flex items-center rounded-[var(--cx-r-pill,999px)] px-2 py-0.5 text-[11px] font-medium",
         className,
       )}
       {...props}
@@ -107,7 +119,8 @@ export const Select = React.forwardRef<
   <select
     ref={ref}
     className={cn(
-      "flex h-9 w-full rounded-md border border-border bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50",
+      // Matches Input exactly - they sit next to each other in every form on the console.
+      "flex h-9 w-full rounded-[var(--cx-r-xs,10px)] border border-border bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50",
       className,
     )}
     {...props}
@@ -117,13 +130,38 @@ Select.displayName = "Select";
 
 export type PillTone = "neutral" | "success" | "warning" | "danger" | "info";
 
+/**
+ * Status colour, defined once. Every tone resolves through the console palette tokens
+ * (consoleTheme.css / consoleTheme.light.css, which is docs/design/console-reference.html
+ * converted to HSL triplets) rather than through a raw Tailwind scale, so a theme change
+ * reaches the pills instead of stopping at them. The reference rations saturated colour to
+ * three hues, and this is the mapping it implies:
+ *   success -> --cx-live   (green - it went through)
+ *   warning -> --cx-flag   (YELLOW #E8C468, never orange; the reference is explicit)
+ *   danger  -> --cx-danger (the console's red; the reference has no failure state of its own)
+ *   info    -> --cx-accent (azure, the active/primary hue)
+ *   neutral -> the muted token, unchanged
+ * The 15% wash and the full-strength foreground are the weights these pills already had.
+ * The hues move slightly: emerald-300 -> #3ECF8E, amber-300 -> #E8C468, sky-300 -> #5B8DEF.
+ */
 const PILL_TONES: Record<PillTone, string> = {
   neutral: "bg-muted text-muted-foreground",
-  success: "bg-emerald-500/15 text-emerald-300",
-  warning: "bg-amber-500/15 text-amber-300",
-  danger: "bg-red-500/15 text-red-300",
-  info: "bg-sky-500/15 text-sky-300",
+  success: "bg-[hsl(var(--cx-live)/0.15)] text-[hsl(var(--cx-live))]",
+  warning: "bg-[hsl(var(--cx-flag)/0.15)] text-[hsl(var(--cx-flag))]",
+  danger: "bg-[hsl(var(--cx-danger)/0.15)] text-[hsl(var(--cx-danger))]",
+  info: "bg-[hsl(var(--cx-accent)/0.15)] text-[hsl(var(--cx-accent))]",
 };
+
+/**
+ * The tone classes on their own, for the handful of places that render a status through
+ * `Badge` rather than `Pill` (CallsPage, CampaignsPage, ListsPage each map a server status
+ * string onto a tone). Exported so a status-badge FAMILY stays defined in exactly one
+ * place - converting one member of a green/yellow/red/azure/grey set and leaving its
+ * siblings on raw Tailwind is how a page ends up half on the palette.
+ */
+export function pillToneClass(tone: PillTone): string {
+  return PILL_TONES[tone];
+}
 
 type PillProps = React.HTMLAttributes<HTMLSpanElement> & {
   tone?: PillTone;
@@ -134,7 +172,9 @@ export const Pill = React.forwardRef<HTMLSpanElement, PillProps>(
     <span
       ref={ref}
       className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px]",
+        // The reference's `.pill` filter chip: a full pill. This is the shape the name
+        // promises, and it is the one the operator signed off.
+        "inline-flex items-center rounded-[var(--cx-r-pill,999px)] px-2 py-0.5 text-[11px]",
         PILL_TONES[tone],
         className,
       )}
@@ -150,7 +190,8 @@ export const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDi
   ({ className, children, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn("rounded-lg border border-border bg-background p-4", className)}
+      // The reference's `.row`/`.note`/`.callcard`: 14px. A card is the card radius.
+      className={cn("rounded-[var(--cx-r-md,14px)] border border-border bg-background p-4", className)}
       {...props}
     >
       {children}
@@ -228,7 +269,8 @@ export const EmptyState = React.forwardRef<HTMLDivElement, EmptyStateProps>(
     <div
       ref={ref}
       className={cn(
-        "flex flex-col items-center justify-center rounded-lg border border-dashed border-border p-8 text-center",
+        // Same 14px as Card - an empty state is a card that has nothing in it yet.
+        "flex flex-col items-center justify-center rounded-[var(--cx-r-md,14px)] border border-dashed border-border p-8 text-center",
         className,
       )}
       {...props}
@@ -432,7 +474,13 @@ export function Drawer({ open, onClose, title, children, footer, width }: Drawer
       onClose={onClose}
       title={title}
       footer={footer}
-      panelClassName={cn("right-0 top-0 h-full w-[420px] max-w-full border-l", width)}
+      // 18px, the `.bubble`/`.composer-box` value, and only on the two corners that face
+      // into the page: a drawer is flush against the right edge of the viewport, so
+      // rounding its outer corners would show the page through them.
+      panelClassName={cn(
+        "right-0 top-0 h-full w-[420px] max-w-full rounded-l-[var(--cx-r-lg,18px)] border-l",
+        width,
+      )}
     >
       {children}
     </Overlay>
@@ -456,8 +504,8 @@ export function Sheet({
       footer={footer}
       panelClassName={cn(
         side === "bottom"
-          ? "inset-x-0 bottom-0 max-h-[85vh] rounded-t-xl border-t"
-          : "inset-y-0 left-0 h-full w-[280px] max-w-[85vw] border-r",
+          ? "inset-x-0 bottom-0 max-h-[85vh] rounded-t-[var(--cx-r-lg,18px)] border-t"
+          : "inset-y-0 left-0 h-full w-[280px] max-w-[85vw] rounded-r-[var(--cx-r-lg,18px)] border-r",
         side === "left" ? width : undefined,
       )}
     >
@@ -562,7 +610,9 @@ export function Tabs({
             disabled={tab.disabled}
             onClick={() => onChange(tab.id)}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm",
+              // The reference's only segmented control is `.toggle`, whose buttons are
+              // full pills on a pill-shaped track.
+              "rounded-[var(--cx-r-pill,999px)] px-3 py-1.5 text-sm",
               selected
                 ? "bg-muted text-foreground"
                 : "text-muted-foreground hover:bg-muted",
@@ -647,13 +697,15 @@ export function Collapsible({
   const contentId = React.useId();
 
   return (
-    <div className={cn("rounded-lg border border-border", className)}>
+    // Card radius on the shell; the header's top corners have to match it exactly or the
+    // hover fill squares off the two corners it sits inside.
+    <div className={cn("rounded-[var(--cx-r-md,14px)] border border-border", className)}>
       <button
         type="button"
         aria-expanded={open}
         aria-controls={contentId}
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between rounded-t-lg px-4 py-3 text-sm font-medium hover:bg-muted"
+        className="flex w-full items-center justify-between rounded-t-[var(--cx-r-md,14px)] px-4 py-3 text-sm font-medium hover:bg-muted"
       >
         <span>{title}</span>
         <ChevronDown
@@ -675,7 +727,8 @@ export const Kbd = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElemen
     <kbd
       ref={ref}
       className={cn(
-        "rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground",
+        // 10px on a ~18px-tall cap reads as a rounded keycap rather than a chiclet.
+        "rounded-[var(--cx-r-xs,10px)] border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground",
         className,
       )}
       {...props}

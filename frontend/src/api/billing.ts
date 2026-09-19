@@ -23,12 +23,17 @@ export interface AutoRecharge {
 
 export interface LastTopup {
   amount_micros: number;
-  created_at?: string | null;
+  /** The server names this field `at`, not `created_at` - see GET /billing/summary. */
+  at: string;
 }
 
 export interface BillingSummary {
+  /** Everything in the account, INCLUDING money already reserved for calls in flight. */
   balance_micros: number;
+  /** Held against calls currently up; released when they end. */
   reserved_micros: number;
+  /** balance - reserved, floored at zero. This, not balance, is what can be spent. */
+  available_micros: number;
   warning: BalanceWarning | null;
   auto_recharge: AutoRecharge | null;
   last_topup: number | LastTopup | null;
@@ -136,6 +141,18 @@ export function parseDollarsToMicros(text: string): number | null {
   // non-positive top-up anyway - better to disable the button than to send a 422.
   if (!Number.isFinite(value) || value <= 0) return null;
   return dollarsToMicros(value);
+}
+
+/**
+ * The spendable figure, and the only one a customer-facing headline may show.
+ *
+ * The server computes `available_micros` as max(balance - reserved, 0). The fallback
+ * recomputes exactly that, so a server predating the field degrades to the honest number
+ * instead of silently back to the raw balance, which overstates the credit.
+ */
+export function availableMicros(summary: BillingSummary): number {
+  if (typeof summary.available_micros === "number") return summary.available_micros;
+  return Math.max(summary.balance_micros - summary.reserved_micros, 0);
 }
 
 export function lastTopupMicros(summary: BillingSummary | undefined): number {

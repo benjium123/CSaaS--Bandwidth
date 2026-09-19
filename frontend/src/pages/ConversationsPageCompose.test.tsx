@@ -17,6 +17,10 @@ const { dialMock, subscribeMock } = vi.hoisted(() => ({
 vi.mock("@/softphone/SoftphoneProvider", () => ({
   SoftphoneProvider: ({ children }: { children: ReactNode }) => children,
   useSoftphone: () => ({ dial: dialMock, subscribe: subscribeMock }),
+  // The inbox rail now mounts NotificationBell (the reference's Notifications item), and
+  // the bell reads the realtime socket through this hook. Returning null IS the "no
+  // socket" case the hook exists for - the bell falls back to polling.
+  useOptionalSoftphone: () => null,
 }));
 
 function inbox(overrides: Partial<Inbox> = {}): Inbox {

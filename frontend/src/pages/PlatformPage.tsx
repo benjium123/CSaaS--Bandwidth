@@ -25,7 +25,6 @@ import {
 } from "@/api/hooks";
 import {
   Button,
-  Card,
   EmptyState,
   Input,
   MutationStatus,
@@ -34,8 +33,8 @@ import {
   Select,
   Spinner,
 } from "@/components/ui/primitives";
+import { ConsoleCard, PageHeader, SurfaceCard } from "@/components/ui/consoleChrome";
 import { cn } from "@/lib/utils";
-import { PlatformBillingOps } from "@/components/billing/PlatformBillingOps";
 import { PlatformMessagingHealth } from "@/components/billing/PlatformMessagingHealth";
 
 function todayUtc(): string {
@@ -54,9 +53,9 @@ function CopyOnceBox({
   onDismiss: () => void;
 }) {
   return (
-    <Card className="space-y-2 text-sm">
+    <ConsoleCard className="space-y-[9px] text-[13.5px]">
       <p className="font-medium">{label}</p>
-      <p className="text-xs text-muted-foreground">{note}</p>
+      <p className="text-xs text-[hsl(var(--cx-muted))]">{note}</p>
       <div className="flex gap-2">
         <Input
           readOnly
@@ -77,7 +76,7 @@ function CopyOnceBox({
       <Button type="button" size="sm" variant="ghost" onClick={onDismiss}>
         Dismiss
       </Button>
-    </Card>
+    </ConsoleCard>
   );
 }
 
@@ -93,11 +92,11 @@ function CheckboxGrid({
   legend: string;
 }) {
   return (
-    <fieldset className="max-h-40 overflow-y-auto rounded-md border border-border p-2">
-      <legend className="px-1 text-xs text-muted-foreground">{legend}</legend>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3">
+    <fieldset className="max-h-40 overflow-y-auto rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[11px]">
+      <legend className="px-1 text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">{legend}</legend>
+      <div className="grid grid-cols-2 gap-x-[12px] gap-y-[6px] sm:grid-cols-3">
         {options.map((opt) => (
-          <label key={opt} className="flex items-center gap-1.5 text-xs">
+          <label key={opt} className="flex items-center gap-[7px] text-[12px]">
             <input
               type="checkbox"
               checked={selected.has(opt)}
@@ -179,7 +178,7 @@ function ApiKeysSection() {
       {isLoading ? (
         <Spinner />
       ) : keysError ? (
-        <div role="alert" className="space-y-2 text-sm text-destructive">
+        <div role="alert" className="space-y-2 text-sm text-[hsl(var(--cx-danger))]">
           <p>{(keysError as Error).message}</p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetchKeys()}>
             Retry
@@ -192,33 +191,33 @@ function ApiKeysSection() {
           description="Create an API key to access the platform API."
         />
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
+        <SurfaceCard className="overflow-x-auto p-0">
+          <table className="w-full text-[13.5px]">
             <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Name</th>
-                <th className="px-3 py-2 font-medium">Prefix</th>
-                <th className="px-3 py-2 font-medium">Scopes</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Last used</th>
-                <th className="px-3 py-2 font-medium">Actions</th>
+              <tr className="border-b border-[hsl(var(--cx-line))] text-left text-[11.5px] text-[hsl(var(--cx-muted))]">
+                <th className="px-[12px] py-[10px] font-semibold">Name</th>
+                <th className="px-[12px] py-[10px] font-semibold">Prefix</th>
+                <th className="px-[12px] py-[10px] font-semibold">Scopes</th>
+                <th className="px-[12px] py-[10px] font-semibold">Status</th>
+                <th className="px-[12px] py-[10px] font-semibold">Last used</th>
+                <th className="px-[12px] py-[10px] font-semibold">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody className="divide-y divide-[hsl(var(--cx-line))]">
               {(keys ?? []).map((k: ApiKeyOut) => (
                 <tr key={k.id}>
-                  <td className="px-3 py-2">{k.name}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{k.prefix}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  <td className="px-[12px] py-[10px]">{k.name}</td>
+                  <td className="px-[12px] py-[10px] font-mono text-[11.5px]">{k.prefix}</td>
+                  <td className="px-[12px] py-[10px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                     {k.scopes.join(", ")}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-[12px] py-[10px]">
                     <Pill tone={apiKeyStatusTone(k.status)}>{k.status}</Pill>
                   </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  <td className="px-[12px] py-[10px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                     {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "Never"}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-[12px] py-[10px]">
                     {k.status === "active" && (
                       <div className="flex gap-2">
                         <Button
@@ -246,14 +245,14 @@ function ApiKeysSection() {
               ))}
             </tbody>
           </table>
-        </Card>
+        </SurfaceCard>
       )}
 
-      <Card className="space-y-3">
+      <ConsoleCard className="space-y-[12px]">
         <form className="space-y-3" onSubmit={submitCreate}>
           <div className="flex items-end gap-2">
             <div className="flex-1 space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="apikey-name">
+              <label className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]" htmlFor="apikey-name">
                 Name
               </label>
               <Input
@@ -288,7 +287,7 @@ function ApiKeysSection() {
             onDismiss={() => setCreated(null)}
           />
         )}
-      </Card>
+      </ConsoleCard>
     </Section>
   );
 }
@@ -336,9 +335,11 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
   }
 
   return (
-    <div className="space-y-2 border-t border-border bg-muted/40 p-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-medium text-foreground">Deliveries for {endpoint.url}</h3>
+    <div className="space-y-[11px] border-t border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px]">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
+          Deliveries for {endpoint.url}
+        </h3>
         <Select
           aria-label="Filter deliveries by status"
           className="h-7 w-auto px-2 text-xs"
@@ -358,7 +359,7 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
       {isLoading ? (
         <Spinner label="Loading deliveries" />
       ) : deliveriesError ? (
-        <div role="alert" className="space-y-2 text-xs text-destructive">
+        <div role="alert" className="space-y-2 text-xs text-[hsl(var(--cx-danger))]">
           <p>{(deliveriesError as Error).message}</p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetchDeliveries()}>
             Retry
@@ -367,30 +368,30 @@ function DeliveriesDrawer({ endpoint }: { endpoint: WebhookEndpointOut }) {
       ) : (deliveries ?? []).length === 0 ? (
         <EmptyState title="No deliveries yet." description="Delivered events will appear here." />
       ) : (
-        <table className="w-full text-xs">
+        <table className="w-full text-[12px]">
           <thead>
-            <tr className="text-left text-muted-foreground">
-              <th className="px-2 py-1 font-medium">Event</th>
-              <th className="px-2 py-1 font-medium">Status</th>
-              <th className="px-2 py-1 font-medium">Attempts</th>
-              <th className="px-2 py-1 font-medium">Last error</th>
-              <th className="px-2 py-1 font-medium">Actions</th>
+            <tr className="text-left text-[11.5px] text-[hsl(var(--cx-muted))]">
+              <th className="px-[10px] py-[8px] font-semibold">Event</th>
+              <th className="px-[10px] py-[8px] font-semibold">Status</th>
+              <th className="px-[10px] py-[8px] font-semibold">Attempts</th>
+              <th className="px-[10px] py-[8px] font-semibold">Last error</th>
+              <th className="px-[10px] py-[8px] font-semibold">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border">
+          <tbody className="divide-y divide-[hsl(var(--cx-line))]">
             {(deliveries ?? []).map((d) => (
               <tr key={d.id}>
-                <td className="px-2 py-1">{d.event_type}</td>
-                <td className="px-2 py-1">
+                <td className="px-[10px] py-[8px]">{d.event_type}</td>
+                <td className="px-[10px] py-[8px]">
                   <Pill tone={deliveryStatusTone(d.status)}>{d.status}</Pill>
                 </td>
-                <td className="px-2 py-1">{d.attempts}</td>
-                <td className="px-2 py-1">
+                <td className="px-[10px] py-[8px]">{d.attempts}</td>
+                <td className="px-[10px] py-[8px]">
                   {d.last_status_code ? `HTTP ${d.last_status_code}` : ""}
                   {d.last_error ? ` ${d.last_error}` : ""}
                   {!d.last_status_code && !d.last_error ? "—" : ""}
                 </td>
-                <td className="px-2 py-1">
+                <td className="px-[10px] py-[8px]">
                   <Button
                     type="button"
                     size="sm"
@@ -480,7 +481,7 @@ function WebhooksSection() {
       {isLoading ? (
         <Spinner />
       ) : endpointsError ? (
-        <div role="alert" className="space-y-2 text-sm text-destructive">
+        <div role="alert" className="space-y-2 text-sm text-[hsl(var(--cx-danger))]">
           <p>{(endpointsError as Error).message}</p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetchEndpoints()}>
             Retry
@@ -493,17 +494,19 @@ function WebhooksSection() {
           description="Create a callback to receive platform events."
         />
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-[11px]">
           {(endpoints ?? []).map((ep: WebhookEndpointOut) => (
-            <Card key={ep.id} className="p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-sm">{ep.url}</p>
-                  <p className="text-xs text-muted-foreground">{ep.event_types.join(", ")}</p>
+            <ConsoleCard key={ep.id} className="overflow-hidden p-0">
+              <div className="flex flex-wrap items-center justify-between gap-[11px] p-[14px]">
+                <div className="min-w-0">
+                  <p className="text-[13.5px] font-semibold">{ep.url}</p>
+                  <p className="mt-[3px] text-[11.5px] text-[hsl(var(--cx-muted))]">
+                    {ep.event_types.join(", ")}
+                  </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-[7px]">
                   <Pill tone={endpointStatusTone(ep.status)}>{ep.status}</Pill>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-[11.5px] text-[hsl(var(--cx-muted))]">
                     {ep.failure_streak} failing
                   </span>
                   <Button
@@ -528,17 +531,17 @@ function WebhooksSection() {
                 </div>
               </div>
               {expandedId === ep.id && <DeliveriesDrawer endpoint={ep} />}
-            </Card>
+            </ConsoleCard>
           ))}
         </div>
       )}
 
-      <Card className="space-y-3">
+      <ConsoleCard className="space-y-[12px]">
         <form className="space-y-3" onSubmit={submitCreate}>
           <div className="flex items-end gap-2">
             <div className="flex-1 space-y-1">
               {/* P20b: PlatformPage.test.tsx queries the exact label "Endpoint URL". */}
-              <label className="block text-xs text-muted-foreground" htmlFor="webhook-url">
+              <label className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]" htmlFor="webhook-url">
                 Endpoint URL
               </label>
               <Input
@@ -575,7 +578,7 @@ function WebhooksSection() {
             onDismiss={() => setCreated(null)}
           />
         )}
-      </Card>
+      </ConsoleCard>
     </Section>
   );
 }
@@ -610,10 +613,10 @@ function AuditSection() {
 
   return (
     <Section title="Audit log" description="Recent platform activity." className="space-y-4">
-      <Card className="p-4">
+      <ConsoleCard>
         <form className="flex flex-wrap items-end gap-2" onSubmit={applyFilters}>
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="audit-action">
+            <label className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]" htmlFor="audit-action">
               Action
             </label>
             <Input
@@ -625,7 +628,7 @@ function AuditSection() {
             />
           </div>
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="audit-target-type">
+            <label className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]" htmlFor="audit-target-type">
               Target type
             </label>
             <Input
@@ -640,12 +643,12 @@ function AuditSection() {
             Apply filters
           </Button>
         </form>
-      </Card>
+      </ConsoleCard>
 
       {isLoading && rows.length === 0 ? (
         <Spinner />
       ) : error ? (
-        <div role="alert" className="space-y-2 text-sm text-destructive">
+        <div role="alert" className="space-y-2 text-sm text-[hsl(var(--cx-danger))]">
           <p>{(error as Error).message}</p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetch()}>
             Retry
@@ -654,39 +657,39 @@ function AuditSection() {
       ) : rows.length === 0 ? (
         <EmptyState title="No audit entries yet." description="Audit activity will appear here." />
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
+        <SurfaceCard className="overflow-x-auto p-0">
+          <table className="w-full text-[13.5px]">
             <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Action</th>
-                <th className="px-3 py-2 font-medium">Target</th>
-                <th className="px-3 py-2 font-medium">Actor</th>
-                <th className="px-3 py-2 font-medium">When</th>
+              <tr className="border-b border-[hsl(var(--cx-line))] text-left text-[11.5px] text-[hsl(var(--cx-muted))]">
+                <th className="px-[12px] py-[10px] font-semibold">Action</th>
+                <th className="px-[12px] py-[10px] font-semibold">Target</th>
+                <th className="px-[12px] py-[10px] font-semibold">Actor</th>
+                <th className="px-[12px] py-[10px] font-semibold">When</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody className="divide-y divide-[hsl(var(--cx-line))]">
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td className="px-3 py-2 font-mono text-xs">{r.action}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  <td className="px-[12px] py-[10px] font-mono text-[11.5px]">{r.action}</td>
+                  <td className="px-[12px] py-[10px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                     {r.target_type}
                     {r.target_id ? ` (${r.target_id.slice(0, 8)})` : ""}
                   </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  <td className="px-[12px] py-[10px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                     {r.actor_api_key_id
                       ? `API key ${r.actor_api_key_id.slice(0, 8)}`
                       : r.actor_user_id
                         ? `User ${r.actor_user_id.slice(0, 8)}`
                         : "—"}
                   </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  <td className="px-[12px] py-[10px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                     {new Date(r.created_at).toLocaleString()}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </Card>
+        </SurfaceCard>
       )}
 
       {data?.next_cursor && (
@@ -758,7 +761,7 @@ function UsageSection() {
       {usageLoading || reconLoading ? (
         <Spinner />
       ) : usageOrReconError ? (
-        <div role="alert" className="space-y-2 text-sm text-destructive">
+        <div role="alert" className="space-y-2 text-sm text-[hsl(var(--cx-danger))]">
           <p>{(usageOrReconError as Error).message}</p>
           <Button
             type="button"
@@ -773,39 +776,39 @@ function UsageSection() {
           </Button>
         </div>
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
+        <SurfaceCard className="overflow-x-auto p-0">
+          <table className="w-full text-[13.5px]">
             <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Metric</th>
-                <th className="px-3 py-2 font-medium">Ours</th>
-                <th className="px-3 py-2 font-medium">Provider</th>
-                <th className="px-3 py-2 font-medium">Verdict</th>
+              <tr className="border-b border-[hsl(var(--cx-line))] text-left text-[11.5px] text-[hsl(var(--cx-muted))]">
+                <th className="px-[12px] py-[10px] font-semibold">Metric</th>
+                <th className="px-[12px] py-[10px] font-semibold">Ours</th>
+                <th className="px-[12px] py-[10px] font-semibold">Provider</th>
+                <th className="px-[12px] py-[10px] font-semibold">Verdict</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody className="divide-y divide-[hsl(var(--cx-line))]">
               {(reconciliation?.items ?? []).map((item) => (
                 <tr key={item.metric}>
-                  <td className="px-3 py-2 font-mono text-xs">{item.metric}</td>
-                  <td className="px-3 py-2">{item.ours}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                  <td className="px-[12px] py-[10px] font-mono text-[11.5px]">{item.metric}</td>
+                  <td className="px-[12px] py-[10px]">{item.ours}</td>
+                  <td className="px-[12px] py-[10px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                     {item.carrier ?? "—"}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-[12px] py-[10px]">
                     <Pill tone={verdictTone(item.verdict)}>{item.verdict}</Pill>
                   </td>
                 </tr>
               ))}
               {(reconciliation?.items ?? []).length === 0 && (usage ?? []).length === 0 && (
                 <tr>
-                  <td className="px-3 py-4 text-center text-xs text-muted-foreground" colSpan={4}>
+                  <td className="px-[12px] py-[18px] text-center text-[12px] text-[hsl(var(--cx-muted))]" colSpan={4}>
                     No usage recorded for this date yet.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-        </Card>
+        </SurfaceCard>
       )}
     </Section>
   );
@@ -813,14 +816,36 @@ function UsageSection() {
 
 export function PlatformPage() {
   return (
-    <div className={cn("mx-auto max-w-4xl space-y-10 p-6")}>
-      <h1 className="text-lg font-semibold">Platform</h1>
+    <div className={cn("mx-auto max-w-4xl space-y-[18px]")}>
+      <PageHeader
+        title="Platform"
+        description="Keys, callbacks, the audit trail and what you used."
+      />
       <ApiKeysSection />
       <WebhooksSection />
       <AuditSection />
       <UsageSection />
-      <PlatformBillingOps />
+      {/* KEPT from main: messaging health is a live, working feature. Noting for later that
+          it carries the same shape as the panel removed below - its own comment says the ops
+          token helpers are "deliberately duplicated from PlatformBillingOps.tsx", so it too
+          unlocks by pasting the shared X-Platform-Ops-Token into a box on a CUSTOMER's
+          Developers tab. Unlike that panel it is not broken, so it stays until someone
+          decides to move it behind the named-operator console. */}
       <PlatformMessagingHealth />
+      {/* PlatformBillingOps was mounted here: a platform-operator billing panel sitting at the
+          bottom of a CUSTOMER's Developers tab. Removed, for three reasons.
+          1. It authenticates by pasting the shared X-Platform-Ops-Token into a text box and
+             keeping it in sessionStorage. The named-operator console requires a second factor
+             and a recent step-up; this was the weaker of the two doors, on the more public page.
+          2. It is built against a contract the server does not serve: it GETs
+             /platform/billing/rates (PUT only - platform.py:636), sends `cost_micros` where the
+             API takes `unit_cost_micros` (:481), and reads `org_id`/`name` off a response that
+             carries neither (_platform_billing_shape, :488). Its 11 tests pass because they stub
+             the shape the component imagines, so they compare it against itself.
+          3. Operator billing now lives in the Ops console (components/ops/BillingTab.tsx),
+             behind require_operator, written against the contract read out of the Python.
+          The component and its test file still exist and are now unreferenced - delete them once
+          the Ops console Billing tab has been exercised against a live backend. */}
     </div>
   );
 }

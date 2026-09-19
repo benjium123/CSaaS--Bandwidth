@@ -32,6 +32,108 @@ REPUTATION_TICK_INTERVAL_SECONDS = 3600
 #: recompute every org's spend on every ~60s tick - hourly matches the reputation gate
 #: above, same discipline (Opus review B4).
 SPEND_TICK_INTERVAL_SECONDS = 3600
+#: P41: trust & safety housekeeping, and the (large) sanctions/Tor list downloads.
+KYC_TICK_INTERVAL_SECONDS = 3600
+KYC_AUTOMATION_INTERVAL_SECONDS = 120
+#: P43 traffic monitoring cadences.
+MONITOR_FAST_INTERVAL_SECONDS = 120
+MONITOR_HOURLY_INTERVAL_SECONDS = 3600
+
+
+async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
+    """P43: call reviews and case files (every couple of minutes); behaviour signals,
+    unchecked texts, public reports and the canary (hourly); the full exam (weekly)."""
+    from datetime import timedelta
+
+    from app.api.routes import monitoring as monitoring_routes
+    from app.db.session import get_sessionmaker
+    from app.services import (
+        monitor_calls,
+        monitor_cohorts,
+        monitor_exam,
+        monitor_score,
+        monitor_text,
+    )
+
+    settings = app.state.settings
+    now = time.monotonic()
+    fast_due = now - getattr(app.state, "_monitor_fast_last_run", -1e9) >= (
+        MONITOR_FAST_INTERVAL_SECONDS
+    )
+    hourly_due = now - getattr(app.state, "_monitor_hourly_last_run", -1e9) >= (
+        MONITOR_HOURLY_INTERVAL_SECONDS
+    )
+    jobs = []
+    if fast_due:
+        app.state._monitor_fast_last_run = now
+        jobs += [
+            (
+                "call_reviews",
+                lambda s: monitor_calls.review_tick(s, settings, app.state.media_store),
+            ),
+            ("case_files", lambda s: monitor_score.case_file_tick(s, settings)),
+        ]
+    if hourly_due:
+        app.state._monitor_hourly_last_run = now
+        jobs += [
+            ("behaviour", lambda s: monitor_calls.behaviour_tick(s, settings)),
+            ("unchecked_texts", lambda s: monitor_text.unchecked_tick(s, settings)),
+            ("public_reports", lambda s: monitoring_routes.assess_reports_tick(s, settings)),
+        ]
+
+        async def canary(s):  # noqa: ANN001, ANN202
+            if await monitor_exam.due(s, "canary", timedelta(minutes=55)):
+                return (await monitor_exam.canary_tick(s, settings)).passed
+            return None
+
+        async def exam(s):  # noqa: ANN001, ANN202
+            # The weekly exam takes minutes: run it beside the sweeper, never inside it.
+            if getattr(app.state, "_monitor_exam_task", None) is not None and not (
+                app.state._monitor_exam_task.done()
+            ):
+                return "running"
+            if not await monitor_exam.due(s, "exam", timedelta(days=7)):
+                return None
+
+            async def _run_exam() -> None:
+                try:
+                    async with get_sessionmaker()() as exam_session:
+                        await monitor_exam.exam_tick(exam_session, settings)
+                except Exception:
+                    log.exception("monitor_exam_failed")
+
+            app.state._monitor_exam_task = asyncio.create_task(_run_exam())
+            return "started"
+
+        async def campaigns(s):  # noqa: ANN001, ANN202
+            """The cohort sweep: one AI call per CAMPAIGN, not per message.
+
+            Hourly with a 24-hour window, so the two overlap by 23 hours on purpose - a
+            campaign that starts at 09:05 is seen at 10:00 rather than waiting for a fresh
+            window. That overlap is only affordable because `tick` checks
+            `signalled_fingerprints` BEFORE spending an AI call: a template already on the
+            record costs nothing to see again, so re-reading the day is a clustering pass,
+            not a bill. Without that check this cadence would re-score one campaign 24 times
+            and pause the account on repetition alone.
+            """
+            counts = await monitor_cohorts.tick(s, settings, hours=24)
+            # Flattened into the pass log rather than returned whole: `any(results.values())`
+            # decides whether the sweeper logs the pass at all, and a dict is ALWAYS truthy,
+            # so returning one would make every hourly pass look like something happened.
+            for key in ("cohorts", "reviewed", "signals", "unavailable", "repeats"):
+                if counts.get(key):
+                    results[f"monitor_campaign_{key}"] = counts[key]
+            return counts.get("signals", 0)
+
+        jobs += [("canary", canary), ("exam", exam), ("campaigns", campaigns)]
+    for label, job in jobs:
+        try:
+            async with get_sessionmaker()() as session:
+                outcome = await job(session)
+            results[f"monitor_{label}"] = outcome
+        except Exception:
+            log.exception("sweeper_monitoring_job_failed", job=label)
+SECURITY_LISTS_INTERVAL_SECONDS = 86400
 
 #: 8.18/4.15/6.19: arbitrary constant lock key, one per "the whole sweeper pass". Any
 #: int works for pg_try_advisory_lock - it just needs to be the SAME constant every call
@@ -159,6 +261,21 @@ async def _run_once_locked(app) -> dict[str, int]:
                 )
         except Exception:
             log.exception("sweeper_number_order_poll_failed")
+
+    # P43: second look at texts held by the AI safety check. Runs BEFORE the held-message
+    # release so a text cleared here goes out on this same pass.
+    if getattr(app.state.settings, "monitor_enforced", False):
+        from app.services import monitor_text
+
+        try:
+            async with get_sessionmaker()() as session:
+                second = await monitor_text.second_look_tick(session, app.state.settings)
+            results.update({f"text_second_look_{k}": v for k, v in second.items()})
+        except Exception:
+            log.exception("sweeper_text_second_look_failed")
+
+    if getattr(app.state.settings, "monitor_enforced", False):
+        await _monitoring_jobs(app, results)
 
     if carrier is not None:
         try:
@@ -371,6 +488,68 @@ async def _run_once_locked(app) -> dict[str, int]:
             )
     except Exception:
         log.exception("sweeper_telephony_billing_failed")
+
+    # P41 trust & safety: hourly re-verification / Stripe reconcile / AI summaries, and a
+    # daily sanctions + Tor list refresh. Same reserve-the-slot-first discipline as spend.
+    from app.services import kyc_tick
+
+    # Only where verification is enforced: a deployment (or test) running without KYC has no
+    # applications to re-verify and must not start downloading government lists.
+    kyc_on = bool(getattr(app.state.settings, "kyc_enforced", False))
+    last_kyc_run = getattr(app.state, "_kyc_last_run", None)
+    if kyc_on and (
+        last_kyc_run is None or time.monotonic() - last_kyc_run >= KYC_TICK_INTERVAL_SECONDS
+    ):
+        app.state._kyc_last_run = time.monotonic()
+        cfg = app.state.settings
+        for label, job in (
+            ("reverification", lambda s: kyc_tick.reverification_tick(s, cfg)),
+            ("identity_reconcile", lambda s: kyc_tick.reconcile_identity_sessions(s, cfg)),
+            ("webauthn_cleanup", lambda s: kyc_tick.cleanup_challenges(s)),
+        ):
+            try:
+                async with get_sessionmaker()() as session:
+                    outcome = await job(session)
+                if isinstance(outcome, dict):
+                    results.update({f"kyc_{k}": v for k, v in outcome.items()})
+                else:
+                    results[f"kyc_{label}"] = outcome
+            except Exception:
+                log.exception("sweeper_kyc_tick_failed", job=label)
+    # P43: hands-off verification - read documents, retry registries, refresh the AI decision
+    # pack. Every couple of minutes so a submitted application is ready for a decision fast.
+    last_auto_run = getattr(app.state, "_kyc_automation_last_run", None)
+    if kyc_on and (
+        last_auto_run is None
+        or time.monotonic() - last_auto_run >= KYC_AUTOMATION_INTERVAL_SECONDS
+    ):
+        app.state._kyc_automation_last_run = time.monotonic()
+        from app.services import kyc_automation
+
+        try:
+            async with get_sessionmaker()() as session:
+                auto = await kyc_automation.tick(
+                    session,
+                    app.state.settings,
+                    app.state.media_store,
+                    http_client=getattr(app.state, "kyc_http_client", None),
+                )
+            results.update({f"kyc_{k}": v for k, v in auto.items()})
+        except Exception:
+            log.exception("sweeper_kyc_automation_failed")
+
+    last_lists_run = getattr(app.state, "_security_lists_last_run", None)
+    if kyc_on and (
+        last_lists_run is None
+        or time.monotonic() - last_lists_run >= SECURITY_LISTS_INTERVAL_SECONDS
+    ):
+        app.state._security_lists_last_run = time.monotonic()
+        try:
+            async with get_sessionmaker()() as session:
+                lists = await kyc_tick.daily_lists_tick(session, app.state.settings)
+            results["sanctions_hits"] = lists.get("sanctions_hits", 0)
+        except Exception:
+            log.exception("sweeper_security_lists_failed")
 
     # P24 credits sweeper (stale holds, low-balance warnings, auto-recharge, pausing
     # campaigns when empty). D69: it existed but was never called from here.

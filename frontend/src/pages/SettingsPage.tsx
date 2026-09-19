@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Navigate, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { hasPermission, useAuth } from "@/auth/AuthContext";
+import { hasPermission, isOwner, useAuth } from "@/auth/AuthContext";
 import { useGate } from "@/api/capabilities";
 import { DataRetentionCard } from "@/components/settings/DataRetentionCard";
 import { CreditsSection } from "@/components/billing/CreditsSection";
@@ -11,7 +11,6 @@ import { AiProvidersTab } from "@/components/assistants/AiProvidersTab";
 import { KnowledgeTab } from "@/components/assistants/KnowledgeTab";
 import {
   Button,
-  Card,
   EmptyState,
   panelId,
   Pill,
@@ -21,6 +20,7 @@ import {
   TabPanel,
   Tabs,
 } from "@/components/ui/primitives";
+import { SectionLabel, SurfaceCard } from "@/components/ui/consoleChrome";
 import { cn } from "@/lib/utils";
 import { TeamPage } from "@/pages/TeamPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
@@ -34,7 +34,14 @@ import { AgentPage } from "@/pages/AgentPage";
 import { AppointmentsPage } from "@/pages/AppointmentsPage";
 import { PlatformPage } from "@/pages/PlatformPage";
 import { DashboardPage } from "@/pages/DashboardPage";
-import { SETTINGS_SECTIONS, type SettingsSectionId } from "./settingsSections";
+import { VerifyBusinessPage } from "@/pages/VerifyBusinessPage";
+import {
+  canViewSettingsSection,
+  SETTINGS_SECTIONS,
+  type SettingsSectionId,
+} from "./settingsSections";
+import { INBOX_RAIL_PATHS, useRailNav } from "@/components/shell/Sidebar";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 
 export type { SettingsSectionId } from "./settingsSections";
 export { SETTINGS_SECTIONS } from "./settingsSections";
@@ -79,7 +86,7 @@ function SettingsTabs({ id, tabs, value, onChange, ariaLabel, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-[14px]">
       <Tabs
         tabs={tabs}
         value={value}
@@ -241,7 +248,7 @@ function WorkspaceGeneral() {
   });
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-[14px]">
       <Section title="Workspace">
         {currentOrgQuery.isLoading ? (
           <Spinner label="Loading workspace" />
@@ -258,24 +265,26 @@ function WorkspaceGeneral() {
             </Button>
           </div>
         ) : (
-          <Card>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Name</dt>
+          <SurfaceCard>
+            {/* The reference's panel fields: muted key, value on the right, a hairline
+                between rows rather than a gap. */}
+            <dl className="text-[13.5px] [&>div+div]:border-t [&>div+div]:border-[hsl(var(--cx-line))]">
+              <div className="flex justify-between gap-4 py-[11px]">
+                <dt className="text-[hsl(var(--cx-muted))]">Name</dt>
                 <dd>{currentOrgQuery.data?.name}</dd>
               </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Short name</dt>
+              <div className="flex justify-between gap-4 py-[11px]">
+                <dt className="text-[hsl(var(--cx-muted))]">Short name</dt>
                 <dd>{currentOrgQuery.data?.slug}</dd>
               </div>
             </dl>
-          </Card>
+          </SurfaceCard>
         )}
       </Section>
 
       {gate.org ? (
-        <Card>
-          <div className="flex flex-wrap gap-2">
+        <SurfaceCard>
+          <div className="flex flex-wrap gap-[7px]">
             <Pill tone={gate.org.has_provider ? "success" : "neutral"}>
               {gate.org.has_provider ? "Provider connected" : "No provider yet"}
             </Pill>
@@ -285,7 +294,7 @@ function WorkspaceGeneral() {
             <Pill tone="info">{gate.org.member_count} {gate.org.member_count === 1 ? "member" : "members"}</Pill>
             <Pill tone="info">{registrationLabel(gate.org.registration_state)}</Pill>
           </div>
-        </Card>
+        </SurfaceCard>
       ) : null}
     </div>
   );
@@ -372,7 +381,7 @@ function BillingUsageSection() {
           }
         />
       ) : (
-        <div className="grid gap-3">
+        <div className="grid gap-[14px]">
           {accountsQuery.data?.map((account) => (
             <SpendCard key={account.id} provider={account.provider} />
           ))}
@@ -386,6 +395,8 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
   switch (id) {
     case "workspace":
       return <WorkspaceSection />;
+    case "verification":
+      return <VerifyBusinessPage />;
     case "team":
       return <TeamSettingsSection />;
     case "inboxes":
@@ -409,55 +420,121 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
   return null;
 }
 
+/** One class function for every row in the settings nav, so the sections and the routes
+ *  that moved here out of the inbox rail cannot drift apart visually. */
+function settingsNavLinkClass({ isActive }: { isActive: boolean }): string {
+  // The reference's `.nav-item`: 10px radius, 9/10 padding, 13.5px, subtle until it is
+  // hovered or current.
+  return cn(
+    "rounded-[10px] px-[10px] py-[9px] text-[13.5px] transition-colors",
+    isActive
+      ? "bg-[hsl(var(--cx-overlay))] font-semibold text-[hsl(var(--cx-text))]"
+      : "text-[hsl(var(--cx-subtle))] hover:bg-[hsl(var(--cx-overlay))] hover:text-[hsl(var(--cx-text))]",
+  );
+}
+
 export function SettingsPage() {
+  // The console follows the one stored theme preference the front door writes. See
+  // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
+  // every wrapper in the console on the same commit rather than only its own.
+  const { theme } = useSurfaceTheme();
   const { section } = useParams<{ section: string }>();
   const gate = useGate();
+  const { me, orgId } = useAuth();
+  // Ownership, not permission: the owner's "*" role is expanded into every permission
+  // string server-side, so an owner and an admin look identical to gate.can(). Read it from
+  // the membership (see isOwner). Fail-closed while `me` is null.
+  const owner = isOwner(me, orgId);
+  const { items: railItems } = useRailNav();
   const current = SETTINGS_SECTIONS.find((s) => s.id === section);
+
+  /**
+   * The destinations that moved OUT of the inbox rail and now live here.
+   *
+   * The operator's rail is Contacts / Campaigns / Settings and nothing else, so Calls and
+   * Setup - full routes, not settings sections - have to be reachable from somewhere:
+   * this nav is that somewhere. They are read from `useRailNav`, the SAME already-gated
+   * list both rails render, and then filtered to whatever the rail does not itself show.
+   * Nothing is re-derived, so a member without `calls:read` still gets no Calls row, and
+   * Setup still appears only while the checklist has work (see showSetupItem). `/inbox` is
+   * excluded by INBOX_RAIL_PATHS' contract.
+   *
+   * Trust & safety is separate because its gate is `is_platform_operator`, which is not a
+   * capability at all - exactly the condition Sidebar and the old rail row used.
+   */
+  const movedItems = railItems.filter(
+    (item) => item.to !== "/inbox" && !INBOX_RAIL_PATHS.includes(item.to),
+  );
 
   if (!section || !current) {
     return <Navigate to="/settings/workspace" replace />;
   }
 
-  const canView = !gate.isLoading && gate.can(current.permission);
+  const canView = !gate.isLoading && canViewSettingsSection(current, gate.can, owner);
 
   return (
-    <div className="dark flex h-full flex-col overflow-hidden sm:flex-row">
+    <div className={cn(surfaceThemeClass(theme), "flex h-full flex-col overflow-hidden sm:flex-row")}>
       <nav
         aria-label="Settings"
-        className="w-full shrink-0 overflow-x-auto border-b border-border p-2 sm:w-56 sm:overflow-y-auto sm:border-b-0 sm:border-r"
+        className="w-full shrink-0 overflow-x-auto border-b border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] p-3 sm:w-56 sm:overflow-y-auto sm:border-b-0 sm:border-r"
       >
         {gate.isLoading ? (
           <Spinner label="Loading settings" />
         ) : (
-          <div className="flex flex-row gap-1 sm:flex-col">
-            {SETTINGS_SECTIONS.filter((s) => gate.can(s.permission)).map((s) => (
+          <div className="flex flex-row gap-[3px] sm:flex-col">
+            {SETTINGS_SECTIONS.filter((s) => canViewSettingsSection(s, gate.can, owner)).map((s) => (
               <NavLink
                 key={s.id}
                 to={`/settings/${s.id}`}
-                className={({ isActive }) =>
-                  cn(
-                    "rounded-md px-3 py-2 text-sm",
-                    isActive
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:bg-muted",
-                  )
-                }
+                className={settingsNavLinkClass}
               >
                 {s.label}
               </NavLink>
             ))}
+
+            {/* The rail's former rows. Separated by a rule and a caption because they are
+                not settings SECTIONS - each one leaves this page for a route of its own,
+                and the panel beside the nav will not change when you click them. */}
+            {movedItems.length > 0 || me?.is_platform_operator ? (
+              <>
+                <SectionLabel className="hidden px-[10px] pb-2 pt-5 sm:block">
+                  More
+                </SectionLabel>
+                {movedItems.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    aria-label={item.label}
+                    className={settingsNavLinkClass}
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+                {me?.is_platform_operator ? (
+                  <NavLink
+                    to="/ops"
+                    aria-label="Trust & safety"
+                    className={settingsNavLinkClass}
+                  >
+                    Trust &amp; safety
+                  </NavLink>
+                ) : null}
+              </>
+            ) : null}
           </div>
         )}
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="p-4">
+        <div className="p-[18px]">
           {gate.isLoading ? (
             <Spinner label="Loading settings" />
           ) : !canView ? (
-            <Card>
-              <p className="text-sm font-medium">You do not have access to this setting.</p>
-            </Card>
+            <SurfaceCard>
+              <p className="text-[13.5px] font-medium">
+                You do not have access to this setting.
+              </p>
+            </SurfaceCard>
           ) : (
             <SectionContent id={current.id} />
           )}

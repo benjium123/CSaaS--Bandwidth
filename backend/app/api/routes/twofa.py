@@ -11,16 +11,16 @@ of that key. There is **no plaintext fallback branch**: without the key, enrollm
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Annotated
 
 import pyotp
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import get_current_user
+from app.auth.deps import check_step_up, current_identity_session, get_current_user
 from app.auth.security import (
-    create_access_token,
     decode_pending_2fa_token,
     decrypt_credential,
     encrypt_credential,
@@ -36,7 +36,7 @@ from app.errors import (
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
-from app.services import identity as identity_svc
+from app.services import account_security, lockout, login_flow, session_tokens
 
 router = APIRouter(prefix="/api/v1/auth/2fa", tags=["auth"])
 
@@ -69,9 +69,7 @@ class EnrollOut(BaseModel):
 def _fernet_key(settings: Settings) -> str:
     key = settings.credential_encryption_key.get_secret_value().strip()
     if not key:
-        raise FeatureUnavailableError(
-            "Two-factor auth needs CREDENTIAL_ENCRYPTION_KEY to be set"
-        )
+        raise FeatureUnavailableError("Two-factor auth needs CREDENTIAL_ENCRYPTION_KEY to be set")
     return key
 
 
@@ -100,6 +98,9 @@ async def enroll(
 ) -> EnrollOut:
     if not verify_password(payload.password, user.hashed_password):
         raise UnauthenticatedError("Incorrect password")
+    # P43: a passkey user adding an authenticator app proves the passkey first.
+    if user.has_second_factor:
+        await check_step_up(request, session, user, kind="recent_2fa", action="totp_change")
     settings: Settings = request.app.state.settings
     key = _fernet_key(settings)
     if user.totp_enabled:
@@ -129,9 +130,22 @@ async def activate(
 
     secret = decrypt_credential(user.totp_secret, key)
     step = _check_code(user, secret, payload.code)
+    had_factor = bool(user.has_second_factor)
     user.totp_enabled = True
     user.totp_last_used_step = step
+    # P41: activating proves possession of the factor, so the enrolling session counts as
+    # second-factor-verified from here on.
+    row = await current_identity_session(request, session)
+    if row is not None and not had_factor:
+        row.second_factor_at = datetime.now(timezone.utc)
+    account_security.audit(session, user.id, "totp.enabled", request=request)
     await session.commit()
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "Authenticator app added",
+        "An authenticator app was added to your account.",
+    )
     return {"totp_enabled": True}
 
 
@@ -139,6 +153,7 @@ async def activate(
 async def verify(
     payload: VerifyIn,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     """Exchange a pending-2FA token + code for a real access token.
@@ -158,44 +173,59 @@ async def verify(
     if user is None or not user.totp_enabled or not user.totp_secret:
         raise UnauthenticatedError("Invalid verification session")
 
+    await lockout.ensure_not_locked(session, user)
     secret = decrypt_credential(user.totp_secret, key)
     try:
         step = _check_code(user, secret, payload.code)
     except UnauthenticatedError as exc:
         # A wrong or replayed second factor is a security event in its own right, and it
-        # is committed even though the request fails.
-        identity_svc.record_login_event(
-            session,
-            email=user.email,
-            outcome="bad_2fa",
-            user_id=user.id,
-            request=request,
-        )
-        await session.commit()
-        raise exc
+        # is committed even though the request fails. P42: it also counts toward lockout.
+        await lockout.fail(session, settings, request, user, outcome="bad_2fa", error=exc)
 
     user.totp_last_used_step = step
 
-    identity_session = await identity_svc.create_session(
+    token = await login_flow.complete_login(
         session,
-        user_id=user.id,
-        org_id=None,
-        request=request,
-        expire_hours=settings.jwt_expire_hours,
+        settings,
+        request,
+        user,
+        second_factor=True,
+        response=response,
+        auth_method="password_totp",
     )
-    await session.flush()
-
-    token = create_access_token(
-        user.id,
-        settings.jwt_secret.get_secret_value(),
-        expire_hours=settings.jwt_expire_hours,
-        sid=identity_session.id,
-    )
-    identity_svc.record_login_event(
-        session, email=user.email, outcome="ok", user_id=user.id, request=request
-    )
-    await session.commit()
     return {"access_token": token, "token_type": "bearer"}
+
+
+@router.post("/step-up")
+async def step_up(
+    payload: CodeIn,
+    request: Request,
+    response: Response,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """P41: re-prove the authenticator app inside an existing session (step-up)."""
+    settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"totp-step-up:{user.id}")
+    key = _fernet_key(settings)
+    if not user.totp_enabled or not user.totp_secret:
+        raise ValidationFailedError("Two-factor auth is not enabled")
+    row = await current_identity_session(request, session)
+    if row is None:
+        raise UnauthenticatedError("Sign in again to continue")
+    secret = decrypt_credential(user.totp_secret, key)
+    # P43: wrong step-up codes count toward the account lockout, like sign-in codes do.
+    await lockout.ensure_not_locked(session, user)
+    try:
+        step = _check_code(user, secret, payload.code)
+    except UnauthenticatedError as exc:
+        await lockout.fail(session, settings, request, user, outcome="bad_2fa", error=exc)
+        raise
+    user.totp_last_used_step = step
+    row.second_factor_at = datetime.now(timezone.utc)
+    session_tokens.rotate(response, settings, row)
+    await session.commit()
+    return {"ok": True}
 
 
 @router.post("/disable")
@@ -212,10 +242,24 @@ async def disable(
     if not user.totp_enabled or not user.totp_secret:
         raise ValidationFailedError("Two-factor auth is not enabled")
 
+    if settings.require_2fa_all_users and not user.has_passkey:
+        raise ValidationFailedError(
+            "Every account needs a second factor. Add a passkey before turning off the "
+            "authenticator app.",
+            code="last_second_factor",
+        )
+
     secret = decrypt_credential(user.totp_secret, key)
     _check_code(user, secret, payload.code)
     user.totp_enabled = False
     user.totp_secret = None
     user.totp_last_used_step = None
+    account_security.audit(session, user.id, "totp.disabled", request=request)
     await session.commit()
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "Authenticator app removed",
+        "The authenticator app was removed from your account.",
+    )
     return {"totp_enabled": False}

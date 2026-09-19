@@ -39,6 +39,17 @@ export type SsoConfigOut = {
   enforce: boolean;
   default_role_id: string | null;
   client_secret_set: boolean;
+  protocol?: "oidc" | "saml";
+  idp_entity_id?: string;
+  idp_sso_url?: string;
+  idp_cert_set?: boolean;
+  /** P43: when the saved signing certificate stops being valid, and whether it already
+   * has. Both are optional because a backend that predates them must produce SILENCE in
+   * the console, not a "certificate valid" claim - absence of a warning is not evidence
+   * of health. */
+  idp_cert_expires_at?: string | null;
+  idp_cert_expired?: boolean;
+  group_roles?: Record<string, string>;
 };
 
 export type SecurityPolicyOut = {
@@ -55,6 +66,12 @@ export type SsoConfigIn = {
   domain?: string;
   enforce?: boolean;
   default_role_id?: string | null;
+  /** P42: "oidc" (default) or "saml". */
+  protocol?: "oidc" | "saml";
+  idp_entity_id?: string;
+  idp_sso_url?: string;
+  idp_x509_cert?: string;
+  group_roles?: Record<string, string>;
 };
 
 export type SecurityPolicyIn = {

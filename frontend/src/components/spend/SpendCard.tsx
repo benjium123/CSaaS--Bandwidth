@@ -48,10 +48,10 @@ export function SpendCard({
   }, [providerSpend]);
 
   return (
-    <div className="border-t border-neutral-800 pt-3">
+    <div className="border-t border-border pt-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-medium text-neutral-400">
-          Spend this month <span className="text-neutral-600">(UTC days)</span>
+        <p className="text-xs font-medium text-muted-foreground">
+          Spend this month <span className="text-muted-foreground/50">(UTC days)</span>
         </p>
         {providerSpend && (
           <button
@@ -59,7 +59,7 @@ export function SpendCard({
             aria-expanded={expanded}
             aria-controls={`${provider}-spend-breakdown`}
             onClick={() => setExpanded((prev) => !prev)}
-            className="text-xs text-neutral-500 underline hover:text-neutral-300"
+            className="text-xs text-muted-foreground/75 underline hover:text-foreground/85"
           >
             {expanded ? "Hide breakdown" : "Show breakdown"}
           </button>
@@ -67,25 +67,25 @@ export function SpendCard({
       </div>
 
       {summaryQuery.isLoading ? (
-        <p className="text-xs text-neutral-500">Loading spend…</p>
+        <p className="text-xs text-muted-foreground/75">Loading spend…</p>
       ) : summaryQuery.isError ? (
-        <p className="text-xs text-red-400">Spend unavailable</p>
+        <p className="text-xs text-destructive">Spend unavailable</p>
       ) : !providerSpend ? (
-        <p className="text-xs text-neutral-500">No spend yet.</p>
+        <p className="text-xs text-muted-foreground/75">No spend yet.</p>
       ) : (
         <>
-          <p className="text-sm font-semibold text-neutral-100">
+          <p className="text-sm font-semibold text-foreground">
             {formatMicros(providerSpend.cost_micros)}
           </p>
 
           {isUnrated && (
-            <p className="mt-1 text-[10px] text-amber-400">
+            <p className="mt-1 text-[10px] text-[hsl(var(--cx-flag))]">
               No rate card — costs shown as $0.00{" "}
               {onOpenRates ? (
                 <button
                   type="button"
                   onClick={onOpenRates}
-                  className="underline hover:text-amber-300"
+                  className="underline underline-offset-2 hover:opacity-80"
                 >
                   (set rates)
                 </button>
@@ -99,18 +99,20 @@ export function SpendCard({
             <div id={`${provider}-spend-breakdown`} className="mt-3 space-y-3">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-left text-neutral-500">
-                    <th className="py-1 font-medium">Metric</th>
-                    <th className="py-1 text-right font-medium">Qty</th>
-                    <th className="py-1 text-right font-medium">Cost</th>
+                  <tr className="text-left text-muted-foreground/75">
+                    <th className="py-2 pr-3 font-medium">Metric</th>
+                    <th className="py-2 text-right font-medium">Qty</th>
+                    <th className="py-2 text-right font-medium">Cost</th>
                   </tr>
                 </thead>
                 <tbody>
                   {metricEntries.map(([metric, line]) => (
-                    <tr key={metric} className="border-t border-neutral-800">
-                      <td className="py-1 text-neutral-300">{SPEND_METRIC_LABELS[metric]}</td>
-                      <td className="py-1 text-right text-neutral-400">{line.quantity}</td>
-                      <td className="py-1 text-right text-neutral-200">
+                    <tr key={metric} className="border-t border-border">
+                      <td className="py-2 pr-3 text-foreground/85">
+                        {SPEND_METRIC_LABELS[metric]}
+                      </td>
+                      <td className="py-2 text-right text-muted-foreground">{line.quantity}</td>
+                      <td className="py-2 text-right text-foreground/95">
                         {formatMicros(line.cost_micros)}
                       </td>
                     </tr>
@@ -120,12 +122,12 @@ export function SpendCard({
 
               {providerSpend.numbers.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-neutral-400">Numbers</p>
+                  <p className="text-xs font-medium text-muted-foreground">Numbers</p>
                   <ul className="mt-1 space-y-1">
                     {providerSpend.numbers.map((number) => (
                       <li
                         key={number.number_id}
-                        className="flex justify-between text-xs text-neutral-300"
+                        className="flex justify-between text-xs text-foreground/85"
                       >
                         <span>{number.e164}</span>
                         <span>{formatMicros(number.cost_micros)}</span>
@@ -179,12 +181,17 @@ export function SpendTile() {
   const allDailyZero = dailyByDate.every(([, micros]) => micros === 0);
 
   // Matches ChartCard's token-based shell in DashboardPage.tsx (border-border,
-  // text-muted-foreground/text-destructive) rather than a hardcoded dark palette - this
-  // page doesn't force a "dark" class the way ProvidersPage/NumbersPage do, it follows
-  // the viewer's light/dark theme via CSS variables.
+  // text-muted-foreground/text-destructive) rather than a hardcoded dark palette, so this
+  // renders with whatever --background/--foreground/--border resolve to on the surface it
+  // is mounted on. That is NOT the same as "follows the viewer's theme", which is what
+  // this comment used to claim: App.tsx still wraps the whole shell in a `dark` class (and
+  // NumbersPage adds a second one of its own), so today these tokens always resolve to the
+  // dark values. The point of using them is that the component holds no opinion of its
+  // own - when the shell stops forcing `dark`, this follows with no edit here. SpendCard
+  // above is on the same tokens for the same reason.
   if (summaryQuery.isLoading || dailyQuery.isLoading) {
     return (
-      <div className="rounded-md border border-border p-4 text-sm text-muted-foreground">
+      <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
         Loading spend…
       </div>
     );
@@ -192,14 +199,14 @@ export function SpendTile() {
 
   if (summaryQuery.isError) {
     return (
-      <div role="alert" className="rounded-md border border-border p-4 text-sm text-destructive">
+      <div role="alert" className="rounded-lg border border-border p-4 text-sm text-destructive">
         Spend data is unavailable.
       </div>
     );
   }
 
   return (
-    <div className="rounded-md border border-border p-4">
+    <div className="rounded-lg border border-border p-4">
       <h2 className="mb-1 text-sm font-medium">Spend</h2>
       <p className="mb-2 text-xs text-muted-foreground">Month-to-date, UTC days</p>
       <p className="text-2xl font-semibold">
@@ -216,7 +223,7 @@ export function SpendTile() {
       </ul>
 
       {(summaryQuery.data?.unrated_providers ?? []).length > 0 && (
-        <p className="mt-2 text-xs text-amber-500">
+        <p className="mt-2 text-xs text-[hsl(var(--cx-flag))]">
           No rate card: {(summaryQuery.data?.unrated_providers ?? []).join(", ")}
         </p>
       )}
@@ -239,7 +246,7 @@ export function SpendTile() {
                     role="img"
                     aria-label={`Spend ${date}: ${formatMicros(micros)}`}
                     title={`${formatDateShort(date)}: ${formatMicros(micros)}`}
-                    className="w-full rounded-sm bg-primary"
+                    className="w-full rounded-t-[var(--cx-r-tail,6px)] bg-primary"
                     style={{ height: `${heightPct}%` }}
                   />
                 </div>

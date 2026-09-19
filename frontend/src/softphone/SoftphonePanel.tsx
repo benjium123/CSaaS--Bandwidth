@@ -21,6 +21,7 @@ import { useSoftphone } from "@/softphone/SoftphoneProvider";
 import { Button, Input } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 
 const KEYPAD_ROWS = [
   ["1", "2", "3"],
@@ -126,6 +127,10 @@ function useRingTone(active: boolean, muted: boolean) {
 }
 
 export function SoftphonePanel() {
+  // The console follows the one stored theme preference the front door writes. See
+  // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
+  // every wrapper in the console on the same commit rather than only its own.
+  const { theme } = useSurfaceTheme();
   const { api, me, orgId } = useAuth();
   const { data: numbers } = useNumbers(api);
   const softphone = useSoftphone();
@@ -152,8 +157,12 @@ export function SoftphonePanel() {
   const answerButtonRef = React.useRef<HTMLButtonElement>(null);
 
   const activeNumbers = React.useMemo(() => (numbers ?? []).filter((n) => n.is_active), [numbers]);
-  // Item 5: undefined `permissions` (backend hasn't rolled them out for this membership
-  // yet) fails OPEN - only an explicit, present, and missing "calls:place" disables this.
+  // This gate now fails CLOSED, and the comment that used to sit here was describing a
+  // world that never existed. It said an undefined `permissions` meant "the backend has not
+  // rolled them out for this membership yet" and so must fail OPEN. The backend has never
+  // sent `permissions` on a membership - it sends the list top-level on /auth/me - so that
+  // branch was unconditional and this button rendered for every member of the org, then
+  // 403'd on click. See the note on hasPermission in auth/AuthContext.tsx.
   const canPlaceCalls = hasPermission(me, orgId, "calls:place");
 
   useRingTone(softphone.incoming.length > 0, ringtoneMuted);
@@ -328,11 +337,15 @@ export function SoftphonePanel() {
 
   if (!expanded && softphone.incoming.length === 0 && !softphone.activeCall) {
     return (
-      <div className="fixed bottom-4 right-4 z-50">
+      // App.tsx renders this OUTSIDE the Shell's `dark` wrapper (:55 vs :67), so it was
+      // reading the light :root tokens inside a dark app - which is why the launcher was a
+      // navy circle. It now carries the console scope itself: same palette as the inbox it
+      // belongs to, and verdigris, the colour reserved here for a live line.
+      <div className={cn("console-surface", surfaceThemeClass(theme), "fixed bottom-4 right-4 z-50")}>
         <Button
           type="button"
           size="icon"
-          className="h-12 w-12 rounded-full shadow-lg"
+          className="cx-call h-12 w-12 rounded-full shadow-lg"
           aria-label="Open softphone"
           onClick={() => setExpanded(true)}
         >
@@ -344,7 +357,7 @@ export function SoftphonePanel() {
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-50 w-80 rounded-lg border border-border bg-background shadow-xl"
+      className={cn("console-surface", surfaceThemeClass(theme), "fixed bottom-4 right-4 z-50 w-80 rounded-lg border border-border bg-background shadow-xl")}
       aria-label="Softphone"
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -400,18 +413,22 @@ export function SoftphonePanel() {
         ring.kind === "handoff" ? (
           <div
             key={ring.callId}
-            className="space-y-2 border-b border-border bg-amber-50 p-3"
+            // The AI-handoff banner used to be a LIGHT amber card (bg-amber-50 /
+            // text-amber-900) inside a panel that carries `console-surface` and is dark by
+            // default - a white-hot block. It now wears the reference's note colouring:
+            // --cx-flag, which is yellow #E8C468, never orange.
+            className="space-y-2 border-b border-border bg-[hsl(var(--cx-flag)/0.1)] p-3"
             role="alert"
             aria-label="AI handoff"
           >
-            <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
-              <PhoneIncoming className="h-4 w-4 text-amber-600" />
+            <div className="flex items-center gap-2 text-sm font-semibold text-[hsl(var(--cx-flag))]">
+              <PhoneIncoming className="h-4 w-4 text-[hsl(var(--cx-flag))]" />
               AI handoff — {formatPhone(ring.from)}
             </div>
             {ring.reason && (
-              <p className="text-xs font-medium text-amber-800">Reason: {ring.reason}</p>
+              <p className="text-xs font-medium text-foreground">Reason: {ring.reason}</p>
             )}
-            {ring.summary && <p className="text-xs text-amber-800">{ring.summary}</p>}
+            {ring.summary && <p className="text-xs text-muted-foreground">{ring.summary}</p>}
             <Button
               ref={index === 0 ? answerButtonRef : undefined}
               type="button"
@@ -426,7 +443,7 @@ export function SoftphonePanel() {
         ) : (
           <div key={ring.callId} className="space-y-2 border-b border-border p-3" role="alert">
             <div className="flex items-center gap-2 text-sm font-medium">
-              <PhoneIncoming className="h-4 w-4 text-green-600" />
+              <PhoneIncoming className="h-4 w-4 text-[hsl(var(--cx-live))]" />
               Incoming call — {formatPhone(ring.from)}
             </div>
             <p className="text-xs text-muted-foreground">to {formatPhone(ring.to)}</p>
@@ -460,7 +477,7 @@ export function SoftphonePanel() {
           {showBadge && (
             <span
               role="status"
-              className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800"
+              className="inline-flex items-center rounded-full bg-[hsl(var(--cx-flag)/0.15)] px-2 py-0.5 text-[11px] font-medium text-[hsl(var(--cx-flag))]"
             >
               {statusLabel(softphone.status)}
             </span>
@@ -570,7 +587,7 @@ export function SoftphonePanel() {
           {showBadge && (
             <span
               role="status"
-              className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800"
+              className="inline-flex items-center rounded-full bg-[hsl(var(--cx-flag)/0.15)] px-2 py-0.5 text-[11px] font-medium text-[hsl(var(--cx-flag))]"
             >
               {statusLabel(softphone.status)}
             </span>

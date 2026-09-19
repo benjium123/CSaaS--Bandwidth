@@ -185,10 +185,12 @@ describe("settings section routing", () => {
       "workspace",
       "inboxes",
       "messaging",
+      // P41
+      "verification",
     ]) {
       expect(ids.has(target as never)).toBe(true);
     }
-    expect(SETTINGS_SECTIONS).toHaveLength(10);
+    expect(SETTINGS_SECTIONS).toHaveLength(11);
   });
 
   it("an unknown /settings/:section bounces to workspace exactly once", async () => {

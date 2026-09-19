@@ -34,6 +34,14 @@ import {
   TabPanel,
   Tabs,
 } from "@/components/ui/primitives";
+import {
+  ConsoleEmpty,
+  FilterPill,
+  InitialsAvatar,
+  PageHeader,
+  SectionLabel,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
 import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { formatPhone } from "@/lib/format";
 import { ListsPage } from "@/pages/ListsPage";
@@ -177,16 +185,18 @@ export function ContactsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="mx-auto w-full max-w-4xl space-y-4 p-6 pb-0">
-        <div className="flex items-center justify-between gap-4">
-          <h1 className="text-lg font-semibold">Contacts</h1>
-          {activeTab === "people" && (
-            <ExportContactsButton
-              filters={filters}
-              viewId={activeView?.id ?? null}
-            />
-          )}
-        </div>
+      <div className="mx-auto w-full max-w-4xl space-y-[14px] p-6 pb-0">
+        <PageHeader
+          title="Contacts"
+          actions={
+            activeTab === "people" ? (
+              <ExportContactsButton
+                filters={filters}
+                viewId={activeView?.id ?? null}
+              />
+            ) : null
+          }
+        />
 
         <Tabs
           tabs={[
@@ -206,8 +216,10 @@ export function ContactsPage() {
             screen reader. Same shape as SettingsPage. */}
         {activeTab === "people" ? (
           <TabPanel tabsId="contacts" id="people">
-            <div className="mx-auto max-w-4xl space-y-4 p-6">
-              <form className="flex flex-wrap gap-2" onSubmit={create}>
+            <div className="mx-auto max-w-4xl space-y-[14px] p-6">
+              <SurfaceCard className="space-y-[11px]">
+                <SectionLabel>Add a contact</SectionLabel>
+                <form className="flex flex-wrap gap-[11px]" onSubmit={create}>
                 <Input
                   aria-label="Contact name"
                   placeholder="Name"
@@ -242,13 +254,17 @@ export function ContactsPage() {
                 </p>
               )}
 
-              {addedName && (
-                <p className="text-sm text-green-400">Added {addedName}.</p>
-              )}
+                {addedName && (
+                  <p className="text-[13px] text-[hsl(var(--cx-live))]">
+                    Added {addedName}.
+                  </p>
+                )}
+              </SurfaceCard>
 
               <Input
                 aria-label="Search contacts"
                 placeholder="Search name or number"
+                className="h-10 rounded-full px-[14px]"
                 value={q}
                 onChange={(event) => {
                   setQ(event.target.value);
@@ -256,7 +272,7 @@ export function ContactsPage() {
                 }}
               />
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-[7px]">
                 {(["mine", "team", "unowned"] as const).map((item) => {
                   const label =
                     item === "mine"
@@ -266,11 +282,9 @@ export function ContactsPage() {
                         : "Unowned";
                   const active = filter === item;
                   return (
-                    <Button
+                    <FilterPill
                       key={item}
-                      type="button"
-                      size="sm"
-                      variant={active ? "default" : "outline"}
+                      active={active}
                       aria-pressed={active}
                       onClick={() => {
                         setFilter((previous) =>
@@ -280,7 +294,7 @@ export function ContactsPage() {
                       }}
                     >
                       {label}
-                    </Button>
+                    </FilterPill>
                   );
                 })}
               </div>
@@ -293,7 +307,7 @@ export function ContactsPage() {
               />
 
               {selected.size > 0 && (
-                <div className="flex flex-wrap items-center gap-3 rounded-md border border-border px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-center gap-3 rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[14px] py-[11px] text-[13px]">
                   <span>{selected.size} selected</span>
                   <Button
                     type="button"
@@ -340,7 +354,7 @@ export function ContactsPage() {
                   </Button>
                 </div>
               ) : contacts.length === 0 ? (
-                <div className="rounded-md border border-border p-6 text-sm text-muted-foreground">
+                <ConsoleEmpty>
                   {q || filter ? (
                     <div className="flex items-center gap-2">
                       <span>No contacts match this filter.</span>
@@ -360,13 +374,13 @@ export function ContactsPage() {
                   ) : (
                     "No contacts yet. Add one above."
                   )}
-                </div>
+                </ConsoleEmpty>
               ) : (
-                <div className="overflow-x-auto rounded-md border border-border">
-                  <table className="w-full text-sm">
+                <div className="overflow-x-auto rounded-[18px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))]">
+                  <table className="w-full text-[13px]">
                     <thead>
-                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                        <th className="px-3 py-2">
+                      <tr className="border-b border-[hsl(var(--cx-line))] text-left text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
+                        <th className="px-[14px] py-[11px]">
                           <input
                             type="checkbox"
                             aria-label="Select all contacts"
@@ -382,16 +396,16 @@ export function ContactsPage() {
                             }
                           />
                         </th>
-                        <th className="px-3 py-2 font-medium">Name</th>
-                        <th className="px-3 py-2 font-medium">Phone</th>
-                        <th className="px-3 py-2 font-medium">Owner</th>
-                        <th className="px-3 py-2 font-medium">Team</th>
-                        <th className="px-3 py-2 text-right font-medium">
+                        <th className="px-[14px] py-[11px] font-semibold">Name</th>
+                        <th className="px-[14px] py-[11px] font-semibold">Phone</th>
+                        <th className="px-[14px] py-[11px] font-semibold">Owner</th>
+                        <th className="px-[14px] py-[11px] font-semibold">Team</th>
+                        <th className="px-[14px] py-[11px] text-right font-semibold">
                           Actions
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-border">
+                    <tbody className="divide-y divide-[hsl(var(--cx-line))]">
                       {contacts.map((contact) => {
                         const ownerName = contact.owner_user_id
                           ? (memberById.get(contact.owner_user_id) ?? "Unknown")
@@ -401,8 +415,11 @@ export function ContactsPage() {
                             "Unknown")
                           : "No team";
                         return (
-                          <tr key={contact.id}>
-                            <td className="px-3 py-2">
+                          <tr
+                            key={contact.id}
+                            className="transition-colors hover:bg-[hsl(var(--cx-overlay))]"
+                          >
+                            <td className="px-[14px] py-[11px]">
                               <input
                                 type="checkbox"
                                 aria-label={`Select ${contact.display_name}`}
@@ -410,16 +427,24 @@ export function ContactsPage() {
                                 onChange={() => toggleSelected(contact.id)}
                               />
                             </td>
-                            <td className="px-3 py-2">
+                            <td className="px-[14px] py-[11px]">
+                              {/* The avatar is decorative and sits INSIDE the button so
+                                  the whole name cell is one target; the accessible name
+                                  is still just the contact's name. */}
                               <button
                                 type="button"
-                                className="text-left font-medium underline-offset-2 hover:underline"
+                                className="flex items-center gap-[11px] rounded-[12px] px-2 py-1 text-left font-medium transition-colors hover:bg-[hsl(var(--cx-lift))]"
                                 onClick={() => setDetailContact(contact)}
                               >
+                                <InitialsAvatar
+                                  name={contact.display_name}
+                                  seed={contact.id}
+                                  size="md"
+                                />
                                 {contact.display_name}
                               </button>
                             </td>
-                            <td className="px-3 py-2 text-xs text-muted-foreground">
+                            <td className="px-[14px] py-[11px] text-[12px] text-[hsl(var(--cx-subtle))]">
                               {contact.phones.length === 0 ? (
                                 "—"
                               ) : (
@@ -439,13 +464,13 @@ export function ContactsPage() {
                                 </div>
                               )}
                             </td>
-                            <td className="px-3 py-2 text-xs text-muted-foreground">
+                            <td className="px-[14px] py-[11px] text-[12px] text-[hsl(var(--cx-subtle))]">
                               {ownerName}
                             </td>
-                            <td className="px-3 py-2 text-xs text-muted-foreground">
+                            <td className="px-[14px] py-[11px] text-[12px] text-[hsl(var(--cx-subtle))]">
                               {teamName}
                             </td>
-                            <td className="px-3 py-2 text-right">
+                            <td className="px-[14px] py-[11px] text-right">
                               <Button
                                 type="button"
                                 size="sm"

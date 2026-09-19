@@ -18,7 +18,7 @@ import httpx
 _DEFAULT_MODELS = {
     "anthropic": "claude-haiku-4-5",
     "openai": "gpt-4o-mini",
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-flash",
     "groq": "llama-3.3-70b-versatile",
     "google": "gemini-1.5-flash",
 }
@@ -484,6 +484,10 @@ async def chat(
             _OPENAI_COMPATIBLE_TOKEN_PARAM[provider]: max_tokens,
             "messages": _openai_messages(system, turns),
         }
+        if provider == "deepseek":
+            # P43: DeepSeek Flash "thinks" by default and can spend the whole token budget
+            # before writing an answer (empty content). Agents and scorers need the answer.
+            payload["thinking"] = {"type": "disabled"}
         if tools:
             payload["tools"] = [
                 {

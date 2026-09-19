@@ -3,6 +3,7 @@ import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  MessageSquare,
   PhoneMissed,
   Play,
   Voicemail,
@@ -25,7 +26,7 @@ import {
 } from "@/api/conversations";
 import { Pill } from "@/components/ui/primitives";
 import { useSoftphone } from "@/softphone/SoftphoneProvider";
-import { relativeTime, statusTick } from "@/lib/format";
+import { formatPhone, relativeTime, statusTick } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /** Item 2: keeps the open thread's timeline fresh two ways - a background poll while
@@ -40,12 +41,23 @@ function formatDuration(totalSeconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function dayLabel(iso: string): string {
+/** The reference's day pill says "Wednesday", not "Sep 17, 2025" - within the last week a
+ * weekday is how people actually place a conversation, and today/yesterday get their own
+ * words. Anything older keeps the full date, which a weekday alone would make ambiguous. */
+function dayLabel(iso: string, now: Date = new Date()): string {
+  const when = new Date(iso);
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const daysAgo = Math.round((startOf(now) - startOf(when)) / 86400000);
+  if (daysAgo === 0) return "Today";
+  if (daysAgo === 1) return "Yesterday";
+  if (daysAgo > 1 && daysAgo < 7) {
+    return new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(when);
+  }
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(new Date(iso));
+  }).format(when);
 }
 
 function groupByDay(items: TimelineItem[]): { date: string; label: string; items: TimelineItem[] }[] {
@@ -63,7 +75,24 @@ function groupByDay(items: TimelineItem[]): { date: string; label: string; items
   return groups;
 }
 
-function MessageTimelineItemView({ item, api }: { item: MessageTimelineItem; api: ApiClient }) {
+function MessageTimelineItemView({
+  item,
+  api,
+  runStart,
+  runEnd,
+  senderLabel,
+}: {
+  item: MessageTimelineItem;
+  api: ApiClient;
+  /** First bubble of a run of same-direction messages: the run wears the sender's name
+   * above it, once, exactly as the reference's `.grp-who` does. */
+  runStart: boolean;
+  /** Last bubble of the run: the time (and the delivery tick) sit UNDER the run, once,
+   * not under every bubble - and the corner nearest the speaker is the one that gets
+   * clipped. */
+  runEnd: boolean;
+  senderLabel: string;
+}) {
   const outbound = item.direction === "outbound";
   // Defensive on purpose: a page still holding a pre-P28 cached timeline (or a fixture
   // written before this phase) has no `links`/`clicks` at all, and a bubble must never
@@ -87,14 +116,26 @@ function MessageTimelineItemView({ item, api }: { item: MessageTimelineItem; api
   return (
     <div className={cn("flex", outbound ? "justify-end" : "justify-start")}>
       <div
-        title={item.route_reason ?? undefined}
         className={cn(
-          "max-w-[75%] space-y-1 rounded-lg px-3 py-2 text-sm",
+          "flex min-w-0 max-w-[62%] flex-col gap-1",
+          outbound ? "items-end" : "items-start",
+        )}
+      >
+        {runStart && <div className="cx-run-who">{senderLabel}</div>}
+      <div
+        title={item.route_reason ?? undefined}
+        data-run-end={runEnd ? "true" : "false"}
+        className={cn(
+          "cx-msg space-y-1",
           scheduled
-            ? "border border-dashed border-border bg-muted text-foreground"
+            ? "border-dashed border-border bg-muted text-foreground"
             : outbound
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-foreground",
+              ? "cx-msg-out"
+              : "cx-msg-in",
+          // A failed message is the one thing in a thread someone must not scroll past:
+          // it now carries the danger edge on the bubble itself, not just a line of red
+          // text inside an otherwise ordinary-looking message.
+          item.failure_reason_public && "cx-msg-fail",
         )}
       >
         {item.route_reason && <span className="sr-only">{item.route_reason}</span>}
@@ -122,7 +163,7 @@ function MessageTimelineItemView({ item, api }: { item: MessageTimelineItem; api
           </p>
         )}
         {links.length > 0 && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="cx-num text-[0.625rem] text-muted-foreground">
             {clicks === 0
               ? "Link not opened yet"
               : clicks === 1
@@ -148,14 +189,17 @@ function MessageTimelineItemView({ item, api }: { item: MessageTimelineItem; api
             )}
           </div>
         )}
-        <div className="flex items-center justify-end gap-2 text-[11px] opacity-70">
-          <span>{relativeTime(item.occurred_at)}</span>
-          {outbound && !scheduled && (
-            <span title={tick.label} aria-label={tick.label}>
-              {tick.glyph}
-            </span>
-          )}
-        </div>
+      </div>
+        {runEnd && (
+          <div className="cx-meta flex items-center gap-2">
+            <span>{relativeTime(item.occurred_at)}</span>
+            {outbound && !scheduled && (
+              <span title={tick.label} aria-label={tick.label}>
+                {tick.glyph}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -213,7 +257,7 @@ function CallRecordingPlayer({
         type="button"
         onClick={play}
         disabled={loading || status !== "stored"}
-        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-muted disabled:opacity-50"
+        className="cx-play inline-flex items-center gap-1 px-3 py-1.5 text-xs disabled:opacity-50"
       >
         <Play className="h-3 w-3" />
         {loading ? "Loading…" : "Play recording"}
@@ -257,12 +301,21 @@ function CallTimelineItemView({
       : item.direction === "inbound"
         ? "Called you"
         : "You called";
+  // The reference's card reads "Outbound call · 6:12" - direction and length on ONE line,
+  // because that is the whole of what a completed call has to say. The verb phrases above
+  // are kept as the label (they are what every existing caller and test reads) and the
+  // duration joins them with the reference's separator instead of dropping to its own
+  // line. A call with no duration - missed, failed, still ringing - shows no separator.
+  const duration =
+    item.duration_seconds !== null && item.duration_seconds > 0
+      ? formatDuration(item.duration_seconds)
+      : null;
 
   return (
     <div
       title={item.route_reason ?? undefined}
       className={cn(
-        "flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2 text-sm",
+        "cx-callcard flex items-center gap-3 text-sm",
         failed || missed ? "text-destructive" : "text-foreground",
       )}
     >
@@ -270,15 +323,15 @@ function CallTimelineItemView({
       {failed || missed ? (
         <PhoneMissed className="h-4 w-4 shrink-0 text-destructive" />
       ) : item.direction === "inbound" ? (
-        <ArrowDownLeft className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <ArrowDownLeft className="h-4 w-4 shrink-0 text-[hsl(var(--cx-live))]" />
       ) : (
-        <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <ArrowUpRight className="h-4 w-4 shrink-0 text-[hsl(var(--cx-live))]" />
       )}
       <div className="min-w-0 flex-1">
-        <p className="font-medium">{label}</p>
-        {item.duration_seconds !== null && item.duration_seconds > 0 && (
-          <p className="text-xs text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
-        )}
+        {/* ONE text node, not a label plus a span: "You called · 0:42" is a single
+            sentence and splitting it makes it unreadable to anything matching on text -
+            a screen reader included. */}
+        <p className="font-medium">{duration ? `${label} · ${duration}` : label}</p>
         {item.recording && (
           <CallRecordingPlayer
             api={api}
@@ -299,7 +352,7 @@ function CallTimelineItemView({
           </div>
         )}
       </div>
-      <span className="ml-auto shrink-0 self-start text-[11px] text-muted-foreground">
+      <span className="cx-num ml-auto shrink-0 self-start text-[0.625rem] text-muted-foreground">
         {relativeTime(item.occurred_at)}
       </span>
     </div>
@@ -312,12 +365,12 @@ function VoicemailTimelineItemView({ item, api }: { item: VoicemailTimelineItem;
       <div className="flex items-center gap-2">
         <Voicemail className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="font-medium">Voicemail</span>
-        <span className="ml-auto text-[11px] text-muted-foreground">
+        <span className="cx-num ml-auto text-[0.625rem] text-muted-foreground">
           {relativeTime(item.occurred_at)}
         </span>
       </div>
       {item.duration_seconds !== null && item.duration_seconds > 0 && (
-        <p className="mt-1 text-xs text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
+        <p className="cx-num mt-1 text-[0.6875rem] text-muted-foreground">{formatDuration(item.duration_seconds)}</p>
       )}
       {item.transcript && (
         <p className="mt-2 whitespace-pre-wrap break-words text-xs text-muted-foreground">
@@ -349,12 +402,14 @@ function NoteTimelineItemView({ item }: { item: NoteTimelineItem }) {
     // that it is private.
     <article
       aria-label={`Note from ${item.author_name}`}
-      className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-foreground"
+      // The reference's `.note`: a flag-coloured wash inside a flag-coloured edge. Yellow
+      // (--cx-flag, #E8C468), not the amber-500 orange it used to be.
+      className="rounded-lg border border-[hsl(var(--cx-flag)/0.4)] bg-[hsl(var(--cx-flag)/0.1)] p-3 text-sm text-foreground"
     >
       <div className="flex items-center gap-2">
         <Pill tone="warning">Note</Pill>
         <span className="font-medium">{item.author_name}</span>
-        <span className="ml-auto text-[11px] text-muted-foreground">
+        <span className="cx-num ml-auto text-[0.625rem] text-muted-foreground">
           {relativeTime(item.occurred_at)}
         </span>
       </div>
@@ -368,12 +423,35 @@ function NoteTimelineItemView({ item }: { item: NoteTimelineItem }) {
   );
 }
 
+/** Who a run of same-direction messages is from, for the reference's `.grp-who`.
+ *
+ * Inbound is the contact. Outbound is deliberately the LINE, not a person: the timeline
+ * payload carries no sender identity for an outbound message
+ * (api/conversations.ts MessageTimelineItem has no author), so naming the signed-in user
+ * would attribute a colleague's reply to whoever happens to be looking at it. The line is
+ * the part we actually know. */
+function senderLabelFor(
+  direction: "inbound" | "outbound",
+  contactLabel: string,
+  lineLabel: string,
+): string {
+  return direction === "inbound" ? contactLabel : lineLabel;
+}
+
 export function Timeline({
   contactE164,
   ourE164,
+  contactName,
+  inboxName,
 }: {
   contactE164: string | null;
   ourE164: string | null;
+  /** The contact's display name, for the name above an inbound run. Falls back to their
+   * formatted number when they are not a saved contact. */
+  contactName?: string | null;
+  /** The name of the line replies go out on ("Main line"), for the label above an
+   * outbound run. Falls back to our formatted number. */
+  inboxName?: string | null;
 }) {
   const { api } = useAuth();
   const softphone = useSoftphone();
@@ -446,8 +524,15 @@ export function Timeline({
 
   if (!enabled) {
     return (
-      <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
-        Select a conversation
+      // The one empty state that remains, and the only one placed where the eye actually
+      // lands. It says what to do next rather than describing the current absence.
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <MessageSquare className="h-7 w-7 text-[hsl(var(--cx-accent)/0.55)]" aria-hidden="true" />
+        <p className="text-sm text-muted-foreground">Select a conversation</p>
+        <p className="cx-empty max-w-[22rem] text-xs leading-relaxed">
+          Pick someone on the left to read the whole history — every text, call and
+          voicemail — and reply or ring them from the same place.
+        </p>
       </div>
     );
   }
@@ -471,6 +556,8 @@ export function Timeline({
   }
 
   const groups = groupByDay(items);
+  const contactLabel = contactName || (contactE164 ? formatPhone(contactE164) : "Them");
+  const lineLabel = inboxName || (ourE164 ? formatPhone(ourE164) : "You");
 
   // F12: an explicit empty state for a selected conversation with zero events, distinct
   // from "Select a conversation" (not enabled) and "Loading timeline…".
@@ -505,14 +592,33 @@ export function Timeline({
         )}
 
         {groups.map((group) => (
-          <section key={group.date} className="space-y-2">
-            <div className="sticky top-0 z-10 bg-background py-1 text-center text-[11px] font-medium text-muted-foreground">
+          <section key={group.date} className="flex flex-col gap-2">
+            {/* The reference's centred `.day` pill. `cx-label` is gone from it: that class
+                is a 9px uppercase mono, which a pill this size cannot carry. */}
+            <div className="cx-daybreak sticky top-0 z-10 text-[0.71875rem] font-medium">
               {group.label}
             </div>
-            {group.items.map((item) => {
+            {group.items.map((item, index) => {
               switch (item.kind) {
-                case "message":
-                  return <MessageTimelineItemView key={item.id} item={item} api={api} />;
+                case "message": {
+                  // A "run" is consecutive messages in the same direction, with nothing
+                  // else (a call, a note) between them - the reference's `.grp`. The name
+                  // sits above the first and the time under the last.
+                  const previous = group.items[index - 1];
+                  const next = group.items[index + 1];
+                  const sameRun = (other: TimelineItem | undefined) =>
+                    other?.kind === "message" && other.direction === item.direction;
+                  return (
+                    <MessageTimelineItemView
+                      key={item.id}
+                      item={item}
+                      api={api}
+                      runStart={!sameRun(previous)}
+                      runEnd={!sameRun(next)}
+                      senderLabel={senderLabelFor(item.direction, contactLabel, lineLabel)}
+                    />
+                  );
+                }
                 case "call":
                   return (
                     <CallTimelineItemView

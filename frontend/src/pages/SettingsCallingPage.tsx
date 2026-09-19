@@ -13,6 +13,7 @@ import {
 } from "@/api/calls";
 import { useAuth } from "@/auth/AuthContext";
 import { Button, Input, MutationStatus, Section, Spinner, Textarea } from "@/components/ui/primitives";
+import { SurfaceCard } from "@/components/ui/consoleChrome";
 
 export function SettingsCallingPage() {
   const { api } = useAuth();
@@ -53,7 +54,7 @@ export function SettingsCallingPage() {
   if (calling.isError) {
     return (
       <div className="space-y-3">
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-[13px] text-[hsl(var(--cx-danger))]">
           {getErrorMessage(calling.error)}
         </p>
         <Button
@@ -188,20 +189,21 @@ export function SettingsCallingPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-[14px]">
       {!canWrite ? (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-[12.5px] text-[hsl(var(--cx-muted))]">
           You can view this, but only an admin can make changes here.
         </p>
       ) : null}
 
-      <fieldset disabled={!canWrite} className="m-0 min-w-0 border-0 p-0">
+      <fieldset disabled={!canWrite} className="m-0 min-w-0 space-y-[18px] border-0 p-0">
         <Section title="Recording">
-          <form onSubmit={saveLayout} className="space-y-3">
+          <SurfaceCard>
+          <form onSubmit={saveLayout} className="space-y-[12px]">
             {/* The helper is a description, not part of the name: a screen reader hears
                 "One file with both sides, radio button" and then the explanation. */}
             <div>
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex items-center gap-[9px] text-[13.5px]">
                 <input
                   type="radio"
                   name="channel-layout"
@@ -216,7 +218,7 @@ export function SettingsCallingPage() {
                 />
                 One file with both sides
               </label>
-              <p id="channel-layout-mixed-help" className="pl-6 text-xs text-muted-foreground">
+              <p id="channel-layout-mixed-help" className="pl-[25px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                 Everyone on the call in a single recording.
               </p>
             </div>
@@ -224,7 +226,7 @@ export function SettingsCallingPage() {
             {/* The helper is a description, not part of the name: a screen reader hears
                 "Separate sides, radio button" and then the explanation. */}
             <div>
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex items-center gap-[9px] text-[13.5px]">
                 <input
                   type="radio"
                   name="channel-layout"
@@ -239,18 +241,18 @@ export function SettingsCallingPage() {
                 />
                 Separate sides
               </label>
-              <p id="channel-layout-dual-help" className="pl-6 text-xs text-muted-foreground">
+              <p id="channel-layout-dual-help" className="pl-[25px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                 Your side and their side as separate files, plus the combined one.
               </p>
             </div>
 
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
               Separate sides isn't being captured yet. You can choose it now, but
               every recording is still saved as one file with both sides until it is
               switched on.
             </p>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-[11px]">
               <Button
                 type="submit"
                 size="sm"
@@ -270,11 +272,13 @@ export function SettingsCallingPage() {
               />
             </div>
           </form>
+          </SurfaceCard>
         </Section>
 
         <Section title="Recording announcement">
-          <form onSubmit={saveAnnouncement} className="space-y-3">
-            <label className="flex items-start gap-2 text-sm">
+          <SurfaceCard>
+          <form onSubmit={saveAnnouncement} className="space-y-[12px]">
+            <label className="flex items-start gap-[9px] text-[13.5px]">
               <input
                 type="checkbox"
                 checked={announcementEnabledValue}
@@ -304,44 +308,44 @@ export function SettingsCallingPage() {
               disabled={!canWrite}
             />
 
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
               {settings.recording_announcement_text === null
                 ? `Leave empty to use the standard sentence: “${settings.announcement_text_effective}”`
                 : "Leave empty to go back to the standard sentence."}
             </p>
 
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
               {announcementTextValue.length}/500
             </p>
 
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
               It plays before incoming calls connect. Calls you place from this app
               don't play it yet, so tell the other person yourself.
             </p>
 
-            <div className="space-y-1 rounded-md border border-border p-3">
-              <p className="text-xs font-medium">
+            <div className="space-y-1 rounded-[14px] border border-[hsl(var(--cx-flag)/0.26)] bg-[hsl(var(--cx-flag)/0.11)] p-[13px]">
+              <p className="text-[12.5px] font-semibold text-[hsl(var(--cx-flag))]">
                 Where everyone on the call must agree
               </p>
-              <p className="text-xs text-muted-foreground">(not legal advice)</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">(not legal advice)</p>
+              <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
                 California, Connecticut, Delaware, Florida, Illinois, Maryland,
                 Massachusetts, Michigan, Montana, Nevada, New Hampshire, Oregon,
                 Pennsylvania and Washington.
               </p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
                 Laws change and have exceptions. Check with a lawyer for your
                 situation.
               </p>
             </div>
 
             {announcementTooLong ? (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-[13px] text-[hsl(var(--cx-danger))]">
                 Announcement can be at most 500 characters
               </p>
             ) : null}
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-[11px]">
               <Button
                 type="submit"
                 size="sm"
@@ -362,18 +366,20 @@ export function SettingsCallingPage() {
               />
             </div>
           </form>
+          </SurfaceCard>
         </Section>
 
         <Section title="Call results">
-          <form onSubmit={saveDispositions} className="space-y-3">
-            <p className="text-sm text-muted-foreground">
+          <SurfaceCard>
+          <form onSubmit={saveDispositions} className="space-y-[12px]">
+            <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
               The choices your team picks from after a call. Changing this list
               doesn't change results already saved on past calls.
             </p>
 
-            <ol aria-label="Call results" className="space-y-2">
+            <ol aria-label="Call results" className="space-y-[9px]">
               {listValue.map((value, index) => (
-                <li key={index} className="flex items-center gap-2">
+                <li key={index} className="flex items-center gap-[9px]">
                   <Input
                     aria-label={`Call result ${index + 1}`}
                     maxLength={MAX_DISPOSITION_LEN}
@@ -406,12 +412,12 @@ export function SettingsCallingPage() {
             </Button>
 
             {listTouched && listValidationMessage ? (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-[13px] text-[hsl(var(--cx-danger))]">
                 {listValidationMessage}
               </p>
             ) : null}
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-[11px]">
               <Button
                 type="submit"
                 size="sm"
@@ -432,6 +438,7 @@ export function SettingsCallingPage() {
               />
             </div>
           </form>
+          </SurfaceCard>
         </Section>
       </fieldset>
     </div>

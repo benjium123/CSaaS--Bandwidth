@@ -323,10 +323,10 @@ describe("ConversationsPage", () => {
     await screen.findByText("Ada Lovelace");
 
     await userEvent.click(screen.getByRole("tab", { name: "Calls" }));
-    // P26: the filter chips collapse into one "Filter" dropdown by default (5 chips,
-    // MAX_VISIBLE_CHIPS=4).
-    await userEvent.click(screen.getByRole("button", { name: /^Filter/ }));
-    await userEvent.click(screen.getByRole("menuitemradio", { name: "Unread" }));
+    // The Unread chip is gone with the reference cut (three pills: All, Unresponded,
+    // Important) - Unresponded stands in for it here, and the assertion below still
+    // proves tab + filter + debounced q all reach the request together.
+    await userEvent.click(screen.getByRole("button", { name: "Unresponded" }));
     await userEvent.type(screen.getByLabelText("Search conversations"), "ada");
 
     // F20: the search box is debounced 300ms before it reaches the query - give it room.
@@ -343,7 +343,9 @@ describe("ConversationsPage", () => {
     const call = client.calls.find(
       (c) => c.path.startsWith("/api/v1/conversations?") && c.path.includes("q=ada"),
     );
-    expect(call?.path).toBe("/api/v1/conversations?inbox_id=i1&tab=calls&filter=unread&q=ada");
+    expect(call?.path).toBe(
+      "/api/v1/conversations?inbox_id=i1&tab=calls&filter=unresponded&q=ada",
+    );
   });
 
   it("calls softphone.dial with the conversation's contact_e164 and our_e164", async () => {
@@ -714,14 +716,12 @@ describe("ConversationsPage", () => {
     renderPage(client);
     await screen.findByText("Ada Lovelace");
 
-    // P20b: "Important" now exists twice - as this chip in the conversation list AND as
-    // a row in the new inbox column (two controls over one `filter` value). Scope the
-    // query to the list so the assertion keeps testing the chip specifically.
-    // P26: the chips collapse into one "Filter" dropdown by default (5 chips,
-    // MAX_VISIBLE_CHIPS=4).
+    // The inbox column no longer carries an "Important" row, so the chip is the single
+    // control over `filter=important` again. Still scoped to the list, so the assertion
+    // fails loudly rather than silently retargeting if a second one is ever re-added.
     const list = screen.getByRole("complementary", { name: "Conversation list" });
-    await userEvent.click(within(list).getByRole("button", { name: /^Filter/ }));
-    await userEvent.click(within(list).getByRole("menuitemradio", { name: "Important" }));
+    expect(screen.getAllByRole("button", { name: "Important" })).toHaveLength(1);
+    await userEvent.click(within(list).getByRole("button", { name: "Important" }));
 
     await waitFor(() => {
       const call = client.calls.find(
@@ -790,7 +790,10 @@ describe("ConversationsPage", () => {
     renderPage(client);
     await screen.findByText("Ada Lovelace");
 
-    expect(screen.getByRole("button", { name: "New" })).toBeDisabled();
+    // The list header is now the reference's two icon buttons - a phone and a speech
+    // bubble - rather than one "+ New" menu. Both carry the same gate.
+    expect(screen.getByRole("button", { name: "New text message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New call" })).toBeDisabled();
   });
 
   // Item 1: New text message.
@@ -827,8 +830,7 @@ describe("ConversationsPage", () => {
     renderPage(client);
     await screen.findByText("Ada Lovelace");
 
-    await userEvent.click(screen.getByRole("button", { name: "New" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "New text message" }));
+    await userEvent.click(screen.getByRole("button", { name: "New text message" }));
     expect(screen.getByRole("heading", { name: "New text message" })).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("To"), "9725550999");
@@ -898,8 +900,7 @@ describe("ConversationsPage", () => {
     renderPage(client);
     await screen.findByText("Ada Lovelace");
 
-    await userEvent.click(screen.getByRole("button", { name: "New" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "New call" }));
+    await userEvent.click(screen.getByRole("button", { name: "New call" }));
     expect(screen.getByRole("heading", { name: "New call" })).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("To"), "9725550999");

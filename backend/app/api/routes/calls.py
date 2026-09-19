@@ -36,8 +36,8 @@ from app.services import audit as audit_svc
 from app.services import calling_settings as calling_settings_svc
 from app.services import calls as calls_svc
 from app.services import inbox_access as inbox_access_svc
+from app.services import phone_region, smart_routing
 from app.services import recordings as recordings_svc
-from app.services import smart_routing
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import LiveKitApiError, mint_access_token
 
@@ -45,10 +45,10 @@ router = APIRouter(prefix="/api/v1", tags=["calls"])
 
 _MACHINE_DETECTION_MODES = frozenset({"off", "async"})
 _VIA_MODES = frozenset({"carrier", "room"})
-#: The SIP trunk configured in livekit-sip dials out on this carrier only (single trunk
-#: today, findings 10/11) - a room call FROM a number on any other carrier cannot actually
-#: place a call, no matter how "active" the OrgNumber row says it is.
-_ROOM_TRUNK_CARRIER = "telnyx"
+#: The carrier of the DEFAULT SIP trunk. P40 added per-carrier trunks
+#: (``voice_plane.service.room_trunks``) - a room call FROM a number on a carrier with no
+#: trunk cannot actually place a call, no matter how "active" its OrgNumber row says it is.
+_ROOM_TRUNK_CARRIER = voice_service.DEFAULT_TRUNK_CARRIER
 
 
 class CallIn(BaseModel):
@@ -346,16 +346,20 @@ def _voice_failover_allowed(policy, chosen_carrier: str, candidate) -> bool:  # 
     return bool(policy.allow_cross_carrier_failover)
 
 
-async def _resolve_room_from_number(session, org_id: uuid.UUID, payload: CallIn) -> str:  # noqa: ANN001
+async def _resolve_room_from_number(
+    session, org_id: uuid.UUID, payload: CallIn, settings  # noqa: ANN001
+) -> str:
     """via="room" number resolution (findings 10+11): NO carrier-adapter registry lookup at
     all - a LiveKit-only deploy has none registered, and requiring one would make room
     calls impossible on exactly the deployment this feature is for. An explicit `from` only
-    needs to be active and org-owned; auto-picking one only ever picks a number the SIP
-    trunk can actually dial out on (single trunk today: carrier == _ROOM_TRUNK_CARRIER).
+    needs to be active and org-owned; auto-picking one only ever picks a number some SIP
+    trunk can actually dial out on (P40: one trunk per carrier - telnyx, signalwire).
 
-    Finding 10: an explicit `from` on any OTHER carrier is refused outright (422) rather
-    than silently dialed - the trunk would reject it as caller-id spoofing.
+    Finding 10: an explicit `from` on a carrier with no trunk is refused outright (422)
+    rather than silently dialed - another carrier's trunk would reject it as caller-id
+    spoofing.
     """
+    trunk_carriers = list(voice_service.room_trunks(settings))
     if payload.from_:
         from_norm = to_e164(payload.from_)
         number = (
@@ -363,24 +367,25 @@ async def _resolve_room_from_number(session, org_id: uuid.UUID, payload: CallIn)
         ).scalar_one_or_none()
         if number is None or not number.is_active:
             raise ValidationFailedError(f"{from_norm} is not an active number on this org")
-        if number.carrier != _ROOM_TRUNK_CARRIER:
+        if number.carrier not in trunk_carriers:
             raise ValidationFailedError(
-                f"number {from_norm} is on {number.carrier}; the SIP trunk dials out via "
-                f"{_ROOM_TRUNK_CARRIER} - pick a {_ROOM_TRUNK_CARRIER} number or add a "
+                f"number {from_norm} is on {number.carrier}; calls can only be placed from "
+                f"a {' or '.join(trunk_carriers)} number - pick one of those or add a "
                 f"trunk for {number.carrier}"
             )
         return from_norm
 
     candidate = (
         await session.execute(
-            sa.select(OrgNumber).where(
-                OrgNumber.is_active.is_(True), OrgNumber.carrier == _ROOM_TRUNK_CARRIER
-            )
+            sa.select(OrgNumber)
+            .where(OrgNumber.is_active.is_(True), OrgNumber.carrier.in_(trunk_carriers))
+            .order_by(OrgNumber.created_at)
         )
     ).scalars().first()
     if candidate is None:
         raise ValidationFailedError(
-            f"No active {_ROOM_TRUNK_CARRIER} number is available on this org for a room call"
+            f"No active {' or '.join(trunk_carriers)} number is available on this org for a "
+            "room call"
         )
     return candidate.e164
 
@@ -397,7 +402,9 @@ async def create_call(
     if payload.via not in _VIA_MODES:
         raise ValidationFailedError("via must be 'carrier' or 'room'")
 
-    to_norm = to_e164(payload.to)
+    # P43 (audit): the workspace's own region, not always US - a UK workspace dialling a
+    # bare national number would otherwise place a call to a different real number.
+    to_norm = to_e164(payload.to, await phone_region.for_org(ctx.session, ctx.org.id))
     access = await inbox_access_svc.resolve_access(
         ctx.session, ctx.actor_user_id, ctx.role.permissions or []
     )
@@ -407,11 +414,13 @@ async def create_call(
         api = getattr(request.app.state, "livekit", None)
         if api is None:
             raise FeatureUnavailableError("LiveKit is not configured")
-        if not settings.livekit_sip_outbound_trunk_id:
+        if not voice_service.room_trunks(settings):
             # (finding 12) configured LiveKit but no outbound trunk yet - inbound-only
             # deploys are valid, but this route can never succeed without one.
             raise FeatureUnavailableError("No LiveKit SIP outbound trunk is configured")
-        from_norm = await _resolve_room_from_number(ctx.session, ctx.org.id, payload)
+        from_norm = await _resolve_room_from_number(
+            ctx.session, ctx.org.id, payload, settings
+        )
         if not access.can_use(from_norm):
             raise PermissionDeniedError(f"You do not have call access to {from_norm}")
         bus = request.app.state.event_bus
@@ -776,7 +785,9 @@ async def transfer_call(
         raise NotFoundError("Call not found")
     await _access_or_404(ctx, call, require_use=True)
 
-    to_norm = to_e164(payload.to)
+    # P43 (audit): the workspace's own region, not always US - a UK workspace dialling a
+    # bare national number would otherwise place a call to a different real number.
+    to_norm = to_e164(payload.to, await phone_region.for_org(ctx.session, ctx.org.id))
 
     if (call.extra or {}).get("via") == "livekit":
         api = getattr(request.app.state, "livekit", None)

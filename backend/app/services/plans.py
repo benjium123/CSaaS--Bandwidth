@@ -317,3 +317,120 @@ def overage_rate(plan: Plan | None, metric: str) -> int | None:
     except (TypeError, ValueError):
         return None
     return micros if micros >= 0 else None
+
+
+# ------------------------------------------------------------------------------------
+# Sample plan catalogue
+# ------------------------------------------------------------------------------------
+SAMPLE_PLAN_CODES: tuple[str, ...] = ("starter", "standard", "professional")
+
+#: SAMPLE plans. PRICING IS NOT DECIDED, and two fields say so explicitly:
+#:
+#:   monthly_price_micros = 0   a PLACEHOLDER, not a price. Zero must never be presented to
+#:                              a customer as "free" - it means "nobody has set this yet".
+#:   stripe_price_id = None     a PLACEHOLDER. It is also the safety catch: a plan with no
+#:                              Stripe price id CANNOT be checked out (the route refuses and
+#:                              names the plan), so a $0 plan physically cannot be sold while
+#:                              this is unset. The operator supplies real `price_...` ids.
+#:
+#: The allowance and overage numbers below are illustrative shapes - escalating inclusions,
+#: gently decreasing per-unit overage - so the plumbing has something to exercise. They are
+#: not a commercial proposal.
+_SAMPLE_PLANS: dict[str, dict] = {
+    "starter": {
+        "name": "Starter",
+        "included": {"sms_segments": 500, "voice_minutes": 300, "numbers": 1, "seats": 3},
+        "overage_rates": {
+            "sms_segments": 12_000,
+            "voice_minutes": 12_000,
+            "numbers": 1_500_000,
+        },
+    },
+    "standard": {
+        "name": "Standard",
+        "included": {"sms_segments": 2_000, "voice_minutes": 1_000, "numbers": 3, "seats": 10},
+        "overage_rates": {
+            "sms_segments": 11_000,
+            "voice_minutes": 11_000,
+            "numbers": 1_250_000,
+        },
+    },
+    "professional": {
+        "name": "Professional",
+        "included": {
+            "sms_segments": 10_000,
+            "voice_minutes": 5_000,
+            "numbers": 10,
+            "seats": 50,
+        },
+        "overage_rates": {
+            "sms_segments": 10_000,
+            "voice_minutes": 10_000,
+            "numbers": 1_000_000,
+        },
+    },
+}
+
+
+async def seed_sample_plans(session: AsyncSession) -> list[str]:
+    """Create any of the three sample plans that do not exist yet. Returns the codes created.
+
+    Idempotency is per-row existence, like services/defaults.seed_org_defaults - there is no
+    marker row and no version. An existing plan is left COMPLETELY alone: the operator edits
+    these rows by hand (that is how real prices and Stripe price ids arrive), and a re-seed
+    that "refreshed" them would silently revert pricing to the placeholders and take working
+    checkouts offline. Adding a NEW code to the catalogue is therefore the only thing a
+    re-run can ever do.
+
+    Does not commit - the caller owns the transaction. `plans` is platform-wide, not
+    tenant-scoped, so no org context is involved.
+    """
+    created: list[str] = []
+    for code in SAMPLE_PLAN_CODES:
+        if await session.get(Plan, code) is not None:
+            continue
+        spec = _SAMPLE_PLANS[code]
+        session.add(
+            Plan(
+                code=code,
+                name=spec["name"],
+                # Both placeholders; see _SAMPLE_PLANS above.
+                monthly_price_micros=0,
+                stripe_price_id=None,
+                included=dict(spec["included"]),
+                overage_rates=dict(spec["overage_rates"]),
+                is_active=True,
+            )
+        )
+        created.append(code)
+    if created:
+        log.info("plans.sample_plans_seeded", codes=created)
+    return created
+
+
+async def bootstrap_sample_plans() -> list[str]:
+    """Startup hook: seed the sample catalogue, on its own session, NEVER raising.
+
+    Called once from the app lifespan (app/main.py). Safe on every boot because
+    `seed_sample_plans` only inserts codes that are absent - an operator's edited prices and
+    Stripe price ids are never touched, so a redeploy cannot quietly revert pricing.
+
+    Failure is logged and swallowed, deliberately. The catalogue feeds a plan picker; missing
+    it degrades one screen. Making it fatal would take auth, messaging, calls and webhooks
+    offline - and crash-loop the API - because a placeholder row could not be written, or
+    because the deploy reached this before its migration. The error is logged at error level
+    with the traceback so it is alertable rather than silent.
+
+    Returns the codes created (empty when nothing was needed, and also when seeding failed).
+    """
+    from app.db.session import get_sessionmaker
+
+    try:
+        async with get_sessionmaker()() as session:
+            created = await seed_sample_plans(session)
+            if created:
+                await session.commit()
+            return created
+    except Exception:
+        log.exception("plans.sample_plans_seed_failed")
+        return []

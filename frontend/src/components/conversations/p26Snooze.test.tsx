@@ -293,47 +293,33 @@ describe("ConversationHeader P26 snooze", () => {
   });
 });
 
-describe("InboxColumn P26 snooze/overdue views", () => {
-  it("renders Snoozed and Overdue rows and calls onSelect with view", async () => {
-    const { onSelect } = renderColumn();
+/**
+ * The Snoozed and Overdue RAIL ROWS are gone (console-reference.html: the Views block
+ * duplicated the filter row two columns over). What is NOT gone, and what the rest of
+ * this file still proves above, is the ability to snooze: the header's Snooze menu, its
+ * four presets, the custom datetime, "Bring back now", and the POST/DELETE it sends.
+ *
+ * These assertions are deliberately negative-and-specific rather than deleted, so
+ * re-adding a rail row that sets a filter fails here.
+ */
+describe("InboxColumn after the reference cut", () => {
+  it("no longer renders Snoozed or Overdue rows", () => {
+    renderColumn();
 
-    await userEvent.click(screen.getByRole("button", { name: "Snoozed" }));
-    expect(onSelect).toHaveBeenCalledWith({ kind: "view", view: "snoozed" });
-
-    await userEvent.click(screen.getByRole("button", { name: "Overdue" }));
-    expect(onSelect).toHaveBeenCalledWith({ kind: "view", view: "overdue" });
+    expect(screen.queryByRole("button", { name: "Snoozed" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Overdue" })).toBeNull();
   });
 
-  it("selected snoozed and overdue rows carry aria-current=true", () => {
-    const first = renderColumn({ selection: { kind: "view", view: "snoozed" } });
-    expect(screen.getByRole("button", { name: "Snoozed" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
-    first.unmount();
-
-    renderColumn({ selection: { kind: "view", view: "overdue" } });
-    expect(screen.getByRole("button", { name: "Overdue" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
-  });
-
-  it("renders the four view rows in order Important, Unresponded, Snoozed, Overdue", () => {
+  it("renders no view rows at all, only scope rows", () => {
     renderColumn();
 
     const nav = screen.getByRole("navigation", { name: "Inboxes" });
     const labels = within(nav)
       .getAllByRole("button")
-      .map((button) => button.textContent?.trim())
-      .filter(
-        (label) =>
-          label === "Important" ||
-          label === "Unresponded" ||
-          label === "Snoozed" ||
-          label === "Overdue",
-      );
+      .map((button) => button.textContent?.trim());
 
-    expect(labels).toEqual(["Important", "Unresponded", "Snoozed", "Overdue"]);
+    for (const view of ["Important", "Unresponded", "Snoozed", "Overdue"]) {
+      expect(labels).not.toContain(view);
+    }
   });
 });

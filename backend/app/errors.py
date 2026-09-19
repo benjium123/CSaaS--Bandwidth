@@ -40,6 +40,35 @@ class UnauthenticatedError(CsaasError):
     message = "Not authenticated"
 
 
+class StepUpRequiredError(CsaasError):
+    """P41: the action needs fresh proof of identity. ``kind`` is recent_2fa (authenticator
+    app / passkey) or recent_selfie (Stripe Identity); ``action`` names what is being
+    unlocked so the console can resume it afterwards."""
+
+    code = "step_up_required"
+    http_status = 403
+    message = "Please confirm it is you to continue"
+
+    def __init__(self, message: str | None = None, *, kind: str, action: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.action = action
+
+
+class AccountNotVerifiedError(CsaasError):
+    """P41: calling, texting and numbers wait for business verification."""
+
+    code = "account_not_verified"
+    http_status = 403
+    message = "Calling and texting unlock once your business verification is approved"
+
+
+class AccountSuspendedError(CsaasError):
+    code = "account_suspended"
+    http_status = 403
+    message = "This account is suspended. Contact support."
+
+
 class ValidationFailedError(CsaasError):
     code = "validation_failed"
     http_status = 422

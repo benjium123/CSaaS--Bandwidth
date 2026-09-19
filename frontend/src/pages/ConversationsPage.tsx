@@ -25,6 +25,18 @@ import { InboxColumn, type InboxColumnSelection } from "@/components/conversatio
 import { ScheduledDrawer } from "@/components/conversations/ScheduledDrawer";
 import { Button, Sheet } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+// The console's face, per docs/design/console-reference.html. Self-hosted: the mockup
+// pulls Onest from Google Fonts and we cannot, because our CSP is `font-src 'self'`.
+// Archivo used to be imported here and no longer is — nothing under `.console-surface`
+// asks for it since the theme moved to Onest. AuthShell still imports it for its own
+// surface, which is where the pages that use it (onboarding, plan picker) get it from.
+// The landing page used to be the third of those; it now lives outside this repo.
+import "@fontsource-variable/onest/wght.css";
+// Still needed: `.cx-num`, `.cx-label` and `.cx-meta` keep the mono face for numbers read
+// as data rather than as prose.
+import "@fontsource-variable/martian-mono/wght.css";
+import "@/components/conversations/consoleTheme.css";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 
 /** Item 2: the list is kept fresh two ways - a background poll while the tab is visible
  * (TanStack Query pauses `refetchInterval` in the background by default, so this alone
@@ -66,6 +78,10 @@ const ALL_INBOXES = "all";
  * mounts the one persistent <Sidebar /> for the whole authed app - this page owns only
  * the list / timeline / contact-panel columns to its right, never its own Sidebar copy. */
 export function ConversationsPage() {
+  // The console follows the one stored theme preference the front door writes. See
+  // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
+  // every wrapper in the console on the same commit rather than only its own.
+  const { theme } = useSurfaceTheme();
   const { api, orgId } = useAuth();
   const softphone = useSoftphone();
   const queryClient = useQueryClient();
@@ -252,25 +268,17 @@ export function ConversationsPage() {
   }, [inboxes]);
   const canCompose = fromOptions.length > 0;
 
+  // The rail is scope-only now (see InboxColumn): a filter no longer changes which rail
+  // row looks current, because no rail row sets a filter.
   const inboxSelection = React.useMemo<InboxColumnSelection>(() => {
-    if (
-      filter === "important" ||
-      filter === "unresponded" ||
-      filter === "snoozed" ||
-      filter === "overdue"
-    ) {
-      return { kind: "view", view: filter };
-    }
     if (isAllInboxes) return { kind: "all" };
     if (selectedInboxId) return { kind: "inbox", inboxId: selectedInboxId };
     return { kind: "all" };
-  }, [filter, isAllInboxes, selectedInboxId]);
+  }, [isAllInboxes, selectedInboxId]);
 
   const scopeLabel = React.useMemo(() => {
     if (filter === "important") return "Important";
     if (filter === "unresponded") return "Unresponded";
-    if (filter === "snoozed") return "Snoozed";
-    if (filter === "overdue") return "Overdue";
     if (isAllInboxes) return "All conversations";
     if (selectedInboxId) {
       return inboxes.find((inbox) => inbox.id === selectedInboxId)?.name ?? "All conversations";
@@ -280,10 +288,6 @@ export function ConversationsPage() {
 
   function handleInboxSelect(selection: InboxColumnSelection) {
     setMobileInboxSheetOpen(false);
-    if (selection.kind === "view") {
-      setFilter((current) => (current === selection.view ? "open" : selection.view));
-      return;
-    }
 
     const pathname = selection.kind === "all" ? "/inbox/all" : `/inbox/${selection.inboxId}`;
     const next = new URLSearchParams(searchParams);
@@ -326,10 +330,9 @@ export function ConversationsPage() {
     next.set("contact", contactE164);
     if (conversation) next.set("our", conversation.our_e164);
     setSearchParams(next);
-    // Below sm the contact panel is a MODAL bottom sheet (aria-modal + focus trap), so
-    // auto-opening it on every row click would trap the user the instant they pick a
-    // conversation. On sm and up it is an ordinary side panel and may open eagerly.
-    if (!isBelowSm) setContactPanelOpen(true);
+    // The contact panel stays shut until it is asked for (reference: "hidden until asked
+    // for. The thread takes the full width"). Below sm it is additionally a MODAL sheet,
+    // so auto-opening would also trap the user the instant they pick a conversation.
   }
 
   /** Below md the conversation list and the selected conversation share one column
@@ -350,7 +353,6 @@ export function ConversationsPage() {
     next.set("contact", contactE164);
     next.set("our", ourE164);
     setSearchParams(next);
-    if (!isBelowSm) setContactPanelOpen(true);
   }
 
   async function handleComposeSendMessage(vars: {
@@ -405,15 +407,40 @@ export function ConversationsPage() {
       conversation={composeMode ? null : selectedConversation}
       inbox={activeInbox}
       canSend={canSend}
+      // The panel's own X, per the reference. Same state the header's toggle drives, so
+      // the two never disagree about whether the third column is open.
+      onClose={() => setContactPanelOpen(false)}
       className={cn(
-        !isBelowSm && (contactPanelOpen ? "fixed inset-y-0 right-0 z-40 w-80" : "hidden"),
-        "lg:static lg:z-auto lg:block lg:w-auto",
+        // Closed means GONE, at every width - the third grid column collapses to 0px and
+        // the thread grows into it. Open below lg is still an overlay; at lg it is the
+        // grid column itself.
+        !isBelowSm &&
+          (contactPanelOpen
+            ? "fixed inset-y-0 right-0 z-40 w-80 lg:static lg:z-auto lg:w-auto"
+            : "hidden"),
       )}
     />
   );
 
   return (
-    <div className="dark grid h-full grid-cols-[minmax(0,1fr)] bg-background text-foreground lg:grid-cols-[220px_minmax(0,1fr)_300px]">
+    // The contact panel narrows from 300 to 272 and the inbox rail from 220 to 208: at
+    // 1280 the thread - the thing the person is actually reading - had the least room of
+    // the three, which is the wrong way round. Those 40px go to the conversation.
+    <div
+      className={cn(
+        "console-surface",
+        surfaceThemeClass(theme),
+        "grid h-full grid-cols-[minmax(0,1fr)] bg-background text-foreground",
+        // Transitioning grid-template-columns (rather than toggling a width) is what lets
+        // the thread grow smoothly into the space instead of snapping - same technique as
+        // the reference's .app / .app[data-panel="open"].
+        "transition-[grid-template-columns] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none",
+        contactPanelOpen
+          ? "lg:grid-cols-[240px_minmax(0,1fr)_272px]"
+          : "lg:grid-cols-[240px_minmax(0,1fr)_0px]",
+      )}
+      data-panel={contactPanelOpen ? "open" : "closed"}
+    >
       {isBelowSm ? (
         <>
           <div className="sm:hidden bg-background p-2">
@@ -441,7 +468,15 @@ export function ConversationsPage() {
         inboxColumnElement
       )}
 
-      <main className="grid min-w-0 grid-cols-[1fr] md:grid-cols-[320px_1fr]">
+      {/* `min-h-0` on BOTH this grid and the <section> below is load-bearing, and neither
+          works alone - measured at 1280x720, either one by itself leaves the page 1122px
+          tall and the composer 331px below the fold; only both together bring it back to
+          720. Grid and flex items default to `min-height: auto`, so the tall timeline grows
+          its row instead of scrolling inside it, and the whole app scrolls - taking the
+          conversation list with it and putting the reply box out of reach. Timeline itself
+          already has `min-h-0 flex-1 overflow-y-auto`; the constraint was missing on its
+          ancestors, which is why the symptom looked like "the timeline won't scroll". */}
+      <main className="grid min-h-0 min-w-0 grid-cols-[1fr] md:grid-cols-[320px_1fr]">
         <ConversationList
           items={items}
           selectedContactE164={urlContact}
@@ -467,7 +502,7 @@ export function ConversationsPage() {
           canComposeLoading={inboxesQuery.isLoading}
         />
 
-        <section className="flex min-w-0 flex-col bg-background">
+        <section className="cx-thread flex min-h-0 min-w-0 flex-col">
           {composeMode ? (
             <NewConversationPanel
               // Load-bearing key: the panel seeds its state on mount, so without a
@@ -491,6 +526,14 @@ export function ConversationsPage() {
                 <div className="min-w-0 flex-1">
                   <ConversationHeader
                     conversation={selectedConversation}
+                    // The line's NAME under the contact's number, per the reference's
+                    // `.thread-sub`. Only the inbox that actually governs THIS
+                    // conversation counts - `activeInbox` falls back to the sidebar's
+                    // selection, which in `?inbox=all` would name the wrong line.
+                    inboxName={
+                      inboxes.find((inbox) => inbox.id === selectedConversation?.inbox_id)?.name ??
+                      null
+                    }
                     canSend={canSend}
                     onBack={selectedConversation ? handleBack : undefined}
                   />
@@ -500,8 +543,9 @@ export function ConversationsPage() {
                   variant="ghost"
                   size="icon"
                   aria-label="Toggle contact panel"
+                  aria-pressed={contactPanelOpen}
                   onClick={() => setContactPanelOpen((v) => !v)}
-                  className="mr-2 text-foreground hover:bg-muted lg:hidden"
+                  className="mr-2 text-foreground hover:bg-muted"
                 >
                   <PanelRight className="h-4 w-4" />
                 </Button>
@@ -510,6 +554,14 @@ export function ConversationsPage() {
               <Timeline
                 contactE164={selectedConversation?.contact_e164 ?? urlContact}
                 ourE164={ourE164}
+                // Names the two sides of the thread for the label above each run of
+                // messages. Both are optional - the Timeline falls back to the formatted
+                // numbers when a conversation has not resolved yet.
+                contactName={selectedConversation?.contact?.display_name ?? null}
+                inboxName={
+                  inboxes.find((inbox) => inbox.id === selectedConversation?.inbox_id)?.name ??
+                  null
+                }
               />
 
               {selectedConversation && (

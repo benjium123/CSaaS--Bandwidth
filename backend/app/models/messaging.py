@@ -217,6 +217,9 @@ class Message(Base, TenantScoped, TimestampMixin):
         sa.DateTime(timezone=True), nullable=True
     )
     failure_reason_public: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    #: P43 AI text guard: allowed | held | blocked | cleared | exempt (None = not screened).
+    moderation_state: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
+    moderation_reason: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     # P35 email fields.
     subject: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     html_body: Mapped[str | None] = mapped_column(sa.Text, nullable=True)

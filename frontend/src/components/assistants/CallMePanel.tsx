@@ -28,8 +28,8 @@ export function CallMePanel({
   const disabled = missingAssistant || invalidPhone || mutation.isPending;
 
   return (
-    <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">
+    <div className="space-y-[11px]">
+      <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
         Have your assistant call you so you can hear it for real.
       </p>
       <Input
@@ -41,7 +41,7 @@ export function CallMePanel({
         type="tel"
         disabled={mutation.isPending}
       />
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-[11px]">
         <Button
           type="button"
           disabled={disabled}
@@ -50,7 +50,7 @@ export function CallMePanel({
           Call me
         </Button>
         {missingAssistant ? (
-          <span className="text-sm text-muted-foreground">
+          <span className="text-[13px] text-[hsl(var(--cx-subtle))]">
             Save this assistant first.
           </span>
         ) : null}
@@ -63,7 +63,7 @@ export function CallMePanel({
           />
         )}
       </div>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
         This is a test call and is not counted in your reports.
       </p>
     </div>

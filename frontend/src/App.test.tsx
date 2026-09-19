@@ -1,6 +1,7 @@
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useParams, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
@@ -8,6 +9,11 @@ import { AuthProvider, type Me } from "@/auth/AuthContext";
 import { makeStubClient } from "@/test/harness";
 
 const conversationsMock = vi.hoisted(() => ({ crash: false }));
+// A second crashable page, so the "a crash always leaves a way out" guarantee can be
+// pinned on a NON-inbox route too - the inbox is the one route whose navigation lives
+// INSIDE the boundary, so passing there alone would not prove the fallback works
+// everywhere.
+const contactsMock = vi.hoisted(() => ({ crash: false }));
 
 vi.mock("@/softphone/SoftphoneProvider", () => ({
   SoftphoneProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -29,6 +35,7 @@ vi.mock("@/pages/ContactsPage", () => ({
   // Echoes ?tab= so the /lists redirect can be asserted to land on the Lists TAB, not
   // merely on the Contacts page.
   ContactsPage: () => {
+    if (contactsMock.crash) throw new Error("contacts crashed");
     const [searchParams] = useSearchParams();
     const tab = searchParams.get("tab");
     return (
@@ -81,7 +88,11 @@ vi.mock("@/pages/OrgPickerPage", () => ({
 vi.mock("@/pages/AcceptInvitePage", () => ({
   AcceptInvitePage: () => <div>Accept invite page</div>,
 }));
-vi.mock("@/pages/settingsSections", () => ({
+// SettingsIndexRedirect imports canViewSettingsSection from this module too, so the mock
+// must spread the REAL module (and only override the section list) - a bare object mock
+// left canViewSettingsSection undefined and broke the /settings redirect test.
+vi.mock("@/pages/settingsSections", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/pages/settingsSections")>()),
   SETTINGS_SECTIONS: [
     { id: "workspace", label: "Workspace", permission: "org:read" },
     { id: "team", label: "Team", permission: "members:read" },
@@ -147,17 +158,56 @@ function renderApp(initialEntries: string[] = ["/inbox"]) {
 
 afterEach(() => {
   conversationsMock.crash = false;
+  contactsMock.crash = false;
 });
 
+/**
+ * A CRASHED PAGE MUST STILL LEAVE A WAY OUT.
+ *
+ * This used to be spelled "the icon Sidebar is still there", which worked only because
+ * that rail lives outside the boundary. Since /inbox hides it (InboxColumn carries the
+ * rail there, and InboxColumn renders inside ConversationsPage - inside the boundary), a
+ * crash on the inbox left NO navigation at all. The guarantee is unchanged; what provides
+ * it moved into the fallback, so these tests assert the guarantee directly: the user can
+ * actually navigate off the crashed page, on the inbox and off it.
+ */
 describe("App shell error boundary", () => {
-  it("keeps the sidebar usable when a routed page throws", async () => {
+  it("lets the user navigate away when the inbox - whose rail is inside the boundary - throws", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     conversationsMock.crash = true;
 
     renderApp();
 
     expect(await screen.findByText("Something went wrong")).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Sidebar" })).toBeInTheDocument();
+    // The icon rail is hidden on /inbox and the inbox rail died with the page, so the
+    // fallback is the ONLY navigation left on screen here.
+    const recovery = await screen.findByRole("navigation", { name: "Error recovery" });
+    expect(within(recovery).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    // Gated exactly like the rails: this ME is not a platform operator.
+    expect(within(recovery).queryByRole("link", { name: "Trust & safety" })).not.toBeInTheDocument();
+
+    await userEvent.click(await within(recovery).findByRole("link", { name: "Contacts" }));
+
+    // Not just a URL change: the boundary cleared and a working page rendered.
+    expect(await screen.findByText("Contacts page")).toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Sidebar" })).toBeInTheDocument();
+  });
+
+  it("lets the user navigate away when a non-inbox route throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    contactsMock.crash = true;
+
+    renderApp(["/contacts"]);
+
+    expect(await screen.findByText("Something went wrong")).toBeInTheDocument();
+    const recovery = await screen.findByRole("navigation", { name: "Error recovery" });
+
+    await userEvent.click(await within(recovery).findByRole("link", { name: "Inbox" }));
+
+    expect(await screen.findByText("Inbox page")).toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
   });
 });
 

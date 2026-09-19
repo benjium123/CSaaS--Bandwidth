@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  availableMicros,
   formatCredits,
   formatQuantity,
   formatRateUnit,
@@ -12,6 +13,7 @@ import {
   usageTotalMicros,
   WARNING_COPY,
   type BillingSummary,
+  type LastTopup,
   type UsageSummary,
 } from "./billing";
 
@@ -50,6 +52,7 @@ describe("billing formatters", () => {
     const numberLastTopup: BillingSummary = {
       balance_micros: 0,
       reserved_micros: 0,
+      available_micros: 0,
       warning: null,
       auto_recharge: null,
       last_topup: 42_000_000,
@@ -58,7 +61,7 @@ describe("billing formatters", () => {
 
     const objectLastTopup: BillingSummary = {
       ...numberLastTopup,
-      last_topup: { amount_micros: 7_000_000, created_at: null },
+      last_topup: { amount_micros: 7_000_000, at: "2026-01-02T03:04:05+00:00" },
     };
     expect(lastTopupMicros(objectLastTopup)).toBe(7_000_000);
 
@@ -67,6 +70,44 @@ describe("billing formatters", () => {
       last_topup: null,
     };
     expect(lastTopupMicros(nullLastTopup)).toBe(0);
+  });
+
+  // The server's key is `at`. It was declared as an optional `created_at`, so the first
+  // component to render "last topped up on..." would have compiled and shown undefined.
+  it("reads the last top-up timestamp under the key the server actually sends", () => {
+    const summary: BillingSummary = {
+      balance_micros: 10_000_000,
+      reserved_micros: 0,
+      available_micros: 10_000_000,
+      warning: null,
+      auto_recharge: null,
+      last_topup: { amount_micros: 7_000_000, at: "2026-01-02T03:04:05+00:00" },
+    };
+
+    const topup = summary.last_topup as LastTopup;
+    expect(topup.at).toBe("2026-01-02T03:04:05+00:00");
+    expect(new Date(topup.at).getTime()).not.toBeNaN();
+    expect(Object.keys(topup)).not.toContain("created_at");
+  });
+
+  it("reports available credit, never the raw balance, and floors it at zero", () => {
+    const base: BillingSummary = {
+      balance_micros: 50_000_000,
+      reserved_micros: 20_000_000,
+      available_micros: 30_000_000,
+      warning: null,
+      auto_recharge: null,
+      last_topup: null,
+    };
+    expect(availableMicros(base)).toBe(30_000_000);
+
+    // A server that predates available_micros must still not report the raw balance.
+    const legacy = { ...base } as Partial<BillingSummary>;
+    delete legacy.available_micros;
+    expect(availableMicros(legacy as BillingSummary)).toBe(30_000_000);
+
+    const overdrawn = { ...base, balance_micros: 5_000_000, available_micros: 0 };
+    expect(availableMicros(overdrawn)).toBe(0);
   });
 
   it("formats quantities as minutes, characters, tokens, or a plain number", () => {

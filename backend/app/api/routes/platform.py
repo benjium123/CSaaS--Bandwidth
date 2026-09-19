@@ -12,23 +12,25 @@ transaction as its own commit (DR-6).
 
 from __future__ import annotations
 
-import hmac
 import uuid
 from datetime import date, datetime, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import (
+    OrgContext,
+    check_org_selfie_step_up,
+    require_permission,
+    require_platform_operator,
+)
 from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import (
-    FeatureUnavailableError,
     NotFoundError,
-    PermissionDeniedError,
     ValidationFailedError,
 )
 from app.models import ApiKey, Org, UsageRecord, WebhookDelivery, WebhookEndpoint
@@ -38,6 +40,7 @@ from app.services import apikeys as apikeys_svc
 from app.services import audit as audit_svc
 from app.services import messaging_health as messaging_health_svc
 from app.services import spend as spend_svc
+from app.services import telephony_billing as telephony_billing_svc
 from app.services import usage as usage_svc
 from app.services import webhooks_out as webhooks_out_svc
 
@@ -56,6 +59,8 @@ class ApiKeyIn(BaseModel):
     name: str = Field(min_length=1, max_length=127)
     scopes: list[str] = Field(min_length=1)
     expires_at: datetime | None = None
+    #: P42: optional CIDRs this key may be used from.
+    allowed_cidrs: list[str] | None = None
 
 
 class ApiKeyOut(BaseModel):
@@ -67,6 +72,8 @@ class ApiKeyOut(BaseModel):
     expires_at: datetime | None
     last_used_at: datetime | None
     created_at: datetime
+    allowed_cidrs: list[str] | None = None
+    last_used_ip: str | None = None
 
 
 class ApiKeyCreatedOut(ApiKeyOut):
@@ -83,6 +90,8 @@ def _key_out(row: ApiKey) -> ApiKeyOut:
         expires_at=row.expires_at,
         last_used_at=row.last_used_at,
         created_at=row.created_at,
+        allowed_cidrs=row.allowed_cidrs,
+        last_used_ip=row.last_used_ip,
     )
 
 
@@ -95,8 +104,12 @@ async def _get_key(ctx: OrgContext, key_id: uuid.UUID) -> ApiKey:
 
 @router.post("/api-keys", response_model=ApiKeyCreatedOut, status_code=201)
 async def create_api_key(
-    payload: ApiKeyIn, ctx: Annotated[OrgContext, Depends(require_permission("org:update"))]
+    payload: ApiKeyIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
 ) -> ApiKeyCreatedOut:
+    # P41: an API key is standing, unattended access - issued only to a proven person.
+    await check_org_selfie_step_up(request, ctx, action="api_key_create")
     actor_user_id, actor_api_key_id = _actor(ctx)
     row, full_key = await apikeys_svc.create(
         ctx.session,
@@ -104,6 +117,8 @@ async def create_api_key(
         name=payload.name,
         scopes=payload.scopes,
         expires_at=payload.expires_at,
+        allowed_cidrs=payload.allowed_cidrs,
+        max_days=request.app.state.settings.api_key_max_days,
         created_by=actor_user_id,
         actor_user_id=actor_user_id,
         actor_api_key_id=actor_api_key_id,
@@ -129,19 +144,32 @@ async def revoke_api_key(
     row = await _get_key(ctx, key_id)
     actor_user_id, actor_api_key_id = _actor(ctx)
     row = await apikeys_svc.revoke(
-        ctx.session, row, actor_user_id=actor_user_id, actor_api_key_id=actor_api_key_id
+        ctx.session,
+        row,
+        actor_user_id=actor_user_id,
+        actor_api_key_id=actor_api_key_id,
+        actor_key_scopes=list(ctx.api_key.scopes or []) if ctx.api_key is not None else None,
     )
     return _key_out(row)
 
 
 @router.post("/api-keys/{key_id}/rotate", response_model=ApiKeyCreatedOut)
 async def rotate_api_key(
-    key_id: uuid.UUID, ctx: Annotated[OrgContext, Depends(require_permission("org:update"))]
+    key_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:update"))],
+    overlap_hours: Annotated[int, Query(ge=0, le=24)] = 0,
 ) -> ApiKeyCreatedOut:
+    await check_org_selfie_step_up(request, ctx, action="api_key_create")
     row = await _get_key(ctx, key_id)
     actor_user_id, actor_api_key_id = _actor(ctx)
     new_row, full_key = await apikeys_svc.rotate(
-        ctx.session, row, actor_user_id=actor_user_id, actor_api_key_id=actor_api_key_id
+        ctx.session,
+        row,
+        actor_user_id=actor_user_id,
+        actor_api_key_id=actor_api_key_id,
+        overlap_hours=overlap_hours,
+        actor_key_scopes=list(ctx.api_key.scopes or []) if ctx.api_key is not None else None,
     )
     return ApiKeyCreatedOut(**_key_out(new_row).model_dump(), key=full_key)
 
@@ -436,21 +464,6 @@ async def get_reconciliation(
     return ReconciliationOut(date=date_, items=[ReconciliationItemOut(**i) for i in items])
 
 
-async def require_platform_operator(
-    request: Request,
-    x_platform_ops_token: Annotated[str | None, Header(alias="X-Platform-Ops-Token")] = None,
-) -> None:
-    configured = request.app.state.settings.platform_ops_token.get_secret_value().strip()
-    if not configured:
-        raise FeatureUnavailableError(
-            "Platform operator token is not configured; status callbacks are disabled"
-        )
-    # C6: constant-time compare - a naive != leaks timing information an attacker can
-    # use to recover the token byte-by-byte.
-    if not x_platform_ops_token or not hmac.compare_digest(x_platform_ops_token, configured):
-        raise PermissionDeniedError("Invalid platform operator token")
-
-
 class PlatformBillingPatch(BaseModel):
     ai_markup_bps: int | None = None
     ai_platform_fee_per_minute_micros: int | None = None
@@ -544,6 +557,13 @@ async def patch_platform_billing_org(
             # Re-stamped on every switch-on: traffic from an "off" stretch is never
             # billed retroactively.
             org.telephony_prepaid_since = datetime.now(timezone.utc)
+            # The same rule for number rental. Without this the very next sweeper pass
+            # would bill this org a full month for every number it already holds -
+            # charging for a stretch during which it was not being billed. Their first
+            # charged period starts one month from now instead.
+            # renew_number_rentals guards this at runtime too; stamping here makes the
+            # DATA right rather than relying on the guard staying correct forever.
+            await telephony_billing_svc.stamp_rentals_forward(session, org_id)
 
     audit_svc.record(
         session,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import uuid
 
-import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
@@ -424,6 +423,70 @@ async def test_a_card_used_by_auto_recharge_cannot_be_deleted(client, session):
     assert "turn off auto-recharge" in r.text.lower()
 
 
-async def test_billing_money_routes_require_the_billing_permission(client):
-    pytest.skip("No member API to add a non-owner member in this bundle")
+async def test_billing_money_routes_require_the_billing_permission(client, session):
+    """Un-skipped. The old body was ``pytest.skip(...)`` - it asserted nothing and had
+    never run, so it looked like coverage for months while the hole it named stayed open.
+    There IS a way to add a non-owner member: insert the OrgMembership directly against
+    the org's seeded system ``admin`` role (see tests/test_owner_only_access.py, which
+    holds the shared helper and the full owner-vs-non-owner matrix for the READ routes).
+
+    ``admin`` deliberately excludes ``org:billing`` (app/models/rbac.py), so every money
+    route must refuse it with ``permission_denied`` - NOT ``owner_only``, which is what
+    the separate ``require_owner`` gate on the billing READ routes raises. Asserting the
+    exact code keeps the two mechanisms distinguishable.
+    """
+    from tests.test_owner_only_access import _add_admin_member
+
+    owner_token = await register_and_login(client, "money-owner@example.com")
+    org = await create_org(client, owner_token, "Money Routes Org")
+    org_id = uuid.UUID(org["id"])
+    admin_token = await _add_admin_member(client, session, org_id, "money-admin@example.com")
+
+    # (method, path, kwargs, owner_status, owner_error_code). The owner's statuses are the
+    # HANDLER talking, not the gate: Stripe is unconfigured under this fixture (503
+    # feature_unavailable) and the payment method / plan rows do not exist (404). They are
+    # pinned EXACTLY rather than as "not 403" so an authorization regression that started
+    # refusing the owner cannot hide inside a vague comparison.
+    calls = [
+        (
+            "POST",
+            "/api/v1/billing/topups",
+            {"json": {"amount_micros": 25_000_000}},
+            503,
+            "feature_unavailable",
+        ),
+        (
+            "POST",
+            "/api/v1/billing/payment-methods",
+            {"json": {"stripe_payment_method_id": "pm_test_money_routes"}},
+            503,
+            "feature_unavailable",
+        ),
+        ("DELETE", f"/api/v1/billing/payment-methods/{uuid.uuid4()}", {}, 404, "not_found"),
+        ("PATCH", "/api/v1/billing/auto-recharge", {"json": {"enabled": False}}, 200, None),
+        (
+            "POST",
+            "/api/v1/billing/subscription/checkout",
+            {"json": {"plan_code": "starter"}},
+            404,
+            "not_found",
+        ),
+    ]
+
+    for method, path, kwargs, owner_status, owner_code in calls:
+        # X-Org-Id aims the admin at the OWNER's workspace. Registering the second user
+        # also gave them a workspace of their own, where they are the owner - without the
+        # header this would refuse for the wrong reason.
+        r = await client.request(
+            method, path, headers=auth_headers(admin_token, org_id), **kwargs
+        )
+        assert r.status_code == 403, r.text
+        assert r.json()["error"]["code"] == "permission_denied", r.text
+
+        r = await client.request(
+            method, path, headers=auth_headers(owner_token, org_id), **kwargs
+        )
+        assert r.status_code == owner_status, r.text
+        if owner_code is not None:
+            assert r.json()["error"]["code"] == owner_code, r.text
 

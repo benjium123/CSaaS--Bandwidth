@@ -32,6 +32,16 @@ import {
 } from "@/api/numbers";
 import { formatMicros, monthToDateRange, useSpendSummary } from "@/api/spend";
 import {
+  CONSOLE_CELL as CELL,
+  CONSOLE_CELL_L as CELL_L,
+  CONSOLE_CELL_R as CELL_R,
+  CONSOLE_HEAD as HEAD,
+  CONSOLE_PANEL as PANEL,
+  CONSOLE_ROW as ROW,
+  CONSOLE_TABLE as TABLE,
+  InitialsAvatar,
+} from "@/components/ui/consoleChrome";
+import {
   Button,
   Card,
   EmptyState,
@@ -44,6 +54,16 @@ import {
   type PillTone,
 } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+import { cn } from "@/lib/utils";
+
+/* ── The console's list shape, from docs/design/console-reference.html ──────────────────
+ * The reference has no dense table: rows sit on a recessed fill, breathe, and carry a
+ * circular two-letter avatar wherever a LINE is named. The <table> stays - this page shows
+ * twelve columns per number and none of them may be dropped to tidy the layout - but
+ * `border-separate` + `border-spacing-y` turns each row into a rounded card rather than a
+ * ruled strip, with the 12px list-row radius on the first and last cell (`rounded-md` ->
+ * --cx-r-sm, see tailwind.config.js). Colour is tokens only. */
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
   bandwidth: "Bandwidth",
@@ -138,6 +158,10 @@ function formatPurchasedAt(value: string | null): string {
 }
 
 export function NumbersPage() {
+  // The console follows the one stored theme preference the front door writes. See
+  // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
+  // every wrapper in the console on the same commit rather than only its own.
+  const { theme } = useSurfaceTheme();
   const { api } = useAuth();
   const qc = useQueryClient();
   const { data: numbers, isLoading, isError, error: numbersError, refetch: refetchNumbers } =
@@ -198,20 +222,23 @@ export function NumbersPage() {
   }
 
   return (
-    <div className="dark mx-auto max-w-5xl space-y-8 bg-background p-6 text-foreground">
+    <div className={cn(surfaceThemeClass(theme), "mx-auto max-w-5xl space-y-8 bg-background p-6 text-foreground")}>
       <Section
         title="Phone numbers"
         description="Search, order, release, and assign org numbers."
       >
         <div className="space-y-4">
-          <form className="flex gap-2" onSubmit={add}>
+          <form className={cn(PANEL, "flex gap-3 p-3.5")} onSubmit={add}>
             <Input
               aria-label="Phone number"
               placeholder="+12145550100"
               value={value}
               onChange={(e) => setValue(e.target.value)}
             />
-            <Button type="submit">Add</Button>
+            {/* The reference's `.send`: a primary action is a pill. */}
+            <Button type="submit" className="rounded-full px-5">
+              Add
+            </Button>
           </form>
           {error && (
             <p role="alert" className="text-sm text-destructive">
@@ -224,7 +251,7 @@ export function NumbersPage() {
           ) : isError ? (
             <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
               <span>{(numbersError as Error).message}</span>
-              <Button type="button" size="sm" variant="outline" onClick={() => refetchNumbers()}>
+              <Button type="button" size="sm" className="rounded-full px-3.5" variant="outline" onClick={() => refetchNumbers()}>
                 Retry
               </Button>
             </div>
@@ -235,6 +262,7 @@ export function NumbersPage() {
               action={
                 <Button
                   type="button"
+                  className="rounded-full px-5"
                   onClick={() => document.getElementById("order-a-number")?.scrollIntoView()}
                 >
                   Order a number
@@ -242,34 +270,32 @@ export function NumbersPage() {
               }
             />
           ) : (
-            <Card className="overflow-x-auto p-0">
-              <table className="w-full text-sm">
+            <div className={cn(PANEL, "overflow-x-auto")}>
+              <table className={TABLE}>
                 <thead>
-                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">Number</th>
-                    <th className="px-3 py-2 font-medium">Inbox</th>
+                  <tr>
+                    <th className={HEAD}>Number</th>
+                    <th className={HEAD}>Inbox</th>
                     {/* P23b: who picks up. Writing this binds a one-node flow to the number
                         (PATCH /numbers/{id}/answered-by); "Human" restores the seeded ring flow. */}
-                    <th className="px-3 py-2 font-medium">Answered by</th>
-                    <th className="px-3 py-2 font-medium">Type</th>
-                    <th className="px-3 py-2 font-medium">Provider</th>
-                    <th className="px-3 py-2 font-medium">Cost</th>
-                    <th className="px-3 py-2 font-medium">
-                      Spend MTD <span className="font-normal text-muted-foreground">(UTC days)</span>
+                    <th className={HEAD}>Answered by</th>
+                    <th className={HEAD}>Type</th>
+                    <th className={HEAD}>Provider</th>
+                    <th className={HEAD}>Cost</th>
+                    <th className={HEAD}>
+                      Spend MTD{" "}
+                      <span className="font-normal normal-case tracking-normal">(UTC days)</span>
                     </th>
-                    <th className="px-3 py-2 font-medium">Purchased</th>
-                    <th className="px-3 py-2 font-medium">Status</th>
-                    <th
-                      className="px-3 py-2 font-medium"
-                      title="Registration status for SMS messaging"
-                    >
+                    <th className={HEAD}>Purchased</th>
+                    <th className={HEAD}>Status</th>
+                    <th className={HEAD} title="Registration status for SMS messaging">
                       SMS registration
                     </th>
-                    <th className="px-3 py-2 font-medium">Campaign</th>
-                    <th className="px-3 py-2 font-medium">Actions</th>
+                    <th className={HEAD}>Campaign</th>
+                    <th className={HEAD}>Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border">
+                <tbody>
                   {(numbers ?? []).map((n) => (
                     <NumberRow
                       key={n.id}
@@ -300,7 +326,7 @@ export function NumbersPage() {
                   ))}
                 </tbody>
               </table>
-            </Card>
+            </div>
           )}
           <div className="flex items-center gap-3">
             {/* Small inline pending/error readout - same local pattern as ProvidersPage /
@@ -356,12 +382,21 @@ function NumberRow({
   const providerLabel = providerDisplayLabel(number);
 
   return (
-    <tr>
-      <td className="px-3 py-2 text-foreground">{formatPhone(number.e164)}</td>
-      <td className="px-3 py-2 text-xs text-muted-foreground">
+    <tr className={ROW}>
+      <td className={CELL_L}>
+        <span className="flex items-center gap-3">
+          {/* A number IS a line, so it takes the reference's line avatar treatment. Seeded
+              on the immutable id, labelled with whatever a human would read it by. */}
+          <InitialsAvatar size="row" seed={number.id} name={number.inbox_name ?? formatPhone(number.e164)} />
+          <span className="whitespace-nowrap font-semibold text-foreground">
+            {formatPhone(number.e164)}
+          </span>
+        </span>
+      </td>
+      <td className={cn(CELL, "text-muted-foreground")}>
         {number.inbox_name ?? "Not in an inbox"}
       </td>
-      <td className="px-3 py-2">
+      <td className={CELL}>
         {/* One control, one value: "A person" plus one entry per assistant. The value is the
             assistant's id, and the empty string means a person - so the two modes the wire
             has cannot get out of step with each other on screen. */}
@@ -395,19 +430,21 @@ function NumberRow({
           </span>
         )}
       </td>
-      <td className="px-3 py-2 text-xs text-muted-foreground">{number.number_type}</td>
-      <td className="px-3 py-2">
-        <div className="text-xs text-foreground">{providerLabel}</div>
+      <td className={cn(CELL, "text-muted-foreground")}>{number.number_type}</td>
+      <td className={CELL}>
+        <div className="text-foreground">{providerLabel}</div>
         {number.provider_account_label && providerLabel !== number.provider_account_label && (
           <div className="text-xs text-muted-foreground">{number.provider_account_label}</div>
         )}
       </td>
-      <td className="px-3 py-2 text-xs text-foreground">{formatMonthlyCost(number)}</td>
-      <td className="px-3 py-2 text-xs text-foreground">
+      <td className={cn(CELL, "whitespace-nowrap text-foreground")}>{formatMonthlyCost(number)}</td>
+      <td className={cn(CELL, "whitespace-nowrap text-foreground")}>
         {spendUnavailable ? "—" : formatMicros(spendMicros ?? 0)}
       </td>
-      <td className="px-3 py-2 text-xs text-muted-foreground">{formatPurchasedAt(number.purchased_at)}</td>
-      <td className="px-3 py-2">
+      <td className={cn(CELL, "whitespace-nowrap text-muted-foreground")}>
+        {formatPurchasedAt(number.purchased_at)}
+      </td>
+      <td className={CELL}>
         <Pill tone={status.tone} className="gap-1">
           {number.status === "pending" && <Loader2 className="h-3 w-3 animate-spin" />}
           {status.label}
@@ -418,7 +455,7 @@ function NumberRow({
           </span>
         )}
       </td>
-      <td className="px-3 py-2">
+      <td className={CELL}>
         {/* registration_detail comes from the backend and may contain carrier campaign
             terms; keep the surrounding label plain and render the backend text as the tooltip. */}
         <Pill
@@ -428,7 +465,7 @@ function NumberRow({
           {number.registration}
         </Pill>
       </td>
-      <td className="px-3 py-2">
+      <td className={CELL}>
         {number.number_type === "local" ? (
           <Select
             aria-label={`Campaign for ${number.e164}`}
@@ -448,13 +485,14 @@ function NumberRow({
           <span className="text-xs text-muted-foreground">{campaignName ?? "—"}</span>
         )}
       </td>
-      <td className="px-3 py-2">
+      <td className={CELL_R}>
         {released ? (
           <span className="text-xs text-muted-foreground">Released</span>
         ) : (
           <Button
             type="button"
             size="sm"
+            className="whitespace-nowrap rounded-full px-3.5"
             variant={confirming ? "destructive" : "outline"}
             onClick={onRelease}
             disabled={releasePending}
@@ -538,8 +576,8 @@ function OrderNumberSection({
 
   return (
     <Section id="order-a-number" title="Order a number">
-      <form className="flex flex-wrap items-end gap-2" onSubmit={search}>
-        <div className="space-y-1">
+      <form className={cn(PANEL, "flex flex-wrap items-end gap-3 p-3.5")} onSubmit={search}>
+        <div className="space-y-1.5">
           <label className="block text-xs text-muted-foreground" htmlFor="area-code">
             Area code
           </label>
@@ -552,7 +590,7 @@ function OrderNumberSection({
             onChange={(e) => setAreaCode(e.target.value)}
           />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <label className="block text-xs text-muted-foreground" htmlFor="contains">
             Contains
           </label>
@@ -564,7 +602,7 @@ function OrderNumberSection({
             onChange={(e) => setContains(e.target.value)}
           />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <label className="block text-xs text-muted-foreground" htmlFor="number-type">
             Type
           </label>
@@ -578,7 +616,7 @@ function OrderNumberSection({
             <option value="tollfree">Toll-free</option>
           </Select>
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <label className="block text-xs text-muted-foreground" htmlFor="carrier">
             Provider
           </label>
@@ -601,7 +639,7 @@ function OrderNumberSection({
             ))}
           </Select>
         </div>
-        <Button type="submit" disabled={availableQuery.isFetching}>
+        <Button type="submit" className="rounded-full px-5" disabled={availableQuery.isFetching}>
           Search
         </Button>
         <MutationStatus pending={orderNumber.isPending} error={orderNumber.error} pendingLabel="Saving…" />
@@ -625,34 +663,44 @@ function OrderNumberSection({
           {(availableQuery.error as Error).message}
         </p>
       ) : results.length > 0 ? (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
+        <div className={cn(PANEL, "overflow-x-auto")}>
+          <table className={TABLE}>
             <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Number</th>
-                <th className="px-3 py-2 font-medium">Type</th>
-                <th className="px-3 py-2 font-medium">Region</th>
-                <th className="px-3 py-2 font-medium">Locality</th>
-                <th className="px-3 py-2 font-medium">Monthly cost</th>
-                <th className="px-3 py-2 font-medium">Setup cost</th>
-                <th className="px-3 py-2 font-medium">Actions</th>
+              <tr>
+                <th className={HEAD}>Number</th>
+                <th className={HEAD}>Type</th>
+                <th className={HEAD}>Region</th>
+                <th className={HEAD}>Locality</th>
+                <th className={HEAD}>Monthly cost</th>
+                <th className={HEAD}>Setup cost</th>
+                <th className={HEAD}>Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody>
               {results.map((r) => (
-                <tr key={r.e164}>
-                  <td className="px-3 py-2 text-foreground">{formatPhone(r.e164)}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.number_type}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.region}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.locality}</td>
-                  <td className="px-3 py-2 text-xs text-foreground">{formatMonthlyCost(r)}</td>
-                  <td className="px-3 py-2 text-xs text-foreground">
+                <tr key={r.e164} className={ROW}>
+                  <td className={CELL_L}>
+                    <span className="flex items-center gap-3">
+                      <InitialsAvatar size="row" seed={r.e164} name={formatPhone(r.e164)} />
+                      <span className="whitespace-nowrap font-semibold text-foreground">
+                        {formatPhone(r.e164)}
+                      </span>
+                    </span>
+                  </td>
+                  <td className={cn(CELL, "text-muted-foreground")}>{r.number_type}</td>
+                  <td className={cn(CELL, "text-muted-foreground")}>{r.region}</td>
+                  <td className={cn(CELL, "text-muted-foreground")}>{r.locality}</td>
+                  <td className={cn(CELL, "whitespace-nowrap text-foreground")}>
+                    {formatMonthlyCost(r)}
+                  </td>
+                  <td className={cn(CELL, "whitespace-nowrap text-foreground")}>
                     {formatSetupCost(r.setup_cost_cents)}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className={CELL_R}>
                     <Button
                       type="button"
                       size="sm"
+                      className="rounded-full px-4"
                       onClick={() => order(r)}
                       disabled={orderNumber.isPending}
                     >
@@ -663,13 +711,13 @@ function OrderNumberSection({
               ))}
             </tbody>
           </table>
-        </Card>
+        </div>
       ) : searchFilters ? (
         <EmptyState
           title="No numbers found"
           description="Try a different area code, phrase, type, or provider."
           action={
-            <Button type="button" variant="outline" onClick={() => setSearchFilters(null)}>
+            <Button type="button" className="rounded-full px-5" variant="outline" onClick={() => setSearchFilters(null)}>
               Clear search
             </Button>
           }

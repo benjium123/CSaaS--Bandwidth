@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.routes import account as account_routes
 from app.api.routes import agent as agent_routes
 from app.api.routes import ai_providers as ai_provider_routes
 from app.api.routes import analytics as analytics_routes
@@ -21,24 +22,31 @@ from app.api.routes import compliance as compliance_routes
 from app.api.routes import contacts as contact_routes
 from app.api.routes import conversations as conversation_routes
 from app.api.routes import departments as department_routes
+from app.api.routes import enterprise_sso as enterprise_sso_routes
 from app.api.routes import flows as flow_routes
 from app.api.routes import health as health_routes
 from app.api.routes import identity as identity_routes
 from app.api.routes import inbox as inbox_routes
 from app.api.routes import inboxes as inboxes_routes
+from app.api.routes import kyc as kyc_routes
 from app.api.routes import links as links_routes
 from app.api.routes import me as me_routes
 from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
+from app.api.routes import monitoring as monitoring_routes
 from app.api.routes import numbers as number_routes
+from app.api.routes import ops as ops_routes
 from app.api.routes import orgs as org_routes
 from app.api.routes import outbound as outbound_routes
+from app.api.routes import passkeys as passkey_routes
 from app.api.routes import platform as platform_routes
 from app.api.routes import provider_accounts as provider_accounts_routes
 from app.api.routes import registration as registration_routes
 from app.api.routes import roles as roles_routes
 from app.api.routes import routing as routing_routes
+from app.api.routes import saml as saml_routes
 from app.api.routes import scheduling as scheduling_routes
+from app.api.routes import scim as scim_routes
 from app.api.routes import softphone as softphone_routes
 from app.api.routes import spend as spend_routes
 from app.api.routes import sso as sso_routes
@@ -47,13 +55,14 @@ from app.api.routes import telephony as telephony_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
 from app.api.routes import webhooks as webhook_routes
-from app.config import Settings, load_settings
+from app.config import Settings, load_settings, set_active_settings
 from app.db.session import dispose_engine, init_engine
 from app.errors import CsaasError
 from app.events.bus import EventBus
 from app.logging import configure_logging
 from app.providers.registry import build_registry
 from app.providers.registry_org import CarrierRegistryProxy
+from app.services import plans as plans_svc
 from app.storage.base import build_store
 from app.voice_plane import service as voice_service
 
@@ -74,12 +83,18 @@ def _log_provider_report(settings: Settings) -> None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    set_active_settings(settings)
     configure_logging(env=settings.app_env, level=settings.log_level)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         _log_provider_report(settings)
         init_engine(settings.database_url)
+        # The sample plan catalogue. Idempotent per row and it never rewrites an existing
+        # plan, so it is safe on every boot; it never raises, so a DB blip or a migration
+        # that has not run yet cannot stop the API from serving. See
+        # services/plans.bootstrap_sample_plans.
+        await plans_svc.bootstrap_sample_plans()
         # None when Bandwidth is not configured — the app must still boot and serve
         # /healthz. Sending then answers 503 carrier_not_configured.
         # P17: wrapped so a request with an org context resolving to DB credentials
@@ -166,12 +181,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             raise
         response.headers["X-Request-Id"] = request_id
+        # P42: API responses are data, never pages: nothing may frame, sniff or embed them,
+        # and authentication responses are never cached.
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+        )
+        if request.url.path.startswith(("/api/v1/auth/", "/api/v1/kyc/", "/api/v1/ops/")):
+            response.headers["Cache-Control"] = "no-store"
+        if settings.is_production:
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+            )
         structlog.get_logger("http").info(
             "request",
             status=response.status_code,
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
         return response
+
+    @app.exception_handler(scim_routes.ScimError)
+    async def handle_scim_error(request: Request, exc: scim_routes.ScimError) -> JSONResponse:
+        # SCIM clients (Okta, Entra ID) expect RFC 7644 error bodies, not our envelope.
+        return scim_routes.scim_error_response(exc)
 
     @app.exception_handler(CsaasError)
     async def handle_csaas_error(request: Request, exc: CsaasError) -> JSONResponse:
@@ -188,11 +222,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         retry_after = getattr(exc, "retry_after", None)
         if retry_after is not None:
             headers["Retry-After"] = str(int(retry_after))
+        body = {"code": exc.code, "message": exc.message, "request_id": request_id}
+        # P41: a step-up refusal tells the console WHICH proof to ask for and for what.
+        for extra in ("kind", "action"):
+            value = getattr(exc, extra, None)
+            if isinstance(value, str):
+                body[extra] = value
         return JSONResponse(
             status_code=exc.http_status,
-            content={
-                "error": {"code": exc.code, "message": exc.message, "request_id": request_id}
-            },
+            content={"error": body},
             headers=headers,
         )
 
@@ -224,7 +262,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(identity_routes.org_router)
     app.include_router(roles_routes.router)
     app.include_router(twofa_routes.router)
+    app.include_router(passkey_routes.router)
+    app.include_router(account_routes.router)
+    app.include_router(kyc_routes.router)
+    app.include_router(ops_routes.router)
     app.include_router(sso_routes.router)
+    app.include_router(saml_routes.router)
+    app.include_router(enterprise_sso_routes.router)
+    app.include_router(scim_routes.router)
+    app.include_router(monitoring_routes.customer_router)
+    app.include_router(monitoring_routes.public_router)
+    app.include_router(monitoring_routes.ops_router)
     app.include_router(number_routes.router)
     app.include_router(telephony_routes.router)
     app.include_router(contact_routes.router)

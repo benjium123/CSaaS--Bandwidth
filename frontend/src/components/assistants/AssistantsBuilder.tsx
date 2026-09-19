@@ -41,6 +41,12 @@ import {
   Tabs,
   Textarea,
 } from "@/components/ui/primitives";
+import {
+  ConsoleCard,
+  InitialsAvatar,
+  SectionLabel,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
 
 export type AssistantForm = {
   name: string;
@@ -319,7 +325,7 @@ export function AssistantsBuilder() {
   function renderPersona() {
     return (
       <form
-        className="space-y-4"
+        className="space-y-[14px]"
         onSubmit={(event) => {
           event.preventDefault();
           saveTab(
@@ -334,7 +340,7 @@ export function AssistantsBuilder() {
         }}
       >
         <div className="space-y-1">
-          <label htmlFor="assistant-name" className="block text-xs text-muted-foreground">
+          <label htmlFor="assistant-name" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Name
           </label>
           <Input
@@ -347,7 +353,7 @@ export function AssistantsBuilder() {
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="assistant-greeting" className="block text-xs text-muted-foreground">
+          <label htmlFor="assistant-greeting" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Greeting
           </label>
           <Textarea
@@ -361,7 +367,7 @@ export function AssistantsBuilder() {
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="assistant-language" className="block text-xs text-muted-foreground">
+          <label htmlFor="assistant-language" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Language
           </label>
           <Select
@@ -379,7 +385,7 @@ export function AssistantsBuilder() {
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="assistant-voice" className="block text-xs text-muted-foreground">
+          <label htmlFor="assistant-voice" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Voice id
           </label>
           <Input
@@ -388,7 +394,7 @@ export function AssistantsBuilder() {
             value={form.voice_id}
             onChange={(event) => updateField("voice_id", event.target.value)}
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
             The voice id from your voice provider.
           </p>
         </div>
@@ -400,7 +406,7 @@ export function AssistantsBuilder() {
           voiceId={form.voice_id}
         />
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-[11px]">
           <Button type="submit" disabled={!form.name.trim() || saveMutation.isPending}>
             {selectedId ? "Save persona" : "Create assistant"}
           </Button>
@@ -420,7 +426,7 @@ export function AssistantsBuilder() {
   function renderInstructions() {
     return (
       <form
-        className="space-y-4"
+        className="space-y-[14px]"
         onSubmit={(event) => {
           event.preventDefault();
           saveTab(
@@ -434,7 +440,7 @@ export function AssistantsBuilder() {
         }}
       >
         <div className="space-y-1">
-          <label htmlFor="assistant-instructions" className="block text-xs text-muted-foreground">
+          <label htmlFor="assistant-instructions" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Instructions
           </label>
           <Textarea
@@ -444,13 +450,13 @@ export function AssistantsBuilder() {
             value={form.system_prompt}
             onChange={(event) => updateField("system_prompt", event.target.value)}
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
             How your assistant should behave.
           </p>
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="assistant-goals" className="block text-xs text-muted-foreground">
+          <label htmlFor="assistant-goals" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Goals
           </label>
           <Textarea
@@ -460,11 +466,11 @@ export function AssistantsBuilder() {
             value={form.goals}
             onChange={(event) => updateField("goals", event.target.value)}
           />
-          <p className="text-xs text-muted-foreground">What a good call achieves.</p>
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">What a good call achieves.</p>
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="assistant-guardrails" className="block text-xs text-muted-foreground">
+          <label htmlFor="assistant-guardrails" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Guardrails
           </label>
           <Textarea
@@ -474,14 +480,16 @@ export function AssistantsBuilder() {
             value={form.guardrails}
             onChange={(event) => updateField("guardrails", event.target.value)}
           />
-          <p className="text-xs text-muted-foreground">What it must never do.</p>
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">What it must never do.</p>
         </div>
 
-        <Section title="What your assistant actually gets" className="space-y-3">
-          <p className="text-xs text-muted-foreground">
+        <Section title="What your assistant actually gets" className="space-y-[11px]">
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
             The first paragraph is always included and cannot be changed.
           </p>
-          <p className="text-muted-foreground">{COMPLIANCE_PREAMBLE}</p>
+          <p className="rounded-[14px] bg-[hsl(var(--cx-overlay))] p-[13px] text-[12.5px] text-[hsl(var(--cx-subtle))]">
+            {COMPLIANCE_PREAMBLE}
+          </p>
           {/* The server's effective_prompt wins when present because the server owns the
               real merge of these fields. */}
           <Textarea
@@ -492,7 +500,7 @@ export function AssistantsBuilder() {
           />
         </Section>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-[11px]">
           <Button type="submit" disabled={saveMutation.isPending}>
             Save instructions
           </Button>
@@ -520,18 +528,20 @@ export function AssistantsBuilder() {
 
   return (
     <div className="grid h-full grid-cols-[280px_1fr]">
-      <aside className="flex min-h-0 flex-col border-r border-border">
-        <div className="flex items-center justify-between gap-2 border-b border-border p-3">
-          <h1 className="text-lg font-semibold">Assistants</h1>
+      <aside className="flex min-h-0 flex-col border-r border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))]">
+        <div className="flex items-center justify-between gap-[11px] border-b border-[hsl(var(--cx-line))] p-[14px]">
+          <h1 className="text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
+            Assistants
+          </h1>
           <Button type="button" size="sm" onClick={startNew}>
             New
           </Button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto p-[9px]">
           {assistantsQuery.isLoading ? (
             <Spinner label="Loading assistants" />
           ) : assistantsQuery.isError ? (
-            <p role="alert" className="p-4 text-sm text-destructive">
+            <p role="alert" className="p-[14px] text-[13px] text-[hsl(var(--cx-danger))]">
               Assistants are unavailable.
             </p>
           ) : (assistantsQuery.data ?? []).length === 0 ? (
@@ -540,38 +550,54 @@ export function AssistantsBuilder() {
               description="Create one to answer your calls."
             />
           ) : (
-            <ul aria-label="Assistants">
+            <>
+              <SectionLabel className="px-[12px] pb-[7px] pt-[3px]">
+                Your assistants
+              </SectionLabel>
+              <ul aria-label="Assistants" className="space-y-[3px]">
               {(assistantsQuery.data ?? []).map((assistant) => (
                 <li key={assistant.id}>
+                  {/* The reference's row: 12px radius, 12px padding, overlay when it is
+                      the current one. */}
                   <Button
                     type="button"
                     variant="ghost"
                     aria-current={assistant.id === selectedId ? "true" : undefined}
                     onClick={() => setSelectedId(assistant.id)}
-                    className={`h-auto w-full justify-between px-3 py-2 text-left text-sm ${
-                      assistant.id === selectedId ? "bg-muted" : ""
+                    className={`h-auto w-full justify-between gap-[11px] rounded-[12px] px-[12px] py-[10px] text-left text-[13.5px] ${
+                      assistant.id === selectedId
+                        ? "bg-[hsl(var(--cx-overlay))] font-semibold text-[hsl(var(--cx-text))]"
+                        : "text-[hsl(var(--cx-subtle))] hover:bg-[hsl(var(--cx-overlay))] hover:text-[hsl(var(--cx-text))]"
                     }`}
                   >
-                    <span>{assistant.name}</span>
+                    <span className="flex min-w-0 items-center gap-[11px]">
+                      <InitialsAvatar
+                        name={assistant.name}
+                        seed={assistant.id}
+                        size="sm"
+                      />
+                      <span className="truncate">{assistant.name}</span>
+                    </span>
                     {assistant.is_default && <Pill tone="success">Default</Pill>}
                   </Button>
                 </li>
               ))}
-            </ul>
+              </ul>
+            </>
           )}
         </div>
       </aside>
 
-      <section className="min-h-0 overflow-y-auto p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <h1 className="text-lg font-semibold">
+      <section className="min-h-0 overflow-y-auto p-[18px]">
+        <div className="flex flex-wrap items-start justify-between gap-[11px]">
+          <h1 className="text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
             {selected ? selected.name : "New assistant"}
           </h1>
 
           {selected && (
             <div className="flex flex-wrap items-center gap-2">
               {dirty && (
-                <span className="text-[11px] text-muted-foreground">Unsaved changes</span>
+                <span className="text-[11.5px] text-[hsl(var(--cx-flag))]">Unsaved changes</span>
               )}
               {/* A simulated turn runs against the SAVED assistant, so offering this
                   mid-edit would answer with the wrong instructions. */}
@@ -644,7 +670,7 @@ export function AssistantsBuilder() {
         {goLiveBlockersList.length > 0 && (
           <div
             role="alert"
-            className="space-y-1 rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
+            className="mt-[14px] space-y-1 rounded-[14px] border border-[hsl(var(--cx-danger)/0.35)] bg-[hsl(var(--cx-danger)/0.1)] p-[13px] text-[13px] text-[hsl(var(--cx-danger))]"
           >
             <p>Before this assistant can go live:</p>
             <ul aria-label="What is missing">
@@ -669,11 +695,11 @@ export function AssistantsBuilder() {
 
         {/* A real call is the only way to judge a voice assistant, so it sits above the
             settings rather than buried in a tab. */}
-        <div className="mt-4 rounded-md border border-border p-3">
+        <ConsoleCard className="mt-[14px]">
           <CallMePanel assistantId={selectedId} />
-        </div>
+        </ConsoleCard>
 
-        <div className="mt-4">
+        <div className="mt-[14px]">
           <BuilderSettingsTabs
             id="assistant-builder"
             tabs={tabs}
@@ -681,9 +707,9 @@ export function AssistantsBuilder() {
             onChange={setTab}
             ariaLabel="Assistant settings"
           >
-            <div className="max-w-2xl space-y-4">
+            <SurfaceCard className="max-w-2xl space-y-[14px]">
               {!selectedId && (
-                <p className="text-sm text-muted-foreground">
+                <p className="text-[13px] text-[hsl(var(--cx-muted))]">
                   Save this assistant first, then you can set up the rest.
                 </p>
               )}
@@ -694,7 +720,7 @@ export function AssistantsBuilder() {
 
               {tab === "knowledge" && (
                 <>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-[13px] text-[hsl(var(--cx-muted))]">
                     Your assistants share one knowledge library.
                   </p>
                   <KnowledgeTab />
@@ -783,13 +809,13 @@ export function AssistantsBuilder() {
                   }
                 />
               )}
-            </div>
+            </SurfaceCard>
           </BuilderSettingsTabs>
         </div>
 
         {/* Org-wide, not per-assistant: the endpoint has no assistant filter, and the
             heading says so. */}
-        <div className="mt-8">
+        <div className="mt-[18px]">
           <AssistantAnalyticsPanel />
         </div>
 

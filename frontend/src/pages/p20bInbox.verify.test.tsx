@@ -6,10 +6,12 @@
  * `<Routes>` shape from App.tsx (which the existing ConversationsPage.test.tsx never
  * mounts - it renders the page bare, so `useParams()` is always `{}` there).
  *
- * Covered: route/alias inbox selection, row-click -> URL, Important/Unresponded rows,
- * "+ New", the star-toggle regression (F1) with InboxColumn mounted, the header call
- * button's dial arguments, the contact panel's P22 owner/team + "Open contact" link +
- * Collapsible storageKey persistence, and the below-sm mobile behaviour.
+ * Covered: route/alias inbox selection, row-click -> URL, the Important/Unresponded
+ * FILTER CHIPS (they moved out of the inbox column into the conversation list when the
+ * console reference removed the duplicated Views block), "+ New", the star-toggle
+ * regression (F1) with InboxColumn mounted, the header call button's dial arguments,
+ * the contact panel's P22 owner/team + "Open contact" link + Collapsible storageKey
+ * persistence, the panel's hidden-until-asked-for default, and below-sm mobile.
  *
  * Do not weaken these into smoke tests.
  */
@@ -36,6 +38,10 @@ const { dialMock, subscribeMock } = vi.hoisted(() => ({
 vi.mock("@/softphone/SoftphoneProvider", () => ({
   SoftphoneProvider: ({ children }: { children: React.ReactNode }) => children,
   useSoftphone: () => ({ dial: dialMock, subscribe: subscribeMock }),
+  // The inbox rail now mounts NotificationBell (the reference's Notifications item), and
+  // the bell reads the realtime socket through this hook. Returning null IS the "no
+  // socket" case the hook exists for - the bell falls back to polling.
+  useOptionalSoftphone: () => null,
 }));
 
 beforeEach(() => {
@@ -158,11 +164,21 @@ function inboxColumn() {
   return within(screen.getByRole("complementary", { name: "Inbox column" }));
 }
 
+function conversationList() {
+  return within(screen.getByRole("complementary", { name: "Conversation list" }));
+}
+
 /** ConversationHeader's root is a <header> nested inside <main>/<section>, so it does NOT
  * expose the `banner` role - query the element itself. It is the only <header> this page
  * renders, and it only exists once a conversation is selected. */
 async function threadHeader() {
-  await screen.findByText("· via");
+  // The subtitle used to read "· via <our number>" and is now the reference's
+  // "<their number> · <the line's name>", where the line's name ("Sales") also appears in
+  // the inbox column - so there is no longer a string unique to the header to wait on.
+  // Wait for the header ELEMENT instead, which is what this helper was always after.
+  await waitFor(() => {
+    if (!document.querySelector("header")) throw new Error("thread header is not rendered");
+  });
   const el = document.querySelector("header");
   if (!el) throw new Error("thread header is not rendered");
   return within(el as HTMLElement);
@@ -246,34 +262,48 @@ describe("P20b routing", () => {
     expect(lastLocation.startsWith("/inbox/i1")).toBe(true);
   });
 
-  it("the Important row applies filter=important and toggles back off", async () => {
+  // MOVED, not dropped: the same filter=important round trip, driven from the chip in
+  // the conversation list. The inbox column no longer offers it - the row and the chip
+  // were two controls over one `filter` value, which is exactly what the console
+  // reference removed.
+  it("the Important chip applies filter=important and toggles back off", async () => {
     const client = makeStubClient(routes());
     renderAt("/inbox/i1", client);
 
-    const important = await inboxColumn().findByRole("button", { name: "Important" });
+    const important = await conversationList().findByRole("button", { name: "Important" });
     await userEvent.click(important);
 
     await waitFor(() =>
       expect(listRequests(client).some((p) => p.includes("filter=important"))).toBe(true),
     );
-    await waitFor(() => expect(important).toHaveAttribute("aria-current", "true"));
+    await waitFor(() => expect(important).toHaveAttribute("aria-pressed", "true"));
 
-    // Clicking the selected row again returns to "open", matching the list's chips.
+    // Pressing the active pill again returns to "open".
     await userEvent.click(important);
-    await waitFor(() =>
-      expect(listRequests(client).at(-1)).toContain("filter=open"),
-    );
+    await waitFor(() => expect(listRequests(client).at(-1)).toContain("filter=open"));
   });
 
-  it("the Unresponded row applies filter=unresponded", async () => {
+  it("the Unresponded chip applies filter=unresponded", async () => {
     const client = makeStubClient(routes());
     renderAt("/inbox/i1", client);
 
-    await userEvent.click(await inboxColumn().findByRole("button", { name: "Unresponded" }));
+    await userEvent.click(
+      await conversationList().findByRole("button", { name: "Unresponded" }),
+    );
 
     await waitFor(() =>
       expect(listRequests(client).some((p) => p.includes("filter=unresponded"))).toBe(true),
     );
+  });
+
+  it("the inbox column no longer carries any filter row", async () => {
+    const client = makeStubClient(routes());
+    renderAt("/inbox/i1", client);
+    await screen.findByText("Ada Lovelace");
+
+    for (const label of ["Important", "Unresponded", "Snoozed", "Overdue"]) {
+      expect(inboxColumn().queryByRole("button", { name: label })).toBeNull();
+    }
   });
 
   it('the inbox column\'s "+ New" opens NewConversationPanel', async () => {
@@ -378,47 +408,92 @@ describe("P20b thread header call button", () => {
 });
 
 describe("P20b contact panel", () => {
+  /** The panel is hidden until asked for (console-reference.html), so opening it is now
+   * two steps: pick the conversation, then press the panel toggle. */
   async function openPanel() {
     const client = makeStubClient(routes());
     renderAt("/inbox/i1", client);
     await userEvent.click(await screen.findByRole("button", { name: /Ada Lovelace/ }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Toggle contact panel" }),
+    );
     return within(await screen.findByRole("complementary", { name: "Contact panel" }));
   }
 
-  it("resolves Owner and Team from the P22 owner_user_id / department_id fields", async () => {
-    const panel = await openPanel();
-    expect(await panel.findByText("Grace Hopper")).toBeInTheDocument();
-    expect(panel.getByText("Support Team")).toBeInTheDocument();
+  it("stays shut when a conversation is selected, and opens only on the toggle", async () => {
+    const client = makeStubClient(routes());
+    const { container } = renderAt("/inbox/i1", client);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Ada Lovelace/ }));
+
+    // The grid column is collapsed to 0px and the toggle reads "not pressed".
+    const app = container.querySelector("[data-panel]") as HTMLElement;
+    expect(app.dataset.panel).toBe("closed");
+    const toggle = await screen.findByRole("button", { name: "Toggle contact panel" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    await userEvent.click(toggle);
+
+    expect(app.dataset.panel).toBe("open");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
   });
 
-  it('links "Open contact" to /contacts/<contactId>', async () => {
+  // Owner/Team no longer render here at all: they moved to ContactsPage's table columns
+  // and AssignOwnerDrawer, which is the only place either is EDITABLE (verified: both
+  // columns at ContactsPage.tsx:401-402, the drawer mounted at :498). The absence half is
+  // paired with a presence half on purpose - an absence-only assertion would also pass if
+  // the panel rendered nothing at all, which is the failure it is meant to catch.
+  it("shows the four reference fields at rest, and no longer Owner or Team", async () => {
     const panel = await openPanel();
-    expect(await panel.findByRole("link", { name: "Open contact" })).toHaveAttribute(
-      "href",
-      "/contacts/c1",
-    );
+
+    expect(await panel.findByText("Ada Lovelace")).toBeInTheDocument();
+    expect(panel.getByText("Phone")).toBeInTheDocument();
+    expect(panel.getByText("Email")).toBeInTheDocument();
+    expect(panel.getByText("Company")).toBeInTheDocument();
+
+    expect(panel.queryByText("Grace Hopper")).toBeNull();
+    expect(panel.queryByText("Support Team")).toBeNull();
   });
 
-  it("persists the Details/Notes Collapsible state under its storageKey", async () => {
+  // The route through to the full record survives, but the AVATAR carries it now rather
+  // than a fifth row captioned "Open contact", so the head stays two things.
+  it("links the avatar to /contacts/<contactId>", async () => {
+    const panel = await openPanel();
+    expect(
+      await panel.findByRole("link", { name: "Open contact record for Ada Lovelace" }),
+    ).toHaveAttribute("href", "/contacts/c1");
+  });
+
+  // Both disclosures are now `defaultOpen={false}`: at rest the panel IS the four things,
+  // and Role/Address/Tags/Notes are one click away rather than deleted. Expanding is
+  // asserted to actually reveal Role - "aria-expanded flipped" alone would still pass if
+  // the disclosure body were empty.
+  it("keeps Details/Notes shut at rest, opens them, and persists that under its storageKey", async () => {
     const panel = await openPanel();
     const details = await panel.findByRole("button", { name: "Details" });
-    expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    expect(panel.queryByText("Role")).toBeNull();
     expect(localStorage.getItem("contact-panel.details")).toBeNull();
 
     await userEvent.click(details);
-    expect(details).toHaveAttribute("aria-expanded", "false");
-    expect(localStorage.getItem("contact-panel.details")).toBe("false");
+    expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(panel.getByText("Role")).toBeInTheDocument();
+    expect(localStorage.getItem("contact-panel.details")).toBe("true");
 
     await userEvent.click(panel.getByRole("button", { name: "Notes" }));
-    expect(localStorage.getItem("contact-panel.notes")).toBe("false");
+    expect(localStorage.getItem("contact-panel.notes")).toBe("true");
   });
 
-  it("reads a pre-existing collapsed state back out of localStorage on mount", async () => {
-    localStorage.setItem("contact-panel.details", "false");
+  // Direction flipped deliberately. Once `defaultOpen` became false, seeding "false" here
+  // agreed with the default, so this passed whether or not localStorage was read at all -
+  // it survived the change by becoming vacuous rather than by staying true. Seeding "true"
+  // is the only version that can fail if the read path breaks.
+  it("reads a pre-existing expanded state back out of localStorage on mount", async () => {
+    localStorage.setItem("contact-panel.details", "true");
     const panel = await openPanel();
     expect(await panel.findByRole("button", { name: "Details" })).toHaveAttribute(
       "aria-expanded",
-      "false",
+      "true",
     );
   });
 });

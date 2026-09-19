@@ -37,8 +37,14 @@ from app.errors import (
 from app.models import AgentProfile, Contact, ContactPhone, KbDocument, Org, OrgNumber
 from app.models.agent import DEFAULT_SMS_HANDOFF_KEYWORDS
 from app.services import agent as agent_svc
-from app.services import ai_usage
-from app.services import assistant_dispatch, contact_visibility, kb_ingest, voice_preview
+from app.services import (
+    ai_usage,
+    assistant_dispatch,
+    contact_visibility,
+    kb_ingest,
+    phone_region,
+    voice_preview,
+)
 from app.services import audit as audit_svc
 from app.services import kb as kb_svc
 
@@ -237,7 +243,16 @@ async def get_agent_contact(
     scope = contact_visibility.machine_scope(policy, dept_id)
     predicate = contact_visibility.visible_contacts_filter(scope)
 
-    contact_ctx = await agent_svc.get_contact_context(session, to_e164(e164))
+    # P43 (audit): parse in the WORKSPACE's region, not always US - a bare national number
+    # from a UK workspace would otherwise resolve to a different real number and silently
+    # load the wrong contact's file. Resolved ONCE: the second use below feeds a visibility
+    # predicate, and two independent parses that disagreed would fail open or closed with
+    # no error. `for_org` rather than `strict_for_org` because this is a read path serving
+    # a live call - finding nothing beats raising into the AI worker mid-conversation.
+    region = await phone_region.for_org(session, call.org_id)
+    contact_e164 = to_e164(e164, region)
+
+    contact_ctx = await agent_svc.get_contact_context(session, contact_e164)
 
     visible = True
     if predicate is not None:
@@ -245,7 +260,7 @@ async def get_agent_contact(
             await session.execute(
                 sa.select(Contact.id)
                 .join(ContactPhone, ContactPhone.contact_id == Contact.id)
-                .where(ContactPhone.e164 == to_e164(e164))
+                .where(ContactPhone.e164 == contact_e164)
                 .where(predicate)
                 .limit(1)
             )
@@ -779,20 +794,20 @@ async def call_me_agent_profile(
     if api is None:
         raise FeatureUnavailableError("Calling is not set up on this system yet.")
     settings = request.app.state.settings
-    if not settings.livekit_sip_outbound_trunk_id:
+    from app.voice_plane import service as voice_plane_svc
+
+    trunk_carriers = list(voice_plane_svc.room_trunks(settings))
+    if not trunk_carriers:
         raise FeatureUnavailableError("Calling is not set up on this system yet.")
 
-    to_norm = to_e164(payload.to_e164)
-
-    from app.api.routes.calls import _ROOM_TRUNK_CARRIER
-    from app.voice_plane import service as voice_plane_svc
+    to_norm = to_e164(payload.to_e164, await phone_region.for_org(ctx.session, ctx.org.id))
 
     from_number = (
         await ctx.session.execute(
             sa.select(OrgNumber)
             .where(
                 OrgNumber.org_id == ctx.org.id,
-                OrgNumber.carrier == _ROOM_TRUNK_CARRIER,
+                OrgNumber.carrier.in_(trunk_carriers),
                 # BOTH flags: `status` tracks the provider order's lifecycle while
                 # `is_active` is the operator's own switch, and routes/calls.py's room
                 # path checks is_active. A number turned off must not be dialled from.
@@ -940,9 +955,13 @@ async def post_agent_tool(
             raise ValidationFailedError(
                 "We need a phone number to look up that contact."
             )
+        # P43 (audit): the workspace's region, as above - a US default would look up a
+        # different real number for a UK workspace and hand the AI the wrong contact.
         return {
             "ok": True,
-            "result": await agent_svc.get_contact_context(session, to_e164(e164)),
+            "result": await agent_svc.get_contact_context(
+                session, to_e164(e164, await phone_region.for_org(session, call.org_id))
+            ),
         }
 
     if tool == "webhook":

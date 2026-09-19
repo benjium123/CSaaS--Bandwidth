@@ -4,6 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { LowBalanceBanner } from "./LowBalanceBanner";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
 
+// The banner gates on OWNERSHIP now (the summary endpoint is owner-only server-side), so
+// every render needs /auth/me. makeStubClient pins auth.orgId to "org-1", so the owner's
+// membership MUST name org-1 or isOwner() fails closed and nothing ever renders.
+const OWNER_ME = {
+  id: "u1",
+  email: "owner@example.com",
+  full_name: "Owner",
+  memberships: [{ org_id: "org-1", org_name: "Org", org_slug: "org", role_name: "owner" }],
+};
+
 const CAPABILITIES = {
   permissions: ["settings:read"],
   org: {
@@ -24,13 +34,22 @@ function summary(warning: "low" | "critical" | "empty" | null) {
   };
 }
 
+/** The owner identity under the caller's routes (which can override /auth/me for the
+ *  non-owner and unknown-`me` cases). */
+function makeBannerClient(routes: Record<string, unknown> = {}) {
+  return makeStubClient({
+    "/api/v1/auth/me": OWNER_ME,
+    ...routes,
+  });
+}
+
 beforeEach(() => {
   sessionStorage.clear();
 });
 
 describe("LowBalanceBanner", () => {
   it("renders the low-balance warning", async () => {
-    const client = makeStubClient({
+    const client = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": summary("low"),
     });
@@ -43,7 +62,7 @@ describe("LowBalanceBanner", () => {
   });
 
   it("tells a prepaid workspace at empty that texting and calling are paused", async () => {
-    const client = makeStubClient({
+    const client = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": { ...summary("empty"), telephony_prepaid: true },
     });
@@ -56,7 +75,7 @@ describe("LowBalanceBanner", () => {
   });
 
   it("keeps the assistant copy at empty when texting and calling are not prepaid", async () => {
-    const client = makeStubClient({
+    const client = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": { ...summary("empty"), telephony_prepaid: false },
     });
@@ -70,7 +89,7 @@ describe("LowBalanceBanner", () => {
   });
 
   it("renders nothing when warning is null", async () => {
-    const client = makeStubClient({
+    const client = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": summary(null),
     });
@@ -83,7 +102,7 @@ describe("LowBalanceBanner", () => {
   });
 
   it("dismisses and writes the dismissed level to sessionStorage", async () => {
-    const client = makeStubClient({
+    const client = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": summary("low"),
     });
@@ -97,7 +116,7 @@ describe("LowBalanceBanner", () => {
   });
 
   it("stays hidden for low but shows for critical after dismissing low", async () => {
-    const firstClient = makeStubClient({
+    const firstClient = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": summary("low"),
     });
@@ -106,7 +125,7 @@ describe("LowBalanceBanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     first.unmount();
 
-    const secondClient = makeStubClient({
+    const secondClient = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": summary("low"),
     });
@@ -117,7 +136,7 @@ describe("LowBalanceBanner", () => {
     expect(screen.queryByText("Your credits are running low")).not.toBeInTheDocument();
     second.unmount();
 
-    const thirdClient = makeStubClient({
+    const thirdClient = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": summary("critical"),
     });
@@ -125,25 +144,46 @@ describe("LowBalanceBanner", () => {
     expect(await screen.findByText("You are almost out of credits")).toBeInTheDocument();
   });
 
-  it("renders nothing and makes no billing request without settings read permission", async () => {
-    const client = makeStubClient({
-      "/api/v1/me/capabilities": {
-        ...CAPABILITIES,
-        permissions: [],
+  it("renders nothing and makes no billing request for a non-owner, even one holding settings:read", async () => {
+    const client = makeBannerClient({
+      // Same identity, non-owner role. CAPABILITIES below still grants settings:read -
+      // the permission string is no longer what decides this.
+      "/api/v1/auth/me": {
+        ...OWNER_ME,
+        memberships: [{ ...OWNER_ME.memberships[0], role_name: "admin" }],
       },
+      "/api/v1/me/capabilities": CAPABILITIES,
+      // Stubbed so the test fails loudly if the request were made at all.
       "/api/v1/billing/summary": summary("low"),
     });
     renderWithProviders(<LowBalanceBanner />, client);
 
+    // Wait for the identity lookup so the assertion is not just "we checked too early".
     await waitFor(() => {
-      expect(client.calls.some((call) => call.path === "/api/v1/me/capabilities")).toBe(true);
+      expect(client.calls.some((call) => call.path === "/api/v1/auth/me")).toBe(true);
     });
     expect(screen.queryByText("Your credits are running low")).not.toBeInTheDocument();
     expect(client.calls.some((call) => call.path === "/api/v1/billing/summary")).toBe(false);
   });
 
+  it("makes no billing request while `me` is still unknown", async () => {
+    const client = makeBannerClient({
+      "/api/v1/auth/me": new Error("unauthorized"),
+      "/api/v1/me/capabilities": CAPABILITIES,
+      "/api/v1/billing/summary": summary("low"),
+    });
+    renderWithProviders(<LowBalanceBanner />, client);
+
+    // Wait for the identity lookup to have happened before asserting - otherwise "no
+    // summary request" would only mean we looked too early.
+    await waitFor(() => {
+      expect(client.calls.some((call) => call.path === "/api/v1/auth/me")).toBe(true);
+    });
+    expect(client.calls.some((call) => call.path === "/api/v1/billing/summary")).toBe(false);
+  });
+
   it("has an Add credits button that does not crash when clicked", async () => {
-    const client = makeStubClient({
+    const client = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": summary("low"),
     });
@@ -155,7 +195,7 @@ describe("LowBalanceBanner", () => {
   });
 
   it("never renders the word micros", async () => {
-    const client = makeStubClient({
+    const client = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": summary("critical"),
     });

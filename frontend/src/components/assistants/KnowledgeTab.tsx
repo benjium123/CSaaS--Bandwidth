@@ -12,7 +12,6 @@ import {
 } from "@/api/assistants";
 import {
   Button,
-  Card,
   EmptyState,
   Input,
   MutationStatus,
@@ -23,6 +22,7 @@ import {
   Textarea,
   type PillTone,
 } from "@/components/ui/primitives";
+import { SurfaceCard } from "@/components/ui/consoleChrome";
 
 /**
  * Per-workspace knowledge library, mounted in two places: Settings → AI → Knowledge and
@@ -134,12 +134,12 @@ export function KnowledgeTab() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-[18px]">
       <Section
         title="Add to your knowledge"
         description="Your assistants can look up anything you put here while a call is happening."
       >
-        <form onSubmit={handleSubmit} className="space-y-3">
+        <form onSubmit={handleSubmit} className="space-y-[11px]">
           <Select
             aria-label="How to add"
             value={way}
@@ -151,7 +151,7 @@ export function KnowledgeTab() {
           </Select>
 
           <div className="space-y-1">
-            <label htmlFor="kb-title" className="block text-xs text-muted-foreground">
+            <label htmlFor="kb-title" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
               Title
             </label>
             <Input
@@ -164,7 +164,7 @@ export function KnowledgeTab() {
 
           {way === "text" && (
             <div className="space-y-1">
-              <label htmlFor="kb-text" className="block text-xs text-muted-foreground">
+              <label htmlFor="kb-text" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
                 Text
               </label>
               <Textarea
@@ -179,7 +179,7 @@ export function KnowledgeTab() {
 
           {way === "url" && (
             <div className="space-y-1">
-              <label htmlFor="kb-url" className="block text-xs text-muted-foreground">
+              <label htmlFor="kb-url" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
                 Web address
               </label>
               <Input
@@ -194,7 +194,7 @@ export function KnowledgeTab() {
 
           {way === "file" && (
             <div className="space-y-1">
-              <label htmlFor="kb-file" className="block text-xs text-muted-foreground">
+              <label htmlFor="kb-file" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
                 File
               </label>
               {/* The primitives have no file input; this is the one raw input in this file
@@ -206,13 +206,13 @@ export function KnowledgeTab() {
                 accept=".pdf,.docx,.txt,.md"
                 aria-label="Choose a file"
                 onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                className="block text-sm text-muted-foreground file:mr-4 file:rounded-md file:border file:border-border file:bg-background file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted"
+                className="block text-[13px] text-[hsl(var(--cx-muted))] file:mr-4 file:rounded-[10px] file:border file:border-[hsl(var(--cx-line))] file:bg-[hsl(var(--cx-surface))] file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-[hsl(var(--cx-text))] hover:file:bg-[hsl(var(--cx-overlay))]"
               />
-              <p className="text-xs text-muted-foreground">PDF, Word, text or Markdown.</p>
+              <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">PDF, Word, text or Markdown.</p>
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-[11px]">
             <Button type="submit" disabled={!canSubmit}>
               Add to knowledge
             </Button>
@@ -232,7 +232,7 @@ export function KnowledgeTab() {
         {documentsQuery.isLoading ? (
           <Spinner label="Loading knowledge" />
         ) : documentsQuery.isError ? (
-          <div role="alert" className="space-y-2 text-sm text-destructive">
+          <div role="alert" className="space-y-2 text-sm text-[hsl(var(--cx-danger))]">
             <p>Your knowledge is unavailable.</p>
             <Button
               type="button"
@@ -249,23 +249,23 @@ export function KnowledgeTab() {
             description="Add a file, a web page or some text your assistant can look things up in."
           />
         ) : (
-          <Card className="p-0">
-            <ul aria-label="Knowledge documents" className="divide-y divide-border">
+          <SurfaceCard className="overflow-hidden p-0">
+            <ul aria-label="Knowledge documents" className="divide-y divide-[hsl(var(--cx-line))]">
               {documents.map((doc) => {
                 const pill = statusPill(doc.status);
                 return (
-                  <li key={doc.id} className="space-y-2 p-4">
-                    <div className="flex items-start justify-between gap-4">
+                  <li key={doc.id} className="space-y-[7px] p-[14px]">
+                    <div className="flex items-start justify-between gap-[14px]">
                       <div className="space-y-1">
-                        <p className="text-sm font-medium">{doc.title}</p>
+                        <p className="text-[13.5px] font-semibold">{doc.title}</p>
                         <Pill tone={pill.tone}>{pill.label}</Pill>
                         {doc.status === "indexed" && (
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
                             {doc.chunk_count} {doc.chunk_count === 1 ? "section" : "sections"}
                           </p>
                         )}
                         {doc.status === "failed" && doc.detail && (
-                          <p className="text-xs text-destructive">{doc.detail}</p>
+                          <p className="text-[11.5px] text-[hsl(var(--cx-danger))]">{doc.detail}</p>
                         )}
                       </div>
                       <Button
@@ -293,7 +293,7 @@ export function KnowledgeTab() {
                 );
               })}
             </ul>
-          </Card>
+          </SurfaceCard>
         )}
         {removeDocumentMutation.status !== "idle" && (
           <MutationStatus

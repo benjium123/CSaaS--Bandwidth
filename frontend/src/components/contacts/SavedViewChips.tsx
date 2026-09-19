@@ -149,7 +149,7 @@ export function SavedViewChips({
   const canDeleteActiveView = activeView !== undefined && !(activeView.shared && !canShare);
 
   return (
-    <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Saved views">
+    <div className="flex flex-wrap items-center gap-[11px]" role="group" aria-label="Saved views">
       {viewsQuery.isError ? (
         <p role="alert" className="text-sm text-destructive">
           {getErrorMessage(viewsQuery.error)}
@@ -172,7 +172,7 @@ export function SavedViewChips({
             <div
               role="menu"
               aria-label="Choose a saved view"
-              className="absolute z-10 mt-1 w-64 rounded-md border border-border bg-background p-1 shadow-md"
+              className="absolute z-10 mt-1 w-64 rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] p-1.5 shadow-md"
             >
               {sortedViews.map((view) => (
                 <button
@@ -181,7 +181,7 @@ export function SavedViewChips({
                   role="menuitemradio"
                   aria-checked={activeViewId === view.id}
                   onClick={() => handleViewClick(view)}
-                  className="flex w-full items-center rounded px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted"
+                  className="flex w-full items-center rounded-[12px] px-[10px] py-[9px] text-left text-[13px] text-foreground hover:bg-[hsl(var(--cx-overlay))]"
                 >
                   {view.name}
                   {view.shared ? " - Shared" : null}
@@ -200,10 +200,10 @@ export function SavedViewChips({
               aria-pressed={activeViewId === view.id}
               onClick={() => handleViewClick(view)}
               className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
+                "inline-flex items-center gap-1.5 rounded-full px-[14px] py-[6px] text-[12.5px] font-medium transition-colors",
                 activeViewId === view.id
-                  ? "bg-primary text-primary-foreground"
-                  : "border border-border text-muted-foreground hover:bg-muted",
+                  ? "bg-[hsl(var(--cx-accent))] font-semibold text-[hsl(var(--cx-on-acc))]"
+                  : "bg-[hsl(var(--cx-overlay))] text-[hsl(var(--cx-subtle))] hover:bg-[hsl(var(--cx-lift))] hover:text-[hsl(var(--cx-text))]",
               )}
             >
               <span>{view.name}</span>
@@ -215,7 +215,7 @@ export function SavedViewChips({
         : null}
 
       {saveOpen ? (
-        <form className="flex flex-wrap items-center gap-2" onSubmit={handleSave}>
+        <form className="flex flex-wrap items-center gap-[11px]" onSubmit={handleSave}>
           <Input
             aria-label="View name"
             value={viewName}
@@ -264,7 +264,7 @@ export function SavedViewChips({
       )}
 
       {canDeleteActiveView && activeView ? (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-[11px]">
           {confirmDelete ? (
             <>
               <Button

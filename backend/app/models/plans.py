@@ -34,6 +34,10 @@ class Plan(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=True, server_default=sa.true()
     )
+    #: The recurring Stripe Price (``price_...``) this plan is sold as. NULL means this plan
+    #: CANNOT be checked out: the checkout route refuses and names the plan. We never invent
+    #: a price id - the operator supplies real ones once pricing is decided.
+    stripe_price_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
 
 
 class PlanAllowance(Base, TenantScoped, TimestampMixin):

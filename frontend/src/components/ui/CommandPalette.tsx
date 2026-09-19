@@ -7,6 +7,7 @@ import { fetchConversations, fetchInboxes } from "@/api/conversations";
 import { formatPhone } from "@/lib/format";
 import { EmptyState, Input, Kbd, Spinner } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 
 type PaletteResult = {
   id: string;
@@ -37,6 +38,10 @@ function useDebouncedValue(value: string, delay: number): string {
 }
 
 function PaletteDialog({ onClose }: { onClose: () => void }) {
+  // The console follows the one stored theme preference the front door writes. See
+  // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
+  // every wrapper in the console on the same commit rather than only its own.
+  const { theme } = useSurfaceTheme();
   const navigate = useNavigate();
   const { api } = useAuth();
   const [query, setQuery] = React.useState("");
@@ -200,12 +205,15 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     enabled && (contactsQuery.isLoading || conversationsQuery.isLoading);
 
   return (
-    <div className="dark fixed inset-0 z-50 bg-black/50" onMouseDown={onClose}>
+    <div className={cn(surfaceThemeClass(theme), "fixed inset-0 z-50 bg-black/50")} onMouseDown={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Search"
-        className="mx-auto mt-20 w-full max-w-lg rounded-lg border border-border bg-background shadow-lg"
+        // A dialog takes the reference's largest radius, 18px - the `.composer-box`
+        // value. It is the biggest floating box on the screen and the most visibly square
+        // when it is not rounded.
+        className="mx-auto mt-20 w-full max-w-lg rounded-[var(--cx-r-lg,18px)] border border-border bg-background shadow-lg"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="border-b border-border p-3">
@@ -259,7 +267,8 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
                             aria-selected={globalIndex === activeIndex}
                             tabIndex={-1}
                             className={cn(
-                              "rounded-md px-3 py-2 text-sm",
+                              // A result row is the reference's `.ln`: 12px.
+                              "rounded-[var(--cx-r-sm,12px)] px-3 py-2 text-sm",
                               globalIndex === activeIndex
                                 ? "bg-muted text-foreground"
                                 : "text-foreground",

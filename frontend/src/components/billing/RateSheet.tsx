@@ -32,31 +32,33 @@ export function RateSheet() {
           <EmptyState title="Prices are not available yet." />
         ) : (
           <>
-            <table className="w-full text-sm">
-              <caption className="sr-only">Prices</caption>
-              <thead>
-                <tr>
-                  <th className="text-left font-medium">What you use</th>
-                  <th className="text-right font-medium">Price</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* Keyed by position as well as metric: the customer view is MEANT to send
-                    one row per metric, but if a backend ever sends two rows for the same
-                    one (say a per-provider price), a metric-only key would collide and
-                    React would drop a row silently instead of showing both. */}
-                {rates.map((row, index) => (
-                  <tr key={`${row.metric}-${index}`}>
-                    <td>{metricLabel(row.metric)}</td>
-                    <td className="text-right">
-                      {`${formatUnitPrice(rateDisplayMicros(row.metric, row.price_micros))} ${
-                        row.unit ?? formatRateUnit(row.metric)
-                      }`}
-                    </td>
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-sm">
+                <caption className="sr-only">Prices</caption>
+                <thead>
+                  <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2.5 font-medium">What you use</th>
+                    <th className="px-3 py-2.5 text-right font-medium">Price</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {/* Keyed by position as well as metric: the customer view is MEANT to send
+                      one row per metric, but if a backend ever sends two rows for the same
+                      one (say a per-provider price), a metric-only key would collide and
+                      React would drop a row silently instead of showing both. */}
+                  {rates.map((row, index) => (
+                    <tr key={`${row.metric}-${index}`}>
+                      <td className="px-3 py-2.5">{metricLabel(row.metric)}</td>
+                      <td className="px-3 py-2.5 text-right">
+                        {`${formatUnitPrice(rateDisplayMicros(row.metric, row.price_micros))} ${
+                          row.unit ?? formatRateUnit(row.metric)
+                        }`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <p className="mt-3 text-sm text-muted-foreground">
               Prices are per unit and are taken from your credits as you use them.
             </p>

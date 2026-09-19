@@ -16,11 +16,22 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from app.auth.deps import OrgContext, require_permission
-from app.errors import NotFoundError, ValidationFailedError
-from app.models import Call, CreditLedgerEntry, PaymentMethod
+from app.auth.deps import (
+    OrgContext,
+    check_org_selfie_step_up,
+    require_owner,
+    require_permission,
+)
+from app.errors import (
+    FeatureUnavailableError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationFailedError,
+)
+from app.models import Call, CreditLedgerEntry, PaymentMethod, Plan
 from app.services import ai_usage, credits, stripe_client
 from app.services import audit as audit_svc
+from app.services import plans as plans_svc
 from app.services import spend as spend_svc
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
@@ -46,6 +57,10 @@ def _checkout_urls(settings) -> tuple[str, str]:
 
 class TopupIn(BaseModel):
     amount_micros: int
+
+
+class SubscriptionCheckoutIn(BaseModel):
+    plan_code: str
 
 
 class AutoRechargeIn(BaseModel):
@@ -89,9 +104,13 @@ def _usage_range(
     return start_dt, end_dt
 
 
+# OWNER-ONLY, deliberately: a non-owner member calling this gets 403 ``owner_only``. This
+# route is polled app-wide by the console, so the refusal has to stay a well-formed 403
+# carrying that one STABLE code - never a 401, never a 500, and never a bare "forbidden"
+# that the console cannot distinguish from a dead session.
 @router.get("/summary")
 async def get_summary(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     balance = await credits.balance(ctx.session, ctx.org.id)
     reserved = await credits.outstanding_reserves(ctx.session, ctx.org.id)
@@ -134,7 +153,7 @@ async def get_summary(
 
 @router.get("/ledger")
 async def get_ledger(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
     limit: int = Query(50, ge=1),
     cursor: str | None = None,
 ) -> dict:
@@ -192,7 +211,7 @@ async def get_ledger(
 
 @router.get("/usage")
 async def get_usage(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
     start_date: Annotated[date | None, Query(alias="from")] = None,
     end_date: Annotated[date | None, Query(alias="to")] = None,
 ) -> dict:
@@ -215,7 +234,7 @@ async def get_usage(
 @router.get("/usage/calls/{call_id}")
 async def get_usage_call(
     call_id: uuid.UUID,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     call = (
         await ctx.session.execute(
@@ -266,6 +285,55 @@ async def create_topup(
         actor_user_id=actor_user,
         actor_api_key_id=actor_key,
         detail={"amount_micros": amount},
+    )
+    await ctx.session.commit()
+
+    return {"checkout_url": checkout["url"]}
+
+
+@router.post("/subscription/checkout")
+async def create_subscription_checkout(
+    payload: SubscriptionCheckoutIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:billing"))],
+    request: Request,
+) -> dict:
+    """Start Stripe Checkout for a monthly plan. Same owner permission as a top-up."""
+    code = (payload.plan_code or "").strip()
+    plan = await ctx.session.get(Plan, code) if code else None
+    if plan is None or not plan.is_active:
+        raise NotFoundError("Plan not found")
+
+    # THE MONEY GUARD. A plan whose Stripe price id is not configured cannot be bought,
+    # and the refusal names the plan so the operator knows exactly which one to fix. The
+    # alternative - falling back to some locally computed amount - would charge a real
+    # card an amount nobody at Stripe ever agreed to.
+    if not (plan.stripe_price_id or "").strip():
+        raise FeatureUnavailableError(
+            f"Plan {plan.name} ({plan.code}) is not available for checkout yet - "
+            "its Stripe price id is not configured."
+        )
+
+    settings = request.app.state.settings
+    success_url, cancel_url = _checkout_urls(settings)
+    checkout = await stripe_client.create_subscription_checkout_session(
+        settings,
+        org=ctx.org,
+        price_id=plan.stripe_price_id.strip(),
+        plan_code=plan.code,
+        success_url=success_url,
+        cancel_url=cancel_url,
+    )
+
+    actor_user, actor_key = _actor(ctx)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="billing.subscription_started",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=actor_user,
+        actor_api_key_id=actor_key,
+        detail={"plan_code": plan.code},
     )
     await ctx.session.commit()
 
@@ -353,9 +421,58 @@ async def patch_auto_recharge(
     return ctx.org.credit_auto_recharge
 
 
+def _plan_sort_key(plan: Plan) -> tuple[int, int, str]:
+    """Catalogue order: the seeded tiers first, in SAMPLE_PLAN_CODES order (starter,
+    standard, professional - the meaningful ladder, which is neither alphabetical nor
+    insertion order), then any operator-added plan after them, cheapest first and code
+    as the final tiebreak so the list is fully deterministic."""
+    try:
+        rank = plans_svc.SAMPLE_PLAN_CODES.index(plan.code)
+    except ValueError:
+        rank = len(plans_svc.SAMPLE_PLAN_CODES)
+    return (rank, int(plan.monthly_price_micros or 0), plan.code)
+
+
+@router.get("/plans")
+async def list_plans(
+    ctx: Annotated[OrgContext, Depends(require_owner)],
+) -> list[dict]:
+    """The plan catalogue the picker renders. Read-only, no org data, no cost.
+
+    Owner-only, because the catalogue only ever feeds the billing console. It is NOT
+    identity gated (``org:billing``) - looking at a price list must never make someone
+    pass an ID check - so ``require_owner`` is the right lock rather than the spending
+    permission.
+
+    Inactive plans ARE returned, with ``is_active`` telling the truth: the client
+    renders them as not purchasable rather than hiding them, so a customer on a
+    retired plan still sees the plan they are on instead of a gap.
+
+    ``stripe_price_id`` is passed through verbatim, INCLUDING NULL. It is how the
+    client decides a plan can be bought at all; a plan without one must still appear
+    and be shown as not purchasable. Dropping those rows - every seeded plan today -
+    would render an empty picker that looked perfectly healthy.
+    """
+    # `plans` is platform-wide, not tenant-scoped, so no org filter applies here.
+    rows = (await ctx.session.execute(sa.select(Plan))).scalars().all()
+
+    return [
+        {
+            "code": plan.code,
+            "name": plan.name,
+            "included": dict(plan.included or {}),
+            "overage_rates": dict(plan.overage_rates or {}),
+            "monthly_price_micros": int(plan.monthly_price_micros or 0),
+            "stripe_price_id": plan.stripe_price_id,
+            "is_active": bool(plan.is_active),
+        }
+        for plan in sorted(rows, key=_plan_sort_key)
+    ]
+
+
 @router.get("/rates")
 async def get_rates(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> list[dict]:
     # AI providers are present in DEFAULT_RATES_MICROS, but their metrics are scope
     # 'ai'. This customer rate sheet exposes only the AI metrics with customer prices.
@@ -394,7 +511,7 @@ async def get_rates(
 
 @router.get("/payment-methods")
 async def list_payment_methods(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> list[dict]:
     rows = (
         await ctx.session.execute(
@@ -422,6 +539,8 @@ async def add_payment_method(
     request: Request,
 ) -> dict:
     settings = request.app.state.settings
+    # P41: changing how the business pays is a classic account-takeover move.
+    await check_org_selfie_step_up(request, ctx, action="payment_method_change")
 
     # The org has no stripe_customer_id column (Fable owns the schema), so the
     # customer id is carried on payment_method rows and re-used from there.
@@ -449,6 +568,25 @@ async def add_payment_method(
 
     is_default = not existing_rows
 
+    # P41: a card that belongs to a banned business is refused and detached again.
+    fingerprint = attached.get("fingerprint")
+    if fingerprint:
+        from app.services import ban_list
+
+        hit = await ban_list.matches(
+            ctx.session, [ban_list.identifier("card_fingerprint", fingerprint)]
+        )
+        if hit:
+            try:
+                await stripe_client.detach_payment_method(
+                    settings, payment_method_id=attached["id"]
+                )
+            except Exception:  # noqa: BLE001 - refusing the card matters more
+                pass
+            raise PermissionDeniedError(
+                "This card cannot be used. Contact support.", code="payment_method_refused"
+            )
+
     pm = PaymentMethod(
         id=uuid.uuid4(),
         org_id=ctx.org.id,
@@ -457,6 +595,7 @@ async def add_payment_method(
         brand=attached.get("brand", ""),
         last4=attached.get("last4", ""),
         is_default=is_default,
+        card_fingerprint=fingerprint,
     )
     ctx.session.add(pm)
 
@@ -487,6 +626,7 @@ async def remove_payment_method(
     ctx: Annotated[OrgContext, Depends(require_permission("org:billing"))],
     request: Request,
 ) -> None:
+    await check_org_selfie_step_up(request, ctx, action="payment_method_change")
     pm = (
         await ctx.session.execute(
             sa.select(PaymentMethod).where(

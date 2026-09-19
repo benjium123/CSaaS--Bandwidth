@@ -319,7 +319,15 @@ async def test_4_8_order_conflict_releases_at_provider(engine, settings):
                         number_type="local",
                     )
                 )
-                await session.flush()
+                # COMMIT, not flush. A flush leaves the conflicting row inside an open
+                # transaction: SQLite serialises writes so the request's own insert fails
+                # immediately, but on PostgreSQL that insert must WAIT for this transaction
+                # to end before the uniqueness conflict is decidable - and since pytest is
+                # single-threaded, this transaction cannot end until the request returns.
+                # The suite then deadlocks for ever rather than failing. Committing models
+                # the real race better anyway: a concurrent request that won would have
+                # committed before ours reached its own insert.
+                await session.commit()
 
             provider.order_side_effect = insert_conflict
 

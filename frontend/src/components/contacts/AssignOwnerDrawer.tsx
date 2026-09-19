@@ -8,6 +8,7 @@ import {
   useBulkAssignContacts,
   type ContactOut,
 } from "@/api/contacts";
+import { InitialsAvatar } from "@/components/ui/consoleChrome";
 import { Button, Spinner } from "@/components/ui/primitives";
 
 export function AssignOwnerDrawer({
@@ -56,6 +57,9 @@ export function AssignOwnerDrawer({
   const loadError = membersQuery.error || departmentsQuery.error;
   const members = membersQuery.data ?? [];
   const departments = departmentsQuery.data ?? [];
+  // Presentation only: which face the picker draws. It reads the same `ownerId` the select
+  // already holds and changes nothing about what gets saved.
+  const selectedOwner = members.find((member) => member.user_id === ownerId);
 
   function retry() {
     membersQuery.refetch();
@@ -99,10 +103,15 @@ export function AssignOwnerDrawer({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="h-full w-full max-w-md space-y-4 overflow-y-auto border-l border-border bg-background p-6 shadow-xl"
+        // 18px on the two corners that face into the page only — the same treatment the
+        // Drawer primitive gives its panel. The outer corners are flush against the
+        // viewport edge and rounding them would show the page through.
+        className="h-full w-full max-w-md space-y-[14px] overflow-y-auto rounded-l-[var(--cx-r-lg,18px)] border-l border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] p-[18px] shadow-[var(--cx-shadow)]"
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">{title}</h2>
+          <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
+            {title}
+          </h2>
           <Button
             ref={closeButtonRef}
             type="button"
@@ -127,34 +136,60 @@ export function AssignOwnerDrawer({
             </Button>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="assign-owner">
+          <div className="space-y-[14px]">
+            <div className="space-y-[6px]">
+              <label
+                className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]"
+                htmlFor="assign-owner"
+              >
                 Owner
               </label>
-              <select
-                id="assign-owner"
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-                value={ownerId}
-                onChange={(event) => setOwnerId(event.target.value)}
-                disabled={saving}
-              >
-                <option value="">Unassigned</option>
-                {members.map((member) => (
-                  <option key={member.user_id} value={member.user_id}>
-                    {member.full_name}
-                  </option>
-                ))}
-              </select>
+              {/* The picker STAYS a native <select> — it is what the suites drive and what
+                  a long member list is actually usable with. The face is a read-out of the
+                  current choice beside it, so an owner picker shows a person the way every
+                  other person-row on the console does, without swapping the control out. */}
+              <div className="flex items-center gap-[11px]">
+                {selectedOwner ? (
+                  <InitialsAvatar
+                    name={selectedOwner.full_name}
+                    seed={selectedOwner.user_id}
+                    size="md"
+                  />
+                ) : (
+                  // Unassigned has no initials to draw, so it takes the same circle as an
+                  // empty well rather than a monogram of nothing.
+                  <span
+                    aria-hidden="true"
+                    className="h-[34px] w-[34px] flex-none rounded-full border border-dashed border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))]"
+                  />
+                )}
+                <select
+                  id="assign-owner"
+                  className="h-[38px] min-w-0 flex-1 rounded-[var(--cx-r-sm,12px)] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[11px] text-[13.5px] text-[hsl(var(--cx-text))]"
+                  value={ownerId}
+                  onChange={(event) => setOwnerId(event.target.value)}
+                  disabled={saving}
+                >
+                  <option value="">Unassigned</option>
+                  {members.map((member) => (
+                    <option key={member.user_id} value={member.user_id}>
+                      {member.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="assign-team">
+            <div className="space-y-[6px]">
+              <label
+                className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]"
+                htmlFor="assign-team"
+              >
                 Team
               </label>
               <select
                 id="assign-team"
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                className="h-[38px] w-full rounded-[var(--cx-r-sm,12px)] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[11px] text-[13.5px] text-[hsl(var(--cx-text))]"
                 value={deptId}
                 onChange={(event) => setDeptId(event.target.value)}
                 disabled={saving}
@@ -173,9 +208,9 @@ export function AssignOwnerDrawer({
                 {saveError}
               </p>
             )}
-            {saved && <p className="text-sm text-green-400">Saved</p>}
+            {saved && <p className="text-sm text-[hsl(var(--cx-live))]">Saved</p>}
 
-            <div className="flex gap-2">
+            <div className="flex gap-[11px]">
               <Button type="button" onClick={handleSave} disabled={saving}>
                 {saving ? "Saving…" : "Save"}
               </Button>

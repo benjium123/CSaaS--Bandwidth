@@ -110,3 +110,6 @@ class PaymentMethod(Base, TenantScoped, TimestampMixin):
     brand: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="")
     last4: Mapped[str] = mapped_column(sa.String(4), nullable=False, default="")
     is_default: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    #: P41: Stripe's card fingerprint (same card => same value across customers). Matched
+    #: against the ban list so a banned business cannot return with the same card.
+    card_fingerprint: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_user, identity_verification_state
 from app.auth.security import (
-    create_access_token,
     create_pending_2fa_token,
     hash_password,
     needs_rehash,
@@ -29,8 +29,13 @@ from app.models import PERMISSIONS, Org, OrgMembership, Role, User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
+from app.services import audit as audit_svc
+from app.services import defaults as defaults_svc
 from app.services import identity as identity_svc
 from app.services import invites as invites_svc
+from app.services import kyc as kyc_svc
+from app.services import lockout, login_flow, passkey_policy, password_policy
+from app.services import operators as operators_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -41,6 +46,9 @@ class RegisterIn(BaseModel):
     full_name: str = ""
     #: Required unless this is the very first account on the instance.
     invite_token: str = ""
+    #: Optional. Names the workspace a self-serve signup gets; when it is absent the email
+    #: domain is used instead.
+    company_name: str = ""
 
 
 class LoginIn(BaseModel):
@@ -54,6 +62,10 @@ class TokenOut(BaseModel):
     # When 2FA is enabled the password step alone is NOT a login.
     requires_2fa: bool = False
     pending_token: str | None = None
+    #: P41: which second factors the pending login accepts ("totp", "passkey").
+    methods: list[str] = []
+    #: P41: signed in, but must add an authenticator app or passkey before anything else.
+    requires_2fa_enrollment: bool = False
 
 
 class MembershipOut(BaseModel):
@@ -61,6 +73,12 @@ class MembershipOut(BaseModel):
     org_name: str
     org_slug: str
     role_name: str
+    #: P43: "not_applicable" | "required" | "verified" - whether this person must pass their
+    #: own ID + selfie check before using admin and billing powers IN THIS WORKSPACE. Per
+    #: membership rather than per account on purpose: the answer depends on the workspace's
+    #: verification status and on the role held there, so the same person can be "verified"
+    #: in one and "not_applicable" in another. Computed by the same function the gate calls.
+    identity_verification: str = "not_applicable"
 
 
 class MeOut(BaseModel):
@@ -68,8 +86,47 @@ class MeOut(BaseModel):
     email: str
     full_name: str
     totp_enabled: bool = False
+    has_passkey: bool = False
+    is_platform_operator: bool = False
+    #: P43: "reviewer" or "admin" for platform operators, so the console only offers what
+    #: the operator may actually do.
+    operator_role: str | None = None
+    #: P41: true while this account must still add an authenticator app or passkey.
+    second_factor_required: bool = False
+    #: P42: privileged account that must use passkeys; grace end while it may still not.
+    passkey_required: bool = False
+    passkey_grace_until: datetime | None = None
     permissions: list[str]
     memberships: list[MembershipOut]
+
+
+#: Second-level labels that are part of a public suffix rather than the registrable name.
+#: Deliberately a short fixed list instead of a public-suffix-list dependency: this only
+#: produces a DEFAULT workspace name the owner can rename at any time, so an approximation
+#: is fine and a dependency (plus its update cadence) is not worth it here.
+_MULTI_LABEL_SUFFIXES = {"co", "com", "org", "net", "ac", "gov"}
+
+
+def _signup_org_name(payload: RegisterIn) -> str:
+    """Name for the workspace a self-serve signup gets."""
+    explicit = payload.company_name.strip()
+    if explicit:
+        return explicit
+
+    # Split on the LAST "@", not the first: a local part may legally contain a quoted "@",
+    # and splitting on the first would read a domain other than the one that receives mail.
+    domain = str(payload.email).rsplit("@", 1)[-1].strip().lower()
+    labels = [label for label in domain.split(".") if label]
+    # Drop the final label (the TLD), then drop the new final label too when it is a
+    # second-level public suffix, so acme-corp.co.uk -> acme-corp.
+    if labels:
+        labels.pop()
+    if labels and labels[-1] in _MULTI_LABEL_SUFFIXES:
+        labels.pop()
+    name = " ".join(labels).replace("-", " ").replace("_", " ").strip().title()
+    # Fall back to the full domain, then to a fixed name, so create_org_with_owner's slugify
+    # never receives an empty name (it would otherwise fall back to the slug "org").
+    return name or domain or "My Workspace"
 
 
 async def _log_and_fail(
@@ -88,7 +145,9 @@ async def _log_and_fail(
     raise error
 
 
-async def _sso_enforced_for(session: AsyncSession, user: User, email: str) -> bool:
+async def _sso_enforced_for(
+    session: AsyncSession, user: User, email: str, settings: Settings | None = None
+) -> bool:
     """Return True when an SSO-enforcing org owns the email domain and the user lacks owner."""
     domain = email.partition("@")[2].strip().lower()
     if not domain:
@@ -115,6 +174,15 @@ async def _sso_enforced_for(session: AsyncSession, user: User, email: str) -> bo
             continue
         if "*" in (role.permissions or []):
             return False
+        # P42: an unverified domain can't sign anyone in through SSO, so it must not
+        # block password sign-in either - that would lock the members out entirely.
+        if settings is not None and settings.sso_require_verified_domain:
+            from app.services import sso_provisioning
+
+            if sso_domain.lower() not in await sso_provisioning.verified_domains(
+                session, org.id
+            ):
+                continue
         return True
 
     return False
@@ -126,13 +194,20 @@ async def register(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> MeOut:
-    """Registration is INVITE-ONLY once the instance has an owner.
+    """Three cases, in this order.
 
-    The single exception is first-run: while no account exists at all there is nobody who
-    could issue an invitation, so the first registration is allowed and becomes the owner.
-    That gate is a COUNT of users rather than a config flag - a flag can be left switched
-    on by accident and silently reopen the instance months later; this condition flips
-    itself the moment the first account exists and can never drift back.
+    1. An ``invite_token`` is present: it is ALWAYS resolved and redeemed, whatever
+       ``bootstrap`` says, and the account joins the org the invitation names.
+    2. No token, and open registration is on or this is first-run: a self-serve signup,
+       which gets its own brand-new workspace.
+    3. No token and neither of those: refused - registration is invite-only once the
+       instance has an owner.
+
+    The first-run exception exists because while no account exists at all there is nobody
+    who could issue an invitation, so the first registration is allowed and becomes the
+    owner. That gate is a COUNT of users rather than a config flag - a flag can be left
+    switched on by accident and silently reopen the instance months later; this condition
+    flips itself the moment the first account exists and can never drift back.
     """
     settings: Settings = request.app.state.settings
     await enforce_rate_limit(request, f"register:{payload.email}")
@@ -140,30 +215,73 @@ async def register(
         session
     )
 
+    # A token in the payload wins over ``bootstrap``: an invitation names an org and a role,
+    # so honouring open registration first would drop both on the floor and hand the invitee
+    # an empty workspace of their own instead of the one they were invited to - and leave the
+    # invitation unspent. With public signup on, a token is the caller telling us which
+    # branch they mean. An invalid, expired or wrong-address token still raises here rather
+    # than falling through to a self-serve signup, because that would turn "your invitation
+    # expired" into "you silently got your own empty workspace".
     invite = None
-    if not bootstrap:
-        if not payload.invite_token:
-            raise ValidationFailedError(
-                "This instance is invite-only. Ask an administrator for an invitation."
-            )
+    if payload.invite_token:
         invite = await invites_svc.find_redeemable(
             session, payload.invite_token, payload.email
         )
+    elif not bootstrap:
+        raise ValidationFailedError(
+            "This instance is invite-only. Ask an administrator for an invitation."
+        )
 
+    await password_policy.check(settings, payload.password, email=payload.email)
     user = await users_repo.create_user(
         session, email=payload.email, password=payload.password, full_name=payload.full_name
     )
     if invite is not None:
         await session.flush()
         await invites_svc.redeem(session, invite, user.id)
+    else:
+        # A self-serve signup has no invite to carry an org, so without this the account
+        # would have no workspace at all and nowhere to land - KYC and onboarding both hang
+        # off an org. The defaults and the KYC profile are created here for parity with
+        # POST /orgs, because onboarding and the verification gate both look them up and an
+        # org missing either is a broken half-state. Note the POST /orgs "one unverified
+        # workspace at a time" KYC check is deliberately NOT applied here: this is the
+        # account's first workspace, so there cannot be another one in flight.
+        await session.flush()
+        org = await orgs_repo.create_org_with_owner(
+            session, name=_signup_org_name(payload), owner_id=user.id
+        )
+        await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
+        set_org_context(session, org.id)
+        await kyc_svc.get_or_create_profile(session, org.id)
     await session.commit()
+    if invite is not None:
+        return MeOut(
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            totp_enabled=user.totp_enabled,
+            permissions=[],
+            memberships=[],
+        )
+    # The owner role holds the "*" wildcard, and /me expands it to the full permission set,
+    # so returning the same expansion here lets the client land in the new workspace without
+    # a second round trip. identity_verification is left at its default because GET /me is
+    # where that is computed.
     return MeOut(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
-        permissions=[],
-        memberships=[],
+        permissions=sorted(PERMISSIONS),
+        memberships=[
+            MembershipOut(
+                org_id=org.id,
+                org_name=org.name,
+                org_slug=org.slug,
+                role_name="owner",
+            )
+        ],
     )
 
 
@@ -171,10 +289,11 @@ async def register(
 async def login(
     payload: LoginIn,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TokenOut:
     settings: Settings = request.app.state.settings
-    await enforce_rate_limit(request, f"login:{payload.email}")
+    await enforce_rate_limit(request, f"login:{payload.email.strip().lower()}")
     user = await users_repo.get_by_email(session, payload.email)
 
     # Same failure shape for unknown-email and bad-password. Verifying against a throwaway
@@ -182,6 +301,11 @@ async def login(
     # used to enumerate which emails have accounts.
     if user is None:
         hash_password(payload.password)
+        # P43 (audit): an unknown address locks out the same way a real one does, so the
+        # 423 can't be read as "this address has an account". Checked AFTER the throwaway
+        # hash so the timing shape is unchanged, and BEFORE the failure is recorded so the
+        # count matches a real account's at the same point.
+        await lockout.ensure_unknown_email_not_locked(session, settings, payload.email)
         await _log_and_fail(
             session,
             UnauthenticatedError("Incorrect email or password"),
@@ -190,14 +314,18 @@ async def login(
             request=request,
         )
 
+    # P43: a locked account answers the same whether or not the password is right, so the
+    # lock can't be used to test guesses. Guesses made during the lock are never evaluated.
+    await lockout.ensure_not_locked(session, user)
+
     if not verify_password(payload.password, user.hashed_password):
-        await _log_and_fail(
+        await lockout.fail(
             session,
-            UnauthenticatedError("Incorrect email or password"),
-            email=user.email,
+            settings,
+            request,
+            user,
             outcome="bad_password",
-            user_id=user.id,
-            request=request,
+            error=UnauthenticatedError("Incorrect email or password"),
         )
 
     if not user.is_active:
@@ -210,7 +338,7 @@ async def login(
             request=request,
         )
 
-    if await _sso_enforced_for(session, user, user.email):
+    if await _sso_enforced_for(session, user, user.email, request.app.state.settings):
         await _log_and_fail(
             session,
             PermissionDeniedError(
@@ -227,9 +355,11 @@ async def login(
     if rehash:
         user.hashed_password = hash_password(payload.password)
 
-    if user.totp_enabled:
+    methods = login_flow.second_factor_methods(user)
+    if methods:
         # Do not log an ok event and do not create a Session: the pending token is NOT a
-        # login yet. twofa.verify creates the session and emits the successful event.
+        # login yet. twofa.verify / passkeys login_verify create the session (P41: via
+        # services/login_flow.py, which also runs the risk checks).
         if rehash:
             await session.commit()
         return TokenOut(
@@ -237,37 +367,23 @@ async def login(
             pending_token=create_pending_2fa_token(
                 user.id, settings.jwt_secret.get_secret_value()
             ),
+            methods=methods,
         )
 
-    identity_session = await identity_svc.create_session(
-        session,
-        user_id=user.id,
-        org_id=None,
-        request=request,
-        expire_hours=settings.jwt_expire_hours,
+    token = await login_flow.complete_login(
+        session, settings, request, user, second_factor=False, response=response
     )
-    await session.flush()
-
-    token = create_access_token(
-        user.id,
-        settings.jwt_secret.get_secret_value(),
-        expire_hours=settings.jwt_expire_hours,
-        sid=identity_session.id,
+    # P41: with REQUIRE_2FA_ALL_USERS on, this token only reaches enrolment routes until a
+    # factor exists (auth/deps.py gate); the flag tells the console to go straight there.
+    return TokenOut(
+        access_token=token,
+        requires_2fa_enrollment=settings.require_2fa_all_users,
     )
-    identity_svc.record_login_event(
-        session,
-        email=user.email,
-        outcome="ok",
-        user_id=user.id,
-        org_id=None,
-        request=request,
-    )
-    await session.commit()
-    return TokenOut(access_token=token)
 
 
 @router.get("/me", response_model=MeOut)
 async def me(
+    request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     x_org_id: Annotated[str | None, Header(alias="X-Org-Id")] = None,
@@ -297,18 +413,46 @@ async def me(
             permissions = sorted(PERMISSIONS)
         else:
             permissions = sorted(set(role.permissions or []))
+    operator = await operators_svc.get_active(session, user.id)
+    # Per workspace, because the answer IS per workspace: the same person can be verified in
+    # one and not asked in another. Two cheap queries per membership, and only when the role
+    # actually holds a gated permission and KYC is enforced - see the resolver.
+    memberships = []
+    for org, role in rows:
+        set_org_context(session, org.id)
+        memberships.append(
+            MembershipOut(
+                org_id=org.id,
+                org_name=org.name,
+                org_slug=org.slug,
+                role_name=role.name,
+                identity_verification=await identity_verification_state(
+                    session,
+                    request.app.state.settings,
+                    org_id=org.id,
+                    user_id=user.id,
+                    role=role,
+                ),
+            )
+        )
     return MeOut(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
+        has_passkey=user.has_passkey,
+        is_platform_operator=operator is not None,
+        operator_role=operator.role if operator is not None else None,
+        second_factor_required=bool(
+            request.app.state.settings.require_2fa_all_users and not user.has_second_factor
+        ),
+        passkey_required=bool(
+            request.app.state.settings.require_passkey_for_privileged
+            and user.passkey_required_since is not None
+        ),
+        passkey_grace_until=passkey_policy.grace_until(request.app.state.settings, user),
         permissions=permissions,
-        memberships=[
-            MembershipOut(
-                org_id=org.id, org_name=org.name, org_slug=org.slug, role_name=role.name
-            )
-            for org, role in rows
-        ],
+        memberships=memberships,
     )
 
 
@@ -338,5 +482,15 @@ async def accept_invite(
         raise ConflictError("You are already a member of that organisation")
 
     await invites_svc.redeem(session, invite, user.id)
+    set_org_context(session, invite.org_id)
+    audit_svc.record(
+        session,
+        invite.org_id,
+        action="invite.accepted",
+        target_type="invite",
+        target_id=str(invite.id),
+        actor_user_id=user.id,
+        detail={"role_name": invite.role_name},
+    )
     await session.commit()
     return {"org_id": str(invite.org_id), "role_name": invite.role_name}

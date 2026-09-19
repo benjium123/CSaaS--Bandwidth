@@ -13,6 +13,7 @@ from typing import Annotated
 import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, Depends, Request, WebSocket
+from sqlalchemy.exc import SQLAlchemyError
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +33,7 @@ from app.services import inbox_access as inbox_access_svc
 from app.services.inbox_access import InboxAccess
 from app.voice_plane.livekit_api import mint_access_token
 from app.voice_plane.service import CALL_ROOM_PREFIX
+from app.voice_plane.service import room_trunks as voice_plane_trunks
 
 router = APIRouter(tags=["softphone"])
 log = structlog.get_logger("softphone")
@@ -93,7 +95,7 @@ async def softphone_token(
     settings: Settings = request.app.state.settings
     if getattr(request.app.state, "livekit", None) is None:
         raise FeatureUnavailableError("LiveKit is not configured")
-    if not settings.livekit_sip_outbound_trunk_id:
+    if not voice_plane_trunks(settings):
         # (finding 12) same gate as POST /calls via="room" - a deploy with no outbound
         # trunk configured yet cannot back this feature either.
         raise FeatureUnavailableError("No LiveKit SIP outbound trunk is configured")
@@ -131,6 +133,183 @@ async def softphone_token(
 # --------------------------------------------------------------------------------------
 # Realtime events websocket
 # --------------------------------------------------------------------------------------
+async def _ws_org_from_cookie(
+    session: AsyncSession,
+    settings: Settings,
+    cookie: str,
+    org_id: uuid.UUID,
+    websocket: WebSocket,
+) -> tuple[uuid.UUID, uuid.UUID, list[str]] | None:
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import Session as IdentitySession
+    from app.services import session_tokens
+
+    def aware(value):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+    parsed = session_tokens.parse(cookie)
+    if parsed is None:
+        return None
+    sid, secret = parsed
+    _remember_session_id(websocket, sid)
+    row = await session.get(IdentitySession, sid)
+    now = datetime.now(timezone.utc)
+    if row is None or row.revoked_at is not None or not session_tokens.secret_matches(row, secret):
+        return None
+    seen = aware(row.last_seen_at or row.created_at)
+    if aware(row.expires_at) <= now or now - seen > timedelta(
+        minutes=settings.session_idle_minutes
+    ):
+        return None
+    user = await users_repo.get_by_id(session, row.user_id)
+    if user is None or not user.is_active:
+        return None
+    if settings.require_2fa_all_users and not user.has_second_factor:
+        return None
+    found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
+    if found is None:
+        return None
+    org, _membership, role = found
+    if not await _ws_org_policy_allows(session, settings, websocket, user, org, role, row):
+        return None
+    return org_id, user.id, list(role.permissions or [])
+
+
+async def _expire_idle_session(sid: uuid.UUID, now) -> None:  # noqa: ANN001
+    """Mark an idled-out session revoked, so it is signed out everywhere and not just here.
+
+    Takes ``now`` from the caller rather than reading the clock: this module imports
+    datetime only inside functions, and a module-level ``datetime.now`` here would be a
+    NameError swallowed by the except below - a fix that silently does nothing.
+
+    Uses its own short-lived session, NOT the caller's: that one belongs to a long-lived
+    websocket, and writing through it would hold a transaction open across the socket's
+    network waits. Conditional on ``revoked_at IS NULL`` so a concurrent revoke wins once.
+    A database failure is logged and swallowed because the caller closes the socket either
+    way; a coding error is NOT swallowed.
+    """
+    from app.models import Session as IdentitySession
+
+    try:
+        async with get_sessionmaker()() as own:
+            await own.execute(
+                sa.update(IdentitySession)
+                .where(IdentitySession.id == sid, IdentitySession.revoked_at.is_(None))
+                .values(revoked_at=now)
+            )
+            await own.commit()
+    except asyncio.CancelledError:
+        raise
+    except SQLAlchemyError:
+        log.warning("ws_idle_revoke_failed", session_id=str(sid))
+
+
+async def _ws_org_policy_allows(
+    session: AsyncSession,
+    settings: Settings,
+    websocket: WebSocket,
+    user,
+    org,
+    role,
+    session_row,
+) -> bool:
+    """P43: the SAME workspace rules get_current_org applies to HTTP requests - checked at
+    the handshake AND on every refresh, so a removed member, a revoked session or a
+    suspended workspace stops receiving events within ACCESS_TTL_SECONDS."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.net import client_ip
+    from app.services import passkey_policy
+
+    def aware(value):
+        return value if value is None or value.tzinfo is not None else value.replace(
+            tzinfo=timezone.utc
+        )
+
+    if not org.is_active:
+        return False
+    now = datetime.now(timezone.utc)
+    if session_row is not None:
+        created = aware(session_row.created_at)
+        seen = aware(session_row.last_seen_at) or created
+        # The PLATFORM limits are the floor and a workspace may only tighten them. Both are
+        # resolved here in one place because keeping the platform rule in the handshake
+        # (_ws_org_from_cookie) and only the org rule here is exactly how an open socket came
+        # to outlive the platform idle timeout by up to the absolute session lifetime.
+        # A falsy org value means "unset", NOT "expire immediately".
+        idle_minutes = settings.session_idle_minutes
+        if org.session_idle_minutes:
+            idle_minutes = min(idle_minutes, org.session_idle_minutes)
+        max_hours = settings.session_max_hours
+        if org.session_max_hours:
+            max_hours = min(max_hours, org.session_max_hours)
+        if now - seen > timedelta(minutes=idle_minutes):
+            # Revoke ONLY when the platform floor is what ran out: "signed out after
+            # inactivity" means signed out everywhere, exactly as auth/deps.py
+            # _authenticate_cookie does. A workspace's tighter policy refuses THIS
+            # workspace and must never end the account-wide session - that is why
+            # _enforce_org_session_policy raises without touching revoked_at.
+            if now - seen > timedelta(minutes=settings.session_idle_minutes):
+                await _expire_idle_session(session_row.id, now)
+            return False
+        # Today this is a no-op: sessions are minted with expires_at = created +
+        # SESSION_MAX_HOURS (services/identity.py) and get_live_session already enforces it.
+        # It bites only after an operator LOWERS the setting, which is the right direction.
+        if now - created > timedelta(hours=max_hours):
+            return False
+    if org.ip_allowlist and not identity_svc.ip_in_allowlist(
+        client_ip(websocket), org.ip_allowlist
+    ):
+        return False
+    if identity_svc.two_factor_required(org, user):
+        return False
+    if settings.require_passkey_for_privileged and passkey_policy.is_privileged_role(role):
+        if not passkey_policy.session_satisfies(session_row, org):
+            until = passkey_policy.grace_until(settings, user)
+            if until is None or now >= until:
+                return False
+    return True
+
+
+def _remember_session_id(websocket: WebSocket, sid) -> None:  # noqa: ANN001
+    try:
+        websocket._csaas_session_id = sid  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+
+
+async def _ws_recheck(
+    websocket: WebSocket,
+    session: AsyncSession,
+    settings: Settings,
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> tuple[uuid.UUID, uuid.UUID, list[str]] | None:
+    """P43: the periodic re-check of an OPEN socket. It looks the session up by id - never by
+    the cookie secret the socket was opened with, because a step-up or password change
+    rotates that secret and must not sign the person out. Revocation, expiry, removal from
+    the workspace and workspace policy all still end the stream."""
+    sid = getattr(websocket, "_csaas_session_id", None)
+    if sid is None:
+        return await resolve_ws_org(websocket, session, settings)
+    row = await identity_svc.get_live_session(session, sid)
+    if row is None or row.user_id != user_id:
+        return None
+    user = await users_repo.get_by_id(session, user_id)
+    if user is None or not user.is_active:
+        return None
+    if settings.require_2fa_all_users and not user.has_second_factor:
+        return None
+    found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user_id)
+    if found is None:
+        return None
+    org, _membership, role = found
+    if not await _ws_org_policy_allows(session, settings, websocket, user, org, role, row):
+        return None
+    return org_id, user_id, list(role.permissions or [])
+
+
 async def resolve_ws_org(
     websocket: WebSocket, session: AsyncSession, settings: Settings
 ) -> tuple[uuid.UUID, uuid.UUID, list[str]] | None:
@@ -145,11 +324,28 @@ async def resolve_ws_org(
     """
     token = websocket.query_params.get("token")
     org_id_raw = websocket.query_params.get("org_id")
-    if not token or not org_id_raw:
+    if not org_id_raw:
         return None
     try:
         org_id = uuid.UUID(org_id_raw)
     except ValueError:
+        return None
+
+    # P42: browsers authenticate the socket with the HttpOnly session cookie. The Origin
+    # must be our own console, so another site cannot ride the cookie into the socket.
+    from app.services import session_tokens
+
+    cookie = (getattr(websocket, "cookies", None) or {}).get(
+        session_tokens.session_cookie_name(settings)
+    )
+    if cookie:
+        origin = (websocket.headers.get("origin") or "").rstrip("/")
+        allowed = {o.rstrip("/") for o in settings.cors_origin_list}
+        allowed.add(settings.public_web_url.rstrip("/"))
+        if origin not in allowed:
+            return None
+        return await _ws_org_from_cookie(session, settings, cookie, org_id, websocket)
+    if not token or not settings.auth_bearer_compat:
         return None
 
     try:
@@ -163,18 +359,24 @@ async def resolve_ws_org(
 
     # A revoked or expired session must not be able to open an events socket and keep it
     # open indefinitely - that would outlive "sign out everywhere" entirely.
-    if sid is not None and await identity_svc.get_live_session(session, sid) is None:
+    live_row = await identity_svc.get_live_session(session, sid) if sid is not None else None
+    if sid is not None:
+        _remember_session_id(websocket, sid)
+    if sid is not None and live_row is None:
         return None
 
     user = await users_repo.get_by_id(session, user_id)
     if user is None or not user.is_active:
+        return None
+    # P41: the same mandatory-second-factor rule the HTTP path enforces in auth/deps.py.
+    if settings.require_2fa_all_users and not user.has_second_factor:
         return None
 
     found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
     if found is None:
         return None
     org, _membership, role = found
-    if not org.is_active:
+    if not await _ws_org_policy_allows(session, settings, websocket, user, org, role, live_row):
         return None
     return org_id, user.id, list(role.permissions or [])
 
@@ -319,6 +521,15 @@ async def _forward_events(
         # ping timeouts, every PING_INTERVAL_SECONDS) so the TTL is enforced with
         # reasonable granularity even on a quiet connection.
         if time.monotonic() - last_resolved >= ACCESS_TTL_SECONDS:
+            # P43: re-check the session, membership and workspace rules too, not just inbox
+            # grants - "sign out everywhere", removal and suspension must end the stream.
+            settings: Settings = websocket.app.state.settings
+            async with get_sessionmaker()() as auth_session:
+                again = await _ws_recheck(websocket, auth_session, settings, org_id, user_id)
+            if again is None or again[0] != org_id or again[1] != user_id:
+                await websocket.close(code=4401)
+                return
+            permissions = again[2]
             access = await _resolve_ws_access(org_id, user_id, permissions)
             last_resolved = time.monotonic()
 
@@ -347,6 +558,11 @@ async def pump_events(
     )
     try:
         await asyncio.wait({watcher, forwarder}, return_when=asyncio.FIRST_COMPLETED)
+        if forwarder.done() and not forwarder.cancelled() and forwarder.exception() is not None:
+            # P43: a failed access re-check must end the stream, not leave it open unchecked.
+            log.error("events_ws_forwarder_failed", error=repr(forwarder.exception()))
+            with contextlib.suppress(Exception):
+                await websocket.close(code=1011)
     finally:
         for task in (watcher, forwarder):
             if not task.done():

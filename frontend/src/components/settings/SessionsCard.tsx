@@ -86,30 +86,27 @@ export function SessionsCard() {
         />
       ) : (
         <>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-border text-xs text-muted-foreground">
-                  <th className="py-2 pr-4 font-medium">Device</th>
-                  <th className="py-2 pr-4 font-medium">IP address</th>
-                  <th className="py-2 pr-4 font-medium">Last seen</th>
-                  <th className="py-2 font-medium">
+                <tr className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
+                  <th className="px-3 py-2.5 font-medium">Device</th>
+                  <th className="px-3 py-2.5 font-medium">IP address</th>
+                  <th className="px-3 py-2.5 font-medium">Last seen</th>
+                  <th className="px-3 py-2.5 font-medium">
                     <span className="sr-only">Actions</span>
                   </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-border">
                 {sessions.map((session) => {
                   const label = deviceLabel(session.user_agent);
                   const isPending =
                     revokeSession.isPending && revokeSession.variables === session.id;
 
                   return (
-                    <tr
-                      key={session.id}
-                      className="border-b border-border last:border-0"
-                    >
-                      <td className="py-2 pr-4">
+                    <tr key={session.id}>
+                      <td className="px-3 py-2.5">
                         <span
                           className="flex items-center gap-2"
                           title={session.user_agent ?? undefined}
@@ -120,11 +117,11 @@ export function SessionsCard() {
                           ) : null}
                         </span>
                       </td>
-                      <td className="py-2 pr-4">{session.ip ?? "—"}</td>
-                      <td className="py-2 pr-4">
+                      <td className="px-3 py-2.5">{session.ip ?? "—"}</td>
+                      <td className="px-3 py-2.5">
                         {relativeTime(session.last_seen_at ?? session.created_at)}
                       </td>
-                      <td className="py-2 text-right">
+                      <td className="px-3 py-2.5 text-right">
                         {session.current ? (
                           "—"
                         ) : (
@@ -155,7 +152,7 @@ export function SessionsCard() {
 
           <div className="space-y-2">
             {confirmRevokeAll ? (
-              <div className="flex items-center gap-3 text-sm">
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3 text-sm">
                 <span>
                   This signs out every other device. You stay signed in here.
                 </span>

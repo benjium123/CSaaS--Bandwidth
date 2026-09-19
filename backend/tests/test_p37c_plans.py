@@ -351,7 +351,8 @@ def test_overage_rate_with_no_plan_is_none():
 # ======================================================================================
 # Allowance-first, credits-second: the whole point of selling a package
 # ======================================================================================
-SMS_OUT_MICROS = 5_200  # telnyx sms_out 4_000 x 1.30 default markup
+SMS_OUT_MICROS = 10_000  # flat platform price: $0.01 per segment, carrier-independent
+#                          (telephony_billing.PLATFORM_PRICE_MICROS["sms_out"])
 
 
 async def _prepaid(session, org: Org, *, balance: int = 0) -> Org:

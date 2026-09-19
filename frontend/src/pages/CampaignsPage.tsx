@@ -16,7 +16,14 @@ import {
   type ListOut,
   type OutboundCampaignOut,
 } from "@/api/hooks";
-import { Badge, Button, Input, Select, Spinner } from "@/components/ui/primitives";
+import {
+  ConsoleEmpty,
+  InitialsAvatar,
+  PageHeader,
+  SectionLabel,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
+import { Badge, Button, Input, Select, Spinner, pillToneClass } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -42,21 +49,25 @@ const DIALER_MODES = [
   { value: "predictive", label: "Predictive" },
 ];
 
+/** The whole campaign-status family, converted together onto the shared `Pill` tones.
+ * These were LIGHT-mode Tailwind chips rendering inside a dark console. running ->
+ * --cx-live, paused/scheduled -> --cx-flag (yellow, not amber-orange), completed ->
+ * --cx-accent, cancelled/unknown -> muted, failed -> --cx-danger. */
 function campaignStatusBadgeClass(status: string): string {
   switch (status) {
     case "running":
-      return "bg-green-100 text-green-800";
+      return pillToneClass("success");
     case "paused":
     case "scheduled":
-      return "bg-amber-100 text-amber-800";
+      return pillToneClass("warning");
     case "completed":
-      return "bg-blue-100 text-blue-800";
+      return pillToneClass("info");
     case "cancelled":
-      return "bg-gray-100 text-gray-600";
+      return pillToneClass("neutral");
     case "failed":
-      return "bg-red-100 text-red-800";
+      return pillToneClass("danger");
     default:
-      return "bg-gray-100 text-gray-600";
+      return pillToneClass("neutral");
   }
 }
 
@@ -68,27 +79,30 @@ export function CampaignsPage() {
 
   return (
     <div className="grid h-full grid-cols-[minmax(300px,380px)_1fr]">
-      <aside className="flex min-h-0 flex-col border-r border-border">
-        <div className="flex items-center justify-between gap-2 border-b border-border p-3">
-          <h1 className="text-lg font-semibold">Campaigns</h1>
+      <aside className="flex min-h-0 flex-col border-r border-[hsl(var(--cx-line))]">
+        <div className="border-b border-[hsl(var(--cx-line))] p-[18px]">
           {/* P27: the "Contact lists" button is gone. Lists are contacts, so they live on
               the Contacts page's Lists tab now - a second door into the same room was the
               thing worth removing this phase. */}
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                setSelectedId(null);
-                setCreating(true);
-              }}
-            >
-              New
-            </Button>
-          </div>
+          <PageHeader
+            title="Campaigns"
+            actions={
+              <Button
+                type="button"
+                size="sm"
+                className="rounded-full px-[16px]"
+                onClick={() => {
+                  setSelectedId(null);
+                  setCreating(true);
+                }}
+              >
+                New
+              </Button>
+            }
+          />
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto p-[10px]">
           {isLoading ? (
             <Spinner label="Loading campaigns" />
           ) : error ? (
@@ -96,9 +110,9 @@ export function CampaignsPage() {
               {(error as Error).message}
             </p>
           ) : (campaigns ?? []).length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">No campaigns yet.</p>
+            <ConsoleEmpty>No campaigns yet.</ConsoleEmpty>
           ) : (
-            <ul aria-label="Campaigns">
+            <ul aria-label="Campaigns" className="space-y-[3px]">
               {(campaigns ?? []).map((c) => (
                 <li key={c.id}>
                   <button
@@ -109,13 +123,14 @@ export function CampaignsPage() {
                       setSelectedId(c.id);
                     }}
                     className={cn(
-                      "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted",
-                      c.id === selectedId && !creating && "bg-muted",
+                      "flex w-full items-center gap-[11px] rounded-[14px] px-[12px] py-[11px] text-left text-[13px] transition-colors hover:bg-[hsl(var(--cx-overlay))]",
+                      c.id === selectedId && !creating && "bg-[hsl(var(--cx-overlay))]",
                     )}
                   >
-                    <span className="flex min-w-0 flex-col">
-                      <span className="truncate font-medium">{c.name}</span>
-                      <span className="text-xs text-muted-foreground">
+                    <InitialsAvatar name={c.name} seed={c.id} size="md" />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate font-semibold">{c.name}</span>
+                      <span className="text-[11.5px] text-[hsl(var(--cx-muted))]">
                         {channelLabel(c.channel)}
                       </span>
                     </span>
@@ -141,9 +156,9 @@ export function CampaignsPage() {
         ) : selectedId ? (
           <CampaignDetail api={api} campaignId={selectedId} />
         ) : (
-          <p className="p-6 text-sm text-muted-foreground">
-            Select a campaign or create a new one.
-          </p>
+          <div className="p-[18px]">
+            <ConsoleEmpty>Select a campaign or create a new one.</ConsoleEmpty>
+          </div>
         )}
       </section>
     </div>
@@ -226,8 +241,8 @@ function CampaignForm({
     (channel !== "ai_calls" || agentProfileId.length > 0);
 
   return (
-    <form className="max-w-xl space-y-4 p-6" onSubmit={submit}>
-      <h2 className="text-base font-semibold">New campaign</h2>
+    <form className="max-w-xl space-y-[14px] p-[18px]" onSubmit={submit}>
+      <PageHeader title="New campaign" headingLevel={2} />
 
       <div className="space-y-1">
         <label className="block text-xs text-muted-foreground" htmlFor="campaign-name">
@@ -249,7 +264,7 @@ function CampaignForm({
         <select
           id="campaign-list"
           aria-label="Contact list"
-          className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+          className="h-10 w-full rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[14px] text-[13px]"
           value={listId}
           onChange={(e) => setListId(e.target.value)}
           required
@@ -265,7 +280,7 @@ function CampaignForm({
 
       <div className="space-y-1">
         <span className="block text-xs text-muted-foreground">Channel</span>
-        <div className="flex gap-1" role="radiogroup" aria-label="Channel">
+        <div className="flex flex-wrap gap-[7px]" role="radiogroup" aria-label="Channel">
           {CHANNELS.map((c) => (
             <button
               key={c.value}
@@ -274,8 +289,10 @@ function CampaignForm({
               aria-checked={channel === c.value}
               onClick={() => setChannel(c.value)}
               className={cn(
-                "rounded-md border border-border px-3 py-1.5 text-sm",
-                channel === c.value ? "bg-muted font-medium" : "hover:bg-muted",
+                "rounded-full px-[14px] py-[6px] text-[12.5px] font-medium transition-colors",
+                channel === c.value
+                  ? "bg-[hsl(var(--cx-accent))] font-semibold text-[hsl(var(--cx-on-acc))]"
+                  : "bg-[hsl(var(--cx-overlay))] text-[hsl(var(--cx-subtle))] hover:bg-[hsl(var(--cx-lift))] hover:text-[hsl(var(--cx-text))]",
               )}
             >
               {c.label}
@@ -285,8 +302,10 @@ function CampaignForm({
       </div>
 
       {channel === "sms" ? (
-        <fieldset className="space-y-3 rounded-md border border-border p-3">
-          <legend className="px-1 text-xs font-medium text-muted-foreground">SMS</legend>
+        <fieldset className="space-y-3 rounded-[18px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] p-[18px]">
+          <legend className="px-1 text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
+            SMS
+          </legend>
 
           <div className="space-y-1">
             <label className="block text-xs text-muted-foreground" htmlFor="campaign-body">
@@ -297,7 +316,7 @@ function CampaignForm({
               aria-label="Message body"
               rows={4}
               placeholder="Hi {{first_name}}, ..."
-              className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2"
+              className="flex w-full rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[14px] py-[11px] text-[13px] placeholder:text-[hsl(var(--cx-muted))] focus-visible:outline-none focus-visible:ring-2"
               value={body}
               onChange={(e) => setBody(e.target.value)}
             />
@@ -311,7 +330,7 @@ function CampaignForm({
           <div className="space-y-1">
             <span className="block text-xs text-muted-foreground">From numbers</span>
             <div
-              className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-border p-2"
+              className="max-h-32 space-y-1 overflow-y-auto rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[11px]"
               role="group"
               aria-label="From numbers"
             >
@@ -394,8 +413,8 @@ function CampaignForm({
           </label>
         </fieldset>
       ) : (
-        <fieldset className="space-y-3 rounded-md border border-border p-3">
-          <legend className="px-1 text-xs font-medium text-muted-foreground">
+        <fieldset className="space-y-3 rounded-[18px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] p-[18px]">
+          <legend className="px-1 text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             {channelLabel(channel)}
           </legend>
 
@@ -433,7 +452,7 @@ function CampaignForm({
             <select
               id="campaign-dialer-mode"
               aria-label="Dialer mode"
-              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+              className="h-10 w-full rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[14px] text-[13px]"
               value={dialerMode}
               onChange={(e) => setDialerMode(e.target.value)}
               required
@@ -480,11 +499,20 @@ function CampaignForm({
         </p>
       )}
 
-      <div className="flex gap-2">
-        <Button type="submit" disabled={!canSubmit || createCampaign.isPending}>
+      <div className="flex gap-[11px]">
+        <Button
+          type="submit"
+          className="rounded-full px-[18px]"
+          disabled={!canSubmit || createCampaign.isPending}
+        >
           {createCampaign.isPending ? "Creating…" : "Create campaign"}
         </Button>
-        <Button type="button" variant="outline" onClick={onCancel}>
+        <Button
+          type="button"
+          variant="outline"
+          className="rounded-full px-[18px]"
+          onClick={onCancel}
+        >
           Cancel
         </Button>
       </div>
@@ -521,10 +549,17 @@ function CampaignDetail({ api, campaignId }: { api: ApiClient; campaignId: strin
   const acting = startCampaign.isPending || pauseCampaign.isPending || cancelCampaign.isPending;
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h2 className="text-base font-semibold">{campaign.name}</h2>
-        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-muted-foreground">
+    <div className="space-y-[18px] p-[18px]">
+      <SurfaceCard>
+        <div className="flex items-center gap-[13px]">
+          <InitialsAvatar name={campaign.name} seed={campaign.id} size="lg" />
+          <h2 className="text-[17px] font-semibold tracking-[-0.015em]">
+            {campaign.name}
+          </h2>
+        </div>
+        {/* The reference panel field row: muted key, value right-aligned, a hairline
+            between each. Still a dl - only the presentation moved. */}
+        <dl className="mt-[14px] grid grid-cols-2 text-[13px] [&>dd]:border-t [&>dd]:border-[hsl(var(--cx-line))] [&>dd]:py-[11px] [&>dd]:text-right [&>dt]:border-t [&>dt]:border-[hsl(var(--cx-line))] [&>dt]:py-[11px] [&>dt]:text-[hsl(var(--cx-muted))]">
           <dt>Channel</dt>
           <dd>{channelLabel(campaign.channel)}</dd>
           <dt>Status</dt>
@@ -568,7 +603,7 @@ function CampaignDetail({ api, campaignId }: { api: ApiClient; campaignId: strin
             </>
           )}
         </dl>
-      </div>
+      </SurfaceCard>
 
       {actionError && (
         <p role="alert" className="text-sm text-destructive">
@@ -576,39 +611,51 @@ function CampaignDetail({ api, campaignId }: { api: ApiClient; campaignId: strin
         </p>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => run("start")} disabled={!canStart || acting}>
-          Start
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => run("pause")}
-          disabled={!canPause || acting}
-        >
-          Pause
-        </Button>
-        <Button
-          type="button"
-          variant="destructive"
-          onClick={() => run("cancel")}
-          disabled={!canCancel || acting}
-        >
-          Cancel
-        </Button>
-      </div>
+      <SurfaceCard className="space-y-[11px]">
+        <SectionLabel>Actions</SectionLabel>
+        <div className="flex flex-wrap gap-[11px]">
+          <Button
+            type="button"
+            className="rounded-full px-[18px]"
+            onClick={() => run("start")}
+            disabled={!canStart || acting}
+          >
+            Start
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-full px-[18px]"
+            onClick={() => run("pause")}
+            disabled={!canPause || acting}
+          >
+            Pause
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            className="rounded-full px-[18px]"
+            onClick={() => run("cancel")}
+            disabled={!canCancel || acting}
+          >
+            Cancel
+          </Button>
+        </div>
+      </SurfaceCard>
 
-      <div>
-        <h3 className="text-sm font-medium">Progress</h3>
+      <SurfaceCard>
+        <SectionLabel>Progress</SectionLabel>
         {!progress ? (
           <Spinner label="Loading progress" />
         ) : (
-          <div className="mt-2 space-y-2">
-            <p className="text-xs text-muted-foreground">{progress.total} total</p>
+          <div className="mt-[11px] space-y-[11px]">
+            <p className="text-[12px] text-[hsl(var(--cx-muted))]">
+              {progress.total} total
+            </p>
             <ul className="flex flex-wrap gap-2" aria-label="Progress by status">
               {Object.entries(progress.counts).map(([key, count]) => (
                 <li key={key}>
-                  <Badge className="bg-muted text-foreground">
+                  <Badge className="bg-[hsl(var(--cx-overlay))] px-[10px] py-[3px] text-[hsl(var(--cx-subtle))]">
                     {key}: {count}
                   </Badge>
                 </li>
@@ -616,7 +663,7 @@ function CampaignDetail({ api, campaignId }: { api: ApiClient; campaignId: strin
             </ul>
           </div>
         )}
-      </div>
+      </SurfaceCard>
     </div>
   );
 }

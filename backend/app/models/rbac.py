@@ -81,9 +81,24 @@ SYSTEM_ROLES: dict[str, list[str]] = {
         "compliance:read",
         "templates:read",
         # P16: the unified inbox timeline shows calls alongside SMS. An agent who may work
-        # an inbox may read its calls; P15 grants still scope WHICH numbers. calls:place
-        # deliberately stays admin-granted.
+        # an inbox may read its calls; P15 grants still scope WHICH numbers.
         "calls:read",
+        # An employee handed a line is handed the WHOLE line - this product's premise is
+        # calls and texts on one number, and an agent who could text from a line but not
+        # ring back from it had half a phone. Operator decision, 18 Sept 2026.
+        #
+        # This grants the CAPABILITY, never the reach: resolve_access still decides which
+        # numbers, and `create_call` refuses any `from` the caller lacks `can_use` on, so
+        # an agent can only dial out from a line they hold a `member` grant for. A
+        # `viewer` grant is still read-only.
+        #
+        # It also does not weaken the two gates that actually bound spend and abuse -
+        # the prepaid hard gate (402) and monitoring selection both sit inside
+        # voice_plane/service.py, BELOW this permission check, so they apply to every
+        # caller whatever their role.
+        #
+        # Existing orgs are backfilled by migration 0052; SYSTEM_ROLES only seeds new ones.
+        "calls:place",
     ],
 }
 

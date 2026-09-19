@@ -5,6 +5,8 @@
  * a single "you are logged out" signal so no page has to handle it individually.
  */
 
+import { deviceId } from "@/lib/device";
+
 export type AuthState = {
   token: string | null;
   orgId: string | null;
@@ -30,6 +32,8 @@ export interface ApiClient {
   auth: AuthState;
   setAuth(next: Partial<AuthState>): void;
   onUnauthorized?: () => void;
+  /** P41: fired when the API answers step_up_required - the step-up dialog listens here. */
+  onStepUpRequired?: (details: { kind: string; action: string; message: string }) => void;
 }
 
 const STORAGE_KEY = "csaas.auth";
@@ -61,6 +65,33 @@ export function clearStoredAuth(): void {
   }
 }
 
+/** P42: the CSRF token the server issued with the session cookie (readable on purpose). */
+export function csrfToken(): string | null {
+  if (typeof document === "undefined") return null;
+  for (const part of document.cookie.split(";")) {
+    const [rawName, ...rest] = part.trim().split("=");
+    if (rawName === "__Host-csaas_csrf" || rawName === "csaas_csrf") {
+      return decodeURIComponent(rest.join("="));
+    }
+  }
+  return null;
+}
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** Headers every authenticated call needs: org, device, and CSRF for unsafe methods. */
+export function authHeaders(api: ApiClient, method = "GET", base?: HeadersInit): Headers {
+  const headers = new Headers(base);
+  if (api.auth.token) headers.set("Authorization", `Bearer ${api.auth.token}`);
+  if (api.auth.orgId) headers.set("X-Org-Id", api.auth.orgId);
+  headers.set("X-Device-Id", deviceId());
+  if (!SAFE_METHODS.has(method.toUpperCase())) {
+    const csrf = csrfToken();
+    if (csrf) headers.set("X-CSRF-Token", csrf);
+  }
+  return headers;
+}
+
 export function createClient(baseUrl = ""): ApiClient {
   const client: ApiClient = {
     auth: loadStoredAuth(),
@@ -71,9 +102,8 @@ export function createClient(baseUrl = ""): ApiClient {
     },
 
     async request<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
-      const headers = new Headers(init.headers);
-      if (client.auth.token) headers.set("Authorization", `Bearer ${client.auth.token}`);
-      if (client.auth.orgId) headers.set("X-Org-Id", client.auth.orgId);
+      // P42: the session is an HttpOnly cookie the browser sends itself; scripts never see it.
+      const headers = authHeaders(client, init.method ?? "GET", init.headers);
 
       let body = init.body;
       if (init.json !== undefined) {
@@ -81,7 +111,12 @@ export function createClient(baseUrl = ""): ApiClient {
         body = JSON.stringify(init.json);
       }
 
-      const res = await fetch(`${baseUrl}${path}`, { ...init, headers, body });
+      const res = await fetch(`${baseUrl}${path}`, {
+        ...init,
+        headers,
+        body,
+        credentials: "same-origin",
+      });
 
       if (res.status === 401) {
         clearStoredAuth();
@@ -96,6 +131,16 @@ export function createClient(baseUrl = ""): ApiClient {
 
       if (!res.ok) {
         const err = payload?.error;
+        if (
+          (err?.code === "step_up_required" || err?.code === "passkey_required") &&
+          client.onStepUpRequired
+        ) {
+          client.onStepUpRequired({
+            kind: err.code === "passkey_required" ? "passkey_session" : String(err.kind ?? "recent_2fa"),
+            action: String(err.action ?? ""),
+            message: String(err.message ?? ""),
+          });
+        }
         throw new ApiError(
           res.status,
           err?.code ?? "http_error",
@@ -117,10 +162,8 @@ export function createClient(baseUrl = ""): ApiClient {
  * Authorization/X-Org-Id header logic.
  */
 export async function fetchAuthedBlob(api: ApiClient, path: string): Promise<Blob> {
-  const headers = new Headers();
-  if (api.auth.token) headers.set("Authorization", `Bearer ${api.auth.token}`);
-  if (api.auth.orgId) headers.set("X-Org-Id", api.auth.orgId);
-  const res = await fetch(path, { headers });
+  const headers = authHeaders(api, "GET");
+  const res = await fetch(path, { headers, credentials: "same-origin" });
   if (!res.ok) throw new Error(`Failed to load recording (${res.status})`);
   return res.blob();
 }
@@ -139,10 +182,13 @@ export async function postAuthedBlob(
   path: string,
   json: unknown,
 ): Promise<Blob> {
-  const headers = new Headers({ "Content-Type": "application/json" });
-  if (api.auth.token) headers.set("Authorization", `Bearer ${api.auth.token}`);
-  if (api.auth.orgId) headers.set("X-Org-Id", api.auth.orgId);
-  const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(json) });
+  const headers = authHeaders(api, "POST", { "Content-Type": "application/json" });
+  const res = await fetch(path, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(json),
+    credentials: "same-origin",
+  });
   if (!res.ok) {
     let message = `Request failed with ${res.status}`;
     try {

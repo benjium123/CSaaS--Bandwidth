@@ -33,6 +33,7 @@ from app.compliance import service as compliance_svc
 from app.db.base import set_org_context
 from app.errors import ValidationFailedError
 from app.models import ContactList, ContactListRow, Department, OrgMembership, User
+from app.services import phone_region
 from app.services.contacts import resolve_or_create_contact
 from app.services.list_parsing import (
     ParsedFile,
@@ -204,13 +205,17 @@ async def run_import(
             email_map[email.lower()] = user_id
 
         seen_e164: set[str] = set()
+        # A bare national number means whatever the WORKSPACE's country says it means: a UK
+        # customer's "020 7946 0958" must not be refused, and their "2079460958" must not
+        # quietly become a number in Maine (services/phone_region.py).
+        region = await phone_region.for_org(session, org_id)
         counts = {"accepted": 0, "invalid": 0, "duplicate": 0, "dnc": 0}
         unknown_owner_emails: set[str] = set()
         assigned = 0
 
         for row_number, raw_row in enumerate(parsed.rows, start=1):
             fields = extract_row(raw_row, mapping)
-            e164, parse_reason = normalize_phone(fields.get("phone", ""))
+            e164, parse_reason = normalize_phone(fields.get("phone", ""), region)
             contact_id = None
 
             if e164 is None:

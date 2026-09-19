@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useMutation } from "@tanstack/react-query";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import {
   useCreateInvite,
@@ -18,8 +19,24 @@ import {
   useUpdateRole,
   type RoleOut,
 } from "@/api/roles";
+import {
+  CONSOLE_CELL as CELL,
+  CONSOLE_CELL_L as CELL_L,
+  CONSOLE_CELL_R as CELL_R,
+  CONSOLE_HEAD as HEAD,
+  CONSOLE_PANEL as PANEL,
+  CONSOLE_ROW as ROW,
+  CONSOLE_TABLE as TABLE,
+  InitialsAvatar,
+} from "@/components/ui/consoleChrome";
 import { Button, Input, Pill, Select, Spinner, type PillTone } from "@/components/ui/primitives";
 import { RoleMatrix } from "@/components/team/RoleMatrix";
+import { cn } from "@/lib/utils";
+
+/* ── The console's list shape, from docs/design/console-reference.html ──────────────────
+ * The panel, the row and the cell padding are the shared console constants now
+ * (components/ui/consoleChrome.tsx). The <table> stays: it is the element the rows have to
+ * be - TeamPage.test.tsx walks `closest("tr")` to scope its queries to one role. */
 
 const INVITABLE_ROLES = [
   { value: "admin", label: "Admin" },
@@ -91,6 +108,7 @@ export function TeamPage() {
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
 
   const canEditRoles = hasPermission(me, orgId, "roles:write");
+  const canResetMembers = hasPermission(me, orgId, "members:update");
   const grantablePermissions = React.useCallback(
     (key: string) => hasPermission(me, orgId, key),
     [me, orgId],
@@ -184,15 +202,21 @@ export function TeamPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 p-6">
-      <div role="tablist" className="flex gap-2">
+    <div className="mx-auto max-w-4xl space-y-7 p-6">
+      {/* The reference's `.pills` filter row: full pills on `overlay`, the selected one on
+          the accent. Same buttons, same roles, same names - only the shape moved. */}
+      <div
+        role="tablist"
+        className="inline-flex w-fit gap-1.5 rounded-full bg-[hsl(var(--cx-overlay)/0.55)] p-1"
+      >
         <Button
           type="button"
           role="tab"
           id="tab-members"
           aria-controls="panel-members"
           aria-selected={activeTab === "members"}
-          variant={activeTab === "members" ? "default" : "outline"}
+          variant={activeTab === "members" ? "default" : "ghost"}
+          className="h-8 rounded-full px-4 text-[12.5px]"
           onClick={() => setActiveTab("members")}
         >
           Members
@@ -203,7 +227,8 @@ export function TeamPage() {
           id="tab-roles"
           aria-controls="panel-roles"
           aria-selected={activeTab === "roles"}
-          variant={activeTab === "roles" ? "default" : "outline"}
+          variant={activeTab === "roles" ? "default" : "ghost"}
+          className="h-8 rounded-full px-4 text-[12.5px]"
           onClick={() => setActiveTab("roles")}
         >
           Roles
@@ -217,8 +242,8 @@ export function TeamPage() {
           aria-labelledby="tab-members"
           className="space-y-8"
         >
-          <div className="space-y-4">
-            <h1 className="text-lg font-semibold">Team</h1>
+          <div className="space-y-3">
+            <h1 className="text-[19px] font-semibold tracking-[-0.015em]">Team</h1>
 
             {membersLoading ? (
               <Spinner />
@@ -230,6 +255,7 @@ export function TeamPage() {
                 <Button
                   type="button"
                   size="sm"
+                  className="rounded-full px-3.5"
                   variant="outline"
                   onClick={() => refetchMembers()}
                 >
@@ -237,25 +263,40 @@ export function TeamPage() {
                 </Button>
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-md border border-border">
-                <table className="w-full text-sm">
+              <div className={cn(PANEL, "overflow-x-auto")}>
+                <table className={TABLE}>
                   <thead>
-                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                      <th className="px-3 py-2 font-medium">Name</th>
-                      <th className="px-3 py-2 font-medium">Email</th>
-                      <th className="px-3 py-2 font-medium">Role</th>
+                    <tr>
+                      <th className={HEAD}>Name</th>
+                      <th className={HEAD}>Email</th>
+                      <th className={HEAD}>Role</th>
+                      {canResetMembers && <th className={HEAD}>Sign-in</th>}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border">
+                  <tbody>
                     {(members ?? []).map((member) => (
-                      <tr key={member.user_id}>
-                        <td className="px-3 py-2">{member.full_name}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {member.email}
+                      <tr key={member.user_id} className={ROW}>
+                        <td className={CELL_L}>
+                          <span className="flex items-center gap-3">
+                            <InitialsAvatar
+                              size="row"
+                              seed={member.user_id}
+                              name={member.full_name}
+                            />
+                            <span className="font-semibold text-foreground">{member.full_name}</span>
+                          </span>
                         </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {member.role_name}
+                        <td className={cn(CELL, "text-muted-foreground")}>{member.email}</td>
+                        {/* Last cell in the row carries the right-hand radius, and which
+                            cell that is depends on whether Sign-in is rendered at all. */}
+                        <td className={canResetMembers ? CELL : CELL_R}>
+                          <Pill tone="info">{member.role_name}</Pill>
                         </td>
+                        {canResetMembers && (
+                          <td className={CELL_R}>
+                            {member.user_id !== me?.id && <ResetMemberTwoFactor userId={member.user_id} />}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -265,7 +306,7 @@ export function TeamPage() {
           </div>
 
           <div className="space-y-4">
-            <h2 className="text-base font-semibold">Invitations</h2>
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em]">Invitations</h2>
 
             {invitesLoading ? (
               <Spinner />
@@ -277,6 +318,7 @@ export function TeamPage() {
                 <Button
                   type="button"
                   size="sm"
+                  className="rounded-full px-3.5"
                   variant="outline"
                   onClick={() => refetchInvites()}
                 >
@@ -286,33 +328,39 @@ export function TeamPage() {
             ) : (invites ?? []).length === 0 ? (
               <p className="text-sm text-muted-foreground">No invitations yet.</p>
             ) : (
-              <div className="overflow-x-auto rounded-md border border-border">
-                <table className="w-full text-sm">
+              <div className={cn(PANEL, "overflow-x-auto")}>
+                <table className={TABLE}>
                   <thead>
-                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                      <th className="px-3 py-2 font-medium">Email</th>
-                      <th className="px-3 py-2 font-medium">Role</th>
-                      <th className="px-3 py-2 font-medium">Status</th>
-                      <th className="px-3 py-2 font-medium">Actions</th>
+                    <tr>
+                      <th className={HEAD}>Email</th>
+                      <th className={HEAD}>Role</th>
+                      <th className={HEAD}>Status</th>
+                      <th className={HEAD}>Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border">
+                  <tbody>
                     {(invites ?? []).map((invite) => {
                       const status = inviteStatus(invite);
                       return (
-                        <tr key={invite.id}>
-                          <td className="px-3 py-2">{invite.email}</td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {invite.role_name}
+                        <tr key={invite.id} className={ROW}>
+                          <td className={CELL_L}>
+                            <span className="flex items-center gap-3">
+                              <InitialsAvatar size="row" seed={invite.id} name={invite.email} />
+                              <span className="font-medium text-foreground">{invite.email}</span>
+                            </span>
                           </td>
-                          <td className="px-3 py-2">
+                          <td className={CELL}>
+                            <Pill tone="info">{invite.role_name}</Pill>
+                          </td>
+                          <td className={CELL}>
                             <Pill tone={statusBadgeTone(status)}>{status}</Pill>
                           </td>
-                          <td className="px-3 py-2">
+                          <td className={CELL_R}>
                             {status === "Pending" ? (
                               <Button
                                 type="button"
                                 size="sm"
+                                className="rounded-full px-3.5"
                                 variant="outline"
                                 onClick={() => revoke(invite.id)}
                                 disabled={revokeInvite.isPending}
@@ -333,9 +381,12 @@ export function TeamPage() {
           </div>
 
           <div className="space-y-4">
-            <h2 className="text-base font-semibold">Invite someone</h2>
-            <form className="flex flex-wrap items-end gap-2" onSubmit={submitInvite}>
-              <div className="space-y-1">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em]">Invite someone</h2>
+            <form
+              className={cn(PANEL, "flex flex-wrap items-end gap-3 p-3.5")}
+              onSubmit={submitInvite}
+            >
+              <div className="space-y-1.5">
                 <label className="block text-xs text-muted-foreground" htmlFor="invite-email">
                   Email
                 </label>
@@ -347,14 +398,14 @@ export function TeamPage() {
                   onChange={(event) => setEmail(event.target.value)}
                 />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="block text-xs text-muted-foreground" htmlFor="invite-role">
                   Role
                 </label>
                 <Select
                   id="invite-role"
                   aria-label="Role"
-                  className="h-9 w-auto px-2"
+                  className="h-9 w-auto px-2.5"
                   value={role}
                   onChange={(event) => setRole(event.target.value)}
                 >
@@ -365,7 +416,8 @@ export function TeamPage() {
                   ))}
                 </Select>
               </div>
-              <Button type="submit" disabled={createInvite.isPending}>
+              {/* The reference's `.send`: a primary action is a pill. */}
+              <Button type="submit" className="rounded-full px-5" disabled={createInvite.isPending}>
                 Send invite
               </Button>
             </form>
@@ -377,7 +429,7 @@ export function TeamPage() {
             )}
 
             {created && (
-              <div className="space-y-2 rounded-md border border-border bg-muted p-4 text-sm">
+              <div className="space-y-2.5 rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-4 text-sm">
                 <p className="font-medium">Invitation created for {created.email}</p>
                 <p className="text-xs text-muted-foreground">
                   This link is shown once and cannot be retrieved again. If it is lost, revoke this
@@ -403,6 +455,7 @@ export function TeamPage() {
                 <Button
                   type="button"
                   size="sm"
+                  className="rounded-full px-3.5"
                   variant="ghost"
                   onClick={() => setCreated(null)}
                 >
@@ -422,9 +475,10 @@ export function TeamPage() {
           className="space-y-4"
         >
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold">Roles</h2>
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em]">Roles</h2>
             <Button
               type="button"
+              className="rounded-full px-5"
               disabled={!canEditRoles}
               title={!canEditRoles ? "You don't have permission to change roles." : undefined}
               onClick={openNewRole}
@@ -450,6 +504,7 @@ export function TeamPage() {
               <Button
                 type="button"
                 size="sm"
+                className="rounded-full px-3.5"
                 variant="outline"
                 onClick={() => rolesQuery.refetch()}
               >
@@ -461,34 +516,36 @@ export function TeamPage() {
               No custom roles yet. Create one to give people exactly the access they need.
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
+            <div className={cn(PANEL, "overflow-x-auto")}>
+              <table className={TABLE}>
                 <thead>
-                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">Role</th>
-                    <th className="px-3 py-2 font-medium">Type</th>
-                    <th className="px-3 py-2 font-medium">Members</th>
-                    <th className="px-3 py-2 text-right font-medium">Actions</th>
+                  <tr>
+                    <th className={HEAD}>Role</th>
+                    <th className={HEAD}>Type</th>
+                    <th className={HEAD}>Members</th>
+                    <th className={cn(HEAD, "text-right")}>Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border">
+                <tbody>
                   {(rolesQuery.data ?? []).map((target) => (
-                    <tr key={target.id}>
-                      <td className="px-3 py-2">{target.name}</td>
-                      <td className="px-3 py-2">
+                    <tr key={target.id} className={ROW}>
+                      <td className={cn(CELL_L, "font-semibold text-foreground")}>{target.name}</td>
+                      <td className={CELL}>
                         {target.is_system ? (
                           <Pill tone="neutral">Built-in</Pill>
                         ) : null}
                       </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">
+                      <td className={cn(CELL, "text-muted-foreground")}>
                         {target.member_count === 1
                           ? "1 member"
                           : `${target.member_count} members`}
                       </td>
-                      <td className="flex gap-2 px-3 py-2 text-right">
+                      <td className={cn(CELL_R, "text-right")}>
+                        <span className="flex justify-end gap-2">
                         <Button
                           type="button"
                           size="sm"
+                          className="rounded-full px-3.5"
                           variant={target.is_system ? "outline" : "default"}
                           onClick={() => openEditRole(target)}
                         >
@@ -497,6 +554,7 @@ export function TeamPage() {
                         <Button
                           type="button"
                           size="sm"
+                          className="rounded-full px-3.5"
                           variant="outline"
                           disabled={!canEditRoles || target.is_system || target.member_count > 0}
                           title={
@@ -516,6 +574,7 @@ export function TeamPage() {
                           <Button
                             type="button"
                             size="sm"
+                            className="rounded-full px-3.5"
                             variant="destructive"
                             disabled={deleteRole.isPending}
                             onClick={confirmDelete}
@@ -523,6 +582,7 @@ export function TeamPage() {
                             {deleteRole.isPending ? "Deleting…" : "Confirm delete"}
                           </Button>
                         )}
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -532,8 +592,11 @@ export function TeamPage() {
           )}
 
           {rolePanelOpen && (
-            <form className="space-y-4 rounded-md border border-border p-4" onSubmit={saveRole}>
-              <div className="space-y-1">
+            <form
+              className="space-y-4 rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-5"
+              onSubmit={saveRole}
+            >
+              <div className="space-y-1.5">
                 <label className="block text-xs text-muted-foreground" htmlFor="role-name">
                   Role name
                 </label>
@@ -549,12 +612,15 @@ export function TeamPage() {
               {!editingRole && (
                 <div className="space-y-2">
                   <p className="text-xs font-medium">Start from</p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-3">
                     {STARTING_POINTS.map((point) => (
                       <Button
                         key={point.id}
                         type="button"
                         size="sm"
+                        // Two lines of text is a CARD, not a chip: 14px, and a height that
+                        // grows with the description instead of clipping it.
+                        className="h-auto rounded-lg px-3.5 py-2.5 text-left"
                         variant={startingPoint === point.id ? "default" : "outline"}
                         aria-pressed={startingPoint === point.id}
                         aria-label={`${point.label} starting point`}
@@ -579,9 +645,10 @@ export function TeamPage() {
                 grantablePermissions={grantablePermissions}
               />
 
-              <div className="flex gap-2">
+              <div className="flex gap-3">
                 <Button
                   type="submit"
+                  className="rounded-full px-5"
                   disabled={
                     !canEditRoles ||
                     Boolean(editingRole?.is_system) ||
@@ -594,6 +661,7 @@ export function TeamPage() {
                 </Button>
                 <Button
                   type="button"
+                  className="rounded-full px-5"
                   variant="outline"
                   onClick={() => {
                     setRolePanelOpen(false);
@@ -606,6 +674,43 @@ export function TeamPage() {
             </form>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** P42: a member who lost their phone gets their 2FA reset by an admin (fresh 2FA check,
+ * audited, emailed). Owners/admins/billing recover through ID + selfie instead - the server
+ * refuses those here. */
+function ResetMemberTwoFactor({ userId }: { userId: string }) {
+  const { api } = useAuth();
+  const [confirming, setConfirming] = React.useState(false);
+  const reset = useMutation({
+    mutationFn: () =>
+      api.request(`/api/v1/orgs/current/members/${userId}/reset-2fa`, { method: "POST" }),
+    onSettled: () => setConfirming(false),
+  });
+  if (reset.isSuccess) return <span className="text-xs text-muted-foreground">2FA reset</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {confirming ? (
+        <>
+          <Button type="button" size="sm" variant="outline" disabled={reset.isPending} onClick={() => reset.mutate()}>
+            Confirm reset
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+            Cancel
+          </Button>
+        </>
+      ) : (
+        <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+          Reset 2FA
+        </Button>
+      )}
+      {reset.isError && (
+        <span role="alert" className="text-xs text-destructive">
+          {getErrorMessage(reset.error)}
+        </span>
       )}
     </div>
   );

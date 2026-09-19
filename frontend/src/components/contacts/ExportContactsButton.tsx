@@ -65,7 +65,7 @@ export function ExportContactsButton({
   const isRunning = startMutation.isPending || jobId !== null;
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-[11px]">
       {job?.status === "done" ? (
         <>
           <p role="status" className="text-sm text-muted-foreground">

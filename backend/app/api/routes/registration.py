@@ -7,21 +7,18 @@ should not be able to declare a use case on the company's behalf.
 
 from __future__ import annotations
 
-import hmac
 import uuid
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_permission, require_platform_operator
 from app.errors import (
     ConflictError,
-    FeatureUnavailableError,
     NotFoundError,
-    PermissionDeniedError,
     ValidationFailedError,
 )
 from app.models import OrgNumber
@@ -29,21 +26,6 @@ from app.models.numbers import Brand, Campaign, TollFreeVerification
 from app.services import registration as reg
 
 router = APIRouter(prefix="/api/v1/registration", tags=["registration"])
-
-
-async def require_platform_operator(
-    request: Request,
-    x_platform_ops_token: Annotated[str | None, Header(alias="X-Platform-Ops-Token")] = None,
-) -> None:
-    configured = request.app.state.settings.platform_ops_token.get_secret_value().strip()
-    if not configured:
-        raise FeatureUnavailableError(
-            "Platform operator token is not configured; status callbacks are disabled"
-        )
-    # C6: constant-time compare - a naive != leaks timing information an attacker can
-    # use to recover the token byte-by-byte.
-    if not x_platform_ops_token or not hmac.compare_digest(x_platform_ops_token, configured):
-        raise PermissionDeniedError("Invalid platform operator token")
 
 
 # ----------------------------------------------------------------------------------

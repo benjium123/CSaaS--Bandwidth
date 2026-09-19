@@ -24,7 +24,7 @@ async def test_deepseek_and_groq_use_the_openai_shape_with_the_right_token_param
     """DeepSeek and Groq must use OpenAI message/tool shapes, but DeepSeek needs
     `max_tokens` while Groq and OpenAI need `max_completion_tokens`."""
     cases = [
-        ("deepseek", "deepseek-chat", llm_client._DEEPSEEK_URL, "max_tokens"),
+        ("deepseek", "deepseek-flash", llm_client._DEEPSEEK_URL, "max_tokens"),
         ("groq", "llama-3.3-70b-versatile", llm_client._GROQ_URL, "max_completion_tokens"),
         ("openai", "gpt-4o-mini", llm_client._OPENAI_URL, "max_completion_tokens"),
     ]

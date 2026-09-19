@@ -1,0 +1,605 @@
+/**
+ * The console's working surfaces — the unified inbox.
+ *
+ * THE PALETTE IS NOT INVENTED HERE. Every value below is lifted from
+ * docs/design/console-reference.html, the design the operator signed off, converted from
+ * its hex to the HSL triplets this codebase's tokens are consumed as. Its own opening
+ * comment states the intent: "cool graphite with an azure send... No orange anywhere —
+ * not in the accent, not in the avatars, not in the note." The previous ink/bone/copper
+ * "Exchange" palette that lived here is gone; if you are about to add a warm hue to this
+ * file, you are undoing an approved decision.
+ *
+ * TOKEN NAMES: `--cx-*` ARE THE REFERENCE'S OWN NAMES, one for one, so a rule here can be
+ * read against the mockup without a translation step. The `--ex-*` names underneath them
+ * are ALIASES and exist for one reason: components outside this file (Timeline.tsx,
+ * InboxColumn.tsx) still write `hsl(var(--ex-copper))` and `hsl(var(--ex-verdigris))`
+ * inline, and rewriting those is a separate job. Pointing the aliases at the reference
+ * tokens means those call sites render azure and green rather than copper WITHOUT anyone
+ * editing them. Do not add new `--ex-*` readers.
+ *
+ * Scoped exactly like the auth theme: every rule sits under `.console-surface`, so nothing
+ * can reach the rest of the app. The doubled `.console-surface.console-surface` is for the
+ * same reason as before — the wrapper also carries `dark`, and two classes beat one
+ * whatever order Vite emits the stylesheets in.
+ *
+ * COLOUR CARRIES MEANING HERE, and the reference rations it to three saturated hues:
+ *   accent (azure) — us: our outbound messages, the selected row, the primary action
+ *   live (green)   — a call, and only a call
+ *   flag (yellow)  — a note. Yellow, not orange.
+ *   danger (red)   — a delivery failure. The reference has no danger token because its
+ *                    mockup has no failed send; this is the console's existing red, kept.
+ * An inbox's own colour dot is USER data and is left alone; it is the one hue this file
+ * does not get to choose.
+ *
+ * CONTRAST, MEASURED, AND THE FAILURES INHERITED FROM THE APPROVED DESIGN.
+ * On `--cx-base`: text 14.88, subtle 7.32, live 8.98, flag 10.70, accent 5.55 — all pass
+ * AA body. THREE PAIRS IN THE REFERENCE DO NOT, and they are reproduced here unchanged
+ * rather than quietly "fixed", because this palette is signed off and a token file is not
+ * the place to overrule it:
+ *   muted on base          3.90  — fails 4.5 body, passes 3:1 large. `.cx-meta`, `.cx-empty`
+ *   on-acc on accent       3.23  — white on azure. Fails 4.5. `.cx-send`, `.cx-msg-out`
+ *   on-acc on live         2.00  — white on green. Fails both floors. `.cx-call`
+ * `--cx-line` measures 1.25 on base, below the 3:1 floor for a non-text rule; that is the
+ * reference's own border colour and every border it draws is that ratio. Flagged, not
+ * changed.
+ */
+
+/* THE RADIUS SCALE, and it is the whole scale ---------------------------------
+ * Read out of docs/design/console-reference.html, which is generously rounded everywhere
+ * and has exactly six values. They are declared on `:root` rather than on
+ * `.console-surface` because this file is imported by App.tsx for the whole app and
+ * tailwind.config.js's borderRadius map resolves against them: `rounded-md` is
+ * `var(--cx-r-sm)`, `rounded-lg` is `var(--cx-r-md)`, and so on. Scoping them to the
+ * console would leave every other page's corners resolving to nothing, i.e. square.
+ *
+ * WHICH ELEMENT OWNS WHICH VALUE, from the reference:
+ *   pill   999px  .pill filter chips, .ln-count, .call-btn, .send, .day, .play, .toggle
+ *   circle 50%    .av avatars, .brand-mark, .unread, .ln-dot
+ *   lg     18px   .bubble, .composer-box  (and dialogs, which the mockup has none of)
+ *   md     14px   .row conversation rows, .note, .callcard
+ *   sm     12px   .ln line rows, .who thread-header name block
+ *   xs     10px   .nav-item, .icon-btn
+ *   tail   6px    the clipped corner nearest the speaker, last bubble of a run
+ *
+ * DO NOT ADD A SEVENTH. If something needs a radius it takes one of these; a bare pixel
+ * value below, or in a component, is a bug rather than a variant. */
+:root {
+  --cx-r-pill: 999px;
+  --cx-r-circle: 50%;
+  --cx-r-lg: 18px;
+  --cx-r-md: 14px;
+  --cx-r-sm: 12px;
+  --cx-r-xs: 10px;
+  --cx-r-tail: 6px;
+}
+
+.console-surface.console-surface {
+  /* --- the reference palette, DARK (:root[data-theme="dark"]) ----------------
+   * hex → HSL, one decimal. Every triplet here round-trips back to its exact hex. */
+  --cx-base: 222.9 14.3% 9.6%;      /* #15171C */
+  --cx-surface: 222 16.1% 12.2%;    /* #1A1D24 */
+  --cx-overlay: 220 14.6% 16.1%;    /* #23272F */
+  --cx-lift: 220 14.3% 20.6%;       /* #2D323C */
+  --cx-text: 216 12.2% 92%;         /* #E8EAED */
+  --cx-subtle: 217.5 9.2% 65.9%;    /* #A0A6B0 */
+  --cx-muted: 214.7 7.9% 46.9%;     /* #6E7681 */
+  --cx-line: 220 13.6% 17.3%;       /* #262A32 */
+  --cx-accent: 219.7 82.2% 64.7%;   /* #5B8DEF */
+  --cx-accent-2: 219.7 66.8% 57.5%; /* #4A7BDB */
+  --cx-on-acc: 0 0% 100%;           /* #FFFFFF */
+  --cx-live: 153.1 60.2% 52.7%;     /* #3ECF8E */
+  --cx-flag: 43.1 73.6% 65.9%;      /* #E8C468 */
+  --cx-shadow: 0 18px 40px -24px rgba(0, 0, 0, 0.75);
+  /* Not in the reference: it has no failure state to colour. Kept from the previous
+   * palette so a failed send stays red rather than falling back to the accent. */
+  --cx-danger: 6 74% 62%;
+
+  /* --- compatibility aliases, see TOKEN NAMES above -------------------------- */
+  --ex-ink: var(--cx-base);
+  --ex-ink-raise: var(--cx-surface);
+  --ex-ink-high: var(--cx-overlay);
+  --ex-bone: var(--cx-text);
+  --ex-bone-dim: var(--cx-subtle);
+  --ex-copper: var(--cx-accent);
+  --ex-copper-line: var(--cx-line);
+  --ex-verdigris: var(--cx-live);
+  --ex-danger: var(--cx-danger);
+
+  /* --- the shadcn tokens the rest of the console reads ----------------------- */
+  --background: var(--cx-base);
+  --foreground: var(--cx-text);
+  --muted: var(--cx-overlay);
+  --muted-foreground: var(--cx-subtle);
+  --border: var(--cx-line);
+  --primary: var(--cx-accent);
+  --primary-foreground: var(--cx-on-acc);
+  --destructive: var(--cx-danger);
+
+  /* The reference's face. Loaded from @fontsource-variable/onest by ConversationsPage —
+   * NOT from Google Fonts, whatever the mockup's <link> does: our CSP is
+   * `font-src 'self'`. Tabular figures are set on the surface because the reference sets
+   * them on `body`: this screen is mostly numbers. */
+  font-family: "Onest Variable", ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numerals ------------------------------------------------------------------
+ * A comms console is mostly numbers: E.164 numbers, timestamps, call durations, segment
+ * counts, SLA countdowns. Onest is already set to tabular figures on the surface, so a
+ * column of times aligns without leaving the reference's face; the mono face is kept here
+ * only where a number is being read as DATA rather than as prose. */
+.cx-num {
+  font-family: "Martian Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.cx-label {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-size: 0.5625rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--cx-muted));
+}
+
+/* Columns -------------------------------------------------------------------
+ * The reference's arrangement exactly: the rails and the contact panel sit on `surface`,
+ * the field the conversation itself lives on is `base`, and a hairline in `line` does the
+ * separating. No gradients — the mockup has none, and the previous file's wash down the
+ * top of the thread was part of the palette that went. */
+.cx-rail {
+  background: hsl(var(--cx-surface));
+}
+
+.cx-list {
+  background: hsl(var(--cx-base));
+}
+
+.cx-thread {
+  background: hsl(var(--cx-base));
+}
+
+.cx-panel {
+  background: hsl(var(--cx-surface));
+}
+
+/* The reference's `.panel-head`: the face and the name, stacked and centred, with the
+ * whole head sitting above the first `.cx-field` hairline. Nothing else goes in here. */
+.cx-panel-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.75rem;
+  padding: 0.875rem 0 1.5rem;
+}
+
+/* `.panel-name`: the name is the panel's heading, so it is larger than body type and
+ * carries no "NAME" label above it. */
+.cx-panel-name {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+
+/* `.av.xl`: 64px, 21px initials. Stated here rather than with Tailwind utilities because
+ * `.cx-avatar` already sets `font-size` and would otherwise win or lose by source order
+ * depending on where Tailwind's layer lands. */
+.cx-panel-av {
+  width: 4rem;
+  height: 4rem;
+  font-size: 1.3125rem;
+}
+
+/* Conversation rows ---------------------------------------------------------
+ * The selected row gets an azure spine rather than a fill, so selection survives being
+ * next to an unread row without the two fighting. */
+.cx-row {
+  position: relative;
+  transition: background-color 120ms ease;
+}
+
+.cx-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color 140ms ease;
+}
+
+.cx-row:hover {
+  background: hsl(var(--cx-overlay) / 0.6);
+}
+
+.cx-row[aria-current="true"] {
+  background: hsl(var(--cx-overlay));
+}
+
+.cx-row[aria-current="true"]::before {
+  background: hsl(var(--cx-accent));
+}
+
+/* An unread conversation is waiting on us. The reference's `.unread` is a plain accent
+ * dot and it is never the only signal — the title goes bright too. */
+.cx-unread-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--cx-r-circle);
+  background: hsl(var(--cx-accent));
+  box-shadow: 0 0 0 3px hsl(var(--cx-accent) / 0.16);
+  flex: none;
+}
+
+/* The reference's `.av`: a disc with a white monogram, and A DIFFERENT HUE PER CONTACT —
+ * pink, teal, purple, green, grey. The seven pairs below are the mockup's own avatar
+ * colours (#E36A8C, #4FB3C9, #B98AE8, #3ECF8E, #8792A6, #DB6BB0, and the azure ramp it
+ * uses for the Main line), each with the darker partner its gradient ends on.
+ *
+ * WHY THE COLOURS LIVE HERE AND THE CHOICE LIVES IN JS: which hue a contact gets is data
+ * (a hash of their id — see avatarHueIndex in lib/format.ts, which emits `data-hue`), but
+ * WHAT each hue is is palette, and palette belongs in the theme where the light half can
+ * re-point it. The two halves cannot drift: AVATAR_HUE_COUNT is 7 and so is this list.
+ *
+ * These are decoration, not meaning — they carry no state, which is why they are not
+ * --cx-accent/--cx-live/--cx-flag and why nothing else on this screen may use them.
+ * The transparent border is kept so the disc keeps the same box as before. */
+.cx-avatar {
+  border-radius: var(--cx-r-circle);
+  --cx-av: 219.7 82.2% 64.7%;
+  --cx-av-2: 219.7 66.8% 57.5%;
+  background: linear-gradient(145deg, hsl(var(--cx-av)), hsl(var(--cx-av-2)));
+  border: 1px solid transparent;
+  color: hsl(var(--cx-on-acc));
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.cx-avatar[data-hue="0"] { --cx-av: 342.2 69.2% 65.3%; --cx-av-2: 342.6 46.9% 53.1%; } /* #E36A8C / #C24D70 */
+.cx-avatar[data-hue="1"] { --cx-av: 190.3 52.1% 54.9%; --cx-av-2: 190.6 53.9% 40.6%; } /* #4FB3C9 / #2F8A9E */
+.cx-avatar[data-hue="2"] { --cx-av: 270.5 65.5% 72.5%; --cx-av-2: 270.5 42.1% 57.5%; } /* #B98AE8 / #8E63C4 */
+.cx-avatar[data-hue="3"] { --cx-av: 153.1 60.2% 52.7%; --cx-av-2: 153.4 59.1% 41.0%; } /* #3ECF8E / #2BA873 */
+.cx-avatar[data-hue="4"] { --cx-av: 218.4 12.9% 61.0%; --cx-av-2: 218.6 13.7% 47.8%; } /* #8792A6 / #68738A */
+.cx-avatar[data-hue="5"] { --cx-av: 322.2 62.1% 63.5%; --cx-av-2: 322.3 40.7% 50.2%; } /* #DB6BB0 / #B44C8E */
+.cx-avatar[data-hue="6"] { --cx-av: 219.7 82.2% 64.7%; --cx-av-2: 219.7 66.8% 57.5%; } /* #5B8DEF / #4A7BDB */
+
+.cx-row[aria-current="true"] .cx-avatar {
+  border-color: hsl(var(--cx-accent) / 0.65);
+  color: hsl(var(--cx-on-acc));
+}
+
+/* The reference's `.brand-mark`: a disc on the accent ramp, NOT a flat fill. It takes the
+ * same 145deg gradient the avatars do, pointed at the two accent tokens so it follows the
+ * theme rather than restating a hex. */
+.cx-brand-mark {
+  border-radius: var(--cx-r-circle);
+  background: linear-gradient(145deg, hsl(var(--cx-accent)), hsl(var(--cx-accent-2)));
+  color: hsl(var(--cx-on-acc));
+}
+
+/* The reference's `.av` for the LINE rail, where the hue is USER DATA (`inbox.color`) and
+ * arrives as an inline custom property rather than from the palette. The gradient ends on
+ * that same hue mixed toward black, so the treatment matches the contact avatars while
+ * this rule still chooses no colour of its own. */
+.cx-line-avatar {
+  border-radius: var(--cx-r-circle);
+  background: linear-gradient(
+    145deg,
+    var(--cx-line-av, hsl(var(--cx-accent))),
+    color-mix(in srgb, var(--cx-line-av, hsl(var(--cx-accent))) 74%, #000)
+  );
+}
+
+/* Transcript ----------------------------------------------------------------
+ * Theirs sits on `overlay`, OURS is a solid azure fill — the reference's "azure send",
+ * the one place the accent is used at full strength. The tight radius and the clipped
+ * corner are the console's own and are left as they were; only the colour moved.
+ *
+ * `.cx-msg-out`'s label measures 3.23 on the fill. That is the reference's own
+ * `--on-acc` on `--accent` and it fails AA body text; see the header. */
+.cx-msg {
+  max-width: 34rem;
+  /* The reference's `.bubble`: 18px, generous, with the corner nearest the speaker
+   * clipped to 6px on the LAST bubble of a run — which is what makes a run of three read
+   * as one utterance rather than three separate ones. */
+  border-radius: var(--cx-r-lg);
+  padding: 0.6875rem 0.9375rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  border: 1px solid transparent;
+}
+
+.cx-msg-in {
+  background: hsl(var(--cx-overlay));
+  border-color: hsl(var(--cx-line));
+  color: hsl(var(--cx-text));
+}
+
+.cx-msg-in[data-run-end="true"] {
+  border-bottom-left-radius: var(--cx-r-tail);
+}
+
+.cx-msg-out {
+  background: hsl(var(--cx-accent));
+  border-color: hsl(var(--cx-accent));
+  color: hsl(var(--cx-on-acc));
+}
+
+.cx-msg-out[data-run-end="true"] {
+  border-bottom-right-radius: var(--cx-r-tail);
+}
+
+/* The reference's `.grp-who`: who said it, once per run, above the first bubble. */
+.cx-run-who {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: hsl(var(--cx-muted));
+  padding: 0 0.25rem;
+}
+
+/* The reference's `.callcard`: a full-width card on `overlay`, the arrow first and the
+ * play button pushed to the far end. A call belongs to neither side of the conversation,
+ * so it spans the thread rather than sitting under a speaker. */
+.cx-callcard {
+  width: 100%;
+  border-radius: var(--cx-r-md);
+  background: hsl(var(--cx-overlay));
+  color: hsl(var(--cx-text));
+  padding: 0.8125rem 1rem;
+}
+
+.console-surface .cx-play {
+  border-radius: var(--cx-r-pill);
+  background: hsl(var(--cx-lift));
+  color: hsl(var(--cx-subtle));
+  font-weight: 600;
+  transition: color 120ms ease;
+}
+
+.console-surface .cx-play:not(:disabled):hover {
+  color: hsl(var(--cx-text));
+}
+
+/* The reference's `.note`: an 11% flag wash inside a 26% flag edge. Yellow, not orange. */
+.cx-msg-note {
+  background: hsl(var(--cx-flag) / 0.11);
+  border-color: hsl(var(--cx-flag) / 0.26);
+  border-left-width: 2px;
+  color: hsl(var(--cx-subtle));
+}
+
+.cx-msg-fail {
+  border-color: hsl(var(--cx-danger) / 0.5);
+  background: hsl(var(--cx-danger) / 0.09);
+}
+
+/* The reference's `.m-when` is `--muted`, bare. Measured 3.90 on base: large-text AA,
+ * not body AA. Reproduced as specified — see the header. */
+.cx-meta {
+  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.5625rem;
+  letter-spacing: 0.02em;
+  color: hsl(var(--cx-muted));
+}
+
+/* The reference's `.day`: a CENTRED PILL, not a rule across the thread. The rule this
+ * replaces cut the conversation in half at every date; the pill sits in the flow and lets
+ * the messages run past it. `--muted` on `--overlay`, as specified. */
+.cx-daybreak {
+  align-self: center;
+  display: inline-block;
+  padding: 0.25rem 0.875rem;
+  border-radius: var(--cx-r-pill);
+  background: hsl(var(--cx-overlay));
+  color: hsl(var(--cx-muted));
+}
+
+/* Composer ------------------------------------------------------------------
+ * The reference puts the composer on the field and gives the BOX the raised surface and
+ * the hairline, so the plane the primary action sits on is the box, not the tray. */
+.cx-composer {
+  background: hsl(var(--cx-base));
+  border-top: 1px solid hsl(var(--cx-line));
+}
+
+.console-surface .cx-input {
+  background: hsl(var(--cx-surface));
+  border: 1px solid hsl(var(--cx-line));
+  border-radius: var(--cx-r-xs);
+  color: hsl(var(--cx-text));
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.console-surface .cx-input::placeholder {
+  color: hsl(var(--cx-muted));
+}
+
+/* The reference's `.composer-box:focus-within`: the edge takes the accent and a 4px
+ * accent wash sits outside it. */
+.console-surface .cx-input:focus,
+.console-surface .cx-input:focus-visible {
+  outline: none;
+  border-color: hsl(var(--cx-accent));
+  box-shadow: 0 0 0 4px hsl(var(--cx-accent) / 0.16);
+}
+
+/* Actions -------------------------------------------------------------------
+ * Two verbs matter on this screen and the reference gives them the two saturated hues:
+ * send a message (azure, the thing you do constantly) and place a call (green, the thing
+ * that opens a live line). BOTH labels are `--on-acc` in the reference and both fail AA
+ * on their own fill — 3.23 on azure, 2.00 on green. Reproduced as approved; see header. */
+.console-surface .cx-send {
+  background: linear-gradient(180deg, hsl(var(--cx-accent)), hsl(var(--cx-accent-2)));
+  color: hsl(var(--cx-on-acc));
+  border: 0;
+  font-weight: 600;
+  border-radius: var(--cx-r-pill);
+  transition: filter 140ms ease, box-shadow 140ms ease;
+}
+
+.console-surface .cx-send:not(:disabled):hover {
+  filter: brightness(1.07);
+  box-shadow: 0 8px 22px -14px hsl(var(--cx-accent));
+}
+
+.console-surface .cx-send:disabled {
+  opacity: 0.4;
+}
+
+.console-surface .cx-call {
+  color: hsl(var(--cx-on-acc));
+  border: 1px solid transparent;
+  background: hsl(var(--cx-live));
+  border-radius: var(--cx-r-pill);
+  font-weight: 600;
+  transition: filter 140ms ease;
+}
+
+.console-surface .cx-call:not(:disabled):hover {
+  filter: brightness(1.07);
+}
+
+/* Tabs and chips ------------------------------------------------------------ */
+.console-surface .cx-tab {
+  border-radius: var(--cx-r-xs);
+  color: hsl(var(--cx-muted));
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.console-surface .cx-tab:hover {
+  color: hsl(var(--cx-subtle));
+}
+
+.console-surface .cx-tab[aria-selected="true"],
+.console-surface .cx-tab[data-active="true"] {
+  background: hsl(var(--cx-overlay));
+  color: hsl(var(--cx-text));
+  box-shadow: inset 0 -2px 0 hsl(var(--cx-accent));
+}
+
+/* The reference's `.pill`: a filled chip on `overlay`, lifting to `lift` on hover. */
+.console-surface .cx-chip {
+  border-radius: var(--cx-r-pill);
+  background: hsl(var(--cx-overlay));
+  border: 1px solid hsl(var(--cx-line));
+  color: hsl(var(--cx-subtle));
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.console-surface .cx-chip:hover {
+  background: hsl(var(--cx-lift));
+  border-color: hsl(var(--cx-lift));
+  color: hsl(var(--cx-text));
+}
+
+.console-surface .cx-chip[aria-pressed="true"],
+.console-surface .cx-chip[data-active="true"] {
+  background: hsl(var(--cx-accent));
+  border-color: hsl(var(--cx-accent));
+  color: hsl(var(--cx-on-acc));
+}
+
+/* Empty state ---------------------------------------------------------------
+ * `--muted`, bare: 3.90 on base. The reference's own quiet-text value. */
+.cx-empty {
+  color: hsl(var(--cx-muted));
+}
+
+/* The reference's `.composer-box`: the field and its icon row share ONE rounded box which
+ * takes the focus ring as a whole, rather than a bare field with buttons floating around
+ * it. */
+.console-surface .cx-composer-box {
+  border-radius: var(--cx-r-lg);
+  background: hsl(var(--cx-surface));
+  border: 1px solid hsl(var(--cx-line));
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.console-surface .cx-composer-box:focus-within {
+  border-color: hsl(var(--cx-accent));
+  box-shadow: 0 0 0 4px hsl(var(--cx-accent) / 0.16);
+}
+
+/* The field inside that box has no edge of its own — the box is the edge. */
+.console-surface .cx-composer-box .cx-input {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.console-surface .cx-composer-box .cx-input:focus,
+.console-surface .cx-composer-box .cx-input:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+
+/* The reference's `.icon-btn`: a quiet square that fills on hover and stays filled while
+ * pressed. The list's call/message buttons and the composer's row wear it. */
+.console-surface .cx-icon-btn {
+  border-radius: var(--cx-r-xs);
+  color: hsl(var(--cx-subtle));
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.console-surface .cx-icon-btn:not(:disabled):hover {
+  background: hsl(var(--cx-overlay));
+  color: hsl(var(--cx-text));
+}
+
+.console-surface .cx-icon-btn[aria-pressed="true"],
+.console-surface .cx-icon-btn[aria-selected="true"] {
+  background: hsl(var(--cx-overlay));
+  color: hsl(var(--cx-text));
+}
+
+/* THE ONE BORROWED CONTROL. ThemeToggle's `.ex-theme` is shared with the landing page
+ * and the auth screens, whose design language is deliberately sharp - authTheme.css draws
+ * 2px, 3px and 4px corners throughout and that is not this file's to change. But the rail
+ * renders the same button, at 32px, which is exactly the reference's `.icon-btn`. Scoped
+ * to `.console-surface` so only the console's copy is rounded and the auth screens keep
+ * the shape they were signed off with. */
+.console-surface .ex-theme {
+  border-radius: var(--cx-r-xs);
+}
+
+/* The contact panel's `.f` / `.f-k` / `.f-v`: key on the left in `muted`, value on the
+ * right, a hairline above each row. */
+.cx-field {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.6875rem 0.125rem;
+  border-top: 1px solid hsl(var(--cx-line));
+}
+
+.cx-field-k {
+  width: 4.5rem;
+  flex: none;
+  font-size: 0.8125rem;
+  color: hsl(var(--cx-muted));
+}
+
+.cx-field-v {
+  margin-left: auto;
+  text-align: right;
+  font-size: 0.84375rem;
+  word-break: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-surface *,
+  .console-surface *::before,
+  .console-surface *::after {
+    transition-duration: 1ms !important;
+    animation: none !important;
+  }
+}

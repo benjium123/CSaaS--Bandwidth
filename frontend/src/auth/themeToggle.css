@@ -1,0 +1,46 @@
+/* The light/dark control, shared by the landing page and the auth screens.
+ *
+ * Deliberately NOT an `.ex-btn`: those are 2.75rem tall and carry a fill, and this must sit
+ * beside "Start" on the landing bar, or in the corner of an auth screen, without competing
+ * with the one control on the page that is meant to be pressed. A quiet square that gains
+ * the hairline on hover.
+ *
+ * Every value is a token, so it flips with the theme and needs no light-mode override.
+ */
+
+.ex-theme {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: none;
+  color: hsl(var(--ex-bone-dim));
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.ex-theme:hover {
+  color: hsl(var(--ex-bone));
+  border-color: hsl(var(--ex-copper-line));
+  background: hsl(var(--ex-ink-high) / 0.6);
+}
+
+.ex-theme:focus-visible {
+  outline: 2px solid hsl(var(--ex-verdigris));
+  outline-offset: 2px;
+}
+
+.ex-theme-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ex-theme {
+    transition: none;
+  }
+}

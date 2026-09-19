@@ -18,16 +18,23 @@ import {
 import { Button, Input } from "@/components/ui/primitives";
 import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { SlaChip } from "./SlaChip";
-import { formatPhone, relativeTime } from "@/lib/format";
+import { avatarHueIndex, formatPhone, initialsOf, relativeTime } from "@/lib/format";
+import { avatarSeedFor } from "./ConversationList";
 import { cn } from "@/lib/utils";
 
 export function ConversationHeader({
   conversation,
+  inboxName,
   canSend = true,
   onBack,
   className,
 }: {
   conversation: Conversation | null;
+  /** The name of the line this conversation arrived on ("Main line"), under the contact's
+   * number - the reference's `.thread-sub`. Our E.164 is shown when the caller has no name
+   * for it (an "All inboxes" scope, or an inbox the list has not loaded), which is the
+   * same fact in a less friendly form rather than a blank. */
+  inboxName?: string | null;
   /** F2: viewers (my_role "viewer") can see the conversation but not act on it - the
    * Call button is disabled for them, same gate as the Composer (F1). */
   canSend?: boolean;
@@ -193,14 +200,15 @@ export function ConversationHeader({
 
   if (!conversation) {
     return (
+      // Deliberately empty rather than a second "Select a conversation": with nothing
+      // chosen, the header, the timeline and the contact panel each said their own version
+      // of "nothing selected" - three messages answering one question. The timeline keeps
+      // the message because it owns the space the eye lands on; this keeps only the bar so
+      // the layout does not jump when a conversation is picked.
       <div
-        className={cn(
-          "flex h-14 items-center border-b border-border bg-background px-3 text-sm text-muted-foreground",
-          className,
-        )}
-      >
-        Select a conversation
-      </div>
+        className={cn("h-14 border-b border-border", className)}
+        aria-hidden="true"
+      />
     );
   }
 
@@ -238,9 +246,19 @@ export function ConversationHeader({
               <ArrowLeft className="h-4 w-4" />
             </Button>
           )}
+          {/* The reference's `.who`: the same disc, in the same hue, as the row the person
+              just clicked in the list - which is what makes the thread read as a
+              continuation of that row rather than a new screen. */}
+          <span
+            data-hue={avatarHueIndex(avatarSeedFor(conversation))}
+            aria-hidden="true"
+            className="cx-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+          >
+            {initialsOf(title)}
+          </span>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
+              <h2 className="truncate text-[0.9375rem] font-semibold text-foreground">{title}</h2>
               <Button
                 type="button"
                 variant="ghost"
@@ -263,7 +281,7 @@ export function ConversationHeader({
                 <Star
                   className={cn(
                     "h-3.5 w-3.5",
-                    conversation.important && "fill-amber-400 text-amber-400",
+                    conversation.important && "fill-[hsl(var(--cx-flag))] text-[hsl(var(--cx-flag))]",
                   )}
                 />
               </Button>
@@ -273,33 +291,47 @@ export function ConversationHeader({
                 for its pop-up menu, and a <div> inside a <p> is invalid HTML - the browser
                 closes the paragraph early and the layout breaks. OUR number is plain text:
                 you cannot text or call yourself. */}
-            <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+            {/* Both numbers in tabular mono: they are the two identifiers this whole
+                screen is about, and a proportional face makes them read as prose. */}
+            {/* nowrap + overflow-hidden: Martian Mono is a wide face, and at this column
+                width the two numbers plus "· via" wrapped onto a second line and pushed the
+                header taller. The contact's number keeps its full width; ours truncates. */}
+            <div className="cx-num flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden whitespace-nowrap text-[0.625rem] text-muted-foreground">
               <PhoneNumberMenu
                 e164={conversation.contact_e164}
                 fromE164={conversation.our_e164}
                 onText={focusComposer}
                 disabled={!canSend}
                 disabledReason="Read-only inbox — you can view but not call"
-                className="h-auto min-w-0 px-0 py-0 text-[11px] font-normal text-muted-foreground hover:text-foreground"
+                className="cx-num h-auto min-w-0 px-0 py-0 text-[0.625rem] font-normal text-muted-foreground hover:text-foreground"
               />
-              <span className="shrink-0">· via</span>
-              <span className="truncate">{formatPhone(conversation.our_e164)}</span>
+              {/* The reference's `.ln-dot` + line NAME: "Main line" is what an operator
+                  calls the line they are answering on; the E.164 is the fallback when the
+                  caller could not name it. */}
+              <span className="cx-line-dot h-1.5 w-1.5 shrink-0 rounded-full bg-[hsl(var(--cx-accent))]" aria-hidden="true" />
+              <span className="truncate">{inboxName || formatPhone(conversation.our_e164)}</span>
             </div>
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          {/* Calling is half of what this console is FOR, and it was a bare icon
+              indistinguishable from the four beside it. Now named, and in verdigris - the
+              colour this design reserves for a live line. The accessible name is unchanged
+              (`Call {title}` still comes from aria-label, and the glyph is decorative), so
+              nothing that finds this button by name is affected. */}
           <Button
             type="button"
             variant="ghost"
-            size="icon"
+            size="sm"
             onClick={startCall}
             disabled={!canSend}
             title={canSend ? undefined : "Read-only inbox — you can view but not call"}
             aria-label={`Call ${title}`}
-            className="text-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            className="cx-call gap-1.5 px-2.5 disabled:pointer-events-none disabled:opacity-40"
           >
-            <Phone className="h-4 w-4" />
+            <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="text-[0.6875rem] font-semibold">Call</span>
           </Button>
           <Button
             type="button"
@@ -337,7 +369,7 @@ export function ConversationHeader({
                 <Clock
                   className={cn(
                     "h-4 w-4",
-                    conversation.snoozed_until && "fill-amber-400 text-amber-400",
+                    conversation.snoozed_until && "fill-[hsl(var(--cx-flag))] text-[hsl(var(--cx-flag))]",
                   )}
                 />
               )}

@@ -172,7 +172,7 @@ export function OrgSecurityPolicyCard() {
   const onSaveSso = () => {
     setLastPatchError(null);
     setLastSubmittedBlock("sso");
-    const payload: SsoConfigIn = {};
+    const payload: SsoConfigIn = { protocol: "oidc" };
     if (ssoIssuer.trim()) payload.issuer = ssoIssuer.trim();
     if (ssoClientId.trim()) payload.client_id = ssoClientId.trim();
     if (ssoClientSecret.trim()) payload.client_secret = ssoClientSecret.trim();
@@ -386,7 +386,8 @@ export function OrgSecurityPolicyCard() {
 
             <p className="text-xs text-muted-foreground">
               Members of this email domain can only sign in through your identity
-              provider. Workspace owners can still sign in with a password so you
+              provider (OpenID Connect or SAML). This only applies once the domain is
+              verified. Workspace owners can still sign in with a password so you
               cannot lock yourself out.
             </p>
 
@@ -406,7 +407,9 @@ export function OrgSecurityPolicyCard() {
               Save single sign-on
             </Button>
 
-            {policy.sso?.issuer && policy.sso.client_secret_set && orgSlug ? (
+            {((policy.sso?.issuer && policy.sso.client_secret_set) ||
+              policy.sso?.protocol === "saml") &&
+            orgSlug ? (
               <div>
                 <a
                   className="text-sm underline"
