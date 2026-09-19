@@ -1,6 +1,8 @@
 import * as React from "react";
 import { DecisionPackCard, type DecisionPack } from "@/components/ops/DecisionPackCard";
 import { MonitoringTab } from "@/components/ops/MonitoringTab";
+import { AccountsTab } from "@/components/ops/AccountsTab";
+import { BillingTab } from "@/components/ops/BillingTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAuthedBlob } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
@@ -589,6 +591,8 @@ const TABS = [
   { id: "alerts", label: "Security alerts" },
   { id: "bans", label: "Ban list" },
   { id: "monitoring", label: "Monitoring" },
+  { id: "billing", label: "Billing" },
+  { id: "accounts", label: "Workspaces" },
   { id: "users", label: "Users" },
 ];
 
@@ -642,6 +646,8 @@ export function OpsPage() {
             {tab === "alerts" && <AlertsTab />}
             {tab === "bans" && <BanListTab />}
             {tab === "monitoring" && <MonitoringTab />}
+            {tab === "billing" && <BillingTab />}
+            {tab === "accounts" && <AccountsTab />}
             {tab === "users" && <UsersTab />}
           </TabPanel>
         </>
