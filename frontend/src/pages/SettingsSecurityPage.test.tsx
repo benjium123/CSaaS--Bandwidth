@@ -36,22 +36,23 @@ const ME_2FA_ON: Me = {
   email: "a@example.com",
   full_name: "A",
   memberships: [{ org_id: "org-1", org_name: "Org", org_slug: "org", role_name: "owner" }],
+  // Top-level, exactly where /auth/me puts it. An owner on their own security settings
+  // page: `settings:write` is what the contact-visibility radios gate on
+  // (SettingsSecurityPage.tsx canUpdateVisibility), `settings:read` is its read half.
+  // The 2FA panels on this page are per-user and not permission-gated at all.
+  permissions: ["settings:read", "settings:write"],
   totp_enabled: true,
 };
 
 const ME_2FA_OFF: Me = { ...ME_2FA_ON, totp_enabled: false };
 
+// An agent who can see the workspace but not change its settings. The list is top-level
+// because that is the only place the server ever sends it, and it must OVERRIDE the
+// owner list spread in from ME_2FA_ON - hence spelled out after the spread.
 const ME_NO_SETTINGS_WRITE: Me = {
   ...ME_2FA_ON,
-  memberships: [
-    {
-      org_id: "org-1",
-      org_name: "Org",
-      org_slug: "org",
-      role_name: "agent",
-      permissions: ["org:read"],
-    },
-  ],
+  memberships: [{ org_id: "org-1", org_name: "Org", org_slug: "org", role_name: "agent" }],
+  permissions: ["org:read", "settings:read"],
 };
 
 describe("SettingsSecurityPage", () => {

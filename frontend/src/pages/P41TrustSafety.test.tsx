@@ -17,6 +17,13 @@ const ME: Me = {
   email: "owner@acme.test",
   full_name: "Owner",
   memberships: [{ org_id: "org-1", org_name: "Acme", org_slug: "acme", role_name: "owner" }],
+  // Top-level, exactly where /auth/me puts it (MembershipOut carries no permissions).
+  // This is the workspace OWNER taking their own business through verification: reading
+  // the workspace (VerificationBanner only fetches /kyc/profile with `org:read`) and
+  // editing/submitting the application (VerifyBusinessPage's `editable` needs
+  // `org:update`). Deliberately NOT the owner's full 34-item list - nothing in this file
+  // exercises calls, contacts or members, and a blanket list would hide a gate regression.
+  permissions: ["org:read", "org:update"],
   totp_enabled: true,
   has_passkey: false,
   is_platform_operator: false,

@@ -217,3 +217,182 @@ describe("hasPermission", () => {
     expect(hasPermission(ME, "org-2", "numbers:write")).toBe(false);
   });
 });
+
+/**
+ * `me.permissions` is PER-ORG - the /auth/me handler computes it from the caller's role in
+ * the org named by the X-Org-Id header. selectOrg used to set the new org and clear the
+ * query cache without re-asking, so hasPermission() kept evaluating the PREVIOUS org's
+ * permission list against the new org: an admin in A who is an agent in B switched to B and
+ * was still shown role editing, member 2FA reset and data retention, each of which 403s.
+ */
+describe("selectOrg re-fetches /auth/me for the org it switched to", () => {
+  const A_ONLY = "roles:write"; // admin in org-1, not granted in org-2
+  const B_PERM = "calls:place"; // agent in org-2
+
+  /** Same memberships in both payloads; only the TOP-LEVEL permission list differs, which
+   * is exactly how the server behaves. No per-membership `permissions` key - the server has
+   * never sent one, and setting it here would make hasPermission read that instead, so the
+   * test would stop exercising the top-level list the bug is actually about. */
+  const ME_IN_A: Me = {
+    id: "u1",
+    email: "a@example.com",
+    full_name: "A",
+    permissions: [A_ONLY, "members:update", "org:read"],
+    memberships: [
+      { org_id: "org-1", org_name: "Org 1", org_slug: "org-1", role_name: "admin" },
+      { org_id: "org-2", org_name: "Org 2", org_slug: "org-2", role_name: "agent" },
+    ],
+  };
+  const ME_IN_B: Me = { ...ME_IN_A, permissions: [B_PERM, "org:read"] };
+
+  type Auth = ReturnType<typeof useAuth>;
+
+  function Probe2({ sink }: { sink: { current: Auth | null } }) {
+    const auth = useAuth();
+    sink.current = auth;
+    return <div data-testid="org">{auth.orgId ?? "none"}</div>;
+  }
+
+  /** Sequenced by CALL ORDER, not by the header, so the org-id assertions below stay
+   * independent of the payload: a stub that chose its answer from `client.auth.orgId` would
+   * hand the right permissions back even to an implementation that sent a stale header. */
+  function sequencedClient(payloads: (Me | Error)[]) {
+    const seenOrgIds: (string | null)[] = [];
+    let i = 0;
+    const client = makeStubClient({
+      "/api/v1/auth/me": () => {
+        // Sampled at REQUEST time - this is the value authHeaders() puts in X-Org-Id.
+        seenOrgIds.push(client.auth.orgId);
+        return payloads[Math.min(i++, payloads.length - 1)];
+      },
+    });
+    return { client, seenOrgIds };
+  }
+
+  async function renderSwitcher(client: ReturnType<typeof makeStubClient>) {
+    const sink: { current: Auth | null } = { current: null };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    await act(async () => {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider client={client}>
+            <Probe2 sink={sink} />
+          </AuthProvider>
+        </QueryClientProvider>,
+      );
+    });
+    return { sink, queryClient };
+  }
+
+  it("replaces the previous org's permissions with the new org's", async () => {
+    const { client } = sequencedClient([ME_IN_A, ME_IN_B]);
+    const { sink } = await renderSwitcher(client);
+
+    // Precondition: we are in org-1 and hold org-1's admin rights.
+    expect(sink.current!.orgId).toBe("org-1");
+    expect(hasPermission(sink.current!.me, "org-1", A_ONLY)).toBe(true);
+
+    await act(async () => {
+      await sink.current!.selectOrg("org-2");
+    });
+
+    expect(sink.current!.orgId).toBe("org-2");
+    // The whole point: A's admin permission must NOT survive the switch into B...
+    expect(hasPermission(sink.current!.me, "org-2", A_ONLY)).toBe(false);
+    // ...and B's own permission must be live, so this cannot pass by merely losing `me`.
+    expect(sink.current!.me).not.toBeNull();
+    expect(hasPermission(sink.current!.me, "org-2", B_PERM)).toBe(true);
+  });
+
+  /** Counting calls would not catch the real bug: a refetch issued with the PREVIOUS
+   * X-Org-Id reinstates exactly the stale permission list it was meant to replace. The
+   * client's `auth` object is not React state, so it is `api.setAuth({ orgId })` - not
+   * `setOrgId` - that has to happen first. This asserts the value the header is built from,
+   * sampled inside the stub at the moment the request is made. */
+  it("issues that /auth/me with the NEW org id in scope, not the old one", async () => {
+    const { client, seenOrgIds } = sequencedClient([ME_IN_A, ME_IN_B]);
+    const { sink } = await renderSwitcher(client);
+    expect(seenOrgIds).toEqual(["org-1"]);
+
+    await act(async () => {
+      await sink.current!.selectOrg("org-2");
+    });
+
+    expect(seenOrgIds).toEqual(["org-1", "org-2"]);
+    expect(client.calls.filter((c) => c.path === "/api/v1/auth/me")).toHaveLength(2);
+  });
+
+  /** The trap that kept this unfixed: `loadMe` closes over the PRE-switch orgId and uses it
+   * for its "still a member?" guard. Reusing it naively here would test org-1 against the
+   * fresh memberships and, finding it gone, null out the org-2 selection that had just been
+   * made - dumping the user back at the org picker on a legitimate switch. */
+  it("keeps the new org selected even when the org left behind is gone from memberships", async () => {
+    const withoutOrg1: Me = {
+      ...ME_IN_B,
+      memberships: [{ org_id: "org-2", org_name: "Org 2", org_slug: "org-2", role_name: "agent" }],
+    };
+    const { client } = sequencedClient([ME_IN_A, withoutOrg1]);
+    const { sink } = await renderSwitcher(client);
+
+    await act(async () => {
+      await sink.current!.selectOrg("org-2");
+    });
+
+    expect(sink.current!.orgId).toBe("org-2");
+    expect(client.auth.orgId).toBe("org-2");
+    expect(hasPermission(sink.current!.me, "org-2", B_PERM)).toBe(true);
+  });
+
+  /** Scope pin. selectOrg has never validated the org it is handed, and this fix did not
+   * start: if /auth/me comes back without the org that was selected, the selection STAYS
+   * (App.tsx is what drops an unknown orgId) - what must not happen is the gate answering
+   * yes off the previous org's list. hasPermission fails closed for a non-membership, so
+   * the affordance is denied without selectOrg having to take on org validation. */
+  it("leaves org validation alone, but still denies on the new org's own list", async () => {
+    const withoutOrg2: Me = {
+      ...ME_IN_A,
+      memberships: [{ org_id: "org-1", org_name: "Org 1", org_slug: "org-1", role_name: "admin" }],
+    };
+    const { client } = sequencedClient([ME_IN_A, withoutOrg2]);
+    const { sink } = await renderSwitcher(client);
+
+    await act(async () => {
+      await sink.current!.selectOrg("org-2");
+    });
+
+    expect(sink.current!.orgId).toBe("org-2");
+    expect(client.auth.orgId).toBe("org-2");
+    expect(hasPermission(sink.current!.me, "org-2", A_ONLY)).toBe(false);
+  });
+
+  /** P20 must not regress: the refetch is additive to the cache wipe, not a replacement. */
+  it("still clears every cached query on the switch", async () => {
+    const { client } = sequencedClient([ME_IN_A, ME_IN_B]);
+    const { sink, queryClient } = await renderSwitcher(client);
+    queryClient.setQueryData(["probe"], "secret-org-1-data");
+    expect(queryClient.getQueryData(["probe"])).toBe("secret-org-1-data");
+
+    await act(async () => {
+      await sink.current!.selectOrg("org-2");
+    });
+
+    expect(queryClient.getQueryData(["probe"])).toBeUndefined();
+  });
+
+  /** A failed refetch must not leave the old org's permissions readable under the new org.
+   * hasPermission fails closed on a null `me`, which is the safe direction. */
+  it("does not keep the old org's permissions when the refetch fails", async () => {
+    const { client } = sequencedClient([ME_IN_A, new Error("boom")]);
+    const { sink } = await renderSwitcher(client);
+    expect(hasPermission(sink.current!.me, "org-1", A_ONLY)).toBe(true);
+
+    await act(async () => {
+      await sink.current!.selectOrg("org-2");
+    });
+
+    expect(sink.current!.me).toBeNull();
+    expect(hasPermission(sink.current!.me, "org-2", A_ONLY)).toBe(false);
+  });
+});

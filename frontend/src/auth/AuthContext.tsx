@@ -123,7 +123,9 @@ type AuthValue = {
   recoverWithCode(pendingToken: string, code: string): Promise<LoginResult>;
   refreshMe(): Promise<Me | null>;
   completeSso(accessToken: string | null, orgId: string): Promise<LoginResult>;
-  selectOrg(orgId: string): void;
+  /** Resolves once the post-switch /auth/me (with the NEW X-Org-Id) has landed. Call sites
+   * that just want to switch can keep ignoring the promise; tests await it. */
+  selectOrg(orgId: string): Promise<void>;
   logout(): void;
 };
 
@@ -319,11 +321,52 @@ export function AuthProvider({
     [api, loadMe, logout, queryClient],
   );
 
+  // `me.permissions` is PER-ORG: the /auth/me handler computes it from the caller's role in
+  // the org named by the X-Org-Id header. Switching the org without re-asking therefore left
+  // `me.permissions` describing the PREVIOUS workspace, and hasPermission() - which now
+  // genuinely reads that list instead of returning true for everything - evaluated the old
+  // org's rights against the new one until something else happened to reload `me`. An admin
+  // in A who is only an agent in B would switch to B and still be shown role editing, member
+  // 2FA reset and data retention, each of which 403s on click. completeSso already did the
+  // right thing (it calls loadMe); this was the one org-setting path that did not.
   const selectOrg = React.useCallback(
-    (next: string) => {
+    (next: string): Promise<void> => {
+      // ORDERING IS THE FIX. api.setAuth mutates the client's `auth` object SYNCHRONOUSLY
+      // (api/client.ts setAuth), and authHeaders reads `api.auth.orgId` at REQUEST time
+      // (api/client.ts:86) - it is not React state and does not wait for a re-render. So
+      // every request issued after this line, including the /auth/me below, carries
+      // `X-Org-Id: next`. Sequencing off `setOrgId` instead would race: React state updates
+      // are async, and the refetch would reinstate exactly the stale permissions it exists
+      // to replace.
       api.setAuth({ orgId: next });
       setOrgId(next);
       queryClient.clear();
+      // Deliberately NOT loadMe(): that callback closes over the PRE-switch `orgId` and uses
+      // it for its "is my selected org still one of my memberships?" guard. On a switch that
+      // guard would test the org we just LEFT against the fresh memberships and, if the
+      // person had been removed from it, null out the org-2 selection that was just made -
+      // dumping them back at the org picker on a legitimate switch. So this refreshes `me`
+      // and nothing else.
+      //
+      // The guard is not re-stated against `next` either, deliberately: selectOrg has never
+      // validated the org it is given (App.tsx drops an orgId that is not in the memberships,
+      // and hasPermission fails closed for a non-membership), and widening this fix to add
+      // that would be a second, unrelated behaviour change on the softphone's org-switch
+      // teardown path. This is about `me` only.
+      //
+      // No loading flag on purpose: the whole app must not blank out on every org switch.
+      // `me` keeps its previous value for the one round trip, which is the pre-existing
+      // behaviour; clearing the query cache above already handles everything else.
+      return (async () => {
+        try {
+          setMe(await api.request<Me>("/api/v1/auth/me"));
+        } catch {
+          // Same direction as loadMe: an unanswerable /auth/me is "we do not know", and
+          // hasPermission fails closed on a null `me`. Keeping the PREVIOUS org's list here
+          // would be the original bug, so dropping it is the only safe option.
+          setMe(null);
+        }
+      })();
     },
     [api, queryClient],
   );

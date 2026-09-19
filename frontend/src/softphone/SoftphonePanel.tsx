@@ -152,8 +152,12 @@ export function SoftphonePanel() {
   const answerButtonRef = React.useRef<HTMLButtonElement>(null);
 
   const activeNumbers = React.useMemo(() => (numbers ?? []).filter((n) => n.is_active), [numbers]);
-  // Item 5: undefined `permissions` (backend hasn't rolled them out for this membership
-  // yet) fails OPEN - only an explicit, present, and missing "calls:place" disables this.
+  // This gate now fails CLOSED, and the comment that used to sit here was describing a
+  // world that never existed. It said an undefined `permissions` meant "the backend has not
+  // rolled them out for this membership yet" and so must fail OPEN. The backend has never
+  // sent `permissions` on a membership - it sends the list top-level on /auth/me - so that
+  // branch was unconditional and this button rendered for every member of the org, then
+  // 403'd on click. See the note on hasPermission in auth/AuthContext.tsx.
   const canPlaceCalls = hasPermission(me, orgId, "calls:place");
 
   useRingTone(softphone.incoming.length > 0, ringtoneMuted);

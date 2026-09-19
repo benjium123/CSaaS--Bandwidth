@@ -113,6 +113,13 @@ const ME = {
   email: "u@example.com",
   full_name: "U Ser",
   memberships: [{ org_id: "org-1", org_name: "Org", org_slug: "org", role_name: "owner" }],
+  // Top-level, exactly where /auth/me puts it. Someone actually using the softphone:
+  // `calls:place` is the gate on the Call and Answer buttons (SoftphonePanel.tsx
+  // canPlaceCalls), `calls:read` for the call detail the panel loads, `contacts:read`
+  // for the dialled contact. No settings/members/compliance strings - nothing here
+  // touches those, and a blanket owner list would also weaken the negative test below
+  // that asserts a missing "calls:place" disables Call.
+  permissions: ["calls:place", "calls:read", "contacts:read"],
 };
 
 const NEW_CALL_DETAIL = {
@@ -417,14 +424,11 @@ describe("SoftphonePanel", () => {
       email: "u@example.com",
       full_name: "U Ser",
       memberships: [
-        {
-          org_id: "org-1",
-          org_name: "Org",
-          org_slug: "org",
-          role_name: "agent",
-          permissions: ["contacts:read"],
-        },
+        { org_id: "org-1", org_name: "Org", org_slug: "org", role_name: "agent" },
       ],
+      // Top-level (the real /auth/me shape): a list that is PRESENT but simply lacks
+      // "calls:place" - a different case from no list at all, which fails closed.
+      permissions: ["contacts:read", "calls:read"],
     };
     const client = makeStubClient({
       "/api/v1/auth/me": meWithoutCallPermission,
