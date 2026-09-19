@@ -47,6 +47,16 @@
   --ex-bone: 197 34% 11%;
   --ex-bone-dim: 197 14% 34%;
   --ex-copper: 24 68% 36%;
+  /* SOFT IS DARKER THAN BASE HERE. That is not a transposition and it is the one line in
+   * this file that looks like a mistake, so: `--ex-copper-soft` is the copper that can
+   * carry small text, and carrying small text means moving AWAY from the field. On ink the
+   * field is dark, so authTheme.css raises it to 47% - above its own 52% base's usable
+   * floor - after 40% measured 3.64 and failed AA. On paper the field is light, so the same
+   * requirement sends it the other way, to 32% against a 36% base. Both tokens mean the
+   * identical thing; the field moved, so the direction moved with it.
+   *
+   * 32% measures 6.5 on the paper field. "Correcting" it upward to sit above --ex-copper
+   * reintroduces, on light, the exact failure the 47% value exists to prevent on dark. */
   --ex-copper-soft: 24 62% 32%;
   --ex-copper-line: 24 30% 70%;
   --ex-verdigris: 168 72% 26%;
