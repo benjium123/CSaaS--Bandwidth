@@ -13,6 +13,7 @@ import {
   Pill,
   mutationErrorMessage,
 } from "@/components/ui/primitives";
+import { InitialsAvatar } from "@/components/ui/consoleChrome";
 
 /** P43: an owner's current home address and the recent document that proves it. The AI
  * reads the upload within seconds and says here whether it was accepted, and why not. */
@@ -111,18 +112,23 @@ export function OwnerResidence({
   }, [reviewing]);
 
   return (
-    <div className="space-y-2 rounded-md bg-muted/40 p-3">
-      <p className="text-xs font-medium">
-        Where {person.is_you ? "you live" : `${person.full_name} lives`} now
-      </p>
-      <p className="text-xs text-muted-foreground">
+    <div className="space-y-[11px] rounded-[var(--cx-r-md,14px)] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px]">
+      {/* A KYC person is a person, so the block leads with their face. The avatar is
+          decorative — the name is right beside it in the heading it already had. */}
+      <div className="flex items-center gap-[11px]">
+        <InitialsAvatar name={person.full_name} seed={person.id} size="md" />
+        <p className="min-w-0 text-[13.5px] font-semibold text-[hsl(var(--cx-text))]">
+          Where {person.is_you ? "you live" : `${person.full_name} lives`} now
+        </p>
+      </div>
+      <p className="text-[12.5px] text-[hsl(var(--cx-muted))]">
         Your ID's address can be out of date, so we ask for your current home
         address and a recent document that shows it: a utility bill, bank or
         card statement, government or tax letter, or lease, dated in the last 90
         days.
       </p>
       {current && !editing ? (
-        <div className="flex flex-wrap items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-[11px] text-[13.5px]">
           <span>{formatAddress(current)}</span>
           {editable && (
             <Button
@@ -137,7 +143,7 @@ export function OwnerResidence({
         </div>
       ) : editable ? (
         <form
-          className="grid gap-2 sm:grid-cols-2"
+          className="grid gap-[11px] sm:grid-cols-2"
           onSubmit={(e) => {
             e.preventDefault();
             save.mutate(undefined, { onSuccess: () => setEditing(false) });
@@ -189,15 +195,15 @@ export function OwnerResidence({
           </Button>
         </form>
       ) : (
-        <p className="text-xs text-muted-foreground">No address yet.</p>
+        <p className="text-[12.5px] text-[hsl(var(--cx-muted))]">No address yet.</p>
       )}
 
       {proofs.length > 0 && (
-        <ul className="space-y-1">
+        <ul className="space-y-[9px]">
           {proofs.map((d) => (
             <li
               key={d.id}
-              className="flex flex-wrap items-start justify-between gap-2 text-sm"
+              className="flex flex-wrap items-start justify-between gap-[11px] rounded-[var(--cx-r-sm,12px)] bg-[hsl(var(--cx-surface))] px-[11px] py-[9px] text-[13.5px]"
             >
               <span className="truncate">{d.filename}</span>
               <DocumentReview doc={d} />
@@ -217,7 +223,7 @@ export function OwnerResidence({
         </ul>
       )}
       {editable && current && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-[11px]">
           <Input
             aria-label={`Proof of address for ${person.full_name}`}
             type="file"

@@ -18,16 +18,23 @@ import {
 import { Button, Input } from "@/components/ui/primitives";
 import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { SlaChip } from "./SlaChip";
-import { formatPhone, relativeTime } from "@/lib/format";
+import { avatarHueIndex, formatPhone, initialsOf, relativeTime } from "@/lib/format";
+import { avatarSeedFor } from "./ConversationList";
 import { cn } from "@/lib/utils";
 
 export function ConversationHeader({
   conversation,
+  inboxName,
   canSend = true,
   onBack,
   className,
 }: {
   conversation: Conversation | null;
+  /** The name of the line this conversation arrived on ("Main line"), under the contact's
+   * number - the reference's `.thread-sub`. Our E.164 is shown when the caller has no name
+   * for it (an "All inboxes" scope, or an inbox the list has not loaded), which is the
+   * same fact in a less friendly form rather than a blank. */
+  inboxName?: string | null;
   /** F2: viewers (my_role "viewer") can see the conversation but not act on it - the
    * Call button is disabled for them, same gate as the Composer (F1). */
   canSend?: boolean;
@@ -239,9 +246,19 @@ export function ConversationHeader({
               <ArrowLeft className="h-4 w-4" />
             </Button>
           )}
+          {/* The reference's `.who`: the same disc, in the same hue, as the row the person
+              just clicked in the list - which is what makes the thread read as a
+              continuation of that row rather than a new screen. */}
+          <span
+            data-hue={avatarHueIndex(avatarSeedFor(conversation))}
+            aria-hidden="true"
+            className="cx-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+          >
+            {initialsOf(title)}
+          </span>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
+              <h2 className="truncate text-[0.9375rem] font-semibold text-foreground">{title}</h2>
               <Button
                 type="button"
                 variant="ghost"
@@ -264,7 +281,7 @@ export function ConversationHeader({
                 <Star
                   className={cn(
                     "h-3.5 w-3.5",
-                    conversation.important && "fill-amber-400 text-amber-400",
+                    conversation.important && "fill-[hsl(var(--cx-flag))] text-[hsl(var(--cx-flag))]",
                   )}
                 />
               </Button>
@@ -288,8 +305,11 @@ export function ConversationHeader({
                 disabledReason="Read-only inbox — you can view but not call"
                 className="cx-num h-auto min-w-0 px-0 py-0 text-[0.625rem] font-normal text-muted-foreground hover:text-foreground"
               />
-              <span className="shrink-0">· via</span>
-              <span className="truncate">{formatPhone(conversation.our_e164)}</span>
+              {/* The reference's `.ln-dot` + line NAME: "Main line" is what an operator
+                  calls the line they are answering on; the E.164 is the fallback when the
+                  caller could not name it. */}
+              <span className="cx-line-dot h-1.5 w-1.5 shrink-0 rounded-full bg-[hsl(var(--cx-accent))]" aria-hidden="true" />
+              <span className="truncate">{inboxName || formatPhone(conversation.our_e164)}</span>
             </div>
           </div>
         </div>
@@ -349,7 +369,7 @@ export function ConversationHeader({
                 <Clock
                   className={cn(
                     "h-4 w-4",
-                    conversation.snoozed_until && "fill-amber-400 text-amber-400",
+                    conversation.snoozed_until && "fill-[hsl(var(--cx-flag))] text-[hsl(var(--cx-flag))]",
                   )}
                 />
               )}

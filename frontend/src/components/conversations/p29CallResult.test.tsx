@@ -114,7 +114,7 @@ describe("P29 timeline call result", () => {
     const client = makeStubClient(routes([humanCall({ status: "bridged" })]));
     renderTimeline(client);
 
-    expect(await screen.findByText("You called")).toBeInTheDocument();
+    expect(await screen.findByText("You called · 0:42")).toBeInTheDocument();
     // Give any stray query a chance to fire before asserting it did not.
     await waitFor(() => expect(client.calls.some((c) => c.path.startsWith(TIMELINE))).toBe(true));
     expect(client.calls.some((c) => c.path.startsWith("/api/v1/calls?"))).toBe(false);

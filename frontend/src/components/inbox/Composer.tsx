@@ -1,4 +1,5 @@
 import * as React from "react";
+import { ArrowRight, Clock, MessageSquare, Paperclip, StickyNote } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
 import { estimateSmsSegments } from "@/lib/format";
@@ -432,45 +433,13 @@ export function Composer({
       className={cn(
         "space-y-2 p-3",
         mode === "note"
-          ? "rounded-md border border-amber-500/40 bg-amber-500/10"
+          // Note mode wears the reference's `.note` colouring: --cx-flag, yellow, not orange.
+          ? "rounded-md border border-[hsl(var(--cx-flag)/0.4)] bg-[hsl(var(--cx-flag)/0.1)]"
           // The composer is the primary action on the primary screen and used to be a
           // hairline away from being part of the timeline. It now sits on its own plane.
           : "cx-composer",
       )}
     >
-      <div role="tablist" aria-label="Message type" className="flex gap-2">
-        <Button
-          type="button"
-          role="tab"
-          aria-selected={mode === "reply"}
-          onClick={() => selectMode("reply")}
-          variant={mode === "reply" ? "default" : "ghost"}
-          size="sm"
-        >
-          Reply
-        </Button>
-        <Button
-          type="button"
-          role="tab"
-          aria-selected={mode === "note"}
-          // A read-only grantee cannot post a note either (the server wants inbox:send),
-          // so the tab is off rather than opening onto a field that cannot be submitted.
-          disabled={noteTabDisabled || disabled}
-          title={
-            noteTabDisabled
-              ? "This conversation has no messages yet - there is nothing to note on"
-              : disabled
-                ? "Read-only inbox — you can view but not post notes"
-                : undefined
-          }
-          onClick={() => selectMode("note")}
-          variant={mode === "note" ? "default" : "ghost"}
-          size="sm"
-        >
-          Note
-        </Button>
-      </div>
-
       {needsReassign && mode === "reply" && (
         <div
           role="alert"
@@ -502,40 +471,17 @@ export function Composer({
 
       {mode === "reply" && (
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept={ALLOWED_MEDIA_TYPES.join(",")}
-              // A DIFFERENT label from the button that clicks it: two controls sharing one
-              // accessible name is ambiguous to a screen reader and to getByLabelText.
-              aria-label="Choose files to attach"
-              className="hidden"
-              onChange={handleFiles}
-            />
-            <Button
-              type="button"
-              aria-label="Attach a file"
-              variant="ghost"
-              size="sm"
-              disabled={disabled || busy || uploading}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              Attach
-            </Button>
-            <Button
-              type="button"
-              aria-label="Send later"
-              variant="ghost"
-              size="sm"
-              disabled={disabled || busy || uploading}
-              onClick={() => setScheduleOpen((open) => !open)}
-            >
-              Send later
-            </Button>
-            <span className="text-xs text-muted-foreground">{attachmentLimitSentence()}</span>
-          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={ALLOWED_MEDIA_TYPES.join(",")}
+            // A DIFFERENT label from the button that clicks it: two controls sharing one
+            // accessible name is ambiguous to a screen reader and to getByLabelText.
+            aria-label="Choose files to attach"
+            className="hidden"
+            onChange={handleFiles}
+          />
 
           {scheduleOpen && (
             <div className="space-y-2 rounded-md border border-border bg-background p-2">
@@ -598,6 +544,14 @@ export function Composer({
             </label>
           )}
 
+          {/* The limit is a constraint on the attach button, so it is stated where that
+              button is - as its tooltip - and repeated in full ONLY once there is
+              something attached to measure against it. A permanent line of small print
+              under the composer is what the reference is free of. */}
+          {attachments.length > 0 && (
+            <p className="text-xs text-muted-foreground">{attachmentLimitSentence()}</p>
+          )}
+
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {attachments.map((attachment) => (
@@ -626,7 +580,6 @@ export function Composer({
       )}
 
       <form
-        className="flex items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           if (mode === "note") {
@@ -636,14 +589,16 @@ export function Composer({
           }
         }}
       >
-        <div className="flex-1 space-y-1">
+        {/* The reference's `.composer-box`: field on top, a row of small icon buttons and
+            the send button underneath, all inside one box that takes the focus ring. */}
+        <div className="cx-composer-box space-y-1 px-4 py-3">
           <textarea
             ref={textareaRef}
             aria-label={mode === "note" ? "Note" : "Message"}
             placeholder={
               mode === "note"
                 ? "Write a private note. Type @ to mention a teammate."
-                : "Type a message"
+                : "Write a message…"
             }
             value={body}
             disabled={disabled || busy || noteMutation.isPending}
@@ -654,18 +609,8 @@ export function Composer({
               if (e.key.startsWith("Arrow")) syncCaret(e);
             }}
             onKeyDown={handleTextareaKeyDown}
-            className="cx-input flex max-h-40 min-h-9 w-full resize-y px-3 py-2 text-sm placeholder:text-muted-foreground"
+            className="cx-input flex max-h-40 min-h-9 w-full resize-y px-0 py-1 text-sm placeholder:text-muted-foreground"
           />
-
-          {/* Reply mode only: a note is never sent anywhere, so a segment count under it
-              would be answering a question nobody asked - and one that costs money in
-              every other place it appears. */}
-          {mode === "reply" && (
-            <p className="cx-num text-[0.625rem] text-muted-foreground">
-              {segments.units} char{segments.units === 1 ? "" : "s"} · {segments.encoding} ·{" "}
-              {segments.segments} segment{segments.segments === 1 ? "" : "s"}
-            </p>
-          )}
 
           {mode === "note" && mentionListVisible && (
             <div
@@ -734,15 +679,95 @@ export function Composer({
               )}
             </div>
           )}
-        </div>
+          {/* The reference's `.composer-row`: small icon buttons, the segment count, and
+              the send button at the far end. Every one of these was a text button or a
+              text tab before; not one capability has left. */}
+          <div className="flex items-center gap-1 pt-1">
+            <div role="tablist" aria-label="Message type" className="flex items-center gap-1">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "reply"}
+                aria-label="Reply"
+                title="Reply"
+                onClick={() => selectMode("reply")}
+                className="cx-icon-btn grid h-8 w-8 place-items-center"
+              >
+                <MessageSquare className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "note"}
+                aria-label="Internal note"
+                // A read-only grantee cannot post a note either (the server wants
+                // inbox:send), so the control is off rather than opening onto a field
+                // that cannot be submitted.
+                disabled={noteTabDisabled || disabled}
+                title={
+                  noteTabDisabled
+                    ? "This conversation has no messages yet - there is nothing to note on"
+                    : disabled
+                      ? "Read-only inbox — you can view but not post notes"
+                      : "Internal note"
+                }
+                onClick={() => selectMode("note")}
+                className="cx-icon-btn grid h-8 w-8 place-items-center disabled:pointer-events-none disabled:opacity-40"
+              >
+                <StickyNote className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
 
-        <Button
-          type="submit"
-          className="cx-send"
-          disabled={disabled || busy || noteMutation.isPending || uploading || !body.trim()}
-        >
-          {mode === "note" ? "Post note" : scheduledLocal ? "Schedule" : "Send"}
-        </Button>
+            {/* Attaching and scheduling apply to a message, never to a note - a note is
+                not sent anywhere and has nothing to attach to. */}
+            {mode === "reply" && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Attach a file"
+                  title={attachmentLimitSentence()}
+                  disabled={disabled || busy || uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="cx-icon-btn grid h-8 w-8 place-items-center disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <Paperclip className="h-4 w-4" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Send later"
+                  title="Send later"
+                  aria-expanded={scheduleOpen}
+                  disabled={disabled || busy || uploading}
+                  onClick={() => setScheduleOpen((open) => !open)}
+                  className="cx-icon-btn grid h-8 w-8 place-items-center disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <Clock className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </>
+            )}
+
+            {/* Reply mode only: a note is never sent anywhere, so a segment count under it
+                would be answering a question nobody asked - and one that costs money in
+                every other place it appears. */}
+            {mode === "reply" && (
+              <span className="cx-num ml-2 text-[0.625rem] text-muted-foreground">
+                {segments.units} char{segments.units === 1 ? "" : "s"} · {segments.encoding} ·{" "}
+                {segments.segments} segment{segments.segments === 1 ? "" : "s"}
+              </span>
+            )}
+
+            <Button
+              type="submit"
+              className="cx-send ml-auto gap-2 rounded-full px-4"
+              disabled={disabled || busy || noteMutation.isPending || uploading || !body.trim()}
+            >
+              {mode === "note" ? "Post note" : scheduledLocal ? "Schedule" : "Send"}
+              {mode === "reply" && !scheduledLocal && (
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+            </Button>
+          </div>
+        </div>
       </form>
     </div>
   );

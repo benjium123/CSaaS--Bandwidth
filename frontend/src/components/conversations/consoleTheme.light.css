@@ -1,0 +1,129 @@
+/**
+ * The console's working surfaces — the unified inbox — in daylight.
+ *
+ * WHY THIS IS A SEPARATE FILE AND NOT AN EDIT TO consoleTheme.css
+ * Everything here is additive: one extra class on the surface wrapper turns the light
+ * theme on, and with `is-light` absent not a single rule in this file matches. Deleting
+ * this file restores the dark product exactly.
+ *
+ * WHY IT IS NOW SHORT.
+ * It used to be four hundred lines of hand-written overrides, because the dark file was
+ * full of literal `hsl(...)` values chosen for a dark field — a near-black rail, a
+ * soot-coloured upward shadow, a verdigris bloom used as a focus ring. consoleTheme.css
+ * has since been rewritten so that EVERY rule in it resolves through a `--cx-*` token and
+ * not one rule states a literal colour. That means the whole light theme is the palette
+ * swap below and nothing else: re-point fourteen values and every column, bubble, chip,
+ * button and hairline follows. If you find yourself adding a rule here, check first
+ * whether the dark file has grown a literal that should be a token instead.
+ *
+ * THE PALETTE IS NOT INVENTED HERE EITHER. It is `:root[data-theme="light"]` from
+ * docs/design/console-reference.html, converted hex → HSL. No orange, in either theme.
+ *
+ * SPECIFICITY
+ * The console token block uses `.console-surface.console-surface.is-light` (0,3,0) to beat
+ * consoleTheme.css's own doubled `.console-surface.console-surface` (0,2,0). Do not "tidy"
+ * these down to fewer classes.
+ *
+ * CONTRAST, MEASURED, AND THE FAILURES INHERITED FROM THE APPROVED DESIGN.
+ * On `--cx-base` (#FFFFFF): text 17.79, subtle 6.75, accent 4.25 — text and subtle clear
+ * AA body. FIVE PAIRS IN THE REFERENCE DO NOT, and they are reproduced unchanged rather
+ * than quietly "fixed":
+ *   muted on base      3.26  — fails 4.5 body, passes 3:1 large. `.cx-meta`, `.cx-empty`
+ *   live on base       3.01  — fails 4.5 body, passes 3:1 large
+ *   flag on base       3.13  — fails 4.5 body, passes 3:1 large
+ *   on-acc on accent   4.25  — white on azure, just under 4.5. `.cx-send`, `.cx-msg-out`
+ *   on-acc on live     3.01  — white on green. Fails body, passes large. `.cx-call`
+ * `--cx-line` measures 1.22 on base, below the 3:1 floor for a non-text rule; that is the
+ * reference's own border colour. Flagged, not changed.
+ */
+
+/* Palette ---------------------------------------------------------------------
+ * The reference's LIGHT set, hex → HSL, one decimal. Every triplet round-trips back to
+ * its exact hex. The `--ex-*` aliases and the eight shadcn tokens are declared in
+ * consoleTheme.css as `var(--cx-*)`, so they follow these fourteen values for free and
+ * are deliberately NOT restated. */
+.console-surface.console-surface.is-light {
+  --cx-base: 0 0% 100%;             /* #FFFFFF */
+  --cx-surface: 220 23.1% 97.5%;    /* #F7F8FA */
+  --cx-overlay: 214.3 24.1% 94.3%;  /* #EDF0F4 */
+  --cx-lift: 215 25% 90.6%;         /* #E1E6ED */
+  --cx-text: 217.5 16% 9.8%;        /* #15181D */
+  --cx-subtle: 217.1 11.1% 37.1%;   /* #545C69 */
+  --cx-muted: 217.1 9.6% 57.1%;     /* #878F9C */
+  --cx-line: 216 23.8% 91.8%;       /* #E5E9EF */
+  --cx-accent: 219.5 79% 57.1%;     /* #3B76E8 */
+  --cx-accent-2: 219.9 63.2% 49%;   /* #2E63CC */
+  --cx-on-acc: 0 0% 100%;           /* #FFFFFF */
+  --cx-live: 161.7 83.7% 36.1%;     /* #0FA97A */
+  --cx-flag: 42.7 78.7% 40.6%;      /* #B98A16 */
+  --cx-shadow: 0 10px 30px -18px rgba(21, 24, 29, 0.22);
+  /* Not in the reference; the console's own red, taken down to a weight that carries on
+   * paper. 5.6 on the field. */
+  --cx-danger: 6 68% 42%;
+
+  /* Native scrollbars, the caret and date pickers read `color-scheme`, not the palette.
+   * Without this they stay dark chrome on a white page. */
+  color-scheme: light;
+}
+
+/* The shell -------------------------------------------------------------------
+ * THE LEAST OBVIOUS THING IN THIS FILE, so it keeps the long comment.
+ *
+ * Most of the console chrome never carries `console-surface`. The sidebar rail, the mobile
+ * tab bar, SettingsPage, NumbersPage, InboxSettingsPage and the command palette carry only
+ * `dark`, and read the eight shadcn tokens `.dark` sets in src/index.css. Swapping that
+ * `dark` for `is-light` would otherwise drop those panes onto the generic white/slate
+ * `:root` defaults — a SECOND light palette that has nothing to do with the one the rest
+ * of the console is drawn in. This block is what stops that: the same eight tokens, as
+ * literals because nothing outside `.console-surface` has a `--cx-*` to read.
+ *
+ * THE SINGLE CLASS IS INTENTIONAL AND IS A SPECIFICITY FLOOR, NOT AN OVERSIGHT. At (0,1,0)
+ * it must lose to BOTH `.console-surface.console-surface.is-light` (0,3,0) above — whose
+ * values are identical, so nothing moves on an element carrying both — AND to
+ * `.auth-surface.auth-surface` / `.auth-surface.auth-surface.is-light` (0,2,0 / 0,3,0) in
+ * the auth stylesheets, so that an `auth-surface is-light` wrapper such as StepUpDialog's
+ * keeps the Exchange auth palette while this block only fills in the tokens nobody else
+ * defined. Raising it to two classes breaks that. Do not. */
+.is-light {
+  --background: 0 0% 100%;          /* base    #FFFFFF */
+  --foreground: 217.5 16% 9.8%;     /* text    #15181D */
+  --muted: 214.3 24.1% 94.3%;       /* overlay #EDF0F4 */
+  --muted-foreground: 217.1 11.1% 37.1%; /* subtle #545C69 */
+  --border: 216 23.8% 91.8%;        /* line    #E5E9EF */
+  --primary: 219.5 79% 57.1%;       /* accent  #3B76E8 */
+  --primary-foreground: 0 0% 100%;  /* on-acc  #FFFFFF */
+  --destructive: 6 68% 42%;
+  color-scheme: light;
+}
+
+/* THE ONE SET OF LITERALS THE DARK FILE IS ALLOWED TO KEEP, and why nothing here
+ * overrides them: `.cx-avatar[data-hue="0".."6"]` states seven hex-derived pairs. They are
+ * not palette - they are the reference's own per-contact avatar colours, and the mockup
+ * draws the identical seven in BOTH themes (they are inline styles on `.av`, outside its
+ * `:root[data-theme]` blocks). Re-pointing them here would mean a contact changed colour
+ * when the lights came on, which defeats the only thing the colour is for. They are
+ * mid-tone by construction, so white initials carry on all seven in daylight too; each is
+ * measured at 2.6-3.6 on white-on-fill, which is the same large-text-only footing as the
+ * reference's own `--on-acc` on `--accent`, and the initials are 13-21px semibold. */
+
+/* RADIUS IS NOT RESTATED HERE, and that is deliberate ---------------------------
+ * consoleTheme.css declares the seven `--cx-r-*` radius tokens on `:root`, not on
+ * `.console-surface`, because a corner is not a colour: the reference draws the identical
+ * radii in both themes and tailwind.config.js's borderRadius map has to resolve them on
+ * elements that carry neither theme class. Copying the scale into this file would create a
+ * second source for it, which is the one thing a named scale exists to prevent. If a
+ * radius looks wrong in daylight, it is wrong in the dark too - fix it in consoleTheme.css.
+ */
+
+/* The only rule in the file, and it is about a SHADOW, not a colour --------------
+ * `.cx-send:hover` lifts on `0 8px 22px -14px hsl(var(--cx-accent))` — a fully opaque
+ * azure. On a dark field that reads as a glow under the button; on white it is a bruise.
+ * Same lift, 45% alpha, negative spread still doing the feathering. The dark rule's
+ * `filter: brightness(1.07)` is untouched. */
+.console-surface.is-light .cx-send:not(:disabled):hover {
+  box-shadow: 0 8px 22px -14px hsl(var(--cx-accent) / 0.45);
+}
+
+/* NOT DUPLICATED ON PURPOSE: the `prefers-reduced-motion` block in consoleTheme.css
+ * targets `.console-surface *` and is about motion, not about colour, so it is already
+ * theme-agnostic and covers the light theme. */

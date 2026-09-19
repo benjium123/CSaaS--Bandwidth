@@ -1,10 +1,10 @@
-/* The verification journey, in the Exchange language.
+/* The verification journey, in the console's language.
  *
  * Only what AuthShell does not already own. Every colour is a token from authTheme.css so
  * there is one palette to change, and every value here is scoped under `.auth-surface` so
  * nothing leaks into the console's own theme.
  *
- * The one motif: a copper rail running down the left of the step list, with each step's
+ * The one motif: a rail running down the left of the step list, with each step's
  * node sitting on it. It is drawn with a gradient on the list rather than a border on each
  * item, so the line is continuous through the gaps and reads as one run of wire.
  */
@@ -16,10 +16,9 @@
 
 /* Head ---------------------------------------------------------------------- */
 .auth-surface .ob-title {
-  font-family: "Archivo Variable", system-ui, sans-serif;
-  font-stretch: 122%;
-  font-weight: 650;
-  letter-spacing: -0.005em;
+  font-family: "Onest Variable", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.015em;
   line-height: 1.05;
   font-size: 1.75rem;
   margin-top: 0.625rem;
@@ -129,7 +128,7 @@
   border-radius: 50%;
   border: 1px solid hsl(var(--ex-copper-line));
   background: hsl(var(--ex-ink));
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 0.5625rem;
   letter-spacing: 0.04em;
   color: hsl(var(--ex-bone-dim));
@@ -142,7 +141,7 @@
   box-shadow: 0 0 0 3px hsl(var(--ex-verdigris) / 0.12);
   font-size: 0.75rem;
 }
-/* Waiting: deliberately NOT a treatment of its own. Verdigris on this page means verified,
+/* Waiting: deliberately NOT a treatment of its own. The green on this page means verified,
    and a step nobody has looked at yet must not borrow any part of that - so it keeps the
    plain numeral and only dims, which is what "not applicable yet" looks like. */
 .auth-surface .ob-step.is-waiting .ob-node {
@@ -174,7 +173,7 @@
 .auth-surface .ob-step-tag {
   flex: none;
   margin-top: 0.1875rem;
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 0.5625rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -186,7 +185,7 @@
   color: hsl(var(--ex-verdigris));
 }
 .auth-surface .ob-step-tag.is-waiting {
-  /* Bone, not copper and certainly not verdigris: this reads as an aside, not a verdict. */
+  /* Bone, not the accent and certainly not the green: this reads as an aside, not a verdict. */
   color: hsl(var(--ex-bone-dim) / 0.75);
   letter-spacing: 0.08em;
 }
@@ -264,7 +263,7 @@
 }
 
 .auth-surface .ob-count {
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   color: hsl(var(--ex-copper));
 }
 
@@ -290,7 +289,7 @@
 }
 
 .auth-surface .ob-limits li b {
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-weight: 500;
   font-size: 0.75rem;
   color: hsl(var(--ex-bone));

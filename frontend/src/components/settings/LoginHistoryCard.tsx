@@ -56,36 +56,33 @@ function LoginEventsTable({
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b border-border text-xs text-muted-foreground">
-            <th className="py-2 pr-4 font-medium">When</th>
-            {showWho ? <th className="py-2 pr-4 font-medium">Who</th> : null}
-            <th className="py-2 pr-4 font-medium">Outcome</th>
-            <th className="py-2 pr-4 font-medium">IP address</th>
-            <th className="py-2 font-medium">Details</th>
+          <tr className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
+            <th className="px-3 py-2.5 font-medium">When</th>
+            {showWho ? <th className="px-3 py-2.5 font-medium">Who</th> : null}
+            <th className="px-3 py-2.5 font-medium">Outcome</th>
+            <th className="px-3 py-2.5 font-medium">IP address</th>
+            <th className="px-3 py-2.5 font-medium">Details</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-border">
           {rows.map((event) => (
-            <tr
-              key={event.id}
-              className="border-b border-border last:border-0"
-            >
-              <td className="py-2 pr-4" title={event.at}>
+            <tr key={event.id}>
+              <td className="px-3 py-2.5" title={event.at}>
                 {relativeTime(event.at)}
               </td>
               {showWho ? (
-                <td className="py-2 pr-4">{event.email}</td>
+                <td className="px-3 py-2.5">{event.email}</td>
               ) : null}
-              <td className="py-2 pr-4">
+              <td className="px-3 py-2.5">
                 <Pill tone={loginOutcomeTone(event.outcome)}>
                   {loginOutcomeLabel(event.outcome)}
                 </Pill>
               </td>
-              <td className="py-2 pr-4">{event.ip ?? "—"}</td>
-              <td className="py-2">{event.detail ?? "—"}</td>
+              <td className="px-3 py-2.5">{event.ip ?? "—"}</td>
+              <td className="px-3 py-2.5">{event.detail ?? "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -160,6 +157,7 @@ function OrgLoginHistory() {
       ) : null}
 
       <Select
+        className="w-full sm:max-w-xs"
         aria-label="Filter by outcome"
         value={outcome}
         onChange={(event) => setOutcome(event.target.value)}

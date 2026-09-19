@@ -152,21 +152,44 @@ describe("P26: the wiring that is easy to lose", () => {
     expect(src).toContain("unsnoozeThread");
   });
 
-  it("the inbox column offers Snoozed and Overdue", () => {
+  // The rail rows went; the CAPABILITIES did not. The console reference removed them as
+  // navigation duplicates of the filter chips, so what has to stay true is: the rail
+  // offers no snooze/overdue view, and snoozing + the overdue badge still exist.
+  it("the inbox column no longer offers a Snoozed or Overdue view", () => {
     const src = source("components/conversations/InboxColumn.tsx");
-    expect(src).toContain('"snoozed"');
-    expect(src).toContain('"overdue"');
+    expect(src).not.toContain('view="snoozed"');
+    expect(src).not.toContain('view="overdue"');
+    expect(src).not.toContain('kind: "view"');
+  });
+
+  it("snooze and the overdue badge survive the rail cut", () => {
+    // Snooze: still a real action on the conversation header.
+    const header = source("components/conversations/ConversationHeader.tsx");
+    expect(header).toContain("snoozeThread");
+    expect(header).toContain("unsnoozeThread");
+    // Overdue: still rendered per row by SlaChip, which ConversationList still mounts.
+    expect(source("components/conversations/SlaChip.tsx")).toContain("overdue");
+    expect(source("components/conversations/ConversationList.tsx")).toContain("<SlaChip");
+    // And both filter values are still accepted by the client type, so re-adding an
+    // entry point is a UI change and nothing more.
+    expect(source("api/conversations.ts")).toContain('"snoozed"');
+    expect(source("api/conversations.ts")).toContain('"overdue"');
   });
 });
 
 describe("P26: product rules", () => {
-  it("collapses the filter row by default - Fable dropped the limit below five", () => {
-    // Not a style preference: past MAX_VISIBLE_CHIPS, a row of chips stops reading as a
-    // set of choices. Fable's call was to ship the collapsed dropdown live rather than
-    // dormant, so the five stock chips (Unread, Important, Unresponded, Snoozed,
-    // Overdue) must already exceed the limit - not sit exactly at it.
+  it("ships three chips as an uncollapsed row - All, Unresponded, Important", () => {
+    // The collapse rule itself is unchanged and still live for any caller that passes
+    // more chips (SavedViewChips does). What changed is the stock set: the console
+    // reference cut it from five to three, which is under the limit, so the inbox shows
+    // three pills rather than a "Filter" dropdown.
     expect(MAX_VISIBLE_CHIPS).toBe(4);
-    expect(FILTER_CHIPS.length).toBeGreaterThan(MAX_VISIBLE_CHIPS);
+    expect(FILTER_CHIPS.map((chip) => chip.filter)).toEqual([
+      "all",
+      "unresponded",
+      "important",
+    ]);
+    expect(FILTER_CHIPS.length).toBeLessThanOrEqual(MAX_VISIBLE_CHIPS);
   });
 
   it("offers exactly the four snooze presets, in order", () => {

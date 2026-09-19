@@ -18,15 +18,19 @@ import {
 } from "@/api/kyc";
 import {
   Button,
-  Card,
   Input,
   Pill,
-  Section,
   Select,
   Spinner,
   Textarea,
   mutationErrorMessage,
 } from "@/components/ui/primitives";
+import {
+  ConsoleCard,
+  InitialsAvatar,
+  PageHeader,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
 
 const PERSON_STATUS: Record<KycPerson["status"], { label: string; tone: "neutral" | "success" | "warning" | "danger" | "info" }> = {
   not_started: { label: "ID check not started", tone: "neutral" },
@@ -47,28 +51,37 @@ const AGREEMENT_POINTS = [
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
-    <label className="block space-y-1">
-      <span className="text-sm text-muted-foreground">{label}</span>
+    <label className="block space-y-[6px]">
+      <span className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">{label}</span>
       {children}
-      {hint ? <span className="block text-xs text-muted-foreground">{hint}</span> : null}
+      {hint ? (
+        <span className="block text-[11px] leading-[1.5] text-[hsl(var(--cx-muted))]">{hint}</span>
+      ) : null}
     </label>
   );
 }
 
+/**
+ * One numbered section of the application.
+ *
+ * `id` is `kyc-step-{n}`: the onboarding stepper deep-links into this page, and the step
+ * order is the server's `missing` order, so THE STEPS MUST NOT BE REORDERED OR REGROUPED.
+ * This sweep only changed how they look.
+ */
 function StepCard({ n, title, done, children }: { n: number; title: string; done: boolean; children: React.ReactNode }) {
   return (
-    <Card className="space-y-4">
-      <div className="flex items-center gap-3">
+    <SurfaceCard id={`kyc-step-${n}`} className="scroll-mt-6 space-y-[14px]">
+      <div className="flex items-center gap-[11px]">
         <span
-          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs ${done ? "bg-emerald-500/20 text-emerald-300" : "bg-muted text-muted-foreground"}`}
+          className={`grid h-7 w-7 flex-none place-items-center rounded-full text-[12px] font-semibold ${done ? "bg-[hsl(var(--cx-live)/0.18)] text-[hsl(var(--cx-live))]" : "bg-[hsl(var(--cx-overlay))] text-[hsl(var(--cx-muted))]"}`}
           aria-hidden="true"
         >
           {done ? "✓" : n}
         </span>
-        <h2 className="text-sm font-semibold">{title}</h2>
+        <h2 className="text-[14px] font-semibold text-[hsl(var(--cx-text))]">{title}</h2>
       </div>
       {children}
-    </Card>
+    </SurfaceCard>
   );
 }
 
@@ -92,7 +105,7 @@ function BusinessStep({ profile, editable }: { profile: KycProfile; editable: bo
 
   return (
     <form
-      className="grid gap-3 sm:grid-cols-2"
+      className="grid gap-[12px] sm:grid-cols-2"
       onSubmit={(e) => {
         e.preventDefault();
         save.mutate(undefined);
@@ -140,7 +153,7 @@ function BusinessStep({ profile, editable }: { profile: KycProfile; editable: bo
       <Field label="Business phone">
         <Input aria-label="Business phone" value={form.business_phone ?? ""} onChange={set("business_phone")} disabled={!editable} />
       </Field>
-      <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+      <div className="grid gap-[12px] sm:col-span-2 sm:grid-cols-2">
         <Field label="Registered address">
           <Input aria-label="Address line 1" value={address.line1} onChange={(e) => setAddress((a) => ({ ...a, line1: e.target.value }))} disabled={!editable} />
         </Field>
@@ -155,10 +168,10 @@ function BusinessStep({ profile, editable }: { profile: KycProfile; editable: bo
         </Field>
       </div>
       {editable && (
-        <div className="flex items-center gap-3 sm:col-span-2">
+        <div className="flex flex-wrap items-center gap-[12px] sm:col-span-2">
           <Button type="submit" disabled={save.isPending}>Save business details</Button>
-          {save.isSuccess && <span className="text-sm text-emerald-300">Saved</span>}
-          {save.isError && <span role="alert" className="text-sm text-destructive">{mutationErrorMessage(save.error)}</span>}
+          {save.isSuccess && <span className="text-[12.5px] text-[hsl(var(--cx-live))]">Saved</span>}
+          {save.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(save.error)}</span>}
         </div>
       )}
     </form>
@@ -188,13 +201,13 @@ function UseCaseStep({ profile, editable }: { profile: KycProfile; editable: boo
 
   return (
     <form
-      className="grid gap-3"
+      className="grid gap-[12px]"
       onSubmit={(e) => {
         e.preventDefault();
         save.mutate(undefined);
       }}
     >
-      <p className="text-xs text-muted-foreground">
+      <p className="text-[11.5px] leading-[1.55] text-[hsl(var(--cx-muted))]">
         Be specific. Calls and messages that don't match what you describe here are flagged for review.
       </p>
       <Field label="What will you use calling and texting for?">
@@ -214,7 +227,7 @@ function UseCaseStep({ profile, editable }: { profile: KycProfile; editable: boo
       <Field label="Where do their phone numbers come from?" hint="For example: customers who booked with us, website sign-ups with consent">
         <Textarea aria-label="Where numbers come from" rows={2} value={form.list_source} onChange={text("list_source")} disabled={!editable} />
       </Field>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-[12px] sm:grid-cols-3">
         <Field label="Calls per month">
           <Input aria-label="Calls per month" type="number" min={0} value={form.monthly_calls} onChange={num("monthly_calls")} disabled={!editable} />
         </Field>
@@ -234,12 +247,12 @@ function UseCaseStep({ profile, editable }: { profile: KycProfile; editable: boo
         <Textarea aria-label="Example script" rows={2} value={form.sample_script ?? ""} onChange={text("sample_script")} disabled={!editable} />
       </Field>
       {(editable || profile.status === "approved") && (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-[12px]">
           <Button type="submit" disabled={save.isPending}>
             {profile.status === "approved" ? "Request a change" : "Save use case"}
           </Button>
-          {save.isSuccess && <span className="text-sm text-emerald-300">Saved</span>}
-          {save.isError && <span role="alert" className="text-sm text-destructive">{mutationErrorMessage(save.error)}</span>}
+          {save.isSuccess && <span className="text-[12.5px] text-[hsl(var(--cx-live))]">Saved</span>}
+          {save.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(save.error)}</span>}
         </div>
       )}
     </form>
@@ -277,35 +290,43 @@ function PeopleStep({ profile, editable }: { profile: KycProfile; editable: bool
   });
 
   return (
-    <div className="space-y-4">
-      <p className="text-xs text-muted-foreground">
+    <div className="space-y-[14px]">
+      <p className="text-[11.5px] leading-[1.55] text-[hsl(var(--cx-muted))]">
         Add every owner of 25% or more. Each one takes a photo of a driver's license, ID card or
         passport and a selfie. We never see or store the images - our identity partner does.
       </p>
       {profile.persons.length > 0 && (
-        <ul className="space-y-2">
+        <ul className="space-y-[8px]">
           {profile.persons.map((p) => (
-            <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm">
-                  {p.full_name}
-                  {p.ownership_percent != null ? ` · ${p.ownership_percent}%` : ""}
-                  {p.is_you ? " · you" : ""}
-                </p>
-                <Pill tone={PERSON_STATUS[p.status].tone}>{PERSON_STATUS[p.status].label}</Pill>
-                {p.last_error && <p className="text-xs text-muted-foreground">{p.last_error}</p>}
-                {(p.role === "owner" || p.role === "beneficial_owner") && (
-                  <div className="mt-2">
-                    <OwnerResidence
-                      person={p}
-                      documents={profile.documents}
-                      editable={editable && (profile.status === "draft" || profile.status === "needs_info")}
-                    />
-                  </div>
-                )}
+            <li
+              key={p.id}
+              className="flex flex-wrap items-start justify-between gap-[11px] rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[12px] py-[11px]"
+            >
+              <div className="flex min-w-0 gap-[11px]">
+                {/* A person is listed here, so they get the console's avatar. Seeded on the
+                    person id, not the name, so a corrected spelling keeps the same hue. */}
+                <InitialsAvatar name={p.full_name} seed={p.id} size="sm" className="mt-[2px]" />
+                <div className="min-w-0 space-y-[6px]">
+                  <p className="text-[13px] text-[hsl(var(--cx-text))]">
+                    {p.full_name}
+                    {p.ownership_percent != null ? ` · ${p.ownership_percent}%` : ""}
+                    {p.is_you ? " · you" : ""}
+                  </p>
+                  <Pill tone={PERSON_STATUS[p.status].tone}>{PERSON_STATUS[p.status].label}</Pill>
+                  {p.last_error && <p className="text-[11px] text-[hsl(var(--cx-muted))]">{p.last_error}</p>}
+                  {(p.role === "owner" || p.role === "beneficial_owner") && (
+                    <div className="mt-[8px]">
+                      <OwnerResidence
+                        person={p}
+                        documents={profile.documents}
+                        editable={editable && (profile.status === "draft" || profile.status === "needs_info")}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
               {p.status !== "verified" && p.status !== "processing" && (
-                <Button type="button" size="sm" onClick={() => verify.mutate(p)} disabled={verify.isPending}>
+                <Button type="button" size="sm" className="rounded-full" onClick={() => verify.mutate(p)} disabled={verify.isPending}>
                   {p.is_you ? "Verify my ID" : "Get their ID link"}
                 </Button>
               )}
@@ -314,15 +335,15 @@ function PeopleStep({ profile, editable }: { profile: KycProfile; editable: bool
         </ul>
       )}
       {link && (
-        <div className="space-y-1 rounded-md border border-border p-3">
-          <p className="text-sm">Send this private link to {link.person}. It works once.</p>
+        <div className="space-y-[8px] rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[12px]">
+          <p className="text-[13px] text-[hsl(var(--cx-text))]">Send this private link to {link.person}. It works once.</p>
           <Input aria-label="ID check link" readOnly value={link.url} onFocus={(e) => e.currentTarget.select()} />
         </div>
       )}
-      {verify.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(verify.error)}</p>}
+      {verify.isError && <p role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(verify.error)}</p>}
       {editable && (
         <form
-          className="grid gap-3 sm:grid-cols-2"
+          className="grid gap-[12px] sm:grid-cols-2"
           onSubmit={(e) => {
             e.preventDefault();
             add.mutate(undefined, { onSuccess: () => { setName(""); setEmail(""); setIsMe(false); setRole("beneficial_owner"); } });
@@ -343,13 +364,13 @@ function PeopleStep({ profile, editable }: { profile: KycProfile; editable: bool
           <Field label="Ownership %">
             <Input aria-label="Ownership percent" type="number" min={0} max={100} value={percent} onChange={(e) => setPercent(e.target.value)} />
           </Field>
-          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <label className="flex items-center gap-[10px] text-[13px] text-[hsl(var(--cx-text))] sm:col-span-2">
             <input type="checkbox" checked={isMe} onChange={(e) => setIsMe(e.target.checked)} />
             This person is me
           </label>
-          <div className="flex items-center gap-3 sm:col-span-2">
+          <div className="flex flex-wrap items-center gap-[12px] sm:col-span-2">
             <Button type="submit" disabled={!name.trim() || add.isPending}>Add person</Button>
-            {add.isError && <span role="alert" className="text-sm text-destructive">{mutationErrorMessage(add.error)}</span>}
+            {add.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(add.error)}</span>}
           </div>
         </form>
       )}
@@ -367,21 +388,24 @@ function DocumentsStep({ profile, editable }: { profile: KycProfile; editable: b
   const businessDocs = profile.documents.filter((d) => d.kind !== "proof_of_address");
 
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
+    <div className="space-y-[12px]">
+      <p className="text-[11.5px] leading-[1.55] text-[hsl(var(--cx-muted))]">
         Upload your certificate of incorporation or registration, plus your tax ID letter if you
         have it. PDF, JPG or PNG, up to 10 MB. Files are encrypted and only our compliance team can open them.
       </p>
       {businessDocs.length > 0 && (
-        <ul className="space-y-1">
+        <ul className="space-y-[8px]">
           {businessDocs.map((d) => (
-            <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+            <li
+              key={d.id}
+              className="flex flex-wrap items-center justify-between gap-[11px] rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[12px] py-[11px] text-[13px] text-[hsl(var(--cx-text))]"
+            >
               <span className="truncate">
                 {DOCUMENT_KINDS.find((k) => k.value === d.kind)?.label ?? d.kind} · {d.filename}
               </span>
               <DocumentReview doc={d} />
               {editable && (
-                <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${d.filename}`} onClick={() => remove.mutate(d.id)}>
+                <Button type="button" variant="ghost" size="sm" className="rounded-full" aria-label={`Remove ${d.filename}`} onClick={() => remove.mutate(d.id)}>
                   Remove
                 </Button>
               )}
@@ -390,7 +414,7 @@ function DocumentsStep({ profile, editable }: { profile: KycProfile; editable: b
         </ul>
       )}
       {editable && (
-        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+        <div className="grid gap-[12px] sm:grid-cols-[1fr_1fr_auto] sm:items-end">
           <Field label="Document type">
             <Select aria-label="Document type" value={kind} onChange={(e) => setKind(e.target.value)}>
               {DOCUMENT_KINDS.map((k) => (
@@ -407,7 +431,7 @@ function DocumentsStep({ profile, editable }: { profile: KycProfile; editable: b
         </div>
       )}
       {(upload.isError || remove.isError) && (
-        <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(upload.error ?? remove.error)}</p>
+        <p role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(upload.error ?? remove.error)}</p>
       )}
     </div>
   );
@@ -421,26 +445,26 @@ function AgreementStep({ profile, editable }: { profile: KycProfile; editable: b
     api.request("/api/v1/kyc/agreement", { method: "POST", json: { version: profile.agreement.current_version, accept: true } }),
   );
   return (
-    <div className="space-y-3">
-      <ul className="list-disc space-y-1 pl-5 text-sm">
+    <div className="space-y-[12px]">
+      <ul className="list-disc space-y-[8px] pl-5 text-[13px] leading-[1.55] text-[hsl(var(--cx-subtle))]">
         {AGREEMENT_POINTS.map((point) => (
           <li key={point}>{point}</li>
         ))}
       </ul>
       {accepted ? (
-        <p className="text-sm text-emerald-300">
+        <p className="text-[13px] text-[hsl(var(--cx-live))]">
           Accepted {profile.agreement.accepted_at ? new Date(profile.agreement.accepted_at).toLocaleString() : ""}
         </p>
       ) : editable ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-[12px]">
+          <label className="flex items-center gap-[10px] text-[13px] text-[hsl(var(--cx-text))]">
             <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
             I agree, on behalf of the business
           </label>
-          <Button type="button" disabled={!checked || accept.isPending} onClick={() => accept.mutate(undefined)}>
+          <Button type="button" className="rounded-full" disabled={!checked || accept.isPending} onClick={() => accept.mutate(undefined)}>
             Accept
           </Button>
-          {accept.isError && <span role="alert" className="text-sm text-destructive">{mutationErrorMessage(accept.error)}</span>}
+          {accept.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(accept.error)}</span>}
         </div>
       ) : null}
     </div>
@@ -455,7 +479,7 @@ export function VerifyBusinessPage() {
 
   if (profileQ.isPending) return <Spinner label="Loading verification" />;
   if (profileQ.isError || !profileQ.data) {
-    return <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(profileQ.error)}</p>;
+    return <p role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(profileQ.error)}</p>;
   }
   const profile = profileQ.data;
   const editable = canEdit && (profile.status === "draft" || profile.status === "needs_info");
@@ -464,34 +488,40 @@ export function VerifyBusinessPage() {
   const businessDone = !["country", "legal_name", "entity_type", "registration_number", "registered_address", "website", "business_email", "business_phone"].some((k) => missing.has(k));
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <Section
-        title="Business verification"
-        description="We verify every business before it can call or text. It keeps scammers off the network - and keeps your numbers from being flagged as spam."
-      >
+    <div className="mx-auto max-w-3xl space-y-[14px]">
+      <SurfaceCard className="space-y-[12px]">
+        {/* Heading level 2 is where this page already sat (it renders inside the Settings
+            tab, under that page's h1); PageHeader keeps it there. */}
+        <PageHeader
+          headingLevel={2}
+          title="Business verification"
+          description="We verify every business before it can call or text. It keeps scammers off the network - and keeps your numbers from being flagged as spam."
+        />
         {profile.status === "approved" ? (
-          <Card>
-            <p className="text-sm font-medium text-emerald-300">Your business is verified.</p>
+          <ConsoleCard className="bg-[hsl(var(--cx-overlay))]">
+            <p className="text-[13px] font-medium text-[hsl(var(--cx-live))]">Your business is verified.</p>
             {profile.next_reverification_at && (
-              <p className="text-xs text-muted-foreground">
+              <p className="mt-[4px] text-[11.5px] text-[hsl(var(--cx-muted))]">
                 Next annual check: {new Date(profile.next_reverification_at).toLocaleDateString()}
               </p>
             )}
-          </Card>
+          </ConsoleCard>
         ) : copy ? (
-          <Card>
-            <p className="text-sm font-medium">{copy.title}</p>
-            <p className="text-sm text-muted-foreground">{copy.body}</p>
+          <ConsoleCard className="bg-[hsl(var(--cx-overlay))]">
+            <p className="text-[13px] font-semibold text-[hsl(var(--cx-text))]">{copy.title}</p>
+            <p className="mt-[4px] text-[13px] leading-[1.55] text-[hsl(var(--cx-muted))]">{copy.body}</p>
             {profile.info_request && (
-              <p className="mt-2 rounded-md bg-muted p-2 text-sm">
-                <span className="font-medium">From our reviewer: </span>
+              <p className="mt-[11px] rounded-[12px] border border-[hsl(var(--cx-flag)/0.35)] bg-[hsl(var(--cx-flag)/0.12)] p-[11px] text-[12.5px] text-[hsl(var(--cx-text))]">
+                <span className="font-semibold">From our reviewer: </span>
                 {profile.info_request}
               </p>
             )}
-            {profile.decision_reason && <p className="mt-2 text-sm">{profile.decision_reason}</p>}
-          </Card>
+            {profile.decision_reason && (
+              <p className="mt-[11px] text-[12.5px] text-[hsl(var(--cx-subtle))]">{profile.decision_reason}</p>
+            )}
+          </ConsoleCard>
         ) : null}
-      </Section>
+      </SurfaceCard>
 
       <StepCard n={1} title="Your business" done={businessDone}>
         <BusinessStep profile={profile} editable={editable} />
@@ -510,26 +540,28 @@ export function VerifyBusinessPage() {
       </StepCard>
 
       {editable && (
-        <Card className="space-y-3">
+        <SurfaceCard className="space-y-[12px]">
           {profile.missing.length > 0 ? (
-            <div>
-              <p className="text-sm font-medium">Still needed before you can submit:</p>
-              <ul className="list-disc pl-5 text-sm text-muted-foreground">
+            <div className="space-y-[8px]">
+              <p className="text-[13px] font-semibold text-[hsl(var(--cx-text))]">
+                Still needed before you can submit:
+              </p>
+              <ul className="list-disc space-y-[4px] pl-5 text-[12.5px] text-[hsl(var(--cx-muted))]">
                 {[...new Set(profile.missing.map(missingLabel))].map((m) => (
                   <li key={m}>{m}</li>
                 ))}
               </ul>
             </div>
           ) : (
-            <p className="text-sm">Everything is ready. Submit for review.</p>
+            <p className="text-[13px] text-[hsl(var(--cx-text))]">Everything is ready. Submit for review.</p>
           )}
-          <div className="flex items-center gap-3">
-            <Button type="button" disabled={profile.missing.length > 0 || submit.isPending} onClick={() => submit.mutate(undefined)}>
+          <div className="flex flex-wrap items-center gap-[12px]">
+            <Button type="button" className="rounded-full" disabled={profile.missing.length > 0 || submit.isPending} onClick={() => submit.mutate(undefined)}>
               {submit.isPending ? "Submitting…" : "Submit for review"}
             </Button>
-            {submit.isError && <span role="alert" className="text-sm text-destructive">{mutationErrorMessage(submit.error)}</span>}
+            {submit.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(submit.error)}</span>}
           </div>
-        </Card>
+        </SurfaceCard>
       )}
     </div>
   );

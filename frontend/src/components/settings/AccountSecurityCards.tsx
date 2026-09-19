@@ -31,14 +31,14 @@ export function ChangePasswordCard() {
           data breaches are refused.
         </p>
       </div>
-      <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
         <Input aria-label="Current password" type="password" autoComplete="current-password" placeholder="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} />
         <Input aria-label="New password" type="password" autoComplete="new-password" placeholder="New password" value={next} onChange={(e) => setNext(e.target.value)} />
         <Button type="button" disabled={!current || !next || change.isPending} onClick={() => change.mutate()}>
           Change password
         </Button>
       </div>
-      {change.isSuccess && <p className="text-sm text-emerald-300">Password changed.</p>}
+      {change.isSuccess && <p className="text-sm text-[hsl(var(--cx-live))]">Password changed.</p>}
       {change.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(change.error)}</p>}
     </div>
   );
@@ -74,8 +74,8 @@ export function RecoveryCodesCard() {
       </div>
       {codes ? (
         <div className="space-y-2">
-          <p className="text-sm font-medium text-amber-300">Save these now - they will not be shown again.</p>
-          <ul className="grid grid-cols-2 gap-1 rounded-md bg-muted p-3 font-mono text-sm">
+          <p className="rounded-lg border border-[hsl(var(--cx-flag)/0.35)] bg-[hsl(var(--cx-flag)/0.1)] px-3.5 py-2.5 text-sm font-medium text-[hsl(var(--cx-flag))]">Save these now - they will not be shown again.</p>
+          <ul className="grid grid-cols-2 gap-2 rounded-lg bg-muted p-3.5 font-mono text-sm">
             {codes.map((c) => (
               <li key={c}>{c}</li>
             ))}
@@ -140,7 +140,7 @@ export function AccountActivityCard() {
       ) : (
         <ul className="space-y-1 text-sm">
           {q.data.map((row) => (
-            <li key={`${row.action}-${row.at}`} className="flex justify-between gap-2">
+            <li key={`${row.action}-${row.at}`} className="flex justify-between gap-3 rounded-md px-3 py-2 odd:bg-muted/40">
               <span>
                 {ACTIVITY_LABELS[row.action] ?? row.action}
                 {row.by_someone_else ? " (by someone else)" : ""}
@@ -194,7 +194,7 @@ export function SessionPolicyCard() {
           Leave blank to use the platform default (30 minutes idle, 12 hours maximum). You can only make them shorter.
         </p>
       </div>
-      <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
         <Input aria-label="Idle minutes" type="number" min={5} placeholder="Idle minutes" value={idle} disabled={!canEdit} onChange={(e) => setIdle(e.target.value)} />
         <Input aria-label="Maximum hours" type="number" min={1} placeholder="Maximum hours" value={max} disabled={!canEdit} onChange={(e) => setMax(e.target.value)} />
         <Button
@@ -210,7 +210,7 @@ export function SessionPolicyCard() {
           Save
         </Button>
       </div>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex items-start gap-2.5 text-sm">
         <input
           type="checkbox"
           checked={Boolean(q.data?.trust_idp_mfa)}
@@ -219,7 +219,7 @@ export function SessionPolicyCard() {
         />
         Our SSO provider enforces phishing-resistant MFA (lets admins sign in via SSO instead of a passkey)
       </label>
-      {save.isSuccess && <p className="text-sm text-emerald-300">Saved.</p>}
+      {save.isSuccess && <p className="text-sm text-[hsl(var(--cx-live))]">Saved.</p>}
       {save.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(save.error)}</p>}
     </div>
   );

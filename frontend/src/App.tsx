@@ -13,8 +13,9 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { SettingsIndexRedirect } from "@/pages/SettingsIndexRedirect";
 import { Spinner } from "@/components/ui/primitives";
 import { Sidebar, MobileTabBar } from "@/components/shell/Sidebar";
-import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
-import { ErrorBoundary } from "@/components/shell/ErrorBoundary";
+import { SetupPage } from "@/pages/SetupPage";
+import { ErrorBoundary, ErrorFallbackNav } from "@/components/shell/ErrorBoundary";
+import { BannerRegion } from "@/components/shell/BannerSlot";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 import { CommandPalette } from "@/components/ui/CommandPalette";
@@ -32,6 +33,21 @@ import { OnboardingPage } from "@/pages/OnboardingPage";
 import { LandingPage } from "@/pages/LandingPage";
 import { ChoosePlanPage } from "@/pages/ChoosePlanPage";
 import { PasskeyGraceBanner } from "@/components/security/PasskeyGraceBanner";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+import { cn } from "@/lib/utils";
+// The console palette, and its light half. BOTH belong here rather than beside the one
+// component that first needed them.
+//
+// consoleTheme.css scopes its entire token block to `.console-surface`, and Shell now
+// carries that class, so EVERY console page depends on this stylesheet being in the bundle.
+// It used to be imported only by ConversationsPage, which worked purely because App imports
+// that page statically - the day anyone makes it a `React.lazy` route, the whole console
+// palette silently vanishes for every page except the inbox and nothing fails loudly.
+// The light file has the same reach for the same reason: the sidebar, the settings pages
+// and the command palette are all light too, and none of them render the inbox. Every rule
+// in it is scoped to `is-light`, so loading it unconditionally costs the dark theme nothing.
+import "@/components/conversations/consoleTheme.css";
+import "@/components/conversations/consoleTheme.light.css";
 
 /**
  * Legacy routes kept as redirects so saved links still land somewhere useful:
@@ -42,10 +58,18 @@ import { PasskeyGraceBanner } from "@/components/security/PasskeyGraceBanner";
  * now a redirect too — saved links land on the tab that replaced the page.
  */
 
+/**
+ * The inbox is conversations and nothing else.
+ *
+ * The setup checklist used to sit here, above the columns. On a new workspace it and a
+ * shell banner or two pushed the conversation list into the bottom half of the screen, so
+ * clicking Inbox did not show you an inbox. The checklist now lives at /setup, reached from
+ * its own entry in the rail - which appears exactly while the checklist has work to show
+ * (see isWorkspaceFullySetUp), so a brand-new workspace still finds it.
+ */
 function InboxRoute() {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <OnboardingChecklist />
       <div className="min-h-0 flex-1">
         <ConversationsPage />
       </div>
@@ -53,17 +77,81 @@ function InboxRoute() {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+/**
+ * The inbox rail IS the navigation on /inbox.
+ *
+ * InboxColumn now renders the console reference's full 240px `.nav` - brand, Search,
+ * Notifications, the Workspace group and the Lines group - so the 56px icon Sidebar beside
+ * it would be a SECOND copy of the same destinations, two controls disagreeing about which
+ * one looks current. One of them had to go, and it is the icon rail, because the merged
+ * column is what the operator approved.
+ *
+ * KEPT HIDDEN after the rail was trimmed back to the approved five items, which is the
+ * decision worth writing down. Calls, Setup and Trust & safety came OUT of InboxColumn,
+ * and the temptation was to stop hiding the icon rail so they had somewhere to live. That
+ * would have put two navigations side by side again - the thing this hiding exists to
+ * prevent, and not what the operator's screenshot shows. Instead each of them moved one
+ * level down into the Settings surface (SettingsPage's section nav, same useRailNav gate),
+ * and the two controls that are not destinations - the theme toggle and Sign out - stay in
+ * InboxColumn's cluster beneath the lines. Nothing the icon rail owned is unreachable on
+ * /inbox; see the header comment in InboxColumn.tsx for the item-by-item account.
+ *
+ * Scoped to /inbox ONLY - every other console page still gets the icon rail, which is why
+ * this is a path test rather than a deletion.
+ *
+ * Phones are unaffected: <Sidebar/> is `hidden sm:flex` anyway, and MobileTabBar - the rail
+ * on a phone - renders outside this and is untouched.
+ */
+function useHideIconRail(): boolean {
+  const { pathname } = useLocation();
+  return pathname === "/inbox" || pathname.startsWith("/inbox/");
+}
+
+/** Exported for OnboardingJourney.test.tsx, which pins the console theme class it emits. */
+export function Shell({ children }: { children: React.ReactNode }) {
+  // The console's theme is the SAME stored preference the front door uses - see
+  // useSurfaceTheme. `surfaceThemeClass` still emits the literal `dark` in the dark case,
+  // because that class is what index.css's token override and any shadcn `dark:` variant
+  // hang off; `is-light` is what consoleTheme.light.css hangs off. The two are mutually
+  // exclusive by construction there rather than by discipline at each of the wrappers below.
+  const { theme } = useSurfaceTheme();
+  const hideIconRail = useHideIconRail();
+  // Feeds the error boundary below. Hiding the icon rail on /inbox stays a plain path test
+  // and Shell stays ignorant of whether the page under it is healthy: the recovery screen
+  // carries navigation of its OWN (see ErrorFallbackNav), which is what restores "a crashed
+  // page always leaves you a way out" on every route rather than only on the ones whose
+  // chrome happens to live outside the boundary. The pathname doubles as the boundary's
+  // reset key - without it a link in the fallback would change the URL and keep rendering
+  // the same "Something went wrong", because React never leaves an error state on its own.
+  const { pathname } = useLocation();
   return (
     <SoftphoneProvider>
-      <div className="dark flex h-full bg-background text-foreground">
-        <Sidebar />
+      {/* `console-surface` IS THE THEME SCOPE, and it belongs here rather than on each page.
+          consoleTheme.css scopes its entire token block to `.console-surface.console-surface`,
+          and that block is what re-points --background/--foreground/--border/--primary/--muted/
+          --muted-foreground at the approved reference palette. While the class sat only on
+          ConversationsPage, the softphone and the sidebar toggle wrapper, every other console
+          page - Contacts, Calls, Campaigns, Settings, Ops - fell outside the scope and resolved
+          index.css generic shadcn tokens instead: the old look. Custom properties inherit, so
+          carrying it on this one wrapper hands the palette to every page rendered as `children`.
+          Public screens (/, /login, /onboarding, /plans) return before this component and are
+          not descendants of this node, so no console token can reach them. */}
+      <div className={cn("console-surface", surfaceThemeClass(theme), "flex h-full bg-background text-foreground")}>
+        {hideIconRail ? null : <Sidebar />}
         <main className="min-h-0 flex-1 pb-14 sm:pb-0">
-          <PasskeyGraceBanner />
-          <VerificationBanner />
-          <MonitoringBanner />
-          <LowBalanceBanner />
-          <ErrorBoundary>{children}</ErrorBoundary>
+          {/* At most ONE of these renders - see BannerSlot.tsx for the priority order and
+              why it is arbitrated by claim rather than by recomputing four conditions here.
+              Order in this JSX is irrelevant to which one wins; it is kept in priority
+              order only so it reads the way it behaves. */}
+          <BannerRegion>
+            <MonitoringBanner />
+            <LowBalanceBanner />
+            <VerificationBanner />
+            <PasskeyGraceBanner />
+          </BannerRegion>
+          <ErrorBoundary nav={<ErrorFallbackNav />} resetKey={pathname}>
+            {children}
+          </ErrorBoundary>
         </main>
       </div>
       <MobileTabBar />
@@ -149,6 +237,8 @@ export function App() {
             start reading :inboxId/:threadId in the next phase. */}
         <Route path="/inbox/:inboxId" element={<InboxRoute />} />
         <Route path="/inbox/:inboxId/:threadId" element={<InboxRoute />} />
+
+        <Route path="/setup" element={<SetupPage />} />
 
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/contacts/:contactId" element={<ContactsPage />} />

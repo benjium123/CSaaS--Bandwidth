@@ -1,4 +1,4 @@
-/* The choose-a-plan surface, in the Exchange language.
+/* The choose-a-plan surface, in the console's language.
  *
  * Everything is scoped under `.auth-surface .cp-page`, using only the design tokens from
  * authTheme.css. No new colours, no remote assets, no ad-hoc Tailwind arbitrary values:
@@ -58,9 +58,9 @@
 }
 
 .auth-surface .cp-page .cp-plan-name {
-  font-family: "Archivo Variable", system-ui, sans-serif;
-  font-stretch: 122%;
-  font-weight: 650;
+  font-family: "Onest Variable", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.015em;
   font-size: 1.25rem;
   line-height: 1.15;
   color: hsl(var(--ex-bone));
@@ -89,7 +89,7 @@
 }
 
 .auth-surface .cp-page .cp-included li b {
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-weight: 500;
   font-size: 0.75rem;
   color: hsl(var(--ex-bone));

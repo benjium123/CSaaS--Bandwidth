@@ -31,8 +31,13 @@ export function MessageBubble({
     <li className={cn("flex", outbound ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[75%] space-y-1 rounded-lg px-3 py-2 text-sm",
-          outbound ? "bg-primary text-primary-foreground" : "bg-muted",
+          // A message bubble, so it takes the reference's `.bubble` radius (18px) and the
+          // 6px tail on the corner nearest the speaker - the same shape .cx-msg draws in
+          // consoleTheme.css.
+          "max-w-[75%] space-y-1 rounded-[var(--cx-r-lg,18px)] px-3 py-2 text-sm",
+          outbound
+            ? "rounded-br-[var(--cx-r-tail,6px)] bg-primary text-primary-foreground"
+            : "rounded-bl-[var(--cx-r-tail,6px)] bg-muted",
         )}
       >
         <p className="whitespace-pre-wrap break-words">{body}</p>

@@ -75,7 +75,7 @@ export function VoicePreviewButton({
         {loading ? "Playing…" : "Preview voice"}
       </Button>
       {missingVoiceId ? (
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-[hsl(var(--cx-muted))]">
           Add a voice id first.
         </span>
       ) : null}
@@ -83,7 +83,7 @@ export function VoicePreviewButton({
         <audio ref={audioRef} controls className="h-8" src={audioUrl} />
       ) : null}
       {error ? (
-        <span role="alert" className="text-xs text-destructive">
+        <span role="alert" className="text-xs text-[hsl(var(--cx-danger))]">
           {error}
         </span>
       ) : null}

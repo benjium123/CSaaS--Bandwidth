@@ -2,12 +2,12 @@ import * as React from "react";
 import type { AssistantTool, AssistantToolName, PostCallField } from "@/api/assistants";
 import {
   Button,
-  Card,
   Drawer,
   EmptyState,
   Input,
   Select,
 } from "@/components/ui/primitives";
+import { ConsoleCard } from "@/components/ui/consoleChrome";
 
 export const ASSISTANT_TOOLS: {
   type: AssistantToolName;
@@ -120,19 +120,19 @@ export function ToolsTab({
   );
 
   return (
-    <div className="space-y-4">
-      <div className="space-y-3">
+    <div className="space-y-[14px]">
+      <div className="space-y-[11px]">
         {ASSISTANT_TOOLS.map((entry) => {
           const active = tools.some((tool) => tool.tool === entry.type);
           return (
             /* No role="group" with the tool's name on it: the switch inside already carries
                that exact accessible name, and a landmark sharing a control's name makes
                every by-name query ambiguous and says the phrase twice in a screen reader. */
-            <Card key={entry.type} className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
+            <ConsoleCard key={entry.type} className="space-y-[11px]">
+              <div className="flex items-start justify-between gap-[11px]">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">{entry.label}</p>
-                  <p className="text-xs text-muted-foreground">{entry.description}</p>
+                  <p className="text-[13.5px] font-semibold">{entry.label}</p>
+                  <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">{entry.description}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {entry.type === "webhook" && (
@@ -159,12 +159,12 @@ export function ToolsTab({
                   </Button>
                 </div>
               </div>
-            </Card>
+            </ConsoleCard>
           );
         })}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-[11px]">
         <Button type="button" onClick={onSave} disabled={saving}>
           Save tools
         </Button>
@@ -181,9 +181,9 @@ export function ToolsTab({
           </Button>
         }
       >
-        <div className="space-y-4">
+        <div className="space-y-[14px]">
           <div className="space-y-1">
-            <label htmlFor="tool-webhook-url" className="block text-xs text-muted-foreground">
+            <label htmlFor="tool-webhook-url" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
               Address
             </label>
             <Input
@@ -196,7 +196,7 @@ export function ToolsTab({
             />
           </div>
           <div className="space-y-1">
-            <label htmlFor="tool-webhook-secret" className="block text-xs text-muted-foreground">
+            <label htmlFor="tool-webhook-secret" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
               Signing secret
             </label>
             <Input
@@ -209,7 +209,7 @@ export function ToolsTab({
             />
           </div>
           {missingAddress && drawerUrl.trim() === "" && (
-            <p className="text-destructive text-xs">Add an address first.</p>
+            <p className="text-[11.5px] text-[hsl(var(--cx-danger))]">Add an address first.</p>
           )}
         </div>
       </Drawer>
@@ -251,7 +251,7 @@ function NumberField({
 
   return (
     <div className="space-y-1">
-      <label htmlFor={id} className="block text-xs text-muted-foreground">
+      <label htmlFor={id} className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
         {label}
       </label>
       <Input
@@ -320,7 +320,7 @@ export function BehaviourTab({
   }, [joinedKeywords]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-[14px]">
       {/* Minutes on screen, seconds on the wire. */}
       <NumberField
         id="behaviour-max-minutes"
@@ -341,7 +341,7 @@ export function BehaviourTab({
       />
 
       <div className="space-y-1">
-        <label htmlFor="behaviour-interrupt" className="block text-xs text-muted-foreground">
+        <label htmlFor="behaviour-interrupt" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
           Let the caller interrupt
         </label>
         <Select
@@ -359,7 +359,7 @@ export function BehaviourTab({
       </div>
 
       <div className="space-y-1">
-        <label htmlFor="behaviour-voicemail" className="block text-xs text-muted-foreground">
+        <label htmlFor="behaviour-voicemail" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
           If it reaches voicemail
         </label>
         <Select
@@ -376,10 +376,10 @@ export function BehaviourTab({
         </Select>
       </div>
 
-      <fieldset className="space-y-3 rounded-md border border-border p-3">
-        <legend className="px-1 text-xs font-medium text-muted-foreground">Texting</legend>
+      <fieldset className="space-y-[11px] rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px]">
+        <legend className="px-1 text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">Texting</legend>
 
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-center gap-[9px] text-[13.5px]">
           <input
             type="checkbox"
             checked={value.sms_enabled}
@@ -388,7 +388,7 @@ export function BehaviourTab({
           Reply to inbound texts automatically
         </label>
 
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-[12px] md:grid-cols-2">
           <NumberField
             id="behaviour-sms-turns"
             label="Most replies in one conversation"
@@ -408,7 +408,7 @@ export function BehaviourTab({
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="behaviour-sms-handoff" className="block text-xs text-muted-foreground">
+          <label htmlFor="behaviour-sms-handoff" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Words that hand the conversation to a person
           </label>
           <Input
@@ -428,11 +428,11 @@ export function BehaviourTab({
               });
             }}
           />
-          <p className="text-[11px] text-muted-foreground">Separate them with commas.</p>
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">Separate them with commas.</p>
         </div>
       </fieldset>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-[11px]">
         <Button type="button" onClick={onSave} disabled={saving}>
           Save behaviour
         </Button>
@@ -502,10 +502,10 @@ function OutcomeFieldRow({
   }
 
   return (
-    <Card className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-2">
+    <ConsoleCard className="space-y-[11px]">
+      <div className="grid gap-[12px] md:grid-cols-2">
         <div className="space-y-1">
-          <label htmlFor={`outcome-name-${index}`} className="block text-xs text-muted-foreground">
+          <label htmlFor={`outcome-name-${index}`} className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Name
           </label>
           <Input
@@ -517,7 +517,7 @@ function OutcomeFieldRow({
         </div>
 
         <div className="space-y-1">
-          <label htmlFor={`outcome-type-${index}`} className="block text-xs text-muted-foreground">
+          <label htmlFor={`outcome-type-${index}`} className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Type
           </label>
           <Select
@@ -537,7 +537,7 @@ function OutcomeFieldRow({
 
         {field.type === "select" && (
           <div className="space-y-1 md:col-span-2">
-            <label htmlFor={`outcome-choices-${index}`} className="block text-xs text-muted-foreground">
+            <label htmlFor={`outcome-choices-${index}`} className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
               Choices
             </label>
             <Input
@@ -560,7 +560,7 @@ function OutcomeFieldRow({
         )}
 
         <div className="space-y-1 md:col-span-2">
-          <label htmlFor={`outcome-contact-${index}`} className="block text-xs text-muted-foreground">
+          <label htmlFor={`outcome-contact-${index}`} className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Save to contact detail
           </label>
           <Input
@@ -571,7 +571,7 @@ function OutcomeFieldRow({
               onChange({ ...field, write_to_attribute: event.target.value })
             }
           />
-          <p className="text-[11px] text-muted-foreground">Optional.</p>
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">Optional.</p>
         </div>
       </div>
 
@@ -588,7 +588,7 @@ function OutcomeFieldRow({
           {confirmingRemove ? "Confirm remove?" : "Remove"}
         </Button>
       </div>
-    </Card>
+    </ConsoleCard>
   );
 }
 
@@ -618,8 +618,8 @@ export function OutcomesTab({
   }
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">What every call should collect.</p>
+    <div className="space-y-[14px]">
+      <p className="text-[13px] text-[hsl(var(--cx-subtle))]">What every call should collect.</p>
 
       {fields.length === 0 ? (
         <EmptyState
@@ -627,7 +627,7 @@ export function OutcomesTab({
           description="Add a field and your assistant will collect it on every call."
         />
       ) : (
-        <ul aria-label="Collected fields" className="space-y-3">
+        <ul aria-label="Collected fields" className="space-y-[11px]">
           {fields.map((field, index) => (
             <li key={index}>
               <OutcomeFieldRow
@@ -641,13 +641,13 @@ export function OutcomesTab({
         </ul>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-[11px]">
         <Button type="button" variant="outline" onClick={addField}>
           Add a field
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-[11px]">
         <Button type="button" onClick={onSave} disabled={saving}>
           Save outcomes
         </Button>

@@ -25,7 +25,15 @@ export function makeStubClient(routes: Record<string, RouteStub | unknown>): Api
     },
     async request<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
       calls.push({ path, init });
-      const key = Object.keys(routes).find((k) => path.startsWith(k));
+      // LONGEST prefix wins, not the first one declared. With `find`, a stub for
+      // "/api/v1/orgs/current" silently swallowed "/api/v1/orgs/current/members" and handed
+      // the members query the org OBJECT where the server sends an ARRAY - so the page threw
+      // `.map is not a function`, the error boundary ate it, and the suite stayed green while
+      // rendering a crash instead of the page. A shorter key shadowing a longer path is
+      // invisible by construction: nothing fails, the stub just answers the wrong question.
+      const key = Object.keys(routes)
+        .filter((k) => path.startsWith(k))
+        .sort((a, b) => b.length - a.length)[0];
       if (!key) throw new Error(`No stub for ${path}`);
       const handler = routes[key];
       const value = typeof handler === "function" ? (handler as RouteStub)(path, init) : handler;

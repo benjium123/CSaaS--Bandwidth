@@ -74,8 +74,8 @@ export function DecisionPackCard({
     .join(" · ");
 
   return (
-    <Card className="space-y-3 border-sky-500/40">
-      <div className="flex flex-wrap items-center gap-2">
+    <Card className="space-y-[14px] border-[hsl(var(--cx-accent)/0.4)]">
+      <div className="flex flex-wrap items-center gap-[11px]">
         <Pill tone={rec.tone}>{rec.label}</Pill>
         <span className="text-sm text-muted-foreground">{pack.confidence}% confident</span>
         {pack.suggested_risk === "high" && <Pill tone="danger">AI sees high risk</Pill>}
@@ -87,7 +87,7 @@ export function DecisionPackCard({
           <p className="text-xs font-medium text-muted-foreground">How it thought about it</p>
           <ul className="space-y-1">
             {pack.thoughts.map((t, i) => (
-              <li key={`${t.area}-${i}`} className="flex flex-wrap gap-2 text-sm">
+              <li key={`${t.area}-${i}`} className="flex flex-wrap items-center gap-[11px] text-sm">
                 <Pill tone={ASSESSMENT_TONE[t.assessment] ?? "neutral"}>{t.area.replace(/_/g, " ")}</Pill>
                 <span>{t.thought}</span>
               </li>
@@ -99,7 +99,7 @@ export function DecisionPackCard({
       {pack.concerns.length > 0 && (
         <div className="space-y-1">
           <p className="text-xs font-medium text-muted-foreground">Concerns</p>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-amber-300">
+          <ul className="list-disc space-y-1 pl-5 text-sm text-[hsl(var(--cx-flag))]">
             {pack.concerns.map((c, i) => (
               <li key={i}>
                 {c.concern}
@@ -112,14 +112,14 @@ export function DecisionPackCard({
 
       {limitsText && <p className="text-xs text-muted-foreground">Suggested starting limits: {limitsText}</p>}
       {blockers.length > 0 && (
-        <ul className="list-disc pl-5 text-sm text-amber-300">
+        <ul className="list-disc pl-5 text-sm text-[hsl(var(--cx-flag))]">
           {blockers.map((b) => (
             <li key={b}>{b}</li>
           ))}
         </ul>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-[11px]">
         <Button
           type="button"
           disabled={pending || blockers.length > 0}
@@ -135,7 +135,7 @@ export function DecisionPackCard({
           also ban identifiers
         </label>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-[11px]">
         <Textarea
           aria-label="Questions for the applicant"
           rows={Math.max(2, (pack.questions_for_applicant ?? []).length + 1)}

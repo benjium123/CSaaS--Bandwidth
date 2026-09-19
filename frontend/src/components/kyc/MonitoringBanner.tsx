@@ -2,6 +2,7 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { Button, Textarea, mutationErrorMessage } from "@/components/ui/primitives";
+import { BANNER_PRIORITY, BannerSlot } from "@/components/shell/BannerSlot";
 
 /** P43: shown when the safety monitor paused or restricted calling and texting. The business
  * can explain what happened; an operator reviews it. Hidden while everything is normal. */
@@ -40,31 +41,43 @@ export function MonitoringBanner() {
   const paused = data.level === "paused";
 
   return (
+    <BannerSlot priority={BANNER_PRIORITY.monitoring}>
+    {/* A paused account is a failure state (danger); a restricted one is a warning, and
+        the reference's warning hue is `flag` — yellow, not orange. Both are the token at a
+        low mix so the strip reads as a tint rather than a block of colour. */}
     <div
       role="status"
       aria-label="Account review"
-      className={`border-b px-4 py-3 ${paused ? "border-red-500/40 bg-red-500/10" : "border-amber-500/40 bg-amber-500/10"}`}
+      className={`border-b px-4 py-[9px] ${
+        paused
+          ? "border-[hsl(var(--cx-danger)/0.4)] bg-[hsl(var(--cx-danger)/0.1)]"
+          : "border-[hsl(var(--cx-flag)/0.4)] bg-[hsl(var(--cx-flag)/0.1)]"
+      }`}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">
+      {/* Collapsed, this is one slim line like the other shell banners. The appeal form
+          below is the one thing allowed to make it tall, and only after a click. */}
+      <div className="flex items-center gap-[11px]">
+        <p className="min-w-0 flex-1 truncate text-[13px] text-[hsl(var(--cx-text))]">
+          <span className="font-semibold">
             {paused ? "Calling and texting are paused" : "Calling and texting are limited for now"}
-          </p>
-          <p className="mt-0.5 text-sm text-muted-foreground">{data.message}</p>
+          </span>
+          <span aria-hidden="true" className="text-[hsl(var(--cx-muted))]"> — </span>
+          <span className="text-[hsl(var(--cx-subtle))]">{data.message}</span>
           {data.appealed_at && (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <span className="text-[hsl(var(--cx-muted))]">
+              {" "}
               We received your explanation on {new Date(data.appealed_at).toLocaleString()}. Our team will get back to you.
-            </p>
+            </span>
           )}
-        </div>
+        </p>
         {canAppeal && !data.appealed_at && !open && (
-          <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+          <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => setOpen(true)}>
             Tell us what happened
           </Button>
         )}
       </div>
       {open && (
-        <div className="mt-3 space-y-2">
+        <div className="mt-[11px] space-y-[11px]">
           <Textarea
             aria-label="Explanation for the review team"
             rows={3}
@@ -72,7 +85,7 @@ export function MonitoringBanner() {
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
-          <div className="flex gap-2">
+          <div className="flex gap-[11px]">
             <Button type="button" disabled={text.trim().length < 20 || appeal.isPending} onClick={() => appeal.mutate()}>
               Send to the review team
             </Button>
@@ -84,5 +97,6 @@ export function MonitoringBanner() {
         </div>
       )}
     </div>
+    </BannerSlot>
   );
 }

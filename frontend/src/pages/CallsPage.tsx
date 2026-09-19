@@ -20,7 +20,14 @@ import { fetchInboxes } from "@/api/conversations";
 import { dispositionOf } from "@/api/calls";
 import { DispositionPicker } from "@/components/calls/DispositionPicker";
 import { RecordingDownloads } from "@/components/calls/RecordingDownloads";
-import { Badge, Button, Input, Spinner } from "@/components/ui/primitives";
+import {
+  ConsoleEmpty,
+  InitialsAvatar,
+  PageHeader,
+  SectionLabel,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
+import { Badge, Button, Input, Spinner, pillToneClass } from "@/components/ui/primitives";
 import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -55,20 +62,26 @@ function directionArrow(direction: string): string {
   return direction === "inbound" ? "←" : "→";
 }
 
+/** The whole call-status family, converted together onto the shared `Pill` tones so the
+ * five states stay visually coherent. They were LIGHT-mode Tailwind chips
+ * (bg-green-100/text-green-800 and friends) rendering inside a dark console - pale blocks
+ * that no theme change could reach. success -> --cx-live, danger -> --cx-danger,
+ * neutral -> muted, warning -> --cx-flag (yellow; "ringing" was amber and is not orange
+ * any more). */
 function statusBadgeClass(status: string): string {
   switch (status) {
     case "completed":
     case "answered":
     case "bridged":
-      return "bg-green-100 text-green-800";
+      return pillToneClass("success");
     case "failed":
     case "busy":
     case "no_answer":
-      return "bg-red-100 text-red-800";
+      return pillToneClass("danger");
     case "canceled":
-      return "bg-gray-100 text-gray-600";
+      return pillToneClass("neutral");
     default:
-      return "bg-amber-100 text-amber-800";
+      return pillToneClass("warning");
   }
 }
 
@@ -115,20 +128,23 @@ export function CallsPage() {
 
   return (
     <div className="grid h-full grid-cols-[minmax(340px,440px)_1fr]">
-      <aside className="flex min-h-0 flex-col border-r border-border">
-        <div className="space-y-3 border-b border-border p-3">
-          <h1 className="text-lg font-semibold">Calls</h1>
-          <form className="space-y-2" onSubmit={dial}>
+      <aside className="flex min-h-0 flex-col border-r border-[hsl(var(--cx-line))]">
+        <div className="space-y-[14px] border-b border-[hsl(var(--cx-line))] p-[18px]">
+          <PageHeader title="Calls" />
+          <SurfaceCard className="space-y-[11px]">
+            <SectionLabel>Place a call</SectionLabel>
+            <form className="space-y-[11px]" onSubmit={dial}>
             <Input
               aria-label="Number to call"
               placeholder="+19725550199"
+              className="h-10 rounded-[12px] px-[14px]"
               value={to}
               onChange={(e) => setTo(e.target.value)}
             />
-            <div className="flex gap-2">
+            <div className="flex gap-[11px]">
               <select
                 aria-label="Call from"
-                className="h-9 flex-1 rounded-md border border-border bg-background px-2 text-sm"
+                className="h-10 flex-1 rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[14px] text-[13px]"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
               >
@@ -139,25 +155,30 @@ export function CallsPage() {
                   </option>
                 ))}
               </select>
-              <Button type="submit" disabled={!to.trim() || placeCall.isPending}>
+              <Button
+                type="submit"
+                className="rounded-full px-[18px]"
+                disabled={!to.trim() || placeCall.isPending}
+              >
                 Place call
               </Button>
             </div>
-          </form>
-          {dialError && (
-            <p role="alert" className="text-sm text-destructive">
-              {dialError}
-            </p>
-          )}
-          {placedCall && (
-            <p className="text-xs text-muted-foreground">
-              Calling {formatPhone(placedCall.contact_e164)} — status: {placedCall.status}
-            </p>
-          )}
+            </form>
+            {dialError && (
+              <p role="alert" className="text-[13px] text-destructive">
+                {dialError}
+              </p>
+            )}
+            {placedCall && (
+              <p className="text-[12px] text-[hsl(var(--cx-muted))]">
+                Calling {formatPhone(placedCall.contact_e164)} — status: {placedCall.status}
+              </p>
+            )}
+          </SurfaceCard>
 
           <select
             aria-label="Filter by status"
-            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+            className="h-9 w-full rounded-full border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[14px] text-[12.5px] text-[hsl(var(--cx-subtle))]"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
           >
@@ -169,7 +190,7 @@ export function CallsPage() {
           </select>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto p-[10px]">
           {isLoading ? (
             <Spinner label="Loading calls" />
           ) : error ? (
@@ -177,9 +198,12 @@ export function CallsPage() {
               {(error as Error).message}
             </p>
           ) : (calls ?? []).length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">No calls yet.</p>
+            <ConsoleEmpty>No calls yet.</ConsoleEmpty>
           ) : (
-            <table className="w-full text-sm" aria-label="Calls">
+            <table
+              className="w-full border-separate border-spacing-y-[3px] text-[13px]"
+              aria-label="Calls"
+            >
               <thead className="sr-only">
                 <tr>
                   <th>Contact</th>
@@ -189,7 +213,9 @@ export function CallsPage() {
                   <th>Started</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+              {/* The reference draws no rule between rows: a row is a rounded block that
+                  lights up, so the cells carry the fill and the outer cells the radius. */}
+              <tbody>
                 {(calls ?? []).map((c) => (
                   <tr
                     key={c.id}
@@ -204,8 +230,10 @@ export function CallsPage() {
                       }
                     }}
                     className={cn(
-                      "cursor-pointer hover:bg-muted",
-                      c.id === selectedId && "bg-muted",
+                      "cursor-pointer transition-colors",
+                      "[&>td:first-child]:rounded-l-[14px] [&>td:last-child]:rounded-r-[14px]",
+                      "hover:[&>td]:bg-[hsl(var(--cx-overlay))]",
+                      c.id === selectedId && "[&>td]:bg-[hsl(var(--cx-overlay))]",
                     )}
                   >
                     {/* This cell is the boundary between the phone menu and the row's own
@@ -213,10 +241,16 @@ export function CallsPage() {
                         propagation, opening the menu or pressing Enter on a menu item
                         would also select the call row. */}
                     <td
-                      className="px-3 py-2"
+                      className="px-[12px] py-[11px]"
                       onClick={(event) => event.stopPropagation()}
                       onKeyDown={(event) => event.stopPropagation()}
                     >
+                      <span className="flex items-center gap-[11px]">
+                      <InitialsAvatar
+                        name={formatPhone(c.contact_e164)}
+                        seed={c.contact_e164}
+                        size="md"
+                      />
                       <PhoneNumberMenu
                         e164={c.contact_e164}
                         // A call row knows which of our numbers was on the call, so a
@@ -230,17 +264,18 @@ export function CallsPage() {
                         }
                         className="h-auto px-1 py-0 font-normal"
                       />
+                      </span>
                     </td>
-                    <td className="px-2 py-2 text-center" aria-label={c.direction}>
+                    <td className="px-[8px] py-[11px] text-center" aria-label={c.direction}>
                       {directionArrow(c.direction)}
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-[8px] py-[11px]">
                       <Badge className={statusBadgeClass(c.status)}>{c.status}</Badge>
                     </td>
-                    <td className="px-2 py-2 text-xs text-muted-foreground">
+                    <td className="px-[8px] py-[11px] text-[12px] text-[hsl(var(--cx-subtle))]">
                       {formatDuration(c.duration_seconds)}
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                    <td className="px-[12px] py-[11px] text-[12px] text-[hsl(var(--cx-muted))]">
                       {formatStarted(c.created_at)}
                     </td>
                   </tr>
@@ -255,7 +290,9 @@ export function CallsPage() {
         {detail ? (
           <CallDetailPanel api={api} call={detail} />
         ) : (
-          <p className="p-6 text-sm text-muted-foreground">Select a call to see details.</p>
+          <div className="p-[18px]">
+            <ConsoleEmpty>Select a call to see details.</ConsoleEmpty>
+          </div>
         )}
       </section>
     </div>
@@ -325,10 +362,21 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h2 className="text-base font-semibold">{formatPhone(call.contact_e164)}</h2>
-        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-muted-foreground">
+    <div className="space-y-[18px] p-[18px]">
+      <SurfaceCard>
+        <div className="flex items-center gap-[13px]">
+          <InitialsAvatar
+            name={formatPhone(call.contact_e164)}
+            seed={call.contact_e164}
+            size="lg"
+          />
+          <h2 className="text-[17px] font-semibold tracking-[-0.015em]">
+            {formatPhone(call.contact_e164)}
+          </h2>
+        </div>
+        {/* The reference panel field row: muted key on the left, value right-aligned,
+            a hairline between each. dt/dd are kept so this is still a definition list. */}
+        <dl className="mt-[14px] grid grid-cols-2 text-[13px] [&>dd]:border-t [&>dd]:border-[hsl(var(--cx-line))] [&>dd]:py-[11px] [&>dd]:text-right [&>dt]:border-t [&>dt]:border-[hsl(var(--cx-line))] [&>dt]:py-[11px] [&>dt]:text-[hsl(var(--cx-muted))]">
           <dt>Direction</dt>
           <dd>{call.direction}</dd>
           <dt>From</dt>
@@ -350,7 +398,7 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
             </>
           )}
         </dl>
-      </div>
+      </SurfaceCard>
 
       {/* P29: the call result is picked once the call is over. The picker applies the
           same number-grant rule as the buttons below, plus the catalogue read. */}
@@ -378,45 +426,52 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
         </p>
       )}
 
-      <div className="flex flex-wrap items-end gap-2">
-        <form className="flex items-end gap-2" onSubmit={doTransfer}>
-          <Input
-            aria-label="Transfer to"
-            placeholder="+19725550199"
-            value={transferTo}
-            onChange={(e) => setTransferTo(e.target.value)}
-            disabled={terminal || !canUse}
-          />
+      <SurfaceCard className="space-y-[11px]">
+        <SectionLabel>Actions</SectionLabel>
+        <div className="flex flex-wrap items-end gap-[11px]">
+          <form className="flex items-end gap-[11px]" onSubmit={doTransfer}>
+            <Input
+              aria-label="Transfer to"
+              placeholder="+19725550199"
+              className="h-10 rounded-[12px] px-[14px]"
+              value={transferTo}
+              onChange={(e) => setTransferTo(e.target.value)}
+              disabled={terminal || !canUse}
+            />
+            <Button
+              type="submit"
+              variant="outline"
+              className="rounded-full px-[18px]"
+              disabled={terminal || !canUse || !transferTo.trim() || transferCall.isPending}
+            >
+              Transfer
+            </Button>
+          </form>
           <Button
-            type="submit"
+            type="button"
             variant="outline"
-            disabled={terminal || !canUse || !transferTo.trim() || transferCall.isPending}
+            className="rounded-full px-[18px]"
+            onClick={doSendAgent}
+            disabled={terminal || !canUse || dispatchAgent.isPending}
           >
-            Transfer
+            Send AI agent
           </Button>
-        </form>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={doSendAgent}
-          disabled={terminal || !canUse || dispatchAgent.isPending}
-        >
-          Send AI agent
-        </Button>
-        <Button
-          type="button"
-          variant="destructive"
-          onClick={doHangup}
-          disabled={terminal || !canUse || hangupCall.isPending}
-        >
-          Hang up
-        </Button>
-      </div>
+          <Button
+            type="button"
+            variant="destructive"
+            className="rounded-full px-[18px]"
+            onClick={doHangup}
+            disabled={terminal || !canUse || hangupCall.isPending}
+          >
+            Hang up
+          </Button>
+        </div>
+      </SurfaceCard>
 
       {call.transcript && call.transcript.length > 0 && (
-        <div>
-          <h3 className="text-sm font-medium">Transcript</h3>
-          <ul className="mt-2 space-y-2" aria-label="Transcript">
+        <SurfaceCard>
+          <SectionLabel>Transcript</SectionLabel>
+          <ul className="mt-[11px] space-y-[11px]" aria-label="Transcript">
             {call.transcript.map((seg, i) => (
               <li
                 key={i}
@@ -424,10 +479,10 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
               >
                 <div
                   className={cn(
-                    "max-w-[75%] rounded-lg px-3 py-2 text-sm",
+                    "max-w-[75%] rounded-[18px] px-[15px] py-[11px] text-[14px] leading-[1.55]",
                     seg.role === "agent"
-                      ? "bg-muted text-foreground"
-                      : "bg-primary text-primary-foreground",
+                      ? "rounded-bl-[6px] bg-[hsl(var(--cx-overlay))] text-[hsl(var(--cx-text))]"
+                      : "rounded-br-[6px] bg-[hsl(var(--cx-accent))] text-[hsl(var(--cx-on-acc))]",
                   )}
                 >
                   {seg.text}
@@ -435,21 +490,21 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
               </li>
             ))}
           </ul>
-        </div>
+        </SurfaceCard>
       )}
 
-      <div>
-        <h3 className="text-sm font-medium">Recordings</h3>
+      <SurfaceCard>
+        <SectionLabel>Recordings</SectionLabel>
         {call.recordings.length === 0 ? (
-          <p className="mt-1 text-xs text-muted-foreground">No recordings.</p>
+          <p className="mt-[11px] text-[12px] text-[hsl(var(--cx-muted))]">No recordings.</p>
         ) : (
-          <ul className="mt-2 space-y-2">
+          <ul className="mt-[11px] space-y-[11px]">
             {call.recordings.map((rec) => (
               <RecordingRow key={rec.id} api={api} callId={call.id} recording={rec} />
             ))}
           </ul>
         )}
-      </div>
+      </SurfaceCard>
     </div>
   );
 }
@@ -498,11 +553,12 @@ function RecordingRow({
   }, [audioUrl]);
 
   return (
-    <li className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2 text-xs">
+    <li className="flex flex-wrap items-center gap-[11px] rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px] text-[12px]">
       <Button
         type="button"
         size="sm"
         variant="outline"
+        className="rounded-full px-[13px]"
         onClick={play}
         disabled={loading || recording.status !== "stored"}
       >

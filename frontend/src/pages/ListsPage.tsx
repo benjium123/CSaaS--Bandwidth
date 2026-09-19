@@ -11,7 +11,14 @@ import {
   type ListPreviewOut,
   type ListRowOut,
 } from "@/api/hooks";
-import { Badge, Button, Spinner } from "@/components/ui/primitives";
+import { Badge, Button, Spinner, pillToneClass } from "@/components/ui/primitives";
+import {
+  ConsoleCard,
+  ConsoleEmpty,
+  FilterPill,
+  PageHeader,
+  SectionLabel,
+} from "@/components/ui/consoleChrome";
 import { cn } from "@/lib/utils";
 
 /** Canonical fields the import pipeline understands (plan DR-8/DR-9/DR-14). Mirrors
@@ -33,29 +40,47 @@ const ROW_STATUS_FILTERS = [
   { key: "dnc", label: "DNC" },
 ];
 
+/** Both list-status families, converted together onto the shared `Pill` tones - they were
+ * LIGHT-mode Tailwind chips rendering inside a dark console. ready/accepted -> --cx-live,
+ * failed/invalid/dnc -> --cx-danger, duplicate -> muted, everything still in flight ->
+ * --cx-flag (yellow, not amber-orange).
+ *
+ * THE TONE MAPPING IS DELIBERATELY UNTOUCHED by the console-chrome sweep: the sweep is
+ * presentation only, and which status counts as a failure is a product decision that was
+ * already made here. */
 function listStatusBadgeClass(status: string): string {
   switch (status) {
     case "ready":
-      return "bg-green-100 text-green-800";
+      return pillToneClass("success");
     case "failed":
-      return "bg-red-100 text-red-800";
+      return pillToneClass("danger");
     default:
-      return "bg-amber-100 text-amber-800";
+      return pillToneClass("warning");
   }
 }
 
 function rowStatusBadgeClass(status: string): string {
   switch (status) {
     case "accepted":
-      return "bg-green-100 text-green-800";
+      return pillToneClass("success");
     case "invalid":
     case "dnc":
-      return "bg-red-100 text-red-800";
+      return pillToneClass("danger");
     case "duplicate":
-      return "bg-gray-100 text-gray-600";
+      return pillToneClass("neutral");
     default:
-      return "bg-amber-100 text-amber-800";
+      return pillToneClass("warning");
   }
+}
+
+/** One cell of the import report's count strip. `dl` pairs stay `dt`/`dd`. */
+function CountCell({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[12px] py-[10px]">
+      <dt className="text-[11.5px] font-medium text-[hsl(var(--cx-muted))]">{label}</dt>
+      <dd className="mt-[3px] text-[15px] font-semibold text-[hsl(var(--cx-text))]">{value}</dd>
+    </div>
+  );
 }
 
 export function ListsPage() {
@@ -83,11 +108,11 @@ export function ListsPage() {
   }
 
   return (
-    <div className="grid h-full grid-cols-[minmax(300px,380px)_1fr]">
-      <aside className="flex min-h-0 flex-col border-r border-border">
-        <div className="space-y-3 border-b border-border p-3">
-          <h1 className="text-lg font-semibold">Lists</h1>
-          <div className="space-y-1">
+    <div className="grid h-full grid-cols-[minmax(300px,380px)_1fr] bg-[hsl(var(--cx-base))]">
+      <aside className="flex min-h-0 flex-col border-r border-[hsl(var(--cx-line))]">
+        <div className="space-y-[12px] border-b border-[hsl(var(--cx-line))] p-[14px]">
+          <PageHeader title="Lists" description="Import a file, map its columns, read the report." />
+          <div className="space-y-[6px] rounded-[12px] border border-dashed border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[12px] py-[11px]">
             <input
               ref={fileInputRef}
               aria-label="Upload list file"
@@ -95,29 +120,29 @@ export function ListsPage() {
               accept=".csv,.xlsx"
               onChange={onFileChosen}
               disabled={uploadList.isPending}
-              className="block w-full text-xs"
+              className="block w-full text-[11.5px] text-[hsl(var(--cx-subtle))] file:mr-3 file:rounded-full file:border-0 file:bg-[hsl(var(--cx-accent))] file:px-[14px] file:py-[6px] file:text-[11.5px] file:font-semibold file:text-[hsl(var(--cx-on-acc))]"
             />
-            <p className="text-[11px] text-muted-foreground">CSV or XLSX, with headers.</p>
+            <p className="text-[11px] text-[hsl(var(--cx-muted))]">CSV or XLSX, with headers.</p>
           </div>
           {uploadList.isPending && <Spinner label="Uploading" />}
           {uploadError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">
               {uploadError}
             </p>
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto p-[10px]">
           {isLoading ? (
             <Spinner label="Loading lists" />
           ) : error ? (
-            <p role="alert" className="p-4 text-sm text-destructive">
+            <p role="alert" className="p-[14px] text-[12.5px] text-[hsl(var(--cx-danger))]">
               {(error as Error).message}
             </p>
           ) : (lists ?? []).length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">No lists yet.</p>
+            <ConsoleEmpty>No lists yet.</ConsoleEmpty>
           ) : (
-            <ul aria-label="Contact lists">
+            <ul aria-label="Contact lists" className="space-y-[6px]">
               {(lists ?? []).map((l) => (
                 <li key={l.id}>
                   <button
@@ -128,15 +153,20 @@ export function ListsPage() {
                       setSelectedId(l.id);
                     }}
                     className={cn(
-                      "flex w-full flex-col gap-1 px-3 py-2 text-left text-sm hover:bg-muted",
-                      l.id === selectedId && !preview && "bg-muted",
+                      "flex w-full flex-col gap-[6px] rounded-[12px] px-[12px] py-[10px] text-left text-[13px] transition-colors",
+                      "hover:bg-[hsl(var(--cx-overlay))]",
+                      l.id === selectedId && !preview
+                        ? "bg-[hsl(var(--cx-lift))] text-[hsl(var(--cx-text))]"
+                        : "text-[hsl(var(--cx-subtle))]",
                     )}
                   >
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="truncate font-medium">{l.name}</span>
+                    <span className="flex items-center justify-between gap-[11px]">
+                      <span className="truncate font-medium text-[hsl(var(--cx-text))]">
+                        {l.name}
+                      </span>
                       <Badge className={listStatusBadgeClass(l.status)}>{l.status}</Badge>
                     </span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-[11.5px] text-[hsl(var(--cx-muted))]">
                       {l.total_rows} rows · {l.accepted_count} accepted
                     </span>
                   </button>
@@ -161,9 +191,9 @@ export function ListsPage() {
         ) : selectedId ? (
           <ListDetail api={api} listId={selectedId} />
         ) : (
-          <p className="p-6 text-sm text-muted-foreground">
-            Upload a list or select one to see its import report.
-          </p>
+          <div className="p-6">
+            <ConsoleEmpty>Upload a list or select one to see its import report.</ConsoleEmpty>
+          </div>
         )}
       </section>
     </div>
@@ -196,83 +226,101 @@ function MappingPanel({
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h2 className="text-base font-semibold">Map columns: {preview.name}</h2>
-        <p className="text-xs text-muted-foreground">{preview.row_count} rows detected.</p>
-      </div>
+    <div className="space-y-[18px] p-6">
+      <PageHeader
+        title={`Map columns: ${preview.name}`}
+        description={`${preview.row_count} rows detected.`}
+        headingLevel={2}
+      />
 
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-border bg-muted text-left">
-              {preview.headers.map((h) => (
-                <th key={h} className="whitespace-nowrap px-2 py-1.5 font-medium">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {preview.preview_rows.map((row, i) => (
-              <tr key={i}>
+      <div className="space-y-[11px]">
+        <SectionLabel>File preview</SectionLabel>
+        <div className="overflow-x-auto rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))]">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="border-b border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] text-left">
                 {preview.headers.map((h) => (
-                  <td key={h} className="whitespace-nowrap px-2 py-1.5 text-muted-foreground">
-                    {row[h] ?? ""}
-                  </td>
+                  <th
+                    key={h}
+                    className="whitespace-nowrap px-[12px] py-[9px] font-semibold text-[hsl(var(--cx-subtle))]"
+                  >
+                    {h}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-[hsl(var(--cx-line))]">
+              {preview.preview_rows.map((row, i) => (
+                <tr key={i}>
+                  {preview.headers.map((h) => (
+                    <td
+                      key={h}
+                      className="whitespace-nowrap px-[12px] py-[9px] text-[hsl(var(--cx-muted))]"
+                    >
+                      {row[h] ?? ""}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div className="grid max-w-lg grid-cols-2 gap-3">
-        {CANONICAL_FIELDS.map((field) => (
-          <div key={field.key} className="space-y-1">
-            <label
-              className="block text-xs text-muted-foreground"
-              htmlFor={`mapping-${field.key}`}
-            >
-              {field.label}
-              {field.required && " *"}
-            </label>
-            <select
-              id={`mapping-${field.key}`}
-              aria-label={`Map ${field.label}`}
-              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-              value={mapping[field.key] ?? ""}
-              onChange={(e) =>
-                setMapping((m) => {
-                  const next = { ...m };
-                  if (e.target.value) next[field.key] = e.target.value;
-                  else delete next[field.key];
-                  return next;
-                })
-              }
-            >
-              <option value="">Not mapped</option>
-              {preview.headers.map((h) => (
-                <option key={h} value={h}>
-                  {h}
-                </option>
-              ))}
-            </select>
-          </div>
-        ))}
+      <div className="space-y-[11px]">
+        <SectionLabel>Column mapping</SectionLabel>
+        <div className="grid max-w-lg grid-cols-2 gap-[12px]">
+          {CANONICAL_FIELDS.map((field) => (
+            <div key={field.key} className="space-y-[6px]">
+              <label
+                className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]"
+                htmlFor={`mapping-${field.key}`}
+              >
+                {field.label}
+                {field.required && " *"}
+              </label>
+              <select
+                id={`mapping-${field.key}`}
+                aria-label={`Map ${field.label}`}
+                className="h-9 w-full rounded-[10px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[10px] text-[13px] text-[hsl(var(--cx-text))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--cx-accent))]"
+                value={mapping[field.key] ?? ""}
+                onChange={(e) =>
+                  setMapping((m) => {
+                    const next = { ...m };
+                    if (e.target.value) next[field.key] = e.target.value;
+                    else delete next[field.key];
+                    return next;
+                  })
+                }
+              >
+                <option value="">Not mapped</option>
+                {preview.headers.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">
           {error}
         </p>
       )}
 
-      <div className="flex gap-2">
-        <Button type="button" onClick={commit} disabled={!mapping.phone || commitList.isPending}>
+      <div className="flex gap-[11px]">
+        <Button
+          type="button"
+          className="rounded-full"
+          onClick={commit}
+          disabled={!mapping.phone || commitList.isPending}
+        >
           {commitList.isPending ? "Importing…" : "Commit import"}
         </Button>
-        <Button type="button" variant="outline" onClick={onDiscard}>
+        <Button type="button" variant="outline" className="rounded-full" onClick={onDiscard}>
           Cancel
         </Button>
       </div>
@@ -288,79 +336,90 @@ function ListDetail({ api, listId }: { api: ApiClient; listId: string }) {
   if (isLoading || !list) return <Spinner label="Loading list" />;
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h2 className="text-base font-semibold">{list.name}</h2>
-        <p className="text-xs text-muted-foreground">{list.source_filename}</p>
-        <div className="mt-2 flex items-center gap-2">
-          <Badge className={listStatusBadgeClass(list.status)}>{list.status}</Badge>
-          {list.status === "importing" && (
-            <span className="text-xs text-muted-foreground">Import in progress…</span>
-          )}
-          {list.status === "failed" && list.error && (
-            <span role="alert" className="text-xs text-destructive">
-              {list.error}
-            </span>
-          )}
-        </div>
-        <dl className="mt-3 grid grid-cols-5 gap-x-4 gap-y-1 text-sm">
-          <dt className="text-xs text-muted-foreground">Total</dt>
-          <dt className="text-xs text-muted-foreground">Accepted</dt>
-          <dt className="text-xs text-muted-foreground">Invalid</dt>
-          <dt className="text-xs text-muted-foreground">Duplicate</dt>
-          <dt className="text-xs text-muted-foreground">DNC</dt>
-          <dd>{list.total_rows}</dd>
-          <dd>{list.accepted_count}</dd>
-          <dd>{list.invalid_count}</dd>
-          <dd>{list.duplicate_count}</dd>
-          <dd>{list.dnc_count}</dd>
-        </dl>
-      </div>
-
-      <div className="flex gap-1" role="group" aria-label="Filter rows by status">
-        {ROW_STATUS_FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            onClick={() => setStatus(f.key)}
-            className={cn(
-              "rounded-md px-3 py-1 text-xs",
-              status === f.key ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted",
+    <div className="space-y-[18px] p-6">
+      <ConsoleCard className="space-y-[12px] p-[18px]">
+        <PageHeader
+          title={list.name}
+          description={list.source_filename}
+          headingLevel={2}
+          actions={<Badge className={listStatusBadgeClass(list.status)}>{list.status}</Badge>}
+        />
+        {(list.status === "importing" || (list.status === "failed" && list.error)) && (
+          <div className="flex items-center gap-[11px]">
+            {list.status === "importing" && (
+              <span className="text-[12px] text-[hsl(var(--cx-muted))]">Import in progress…</span>
             )}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+            {list.status === "failed" && list.error && (
+              <span role="alert" className="text-[12px] text-[hsl(var(--cx-danger))]">
+                {list.error}
+              </span>
+            )}
+          </div>
+        )}
+        <dl className="grid grid-cols-2 gap-[11px] sm:grid-cols-5">
+          <CountCell label="Total" value={list.total_rows} />
+          <CountCell label="Accepted" value={list.accepted_count} />
+          <CountCell label="Invalid" value={list.invalid_count} />
+          <CountCell label="Duplicate" value={list.duplicate_count} />
+          <CountCell label="DNC" value={list.dnc_count} />
+        </dl>
+      </ConsoleCard>
 
-      {rowsLoading ? (
-        <Spinner label="Loading rows" />
-      ) : (rows ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No rows for this filter.</p>
-      ) : (
-        <table className="w-full text-sm" aria-label="Import outcomes">
-          <thead>
-            <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="px-2 py-1.5 font-medium">Row</th>
-              <th className="px-2 py-1.5 font-medium">Phone</th>
-              <th className="px-2 py-1.5 font-medium">Status</th>
-              <th className="px-2 py-1.5 font-medium">Reason</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {(rows as ListRowOut[]).map((r) => (
-              <tr key={r.id}>
-                <td className="px-2 py-1.5 text-xs text-muted-foreground">{r.row_number}</td>
-                <td className="px-2 py-1.5">{r.e164 ?? "—"}</td>
-                <td className="px-2 py-1.5">
-                  <Badge className={rowStatusBadgeClass(r.status)}>{r.status}</Badge>
-                </td>
-                <td className="px-2 py-1.5 text-xs text-muted-foreground">{r.reason ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <div className="space-y-[11px]">
+        <SectionLabel>Import outcomes</SectionLabel>
+        <div className="flex flex-wrap gap-[8px]" role="group" aria-label="Filter rows by status">
+          {ROW_STATUS_FILTERS.map((f) => (
+            <FilterPill
+              key={f.key}
+              active={status === f.key}
+              // CSS is off in the suites and the only signal that a chip is the live
+              // filter was its fill, which announces nothing. `aria-pressed` gives the
+              // same state a name.
+              aria-pressed={status === f.key}
+              onClick={() => setStatus(f.key)}
+            >
+              {f.label}
+            </FilterPill>
+          ))}
+        </div>
+
+        {rowsLoading ? (
+          <Spinner label="Loading rows" />
+        ) : (rows ?? []).length === 0 ? (
+          <ConsoleEmpty>No rows for this filter.</ConsoleEmpty>
+        ) : (
+          <div className="overflow-x-auto rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))]">
+            <table className="w-full text-[13px]" aria-label="Import outcomes">
+              <thead>
+                <tr className="border-b border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] text-left text-[11.5px] text-[hsl(var(--cx-muted))]">
+                  <th className="px-[12px] py-[9px] font-semibold">Row</th>
+                  <th className="px-[12px] py-[9px] font-semibold">Phone</th>
+                  <th className="px-[12px] py-[9px] font-semibold">Status</th>
+                  <th className="px-[12px] py-[9px] font-semibold">Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[hsl(var(--cx-line))]">
+                {(rows as ListRowOut[]).map((r) => (
+                  <tr key={r.id}>
+                    <td className="px-[12px] py-[10px] text-[12px] text-[hsl(var(--cx-muted))]">
+                      {r.row_number}
+                    </td>
+                    <td className="px-[12px] py-[10px] text-[hsl(var(--cx-text))]">
+                      {r.e164 ?? "—"}
+                    </td>
+                    <td className="px-[12px] py-[10px]">
+                      <Badge className={rowStatusBadgeClass(r.status)}>{r.status}</Badge>
+                    </td>
+                    <td className="px-[12px] py-[10px] text-[12px] text-[hsl(var(--cx-muted))]">
+                      {r.reason ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

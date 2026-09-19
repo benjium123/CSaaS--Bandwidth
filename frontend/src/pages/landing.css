@@ -1,18 +1,23 @@
 /* The front of the product, in the Exchange language.
  *
  * Scoped under `.lp`, mounted inside `.auth-surface` so the palette in authTheme.css
- * applies. No new colours: ink, bone, copper, verdigris, and the two families already
- * loaded (Archivo Variable wide for nameplate voice, Martian Mono for machine output).
+ * applies. No new colours: ink, bone, the azure accent (`--ex-copper`, a role name that
+ * long outlived the copper it was named for) and the green (`--ex-verdigris`). One
+ * family, Onest, the way the approved console reference sets it.
  *
  * The motif is a patch field - the jack panel of a manual exchange - drawn with a
  * repeating gradient rather than an image, so it costs nothing, scales to any viewport
  * and needs no CSP allowance.
  *
- * COPPER IS THE ACCENT, matching the auth screens one click away: the headline accent, the
- * primary fill, the step numerals and the rules. VERDIGRIS keeps the single meaning it has
- * in authTheme.css - live, verified, in progress - and is reached through .ex-lamp-live and
- * the focus ring, never through --lp-signal. Spending it anywhere else is what makes a lamp
- * stop reading as a lamp.
+ * THE AZURE IS THE ACCENT, matching the auth screens one click away: the headline accent,
+ * the primary fill, the step numerals and the rules. THE GREEN keeps the single meaning it
+ * has in authTheme.css - live, verified, in progress - and is reached through .ex-lamp-live
+ * and the focus ring, never through --lp-signal. Spending it anywhere else is what makes a
+ * lamp stop reading as a lamp.
+ *
+ * There is no warm hue on this page. The jack field, the milled rules, the step numerals
+ * and the lamps were all written against the tokens, so they followed the palette across;
+ * the handful of places that had a literal in them were rewritten with it.
  */
 
 .lp {
@@ -29,10 +34,10 @@
   overflow-x: clip;
 }
 
-/* The patch field: a grid of copper jacks, far enough down that it reads as texture rather
- * than pattern, fading out before it reaches the content it sits behind. A single copper
- * layer: the original had a second verdigris lattice over it, which spent the status colour
- * on wallpaper. */
+/* The patch field: a grid of jacks drawn in the rule colour, far enough down that it reads
+ * as texture rather than pattern, fading out before it reaches the content it sits behind.
+ * A single layer: the original had a second green lattice over it, which spent the status
+ * colour on wallpaper. */
 .lp::before {
   content: "";
   position: absolute;
@@ -129,10 +134,9 @@
 }
 
 .lp-h1 {
-  font-family: "Archivo Variable", system-ui, sans-serif;
-  font-stretch: 122%;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  font-family: "Onest Variable", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.025em;
   line-height: 0.98;
   font-size: clamp(2.5rem, 7.5vw, 4.25rem);
   color: hsl(var(--ex-bone));
@@ -140,11 +144,11 @@
   margin: 1rem 0 0;
 }
 
-/* The accent is copper, and it is copper for a specific reason: this is THE SAME SENTENCE
- * as the headline in AuthShell's aside, which a visitor sees one click later on the login
- * and signup screens. There it is set plain, in copper, at the surrounding width. Two
- * treatments of one sentence, a click apart, is the kind of difference nobody can name and
- * everybody notices - so this matches it exactly.
+/* The accent is the azure, and it is the azure for a specific reason: this is THE SAME
+ * SENTENCE as the headline in AuthShell's aside, which a visitor sees one click later on
+ * the login and signup screens. There it is set plain, in the accent, at the surrounding
+ * width. Two treatments of one sentence, a click apart, is the kind of difference nobody
+ * can name and everybody notices - so this matches it exactly.
  *
  * An earlier revision set this in bone with a narrowed width axis and a drawn rule
  * underneath. It was a better piece of typography in isolation and it is gone deliberately;
@@ -177,8 +181,8 @@
   color: hsl(var(--ex-bone-dim) / 0.85);
 }
 
-/* Keyboard focus stays VERDIGRIS across the whole public surface, matching authTheme's
- * .ex-btn:focus-visible. Copper is the brand accent now, and a focus ring in the brand
+/* Keyboard focus stays GREEN across the whole public surface, matching authTheme's
+ * .ex-btn:focus-visible. The azure is the brand accent, and a focus ring in the brand
  * colour is indistinguishable from ordinary ornament - the indicator has to be the one
  * colour nothing else on the page is spending. */
 .lp a:focus-visible {
@@ -208,10 +212,9 @@
 }
 
 .lp-h2 {
-  font-family: "Archivo Variable", system-ui, sans-serif;
-  font-stretch: 118%;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-family: "Onest Variable", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   line-height: 1.1;
   font-size: clamp(1.5rem, 3.4vw, 2rem);
   color: hsl(var(--ex-bone));
@@ -342,7 +345,7 @@
 }
 
 .lp-line dt {
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 0.5625rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -369,7 +372,7 @@
 }
 
 .lp-step-n {
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 0.6875rem;
   letter-spacing: 0.08em;
   color: hsl(var(--lp-index));
@@ -572,7 +575,7 @@
 /* The safety grid -----------------------------------------------------------
  * Title plus one sentence, six times. No icons in circles: the Exchange language
  * has no icon set, and inventing one here would be the single most generic move
- * available. The copper rule along the top of each item is the whole ornament. */
+ * available. The rule along the top of each item is the whole ornament. */
 .lp-grid {
   list-style: none;
   margin: 0;
@@ -643,7 +646,7 @@
 
 /* Questions -----------------------------------------------------------------
  * Native <details>. The marker is suppressed and replaced by a drawn plus/minus
- * so it can be copper and can rotate; `list-style: none` and the WebKit
+ * so it can take the accent and can rotate; `list-style: none` and the WebKit
  * pseudo-element are both needed, since Safari ignores the former on <summary>. */
 .lp-faq {
   border-top: 1px solid hsl(var(--lp-rule) / 0.7);
@@ -740,7 +743,7 @@
  * bug until a production build happens to order the two files the other way.
  * ------------------------------------------------------------------------- */
 
-/* On paper the jack field is a copper line at 70% lightness rather than 24%, so
+/* On paper the jack field is the line token at 92% lightness rather than 17%, so
  * the same 0.22 alpha that reads as texture on ink all but disappears. */
 .lp.is-light::before {
   background-image:

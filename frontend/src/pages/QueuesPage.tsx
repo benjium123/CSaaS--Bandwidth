@@ -17,7 +17,6 @@ import {
 import {
   Badge,
   Button,
-  Card,
   EmptyState,
   Input,
   Pill,
@@ -26,6 +25,12 @@ import {
   Spinner,
   type PillTone,
 } from "@/components/ui/primitives";
+import {
+  ConsoleCard,
+  InitialsAvatar,
+  PageHeader,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
 import { relativeTime } from "@/lib/format";
 
 const WEEKDAYS = [
@@ -47,8 +52,11 @@ const OVERFLOW_OPTIONS = [
 export function QueuesPage() {
   const { api } = useAuth();
   return (
-    <div className="mx-auto max-w-4xl space-y-10 overflow-y-auto p-6">
-      <h1 className="text-lg font-semibold">Queues &amp; routing</h1>
+    <div className="mx-auto max-w-4xl space-y-[18px] overflow-y-auto">
+      <PageHeader
+        title={<>Queues &amp; routing</>}
+        description="When you are open, who rings, and what happens to the people waiting."
+      />
       <BusinessHoursSection api={api} />
       <RingGroupsSection api={api} />
       <QueuesSection api={api} />
@@ -121,7 +129,7 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
         <Spinner label="Loading business hours" />
       ) : hoursError ? (
         <div className="space-y-2">
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
             {(hoursError as Error).message}
           </p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetchHours()}>
@@ -131,31 +139,32 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
       ) : (hours ?? []).length === 0 ? (
         <EmptyState title="No business hours configured yet." />
       ) : (
-        <Card className="p-0">
-          <ul aria-label="Business hours" className="divide-y divide-border">
+        <SurfaceCard className="overflow-hidden p-0">
+          <ul aria-label="Business hours" className="divide-y divide-[hsl(var(--cx-line))]">
             {(hours ?? []).map((h) => (
-              <li key={h.id} className="p-3 text-sm">
-                <span className="font-medium">{h.name}</span>{" "}
-                <span className="text-xs text-muted-foreground">
+              <li key={h.id} className="flex items-center gap-[11px] p-[12px] text-[13.5px]">
+                <InitialsAvatar name={h.name} seed={h.id} size="sm" />
+                <span className="font-semibold">{h.name}</span>
+                <span className="ml-auto text-[11.5px] text-[hsl(var(--cx-muted))]">
                   {h.timezone} · {h.holidays.length} holiday{h.holidays.length === 1 ? "" : "s"}
                 </span>
               </li>
             ))}
           </ul>
-        </Card>
+        </SurfaceCard>
       )}
 
-      <Card className="p-3">
+      <ConsoleCard className="p-[14px]">
         <form className="space-y-3" onSubmit={submit}>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="bh-name">
+              <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="bh-name">
                 Name
               </label>
               <Input id="bh-name" aria-label="Business hours name" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="bh-tz">
+              <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="bh-tz">
                 Timezone (IANA)
               </label>
               <Input
@@ -170,7 +179,7 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
           <div className="space-y-2">
             {WEEKDAYS.map((day) => (
               <div key={day.key} className="flex flex-wrap items-center gap-2">
-                <span className="w-10 text-xs text-muted-foreground">{day.label}</span>
+                <span className="w-10 text-xs text-[hsl(var(--cx-muted))]">{day.label}</span>
                 {windowsFor(day.key).map((w, i) => (
                   <div key={i} className="flex items-center gap-1">
                     <Input
@@ -179,7 +188,7 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
                       value={w[0]}
                       onChange={(e) => updateWindow(day.key, i, 0, e.target.value)}
                     />
-                    <span className="text-xs text-muted-foreground">–</span>
+                    <span className="text-xs text-[hsl(var(--cx-muted))]">–</span>
                     <Input
                       aria-label={`${day.label} window ${i + 1} close`}
                       className="h-8 w-24"
@@ -205,17 +214,17 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
           </div>
 
           <div className="space-y-1">
-            <span className="block text-xs text-muted-foreground">Holidays (ISO dates)</span>
+            <span className="block text-xs text-[hsl(var(--cx-muted))]">Holidays (ISO dates)</span>
             <div className="flex flex-wrap gap-1">
               {holidays.map((d) => (
-                <Badge key={d} className="bg-muted text-foreground">
+                <Badge key={d} className="rounded-full bg-[hsl(var(--cx-overlay))] text-[hsl(var(--cx-text))]">
                   {d}
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
                     aria-label={`Remove holiday ${d}`}
-                    className="ml-1 h-4 w-4 p-0 text-foreground hover:text-destructive"
+                    className="ml-1 h-4 w-4 p-0 text-foreground hover:text-[hsl(var(--cx-danger))]"
                     onClick={() => setHolidays((prev) => prev.filter((x) => x !== d))}
                   >
                     ×
@@ -238,7 +247,7 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
               {error}
             </p>
           )}
@@ -247,7 +256,7 @@ function BusinessHoursSection({ api }: { api: ApiClient }) {
             Save business hours
           </Button>
         </form>
-      </Card>
+      </ConsoleCard>
     </Section>
   );
 }
@@ -293,7 +302,7 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
         <Spinner label="Loading ring groups" />
       ) : groupsError ? (
         <div className="space-y-2">
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
             {(groupsError as Error).message}
           </p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetchGroups()}>
@@ -303,32 +312,33 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
       ) : (groups ?? []).length === 0 ? (
         <EmptyState title="No ring groups yet." />
       ) : (
-        <Card className="p-0">
-          <ul aria-label="Ring groups" className="divide-y divide-border">
+        <SurfaceCard className="overflow-hidden p-0">
+          <ul aria-label="Ring groups" className="divide-y divide-[hsl(var(--cx-line))]">
             {(groups ?? []).map((g) => (
-              <li key={g.id} className="flex items-center justify-between p-3 text-sm">
-                <span className="font-medium">{g.name}</span>
-                <span className="text-xs text-muted-foreground">
+              <li key={g.id} className="flex items-center gap-[11px] p-[12px] text-[13.5px]">
+                <InitialsAvatar name={g.name} seed={g.id} size="sm" />
+                <span className="font-semibold">{g.name}</span>
+                <span className="ml-auto text-[11.5px] text-[hsl(var(--cx-muted))]">
                   {g.strategy} · {g.member_user_ids.length} member{g.member_user_ids.length === 1 ? "" : "s"} ·{" "}
                   {g.ring_timeout_seconds}s
                 </span>
               </li>
             ))}
           </ul>
-        </Card>
+        </SurfaceCard>
       )}
 
-      <Card className="p-3">
+      <ConsoleCard className="p-[14px]">
         <form className="space-y-3" onSubmit={submit}>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="rg-name">
+              <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="rg-name">
                 Name
               </label>
               <Input id="rg-name" aria-label="Ring group name" value={name} onChange={(e) => setName(e.target.value)} required />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="rg-strategy">
+              <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="rg-strategy">
                 Strategy
               </label>
               <Select
@@ -345,27 +355,37 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
           </div>
 
           <div className="space-y-1">
-            <span className="block text-xs text-muted-foreground">Members</span>
-            <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-border p-2" role="group" aria-label="Members">
+            <span className="block text-xs text-[hsl(var(--cx-muted))]">Members</span>
+            <div
+              className="max-h-32 space-y-1 overflow-y-auto rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[9px]"
+              role="group"
+              aria-label="Members"
+            >
               {(members ?? []).length === 0 ? (
                 <EmptyState title="No team members." />
               ) : (
                 (members ?? []).map((m) => (
-                  <label key={m.user_id} className="flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={memberIds.includes(m.user_id)}
-                      onChange={() => toggleMember(m.user_id)}
-                    />
-                    {m.full_name} ({m.email})
-                  </label>
+                  <div
+                    key={m.user_id}
+                    className="flex items-center gap-[9px] rounded-[10px] px-[6px] py-[5px]"
+                  >
+                    <InitialsAvatar name={m.full_name} seed={m.user_id} size="sm" />
+                    <label className="flex min-w-0 flex-1 items-center gap-[9px] text-[12.5px]">
+                      <input
+                        type="checkbox"
+                        checked={memberIds.includes(m.user_id)}
+                        onChange={() => toggleMember(m.user_id)}
+                      />
+                      {m.full_name} ({m.email})
+                    </label>
+                  </div>
                 ))
               )}
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="rg-timeout">
+            <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="rg-timeout">
               Ring timeout (seconds)
             </label>
             <Input
@@ -381,7 +401,7 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
               {error}
             </p>
           )}
@@ -390,7 +410,7 @@ function RingGroupsSection({ api }: { api: ApiClient }) {
             Create ring group
           </Button>
         </form>
-      </Card>
+      </ConsoleCard>
     </Section>
   );
 }
@@ -435,7 +455,7 @@ function QueuesSection({ api }: { api: ApiClient }) {
         <Spinner label="Loading queues" />
       ) : queuesError ? (
         <div className="space-y-2">
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
             {(queuesError as Error).message}
           </p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetchQueues()}>
@@ -445,18 +465,21 @@ function QueuesSection({ api }: { api: ApiClient }) {
       ) : (queues ?? []).length === 0 ? (
         <EmptyState title="No queues yet." />
       ) : (
-        <Card className="p-0">
-          <ul aria-label="Queues" className="divide-y divide-border">
+        <SurfaceCard className="overflow-hidden p-0">
+          <ul aria-label="Queues" className="divide-y divide-[hsl(var(--cx-line))]">
             {(queues ?? []).map((q) => (
-              <li key={q.id} className="p-3 text-sm">
+              <li key={q.id} className="p-[12px] text-[13.5px]">
                 <Button
                   type="button"
                   variant="ghost"
                   className="h-auto w-full justify-between gap-2 px-0 py-0 text-left"
                   onClick={() => setExpandedId((prev) => (prev === q.id ? null : q.id))}
                 >
-                  <span className="font-medium">{q.name}</span>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="flex items-center gap-[11px]">
+                    <InitialsAvatar name={q.name} seed={q.id} size="sm" />
+                    <span className="font-semibold">{q.name}</span>
+                  </span>
+                  <span className="text-[11.5px] font-normal text-[hsl(var(--cx-muted))]">
                     overflow: {q.overflow} · max wait {q.max_wait_seconds}s
                   </span>
                 </Button>
@@ -464,20 +487,20 @@ function QueuesSection({ api }: { api: ApiClient }) {
               </li>
             ))}
           </ul>
-        </Card>
+        </SurfaceCard>
       )}
 
-      <Card className="p-3">
+      <ConsoleCard className="p-[14px]">
         <form className="space-y-3" onSubmit={submit}>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="q-name">
+              <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="q-name">
                 Name
               </label>
               <Input id="q-name" aria-label="Queue name" value={name} onChange={(e) => setName(e.target.value)} required />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="q-ring-group">
+              <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="q-ring-group">
                 Ring group
               </label>
               <Select
@@ -498,7 +521,7 @@ function QueuesSection({ api }: { api: ApiClient }) {
           </div>
 
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="q-hold-audio">
+            <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="q-hold-audio">
               Hold audio URL
             </label>
             <Input
@@ -512,7 +535,7 @@ function QueuesSection({ api }: { api: ApiClient }) {
 
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="q-max-wait">
+              <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="q-max-wait">
                 Max wait (seconds)
               </label>
               <Input
@@ -526,7 +549,7 @@ function QueuesSection({ api }: { api: ApiClient }) {
               />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor="q-overflow">
+              <label className="block text-xs text-[hsl(var(--cx-muted))]" htmlFor="q-overflow">
                 Overflow
               </label>
               <Select
@@ -546,7 +569,7 @@ function QueuesSection({ api }: { api: ApiClient }) {
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
               {error}
             </p>
           )}
@@ -555,7 +578,7 @@ function QueuesSection({ api }: { api: ApiClient }) {
             Create queue
           </Button>
         </form>
-      </Card>
+      </ConsoleCard>
     </Section>
   );
 }
@@ -589,12 +612,12 @@ function QueueEntriesList({ api, queue }: { api: ApiClient; queue: QueueOut }) {
   } = useQueueEntries(api, queue.id, { enabled: true });
 
   return (
-    <div className="mt-2 border-t border-border pt-2">
+    <div className="mt-[11px] border-t border-[hsl(var(--cx-line))] pt-[11px]">
       {isLoading ? (
         <Spinner label="Loading entries" />
       ) : entriesError ? (
         <div className="space-y-2">
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
             {(entriesError as Error).message}
           </p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetchEntries()}>
@@ -606,7 +629,7 @@ function QueueEntriesList({ api, queue }: { api: ApiClient; queue: QueueOut }) {
       ) : (
         <ul aria-label={`${queue.name} entries`} className="space-y-1">
           {(entries ?? []).map((e) => (
-            <li key={e.id} className="flex items-center justify-between gap-2 text-xs">
+            <li key={e.id} className="flex items-center justify-between gap-2 rounded-[12px] bg-[hsl(var(--cx-overlay))] px-[10px] py-[7px] text-[12px]">
               <span>
                 {e.state === "waiting" && e.position != null ? `#${e.position + 1}` : e.call_id.slice(0, 8)}
                 {e.callback_e164 ? ` · ${e.callback_e164}` : ""}
@@ -660,7 +683,7 @@ function VoicemailsSection({ api }: { api: ApiClient }) {
       }
     >
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
           {error}
         </p>
       )}
@@ -669,7 +692,7 @@ function VoicemailsSection({ api }: { api: ApiClient }) {
         <Spinner label="Loading voicemails" />
       ) : voicemailsError ? (
         <div className="space-y-2">
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-[hsl(var(--cx-danger))]">
             {(voicemailsError as Error).message}
           </p>
           <Button type="button" size="sm" variant="outline" onClick={() => refetchVoicemails()}>
@@ -679,12 +702,12 @@ function VoicemailsSection({ api }: { api: ApiClient }) {
       ) : (voicemails ?? []).length === 0 ? (
         <EmptyState title="No voicemails." />
       ) : (
-        <Card className="p-0">
-          <ul aria-label="Voicemails" className="divide-y divide-border">
+        <SurfaceCard className="overflow-hidden p-0">
+          <ul aria-label="Voicemails" className="divide-y divide-[hsl(var(--cx-line))]">
             {(voicemails ?? []).map((v) => (
-              <li key={v.id} className="space-y-1 p-3 text-sm">
+              <li key={v.id} className="space-y-[7px] p-[12px] text-[13.5px]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground">{relativeTime(v.created_at)}</span>
+                  <span className="text-[11.5px] text-[hsl(var(--cx-muted))]">{relativeTime(v.created_at)}</span>
                   <div className="flex items-center gap-2">
                     <Pill tone="neutral">{v.transcript_status}</Pill>
                     <Pill tone={v.status === "new" ? "warning" : "neutral"}>{v.status}</Pill>
@@ -696,16 +719,16 @@ function VoicemailsSection({ api }: { api: ApiClient }) {
                   </div>
                 </div>
                 {v.transcript ? (
-                  <p className="text-xs text-muted-foreground">{v.transcript}</p>
+                  <p className="text-[12.5px] text-[hsl(var(--cx-subtle))]">{v.transcript}</p>
                 ) : (
-                  <p className="text-xs italic text-muted-foreground">
+                  <p className="text-[12.5px] italic text-[hsl(var(--cx-muted))]">
                     {v.transcript_status === "disabled" ? "Transcription not configured." : "Transcript pending."}
                   </p>
                 )}
               </li>
             ))}
           </ul>
-        </Card>
+        </SurfaceCard>
       )}
     </Section>
   );

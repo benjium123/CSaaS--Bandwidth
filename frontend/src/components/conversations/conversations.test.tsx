@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConversationList } from "./ConversationList";
@@ -8,6 +8,7 @@ import { ConversationHeader } from "./ConversationHeader";
 import { makeStubClient, renderWithProviders, type RouteStub } from "@/test/harness";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import type { Conversation, Inbox } from "@/api/conversations";
+import { avatarHueIndex, shortRelativeTime } from "@/lib/format";
 
 function inbox(overrides: Partial<Inbox> = {}): Inbox {
   return {
@@ -45,6 +46,114 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
 // the org switcher) is covered by src/components/shell/Sidebar.test.tsx.
 
 describe("ConversationList", () => {
+  /** The list with nothing but `items` varying - every other prop is inert. */
+  function renderList(items: Conversation[]) {
+    const client = makeStubClient({});
+    renderWithProviders(
+      <ConversationList
+        items={items}
+        selectedContactE164={null}
+        onSelect={() => {}}
+        tab="chats"
+        onTabChange={() => {}}
+        filter="open"
+        onFilterChange={() => {}}
+        q=""
+        onQChange={() => {}}
+        hasNextPage={false}
+        isFetchingNextPage={false}
+        isLoading={false}
+        onLoadMore={() => {}}
+      />,
+      client,
+    );
+  }
+
+  // console-reference.html: coloured circles with two-letter initials, a different hue
+  // per contact. The hue is a hash of the contact's id (avatarHueIndex), so it is the
+  // SAME on every render and in every tab - that stability is the point of it.
+  it("gives each contact two-letter initials and a hue derived from their id", () => {
+    const items: Conversation[] = [
+      conversation({ contact: { id: "c-ada", display_name: "Ada Whitlock" } }),
+      conversation({
+        contact_e164: "+19725550200",
+        contact: { id: "c-marcus", display_name: "Marcus Bell" },
+      }),
+      conversation({ contact_e164: "+15125550177", contact: null, snippet: "STOP" }),
+    ];
+    renderList(items);
+
+    const ada = screen.getByText("AW");
+    const marcus = screen.getByText("MB");
+    // No contact record: the formatted number is the title, and "51" its initials -
+    // exactly the reference's grey "(512) 555-0177" row.
+    const unsaved = screen.getByText("51");
+
+    for (const avatar of [ada, marcus, unsaved]) {
+      expect(avatar).toHaveClass("cx-avatar");
+      expect(avatar.getAttribute("data-hue")).toMatch(/^[0-6]$/);
+    }
+    // Different contacts, different colours: a uniform list is the gap this closes.
+    expect(ada.getAttribute("data-hue")).not.toBe(marcus.getAttribute("data-hue"));
+    expect(ada.getAttribute("data-hue")).toBe(avatarHueIndex("c-ada").toString());
+    // Not a saved contact, so the seed is the number rather than a contact id.
+    expect(unsaved.getAttribute("data-hue")).toBe(avatarHueIndex("+15125550177").toString());
+  });
+
+  it("times rows in the reference's short relative form, including an old one", () => {
+    const now = Date.now();
+    renderList([
+      conversation({ last_event_at: new Date(now - 12 * 60_000).toISOString() }),
+      conversation({
+        contact_e164: "+19725550200",
+        last_event_at: new Date(now - 4 * 3_600_000).toISOString(),
+      }),
+      conversation({
+        contact_e164: "+19725550201",
+        // Old enough to be a date rather than a count - and the year is dropped, so it
+        // reads "Sep 17", not "9/17/2025".
+        last_event_at: new Date(now - 30 * 86_400_000).toISOString(),
+      }),
+    ]);
+
+    expect(screen.getByText("12m")).toBeInTheDocument();
+    expect(screen.getByText("4h")).toBeInTheDocument();
+    expect(screen.getByText(shortRelativeTime(new Date(now - 30 * 86_400_000).toISOString())))
+      .toBeInTheDocument();
+    // The thing the operator actually complained about is gone.
+    expect(screen.queryByText("now")).not.toBeInTheDocument();
+  });
+
+  it("marks an important row with a star and an unread row with a dot", () => {
+    renderList([
+      conversation({ important: true, unread: false }),
+      conversation({ contact_e164: "+19725550200", important: false, unread: true }),
+      conversation({ contact_e164: "+19725550201", important: false, unread: false }),
+    ]);
+
+    // One star, on the important row only.
+    expect(screen.getAllByLabelText("Important")).toHaveLength(1);
+    // One dot, on the unread row only. The dot has no text and no role - it is decoration
+    // backing up the bold name - so it is queried by class.
+    expect(document.querySelectorAll(".cx-unread-dot")).toHaveLength(1);
+  });
+
+  it("prefixes the preview with You: when the last event was ours", () => {
+    renderList([
+      conversation({ direction: "outbound", snippet: "Perfect, thank you!" }),
+      conversation({
+        contact_e164: "+19725550200",
+        direction: "inbound",
+        snippet: "Is the 0800 number included?",
+      }),
+    ]);
+
+    const ours = screen.getByText("Perfect, thank you!");
+    expect(within(ours).getByText("You:")).toBeInTheDocument();
+    const theirs = screen.getByText("Is the 0800 number included?");
+    expect(within(theirs).queryByText("You:")).not.toBeInTheDocument();
+  });
+
   it("renders message, missed call, and voicemail snippets with icons", () => {
     const client = makeStubClient({});
     const items: Conversation[] = [
@@ -188,15 +297,17 @@ describe("ConversationList", () => {
 
     expect(screen.getAllByLabelText("Important")).toHaveLength(1);
 
-    // P26: the filter chips collapse into one "Filter" dropdown by default (5 chips,
-    // MAX_VISIBLE_CHIPS=4).
-    await userEvent.click(screen.getByRole("button", { name: /^Filter/ }));
-    await userEvent.click(screen.getByRole("menuitemradio", { name: "Important" }));
+    // The chips are three plain pills again (console-reference.html), so Important is a
+    // button - not an item inside a collapsed "Filter" dropdown. The row's star carries
+    // aria-label="Important" too, so query by ROLE to keep hold of the chip.
+    await userEvent.click(screen.getByRole("button", { name: "Important" }));
     expect(onFilterChange).toHaveBeenCalledWith("important");
   });
 
-  // Item 1: the "+ New" button and its New text message / New call menu.
-  it("opens the New menu and fires onNew for each option, and is disabled when canCompose is false", async () => {
+  // Item 1, redrawn: the reference's two `.icon-btn`s at the right of the list header - a
+  // phone and a speech bubble - which replaced the "+ New" dropdown. Both destinations
+  // are still reachable, and both still carry the compose gate.
+  it("fires onNew from each header icon button, and both are disabled when canCompose is false", async () => {
     const client = makeStubClient({});
     const onNew = vi.fn();
     const { rerender } = renderWithProviders(
@@ -220,12 +331,10 @@ describe("ConversationList", () => {
       client,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "New" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "New text message" }));
+    await userEvent.click(screen.getByRole("button", { name: "New text message" }));
     expect(onNew).toHaveBeenCalledWith("message");
 
-    await userEvent.click(screen.getByRole("button", { name: "New" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "New call" }));
+    await userEvent.click(screen.getByRole("button", { name: "New call" }));
     expect(onNew).toHaveBeenCalledWith("call");
 
     rerender(
@@ -247,17 +356,19 @@ describe("ConversationList", () => {
         canCompose={false}
       />,
     );
-    const disabledButton = screen.getByRole("button", { name: "New" });
-    expect(disabledButton).toBeDisabled();
-    expect(disabledButton).toHaveAttribute(
-      "title",
-      "Read-only inbox — you can view but not start new conversations",
-    );
+    for (const name of ["New call", "New text message"]) {
+      const disabledButton = screen.getByRole("button", { name });
+      expect(disabledButton).toBeDisabled();
+      expect(disabledButton).toHaveAttribute(
+        "title",
+        "Read-only inbox — you can view but not start new conversations",
+      );
+    }
   });
 
   // Item 6: the disabled tooltip must not claim "read-only" while we don't yet know
   // whether the user can compose (inboxes query still in flight).
-  it("shows no tooltip on the disabled New button while canComposeLoading is true", () => {
+  it("shows no tooltip on the disabled header buttons while canComposeLoading is true", () => {
     const client = makeStubClient({});
     renderWithProviders(
       <ConversationList
@@ -280,13 +391,124 @@ describe("ConversationList", () => {
       />,
       client,
     );
-    const newButton = screen.getByRole("button", { name: "New" });
-    expect(newButton).toBeDisabled();
-    expect(newButton).not.toHaveAttribute("title");
+    for (const name of ["New call", "New text message"]) {
+      const newButton = screen.getByRole("button", { name });
+      expect(newButton).toBeDisabled();
+      expect(newButton).not.toHaveAttribute("title");
+    }
   });
 });
 
 describe("Timeline", () => {
+  const TIMELINE = "/api/v1/conversations/%2B19725550199/timeline";
+
+  function message(overrides: Record<string, unknown> = {}) {
+    return {
+      kind: "message",
+      id: "m1",
+      direction: "inbound",
+      body: "hello",
+      media: null,
+      status: "received",
+      occurred_at: new Date().toISOString(),
+      error_code: null,
+      route_reason: null,
+      failure_reason_public: null,
+      scheduled_for: null,
+      clicks: 0,
+      links: [],
+      ...overrides,
+    };
+  }
+
+  function renderTimeline(items: unknown[]) {
+    const client = makeStubClient({ [TIMELINE]: { items, next_cursor: null } });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Timeline
+          contactE164="+19725550199"
+          ourE164="+14694617576"
+          contactName="Priya Raman"
+          inboxName="Main line"
+        />
+      </SoftphoneProvider>,
+      client,
+    );
+    return client;
+  }
+
+  // console-reference.html `.day`: a centred pill, not a rule with a label in it.
+  it("draws the day divider as a centred pill, named by weekday when it is recent", async () => {
+    renderTimeline([message()]);
+
+    const pill = await screen.findByText("Today");
+    expect(pill).toHaveClass("cx-daybreak");
+    // `cx-label` was the 9px uppercase mono of the old rule - it cannot live in a pill.
+    expect(pill).not.toHaveClass("cx-label");
+  });
+
+  // console-reference.html `.bubble` / `.grp.out .bubble`: theirs recessed, ours azure.
+  it("gives an inbound bubble the recessed class and an outbound bubble the azure one", async () => {
+    renderTimeline([
+      message({ id: "m1", direction: "inbound", body: "from them" }),
+      message({ id: "m2", direction: "outbound", body: "from us", status: "delivered" }),
+    ]);
+
+    const theirs = (await screen.findByText("from them")).closest(".cx-msg");
+    const ours = screen.getByText("from us").closest(".cx-msg");
+    expect(theirs).toHaveClass("cx-msg-in");
+    expect(theirs).not.toHaveClass("cx-msg-out");
+    expect(ours).toHaveClass("cx-msg-out");
+    expect(ours).not.toHaveClass("cx-msg-in");
+  });
+
+  // `.grp-who`: the name above a run, once, and the time under the run, once.
+  it("names each run once and times it once, with a tick on a delivered outbound run", async () => {
+    renderTimeline([
+      message({ id: "m1", direction: "inbound", body: "first" }),
+      message({ id: "m2", direction: "inbound", body: "second" }),
+      message({ id: "m3", direction: "outbound", body: "reply", status: "delivered" }),
+    ]);
+
+    await screen.findByText("first");
+    // Two inbound messages, ONE name above them - and the outbound run is labelled by the
+    // line it went out on, which is the only sender the API actually tells us.
+    expect(screen.getAllByText("Priya Raman")).toHaveLength(1);
+    expect(screen.getAllByText("Main line")).toHaveLength(1);
+    // The first of the inbound run carries no time; only its last does.
+    expect(document.querySelectorAll(".cx-meta")).toHaveLength(2);
+    expect(screen.getByLabelText("Delivered")).toBeInTheDocument();
+  });
+
+  // console-reference.html `.callcard`: a full-width card, an arrow, "Outbound call ·
+  // 6:12", and a Play recording button.
+  it("renders a call as a full-width card with its length and a play button", async () => {
+    renderTimeline([
+      {
+        kind: "call",
+        id: "call1",
+        direction: "outbound",
+        status: "completed",
+        duration_seconds: 372,
+        occurred_at: new Date().toISOString(),
+        answered_at: null,
+        ended_at: null,
+        failure_detail: null,
+        recording: { id: "rec1", status: "stored", duration_seconds: 372 },
+        has_voicemail: false,
+      },
+    ]);
+
+    const line = await screen.findByText("You called · 6:12");
+    const card = line.closest(".cx-callcard");
+    expect(card).not.toBeNull();
+    expect(within(card as HTMLElement).getByRole("button", { name: /Play recording/ }))
+      .toBeInTheDocument();
+    // Not a bubble: a call belongs to neither side, so it is never aligned to a speaker.
+    expect(card).not.toHaveClass("cx-msg-out");
+    expect(card).not.toHaveClass("cx-msg-in");
+  });
+
   it("renders a message bubble, call card, and failed call with failure detail", async () => {
     const client = makeStubClient({
       // fetchConversationTimeline() URL-encodes the contact E.164 (encodeURIComponent
@@ -342,7 +564,9 @@ describe("Timeline", () => {
     );
 
     expect(await screen.findByText("hello")).toBeInTheDocument();
-    expect(screen.getByText("Called you")).toBeInTheDocument();
+    // The card now carries the direction and the length on one line, as the reference's
+    // "Outbound call · 6:12" does.
+    expect(screen.getByText("Called you · 0:42")).toBeInTheDocument();
     expect(screen.getByText("Call failed — carrier_unreachable")).toBeInTheDocument();
   });
 
@@ -407,7 +631,7 @@ describe("Timeline", () => {
       within(bubble as HTMLElement).getByText("Sent via Telnyx — cheapest healthy route"),
     ).toBeInTheDocument();
 
-    const callCard = screen.getByText("You called").closest("[title]");
+    const callCard = screen.getByText("You called · 0:30").closest("[title]");
     expect(callCard).toHaveAttribute("title", "Failed over to Telnyx — Bandwidth unavailable");
     expect(
       within(callCard as HTMLElement).getByText("Failed over to Telnyx — Bandwidth unavailable"),
@@ -516,10 +740,25 @@ describe("ContactPanel", () => {
   const baseContact = {
     id: "c1",
     display_name: "Ada Lovelace",
-    attributes: { company: "Acme Inc", role: "Owner", email: "ada@example.com", address: "1 Main St" },
+    // Typed loosely on purpose: the backend's `attributes` is free-form JSON, and tests
+    // below stub a contact carrying only SOME of these keys.
+    attributes: {
+      company: "Acme Inc",
+      role: "Owner",
+      email: "ada@example.com",
+      address: "1 Main St",
+    } as Record<string, unknown>,
     notes: null,
     phones: [],
   };
+
+  // `Collapsible` persists its open/closed state to localStorage, which jsdom shares
+  // across tests in this file - a test that opens "Details" would otherwise leave it
+  // open for the next one and make the "these are not on the panel" assertions lie.
+  beforeEach(() => {
+    localStorage.removeItem("contact-panel.details");
+    localStorage.removeItem("contact-panel.notes");
+  });
 
   function renderPanel(contactsStub: RouteStub | typeof baseContact) {
     const client = makeStubClient({
@@ -537,12 +776,128 @@ describe("ContactPanel", () => {
     return client;
   }
 
-  it("reads company, role, email, and address from the contact's attributes", async () => {
+  // NOTE on all of these: vitest runs with `css: false`, so the stylesheet is never
+  // applied. None of these assertions proves a colour, a corner, a gradient or a type
+  // size - they prove which elements and which classes are in the DOM. `.cx-panel-name`
+  // being LARGER than body text is a claim only the browser can settle.
+
+  // console-reference.html's panel: a big avatar, the name, and exactly Phone / Email /
+  // Company as `.f` rows - not folded inside a "Details" disclosure the way they were.
+  it("leads with the name and the Phone, Email and Company rows", async () => {
     renderPanel(baseContact);
 
     expect(await screen.findByText("Acme Inc")).toBeInTheDocument();
-    expect(screen.getByText("Owner")).toBeInTheDocument();
+    for (const key of ["Phone", "Email", "Company"]) {
+      const row = screen.getByText(key).closest(".cx-field");
+      expect(row).not.toBeNull();
+    }
+    // FOUR things: the name plus exactly three field rows. A fourth `.cx-field` creeping
+    // back in is the regression this guards.
+    const panel = screen.getByLabelText("Contact panel");
+    expect(panel.querySelectorAll(".cx-field")).toHaveLength(3);
+    expect(
+      Array.from(panel.querySelectorAll(".cx-field-k")).map((el) => el.textContent),
+    ).toEqual(["Phone", "Email", "Company"]);
+
+    // The name is the panel's heading, carried WITHOUT a "NAME" label above it.
+    expect(screen.getByRole("button", { name: "Edit Name" })).toHaveTextContent(
+      "Ada Lovelace",
+    );
+    expect(panel.querySelector(".cx-panel-name")).not.toBeNull();
+    expect(screen.queryByText("Name")).not.toBeInTheDocument();
+
+    // The avatar carries this contact's own hue, from the same helper the list uses.
+    const avatar = screen.getByText("AL");
+    expect(avatar).toHaveClass("cx-avatar");
+    expect(avatar).toHaveClass("cx-panel-av");
+    expect(avatar.getAttribute("data-hue")).toBe(avatarHueIndex("c1").toString());
+
+    // The contact's number is in the Phone row, formatted by `formatPhone`, not raw E.164.
+    const phoneRow = screen.getByText("Phone").closest(".cx-field") as HTMLElement;
+    expect(within(phoneRow).getByText("(972) 555-0199")).toBeInTheDocument();
+    expect(within(phoneRow).queryByText("+19725550199")).not.toBeInTheDocument();
+  });
+
+  // The operator's instruction, given twice: four things. These five were on the panel
+  // and are not any more. Paired with the reachability assertion at the end so the
+  // absence is not vacuous - a panel that rendered nothing at all would also "pass"
+  // every queryByText below.
+  it("drops Owner, Team, Role, Address and the note list, and still routes to the full record", async () => {
+    renderPanel(baseContact);
+    await screen.findByText("Acme Inc");
+
+    const panel = screen.getByLabelText("Contact panel");
+    // Substring match on the panel's whole text, NOT getByText - getByText compares the
+    // normalised text of one element, so a re-added `<p>Owner: Unassigned</p>` would
+    // match neither "Owner:" nor "Unassigned" and the assertion would pass while the row
+    // was back on screen. (It did, the first time this test was written.)
+    const text = panel.textContent ?? "";
+    for (const gone of ["Owner", "Team", "Unassigned", "No team", "Open contact"]) {
+      expect(text).not.toContain(gone);
+    }
+    // Role's value here is "Owner" and Address's is "1 Main St"; neither is on the face
+    // of the panel, and the note composer is not either - both disclosures are shut.
+    expect(text).not.toContain("1 Main St");
+    expect(within(panel).queryByLabelText("Add note")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Edit Role" })).not.toBeInTheDocument();
+    expect(
+      within(panel).queryByRole("button", { name: "Edit Address" }),
+    ).not.toBeInTheDocument();
+
+    // ...and the way to Owner/Team/duplicates/export is still here: the avatar links to
+    // the contact page. Without this the assertions above would pass on an empty panel.
+    const link = within(panel).getByRole("link", {
+      name: "Open contact record for Ada Lovelace",
+    });
+    expect(link).toHaveAttribute("href", "/contacts/c1");
+    expect(within(link).getByText("AL")).toHaveClass("cx-avatar");
+  });
+
+  // Stable shape: an absent Email still draws its row, with a muted em-dash, rather than
+  // the panel being two rows tall for one contact and three for the next.
+  it("draws the Email row with an em-dash when the contact has no email", async () => {
+    renderPanel({ ...baseContact, attributes: { company: "Acme Inc" } });
+
+    await screen.findByText("Acme Inc");
+    const panel = screen.getByLabelText("Contact panel");
+    expect(panel.querySelectorAll(".cx-field")).toHaveLength(3);
+
+    const emailRow = screen.getByText("Email").closest(".cx-field") as HTMLElement;
+    expect(within(emailRow).getByText("—")).toBeInTheDocument();
+    // "Add" was the link the approved design does not have; the row is still editable.
+    expect(within(emailRow).queryByText("Add")).not.toBeInTheDocument();
+    expect(within(emailRow).getByRole("button", { name: "Edit Email" })).toBeInTheDocument();
+  });
+
+  it("closes from its own X when the caller can close it", async () => {
+    const onClose = vi.fn();
+    const client = makeStubClient({
+      "/api/v1/contacts/c1/notes": [],
+      "/api/v1/contacts/c1": baseContact,
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <ContactPanel conversation={conversation()} inbox={null} onClose={onClose} />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Close contact panel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads company, role, email, and address from the contact's attributes", async () => {
+    renderPanel(baseContact);
+
+    // Company and Email are on the face of the panel...
+    expect(await screen.findByText("Acme Inc")).toBeInTheDocument();
     expect(screen.getByText("ada@example.com")).toBeInTheDocument();
+
+    // ...Role and Address are one click away, in the disclosure that exists only because
+    // /contacts/:contactId cannot render either of them. Deleting them would delete the
+    // feature, so they are still here and still editable.
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByText("Owner")).toBeInTheDocument();
     expect(screen.getByText("1 Main St")).toBeInTheDocument();
   });
 
@@ -592,6 +947,8 @@ describe("ContactPanel", () => {
       return baseContact;
     });
 
+    await screen.findByText("Acme Inc");
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
     await userEvent.click(await screen.findByText("Owner"));
     const input = screen.getByLabelText("Role");
     await userEvent.clear(input);
@@ -631,6 +988,10 @@ describe("ContactPanel", () => {
       client,
     );
 
+    // Notes are behind a disclosure now: the panel's face is the four things the design
+    // asks for, but this panel is still the ONLY place in the app that can read or add a
+    // contact note, so the capability is a click away rather than gone.
+    await userEvent.click(await screen.findByRole("button", { name: "Notes" }));
     expect(await screen.findByText("Called back, left voicemail")).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Add note"), "Sent the contract");

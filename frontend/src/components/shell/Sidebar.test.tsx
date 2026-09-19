@@ -7,9 +7,26 @@ import { AuthProvider, type Me } from "@/auth/AuthContext";
 import { makeStubClient } from "@/test/harness";
 import { MobileTabBar, Sidebar } from "./Sidebar";
 
+/** A workspace that has finished setting up: the rail's Setup entry is absent here, so the
+ *  link-count assertions below are about the permanent destinations only. */
+const SETUP_DONE = {
+  has_provider: true,
+  has_number: true,
+  member_count: 2,
+  registration_state: "approved",
+};
+
+/** A brand-new workspace: nothing connected, nobody invited, not registered. */
+const SETUP_INCOMPLETE = {
+  has_provider: false,
+  has_number: false,
+  member_count: 1,
+  registration_state: "none",
+};
+
 const FULL_CAPS = {
   permissions: ["contacts:read", "calls:read", "campaigns:read", "settings:read"],
-  org: { has_provider: false, has_number: false, member_count: 1, registration_state: "none" },
+  org: SETUP_DONE,
 };
 
 const ME: Me = {
@@ -176,5 +193,93 @@ describe("MobileTabBar", () => {
       "Calls",
       "Settings",
     ]);
+  });
+});
+
+/**
+ * The setup checklist moved off /inbox and onto its own page. This entry is the ONLY way a
+ * new workspace finds it, so these pin both halves: present while there is work to do,
+ * gone (not a dead link to an empty page) once there is not.
+ */
+describe("Setup rail entry", () => {
+  it("appears while the workspace is not finished setting up", async () => {
+    renderRail({ capabilities: { ...FULL_CAPS, org: SETUP_INCOMPLETE } });
+
+    const setup = await screen.findByRole("link", { name: "Setup" });
+    expect(setup).toHaveAttribute("href", "/setup");
+
+    const nav = screen.getByRole("navigation", { name: "Sidebar" });
+    expect(within(nav).getAllByRole("link")).toHaveLength(5);
+    // It sits with the primary destinations, after them, and does not displace Inbox.
+    expect(
+      within(nav).getAllByRole("link").map((l) => l.getAttribute("aria-label")),
+    ).toEqual(["Inbox", "Contacts", "Calls", "Campaigns", "Setup"]);
+  });
+
+  it("is absent once every setup step is done", async () => {
+    renderRail({ capabilities: { ...FULL_CAPS, org: SETUP_DONE } });
+
+    await screen.findByRole("link", { name: "Inbox" });
+    expect(screen.queryByRole("link", { name: "Setup" })).not.toBeInTheDocument();
+  });
+
+  it("appears for a member with no permissions at all - the checklist has never been gated", async () => {
+    renderRail({ capabilities: { permissions: [], org: SETUP_INCOMPLETE } });
+
+    expect(await screen.findByRole("link", { name: "Setup" })).toBeInTheDocument();
+  });
+
+  it("is absent while capabilities are still loading, and when they failed", async () => {
+    renderRail({ capabilities: new Promise<never>(() => undefined) });
+    expect(screen.queryByRole("link", { name: "Setup" })).not.toBeInTheDocument();
+
+    // A failed capabilities call leaves gate.org null: we do not know whether setup is
+    // outstanding, and a Setup link to a page that cannot say anything is worse than none.
+    renderRail({ capabilities: new Error("capabilities unavailable") });
+    await screen.findAllByRole("link", { name: "Inbox" });
+    expect(screen.queryByRole("link", { name: "Setup" })).not.toBeInTheDocument();
+  });
+
+  it("reaches the mobile bar too, between Calls and Settings", async () => {
+    renderMobile({ ...FULL_CAPS, org: SETUP_INCOMPLETE });
+
+    const nav = await screen.findByRole("navigation", { name: "Bottom navigation" });
+    await within(nav).findByRole("link", { name: "Setup" });
+    expect(
+      within(nav).getAllByRole("link").map((l) => l.getAttribute("aria-label")),
+    ).toEqual(["Inbox", "Contacts", "Calls", "Setup", "Settings"]);
+  });
+});
+
+/**
+ * INBOX_RAIL_PATHS is the split between what the merged 240px inbox rail lists and what is
+ * reached through Settings instead. Nothing enforces it at the type level - it is a list of
+ * strings - so these pin the two properties that make the split safe.
+ */
+describe("INBOX_RAIL_PATHS: the split between the inbox rail and Settings", () => {
+  it("names only paths that are real rail destinations", async () => {
+    const { INBOX_RAIL_PATHS, RAIL_ITEMS } = await import("./Sidebar");
+    const known = new Set(RAIL_ITEMS.map((i) => i.to));
+    for (const path of INBOX_RAIL_PATHS) {
+      expect(known.has(path)).toBe(true);
+    }
+  });
+
+  it("is exactly the operator's two Workspace destinations, and never /inbox", async () => {
+    const { INBOX_RAIL_PATHS } = await import("./Sidebar");
+    // Settings is not here because it is gated on "any visible settings section" rather
+    // than a permission, and is rendered separately by both rails (SETTINGS_ITEM).
+    expect([...INBOX_RAIL_PATHS]).toEqual(["/contacts", "/campaigns"]);
+    // The rail IS the inbox; Settings must never offer a second way back to it.
+    expect(INBOX_RAIL_PATHS).not.toContain("/inbox");
+  });
+
+  it("the icon rail is unaffected by the split - it still lists everything", async () => {
+    renderRail({ capabilities: { ...FULL_CAPS, org: SETUP_INCOMPLETE } });
+
+    const nav = await screen.findByRole("navigation", { name: "Sidebar" });
+    expect(
+      within(nav).getAllByRole("link").map((l) => l.getAttribute("aria-label")),
+    ).toEqual(["Inbox", "Contacts", "Calls", "Campaigns", "Setup"]);
   });
 });

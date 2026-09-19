@@ -14,6 +14,7 @@ import { getErrorMessage } from "@/api/spend";
 import {
   TOPUP_PRESETS_MICROS,
   WARNING_COPY,
+  availableMicros,
   defaultCheckoutRedirect,
   formatCredits,
   microsToDollars,
@@ -126,18 +127,24 @@ export function BalanceCard({
   return (
     <Card>
       <CardHeader title="Credits" />
-      <div className="mt-2 text-3xl font-semibold">{formatCredits(summary.balance_micros)}</div>
+      {/* The headline is what can actually be SPENT: the raw balance includes money
+          already reserved for calls in flight, so showing it here tells the customer
+          they have more credit than they do. The raw balance appears only in the
+          on-hold sentence below, and only when there is a reserve to explain - with
+          nothing on hold the two figures are equal and repeating one is just noise. */}
+      <div className="mt-2 text-3xl font-semibold">{formatCredits(availableMicros(summary))}</div>
 
       {summary.reserved_micros > 0 ? (
         <p className="mt-1 text-sm text-muted-foreground">
-          {formatCredits(summary.reserved_micros)} is on hold for calls in progress.
+          {formatCredits(summary.reserved_micros)} of your {formatCredits(summary.balance_micros)}{" "}
+          balance is on hold for calls in progress.
         </p>
       ) : null}
 
       {summary.warning ? (
-        <div role="status" className="mt-3 rounded-md border border-border bg-muted p-3 text-sm">
+        <div role="status" className="mt-4 rounded-lg border border-border bg-muted px-3.5 py-3 text-sm">
           <p className="font-semibold">{WARNING_COPY[summary.warning].title}</p>
-          <p className="text-muted-foreground">{WARNING_COPY[summary.warning].body}</p>
+          <p className="mt-0.5 text-muted-foreground">{WARNING_COPY[summary.warning].body}</p>
         </div>
       ) : null}
 
@@ -147,12 +154,13 @@ export function BalanceCard({
         </p>
       ) : null}
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         {TOPUP_PRESETS_MICROS.map((presetMicros) => (
           <Button
             key={presetMicros}
             type="button"
             variant="outline"
+            className="rounded-full"
             disabled={!canPay || topupMutation.isPending}
             onClick={() => handlePreset(presetMicros)}
           >
@@ -161,7 +169,7 @@ export function BalanceCard({
         ))}
       </div>
 
-      <form className="mt-3 flex items-center gap-2" onSubmit={handleCustomSubmit}>
+      <form className="mt-3 flex items-center gap-3" onSubmit={handleCustomSubmit}>
         <Input
           aria-label="Other amount in dollars"
           value={customAmount}
@@ -170,6 +178,7 @@ export function BalanceCard({
         />
         <Button
           type="submit"
+          className="rounded-full"
           disabled={!canPay || customMicros === null || topupMutation.isPending}
         >
           Add credits

@@ -90,7 +90,7 @@ export function PaymentMethods({
         ) : (
           <div className="space-y-3">
             {methodsQuery.data.map((method) => (
-              <Card key={method.id}>
+              <Card key={method.id} className="space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-medium">
                     {method.brand} ending {method.last4}
@@ -99,12 +99,12 @@ export function PaymentMethods({
                 </div>
 
                 {method.exp_month != null && method.exp_year != null ? (
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     Expires {method.exp_month}/{method.exp_year}
                   </p>
                 ) : null}
 
-                <div className="mt-3 flex items-center gap-2">
+                <div className="flex items-center gap-2">
                   {confirmingId === method.id ? (
                     <>
                       <Button

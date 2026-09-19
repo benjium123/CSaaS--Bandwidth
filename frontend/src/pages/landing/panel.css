@@ -18,11 +18,11 @@
   );
   box-shadow:
     inset 0 1px 0 hsl(var(--ex-bone) / 0.05),
-    0 30px 70px -34px hsl(197 60% 2% / 0.95);
+    0 30px 70px -34px hsl(223 30% 2% / 0.95);
 }
 
 /* The charge line. Deliberately the SAME gradient as `.ex-plate::before` in authTheme.css
- * - copper, through verdigris at the centre, back to copper - rather than a landing-page
+ * - the accent, through the green at the centre, back to the accent - rather than a landing-page
  * variant of it. It is the one piece of ornament the public surface and the signed-in
  * plates share, so a visitor meets the identical gesture on the hero console and then
  * again on the sign-in plate a click later. If authTheme's changes, change this with it. */
@@ -85,7 +85,7 @@
 
 .lps-day-label {
   flex: none;
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 0.5625rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -165,7 +165,7 @@
 .lps-time,
 .lps-meta,
 .lps-state {
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 0.5625rem;
   letter-spacing: 0.1em;
   color: hsl(var(--ex-bone-dim) / 0.85);
@@ -177,7 +177,7 @@
  *
  * The bars do NOT flex. `flex: 1 1 0` looks right and is the trap: the thread panel is
  * full-bleed, so forty bars sharing 900-odd pixels came out 21px wide each and the
- * scrubber turned into a wall of solid teal spanning the page - the loudest object on
+ * scrubber turned into a wall of solid accent spanning the page - the loudest object on
  * the screen, and the one carrying the least meaning. Fixed 3px bars keep it the size
  * of the control it represents whatever the panel does.
  *

@@ -9,6 +9,8 @@ import {
   Field,
   Lamp,
 } from "@/components/auth/AuthShell";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+import { cn } from "@/lib/utils";
 
 type Pending = { kind: string; action: string; message: string };
 
@@ -47,6 +49,10 @@ export const ACTION_LABELS: Record<string, string> = {
  * the middle of a security prompt.
  */
 export function StepUpDialog() {
+  // The console follows the one stored theme preference the front door writes. See
+  // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
+  // every wrapper in the console on the same commit rather than only its own.
+  const { theme } = useSurfaceTheme();
   const { api, me } = useAuth();
   const [pending, setPending] = React.useState<Pending | null>(null);
   const [code, setCode] = React.useState("");
@@ -123,11 +129,14 @@ export function StepUpDialog() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="step-up-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[hsl(197_40%_2%/0.72)] p-4 backdrop-blur-[2px]"
+      // A scrim, like AssignOwnerDrawer's: black at opacity is correct in BOTH themes and
+      // is not a palette hue, so it takes no token. The `hsl(197 40% 2% / .72)` that was
+      // here was a raw literal doing the same job with a teal cast nothing else shares.
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]"
     >
       {/* The security surfaces' own scope: a step-up is the same kind of moment as the
           front door, and it should look like it rather than like an ordinary dialog. */}
-      <div className="auth-surface dark w-full max-w-md bg-transparent">
+      <div className={cn("auth-surface", surfaceThemeClass(theme), "w-full max-w-md bg-transparent")}>
         <AuthPlate
           eyebrow={done ? "Confirmed" : "Confirm it's you"}
           title={

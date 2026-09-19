@@ -113,7 +113,7 @@ export function DataRetentionCard() {
 
   return (
     <Section title="Data">
-      <Card className="space-y-4 p-4">
+      <Card className="space-y-4 p-5">
         <p className="text-sm text-muted-foreground">
           How long this workspace keeps message text, recordings, transcripts and the files
           you imported. Deleting on a schedule is the point - once something is past its date
@@ -137,7 +137,7 @@ export function DataRetentionCard() {
             </Button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3">
             <p className="text-sm text-muted-foreground">
               Leave a box empty to keep something forever.
             </p>
@@ -148,11 +148,14 @@ export function DataRetentionCard() {
               const defaultValue = RETENTION_DEFAULTS[field.key];
 
               return (
-                <div key={field.key} className="space-y-1">
+                <div
+                  key={field.key}
+                  className="space-y-1.5 rounded-md border border-border bg-muted/30 px-3.5 py-3"
+                >
                   <label htmlFor={inputId} className="text-sm font-medium">
                     {field.label}
                   </label>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-3">
                     <Input
                       id={inputId}
                       type="number"

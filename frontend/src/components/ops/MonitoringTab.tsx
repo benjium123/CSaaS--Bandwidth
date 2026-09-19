@@ -2,6 +2,7 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { Button, Card, Pill, Spinner, Textarea, mutationErrorMessage } from "@/components/ui/primitives";
+import { InitialsAvatar } from "@/components/ui/consoleChrome";
 
 /** P43: operators' view of the AI traffic monitor - paused and flagged accounts with the
  * AI case file, texts waiting for a decision, and the daily report with the monitor's own
@@ -96,9 +97,9 @@ function ReportCard() {
     );
   };
   return (
-    <Card className="space-y-2">
+    <Card className="space-y-[11px]">
       <p className="text-sm font-medium">Last 24 hours</p>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-[11px]">
         {health("canary", "Canary")}
         {health("exam", "Weekly exam")}
       </div>
@@ -128,19 +129,19 @@ function HeldTexts() {
   if (q.isPending) return <Spinner label="Loading held texts" />;
   const rows = q.data ?? [];
   return (
-    <Card className="space-y-2">
+    <Card className="space-y-[11px]">
       <p className="text-sm font-medium">Texts waiting for a decision</p>
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">None - the AI's second look handles most holds by itself.</p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="space-y-[11px]">
           {rows.map((t) => (
-            <li key={t.id} className="space-y-1 rounded-md border border-border p-2">
+            <li key={t.id} className="space-y-[9px] rounded-[var(--cx-r-md,14px)] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px]">
               <p className="whitespace-pre-wrap text-sm">{t.body}</p>
               <p className="text-xs text-muted-foreground">
                 to {t.to} · {t.reason ?? "held"} · {t.at ? new Date(t.at).toLocaleString() : ""}
               </p>
-              <div className="flex gap-2">
+              <div className="flex gap-[11px]">
                 <Button type="button" size="sm" variant="outline" disabled={act.isPending} onClick={() => act.mutate({ path: `/api/v1/ops/monitoring/texts/${t.id}`, json: { decision: "release" } })}>
                   Release
                 </Button>
@@ -171,18 +172,19 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
   const c = q.data;
   const file = c.case_file;
   return (
-    <div className="space-y-3">
+    <div className="space-y-[14px]">
       <Button type="button" variant="ghost" onClick={onBack}>
         ← Back to monitoring
       </Button>
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-base font-semibold">{c.org_name}</h2>
+      <div className="flex flex-wrap items-center gap-[11px]">
+        <InitialsAvatar name={c.org_name} seed={c.org_id} size="lg" />
+        <h2 className="text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">{c.org_name}</h2>
         <Pill tone={LEVEL_TONE[c.level] ?? "neutral"}>{c.level}</Pill>
         <span className="text-sm text-muted-foreground">risk score {c.score}</span>
       </div>
       {c.paused_reason && <p className="text-sm text-muted-foreground">{c.paused_reason}</p>}
 
-      <Card className="space-y-2">
+      <Card className="space-y-[11px]">
         <p className="text-sm font-medium">AI case file</p>
         {!file || file.status === "pending" ? (
           <p className="text-sm text-muted-foreground">The AI is writing the case file.</p>
@@ -190,7 +192,7 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
           <p className="text-sm text-muted-foreground">The AI couldn't write it yet - the evidence is below.</p>
         ) : (
           <>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-[11px]">
               {file.recommendation && (
                 <Pill tone={file.recommendation === "unpause" ? "success" : "danger"}>
                   AI recommends: {file.recommendation.replace(/_/g, " ")}
@@ -208,9 +210,9 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
               </ul>
             )}
             {(file.evidence_quotes ?? []).length > 0 && (
-              <ul className="space-y-1">
+              <ul className="space-y-[9px]">
                 {file.evidence_quotes!.map((e, i) => (
-                  <li key={i} className="rounded-md bg-muted p-2 text-sm">
+                  <li key={i} className="rounded-[var(--cx-r-sm,12px)] bg-[hsl(var(--cx-overlay))] px-[11px] py-[9px] text-[13.5px]">
                     <span className="text-xs text-muted-foreground">{e.source}: </span>“{e.quote}”
                   </li>
                 ))}
@@ -238,10 +240,10 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
       )}
 
       {isAdmin ? (
-      <Card className="space-y-2">
+      <Card className="space-y-[11px]">
         <p className="text-sm font-medium">Decide</p>
         <Textarea aria-label="Decision note" rows={2} placeholder="What you checked and why" value={note} onChange={(e) => setNote(e.target.value)} />
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-[11px]">
           <Button type="button" variant="outline" disabled={note.trim().length < 3 || act.isPending} onClick={() => act.mutate({ path: `/api/v1/ops/monitoring/orgs/${orgId}/unpause`, json: { note } })}>
             False alarm - unpause
           </Button>
@@ -256,11 +258,11 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
         <p className="text-xs text-muted-foreground">Only admin operators can unpause or suspend an account.</p>
       )}
 
-      <Card className="space-y-2">
+      <Card className="space-y-[11px]">
         <p className="text-sm font-medium">Signals (last 30 days)</p>
-        <ul className="space-y-1">
+        <ul className="space-y-[9px]">
           {c.signals.map((s) => (
-            <li key={s.id} className="flex flex-wrap gap-2 text-sm">
+            <li key={s.id} className="flex flex-wrap items-center gap-[11px] text-[13.5px]">
               <Pill tone="neutral">+{s.weight}</Pill>
               <span>{s.summary}</span>
               <span className="text-xs text-muted-foreground">{s.at ? new Date(s.at).toLocaleString() : ""}</span>
@@ -270,10 +272,10 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
       </Card>
 
       {c.texts.length > 0 && (
-        <Card className="space-y-2">
+        <Card className="space-y-[11px]">
           <p className="text-sm font-medium">Flagged texts</p>
           {c.texts.map((t) => (
-            <div key={t.id} className="rounded-md border border-border p-2 text-sm">
+            <div key={t.id} className="rounded-[var(--cx-r-md,14px)] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px] text-[13.5px]">
               <Pill tone={t.state === "blocked" ? "danger" : "warning"}>{t.state}</Pill> <span className="whitespace-pre-wrap">{t.body}</span>
               {t.reason && <p className="text-xs text-muted-foreground">{t.reason}</p>}
             </div>
@@ -282,10 +284,10 @@ function CaseView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
       )}
 
       {c.calls.length > 0 && (
-        <Card className="space-y-2">
+        <Card className="space-y-[11px]">
           <p className="text-sm font-medium">Reviewed calls</p>
           {c.calls.map((call) => (
-            <div key={call.call_id} className="space-y-1 rounded-md border border-border p-2 text-sm">
+            <div key={call.call_id} className="space-y-[6px] rounded-[var(--cx-r-md,14px)] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px] text-[13.5px]">
               <Pill tone={VERDICT_TONE[call.verdict] ?? "neutral"}>{call.verdict}</Pill> {call.summary}
               {(call.evidence ?? []).map((e, i) => (
                 <p key={i} className="text-xs text-muted-foreground">
@@ -310,23 +312,30 @@ export function MonitoringTab() {
   });
   if (openOrg) return <CaseView orgId={openOrg} onBack={() => setOpenOrg(null)} />;
   return (
-    <div className="space-y-3">
+    <div className="space-y-[14px]">
       <ReportCard />
-      <Card className="space-y-2">
+      <Card className="space-y-[11px]">
         <p className="text-sm font-medium">Accounts the monitor flagged</p>
         {q.isPending ? (
           <Spinner label="Loading flagged accounts" />
         ) : (q.data ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground">Nothing flagged.</p>
         ) : (
-          <ul className="space-y-1">
+          <ul className="space-y-[9px]">
             {q.data!.map((row) => (
               <li key={row.org_id}>
-                <button type="button" className="flex w-full flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => setOpenOrg(row.org_id)}>
+                {/* A 12px list row, not a boxed table cell. The avatar is decorative — the
+                    org name it stands for is the next thing in the row. */}
+                <button
+                  type="button"
+                  className="flex w-full flex-wrap items-center gap-[11px] rounded-[var(--cx-r-sm,12px)] px-[11px] py-[9px] text-left text-[13.5px] transition-colors hover:bg-[hsl(var(--cx-overlay))]"
+                  onClick={() => setOpenOrg(row.org_id)}
+                >
+                  <InitialsAvatar name={row.org_name} seed={row.org_id} size="sm" />
                   <Pill tone={LEVEL_TONE[row.level] ?? "neutral"}>{row.level}</Pill>
-                  <span className="font-medium">{row.org_name}</span>
-                  <span className="text-muted-foreground">score {row.score}</span>
-                  {row.recommendation && <span className="text-muted-foreground">· AI: {row.recommendation.replace(/_/g, " ")}</span>}
+                  <span className="font-semibold text-[hsl(var(--cx-text))]">{row.org_name}</span>
+                  <span className="text-[hsl(var(--cx-muted))]">score {row.score}</span>
+                  {row.recommendation && <span className="text-[hsl(var(--cx-muted))]">· AI: {row.recommendation.replace(/_/g, " ")}</span>}
                   {row.appealed && <Pill tone="info">appealed</Pill>}
                 </button>
               </li>

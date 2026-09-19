@@ -17,6 +17,11 @@ import {
   Textarea,
   mutationErrorMessage,
 } from "@/components/ui/primitives";
+import {
+  InitialsAvatar,
+  SectionLabel,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
 
 /** P41 operator console: review businesses, handle security alerts, keep the ban list.
  * P42: account support (unlock, reset 2FA, deactivate). */
@@ -125,13 +130,13 @@ function useOpsAction(orgId: string | null) {
 }
 
 function KeyValues({ data }: { data: Record<string, unknown> | null }) {
-  if (!data) return <p className="text-sm text-muted-foreground">Not provided</p>;
+  if (!data) return <p className="text-[13px] text-[hsl(var(--cx-muted))]">Not provided</p>;
   return (
-    <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[180px_1fr]">
+    <dl className="grid gap-x-4 gap-y-1.5 text-[13px] sm:grid-cols-[180px_1fr]">
       {Object.entries(data).map(([k, v]) => (
         <React.Fragment key={k}>
-          <dt className="text-muted-foreground">{k.replace(/_/g, " ")}</dt>
-          <dd className="break-words">{v == null || v === "" ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v)}</dd>
+          <dt className="text-[hsl(var(--cx-muted))]">{k.replace(/_/g, " ")}</dt>
+          <dd className="break-words text-[hsl(var(--cx-text))]">{v == null || v === "" ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v)}</dd>
         </React.Fragment>
       ))}
     </dl>
@@ -170,7 +175,9 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
 
   return (
     <div className="space-y-4">
-      <Button type="button" variant="ghost" onClick={onBack}>← Back to queue</Button>
+      <Button type="button" variant="ghost" className="rounded-full" onClick={onBack}>
+        ← Back to queue
+      </Button>
       <Section
         title={`${String(app.business.legal_name ?? app.org.name)}`}
         description={`Workspace ${app.org.name} · ${app.status.replace(/_/g, " ")}`}
@@ -214,10 +221,10 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
 
         {ai && !decision && (
           <Card>
-            <p className="text-sm font-medium">AI reviewer summary <span className="text-xs text-muted-foreground">(advisory)</span></p>
+            <p className="text-sm font-medium">AI reviewer summary <span className="text-[11.5px] font-normal text-[hsl(var(--cx-muted))]">(advisory)</span></p>
             <p className="text-sm">{String((ai.detail?.summary as string) ?? ai.summary)}</p>
             {Array.isArray(ai.detail?.concerns) && (ai.detail?.concerns as string[]).length > 0 && (
-              <ul className="mt-1 list-disc pl-5 text-sm text-amber-300">
+              <ul className="mt-1 list-disc pl-5 text-sm text-[hsl(var(--cx-flag))]">
                 {(ai.detail?.concerns as string[]).map((c) => <li key={c}>{c}</li>)}
               </ul>
             )}
@@ -227,13 +234,16 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
         <Card className="space-y-2">
           <p className="text-sm font-medium">Automatic checks</p>
           {Object.entries(app.checks).filter(([k]) => k !== "ai_summary" && k !== "ai_decision").map(([k, c]) => (
-            <details key={k} className="rounded-md border border-border px-3 py-2">
-              <summary className="flex cursor-pointer items-center gap-2 text-sm">
+            <details
+              key={k}
+              className="rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-4 py-3"
+            >
+              <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-[13px]">
                 <Pill tone={RESULT_TONE[c.result] ?? "neutral"}>{c.result}</Pill>
-                <span className="font-medium">{CHECK_LABELS[k] ?? k}</span>
-                <span className="text-muted-foreground">{c.summary}</span>
+                <span className="font-medium text-[hsl(var(--cx-text))]">{CHECK_LABELS[k] ?? k}</span>
+                <span className="text-[hsl(var(--cx-muted))]">{c.summary}</span>
               </summary>
-              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
+              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-[12px] bg-[hsl(var(--cx-base))] p-3 text-[11.5px] text-[hsl(var(--cx-subtle))]">
                 {JSON.stringify(c.detail, null, 2)}
               </pre>
             </details>
@@ -245,8 +255,8 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
           <p className="mb-2 text-sm font-medium">Declared use case</p>
           <KeyValues data={app.use_case} />
           {app.use_case_pending && (
-            <div className="mt-3 rounded-md border border-amber-500/40 p-2">
-              <p className="text-sm font-medium text-amber-300">Requested change (applies on approval)</p>
+            <div className="mt-3 rounded-[14px] border border-[hsl(var(--cx-flag)/0.26)] bg-[hsl(var(--cx-flag)/0.11)] p-4">
+              <p className="mb-2 text-[13px] font-semibold text-[hsl(var(--cx-flag))]">Requested change (applies on approval)</p>
               <KeyValues data={app.use_case_pending} />
             </div>
           )}
@@ -255,10 +265,14 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
         <Card className="space-y-2">
           <p className="text-sm font-medium">People</p>
           {app.persons.map((p) => (
-            <div key={p.id} className="flex flex-wrap items-center gap-2 text-sm">
+            <div
+              key={p.id}
+              className="flex flex-wrap items-center gap-2.5 rounded-[12px] px-2 py-2 text-[13px] hover:bg-[hsl(var(--cx-overlay))]"
+            >
+              <InitialsAvatar name={p.full_name} seed={p.id} size="sm" />
               <Pill tone={p.status === "verified" ? "success" : "warning"}>{p.status.replace(/_/g, " ")}</Pill>
-              <span>{p.full_name}</span>
-              <span className="text-muted-foreground">
+              <span className="font-medium text-[hsl(var(--cx-text))]">{p.full_name}</span>
+              <span className="text-[hsl(var(--cx-muted))]">
                 {p.role.replace(/_/g, " ")}
                 {p.ownership_percent != null ? ` · ${p.ownership_percent}%` : ""}
                 {p.verified_name ? ` · ID says "${p.verified_name}"` : ""}
@@ -271,7 +285,10 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
         <Card className="space-y-2">
           <p className="text-sm font-medium">Documents</p>
           {app.documents.map((d) => (
-            <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <div
+              key={d.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] px-2 py-2 text-[13px] hover:bg-[hsl(var(--cx-overlay))]"
+            >
               <span className="space-x-2">
                 {d.review_result && <Pill tone={RESULT_TONE[d.review_result] ?? "neutral"}>{d.review_result}</Pill>}
                 <span>
@@ -279,7 +296,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
                   {d.person_id ? ` for ${app.persons.find((p) => p.id === d.person_id)?.full_name ?? "an owner"}` : ""} · {d.filename}
                 </span>
                 {(d.review?.reasons ?? []).length > 0 && (
-                  <span className="block text-xs text-muted-foreground">{d.review!.reasons!.join(" ")}</span>
+                  <span className="block text-[11.5px] text-[hsl(var(--cx-muted))]">{d.review!.reasons!.join(" ")}</span>
                 )}
               </span>
               <Button type="button" size="sm" variant="outline" onClick={() => void openDocument(d.id, d.filename)}>
@@ -292,7 +309,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
         <Card className="space-y-3">
           <p className="text-sm font-medium">Decide</p>
           {app.approval_blockers.length > 0 && (
-            <ul className="list-disc pl-5 text-sm text-amber-300">
+            <ul className="list-disc pl-5 text-sm text-[hsl(var(--cx-flag))]">
               {app.approval_blockers.map((b) => <li key={b}>{b}</li>)}
             </ul>
           )}
@@ -333,10 +350,10 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
               Save limits
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
             Current: deposit {app.deposit_required_cents ?? "none"} · limits {app.limits ? JSON.stringify(app.limits) : "none"}
           </p>
-          <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+          <div className="flex flex-wrap gap-2 border-t border-[hsl(var(--cx-line))] pt-4">
             {app.status === "suspended" ? (
               <Button type="button" variant="outline" onClick={() => run("unsuspend", { note })}>Lift suspension</Button>
             ) : (
@@ -371,7 +388,7 @@ function QueueTab({ onOpen }: { onOpen: (orgId: string) => void }) {
       ) : q.isError ? (
         <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(q.error)}</p>
       ) : q.data!.applications.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing waiting.</p>
+        <p className="text-[13px] text-[hsl(var(--cx-muted))]">Nothing waiting.</p>
       ) : (
         <ul className="space-y-2">
           {q.data!.applications.map((a) => (
@@ -379,17 +396,17 @@ function QueueTab({ onOpen }: { onOpen: (orgId: string) => void }) {
               <button
                 type="button"
                 onClick={() => onOpen(a.org_id)}
-                className="flex w-full flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2 text-left hover:bg-muted"
+                className="flex w-full flex-wrap items-center gap-2.5 rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] px-4 py-3 text-left transition-colors hover:bg-[hsl(var(--cx-overlay))]"
               >
                 <Pill tone={a.risk_tier === "high" ? "danger" : "neutral"}>{a.risk_tier ?? "—"}</Pill>
-                <span className="text-sm font-medium">{a.legal_name ?? a.org_name}</span>
+                <span className="text-[13.5px] font-semibold text-[hsl(var(--cx-text))]">{a.legal_name ?? a.org_name}</span>
                 {a.ai_recommendation ? (
                   <Pill tone={a.ai_recommendation === "approve" ? "success" : a.ai_recommendation === "reject" ? "danger" : "warning"}>
                     {AI_LABEL[a.ai_recommendation]}
                     {a.ai_confidence != null ? ` ${a.ai_confidence}%` : ""}
                   </Pill>
                 ) : null}
-                <span className="text-xs text-muted-foreground">
+                <span className="text-[11.5px] text-[hsl(var(--cx-muted))]">
                   {a.country ?? ""} · {a.status.replace(/_/g, " ")}
                   {a.video_call_required && !a.video_call_done ? " · video call needed" : ""}
                   {a.use_case_change_pending ? " · use-case change" : ""}
@@ -409,13 +426,16 @@ function AlertsTab() {
   const action = useOpsAction(null);
   if (q.isPending) return <Spinner label="Loading alerts" />;
   if (q.isError) return <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(q.error)}</p>;
-  if (q.data.length === 0) return <p className="text-sm text-muted-foreground">No open alerts.</p>;
+  if (q.data.length === 0) return <p className="text-[13px] text-[hsl(var(--cx-muted))]">No open alerts.</p>;
   return (
     <ul className="space-y-2">
       {q.data.map((a) => (
-        <li key={a.id} className="space-y-1 rounded-md border border-border px-3 py-2">
+        <li
+          key={a.id}
+          className="space-y-2 rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] px-4 py-3"
+        >
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-medium">{a.kind.replace(/_/g, " ")}</span>
+            <span className="text-[13.5px] font-semibold text-[hsl(var(--cx-text))]">{a.kind.replace(/_/g, " ")}</span>
             <Button type="button" size="sm" variant="outline" onClick={() => action.mutate({ path: `/api/v1/ops/alerts/${a.id}/review`, json: { note: "" } })}>
               Mark reviewed
             </Button>
@@ -461,12 +481,15 @@ function BanListTab() {
       {q.isPending ? (
         <Spinner label="Loading ban list" />
       ) : (
-        <ul className="space-y-1">
+        <ul className="space-y-1.5">
           {(q.data ?? []).map((b) => (
-            <li key={b.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
-              <span>
+            <li
+              key={b.id}
+              className="flex items-center justify-between gap-2 rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] px-4 py-2.5 text-[13px]"
+            >
+              <span className="min-w-0 text-[hsl(var(--cx-text))]">
                 <Pill>{b.kind.replace(/_/g, " ")}</Pill> {b.hint} · {b.reason}
-                <span className="text-xs text-muted-foreground"> {b.added_by ? `by ${b.added_by}` : ""}</span>
+                <span className="text-[11.5px] text-[hsl(var(--cx-muted))]"> {b.added_by ? `by ${b.added_by}` : ""}</span>
               </span>
               <Button type="button" size="sm" variant="ghost" onClick={() => remove.mutate(b.id)}>Remove</Button>
             </li>
@@ -522,8 +545,9 @@ function UsersTab() {
       {q.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(q.error)}</p>}
       {user && (
         <Card className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="font-medium">{user.email}</span>
+          <div className="flex flex-wrap items-center gap-2 text-[13px]">
+            <InitialsAvatar name={user.full_name || user.email} seed={user.id} size="md" />
+            <span className="font-semibold text-[hsl(var(--cx-text))]">{user.email}</span>
             {!user.is_active && <Pill tone="danger">Deactivated</Pill>}
             {user.locked_until && <Pill tone="warning">Locked until {new Date(user.locked_until).toLocaleString()}</Pill>}
             <Pill>{user.has_passkey ? "Passkey" : "No passkey"}</Pill>
@@ -549,11 +573,11 @@ function UsersTab() {
               </Button>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11.5px] leading-[1.55] text-[hsl(var(--cx-muted))]">
             Reset 2FA only after confirming who they are out of band. It removes every factor and starts a cool-down on sensitive actions.
           </p>
           {act.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(act.error)}</p>}
-          {act.isSuccess && <p className="text-sm text-emerald-300">Done.</p>}
+          {act.isSuccess && <p className="text-sm text-[hsl(var(--cx-live))]">Done.</p>}
         </Card>
       )}
     </div>
@@ -588,15 +612,26 @@ export function OpsPage() {
 
   if (!me.is_platform_operator) {
     return (
-      <div className="p-6">
-        <Card><p className="text-sm">The operator console is for platform operators only.</p></Card>
+      <div className="mx-auto max-w-3xl p-6 sm:p-8">
+        <SurfaceCard className="p-6">
+          <p className="text-[13.5px] text-[hsl(var(--cx-subtle))]">
+            The operator console is for platform operators only.
+          </p>
+        </SurfaceCard>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto h-full max-w-5xl space-y-4 overflow-y-auto p-6">
-      <h1 className="text-lg font-semibold">Trust & safety</h1>
+    <div className="mx-auto h-full max-w-5xl space-y-4 overflow-y-auto p-6 sm:p-8">
+      {/* Dense by nature - this is the review console, not a marketing page. The air
+          goes into the page header and the row padding; the dense lists stay tight. */}
+      <div className="min-w-0">
+        <SectionLabel>Operator console</SectionLabel>
+        <h1 className="mt-1 text-[24px] font-semibold tracking-[-0.02em] text-[hsl(var(--cx-text))]">
+          Trust &amp; safety
+        </h1>
+      </div>
       {openOrg ? (
         <ApplicationView orgId={openOrg} onBack={() => setOpenOrg(null)} />
       ) : (

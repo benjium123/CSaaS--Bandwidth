@@ -3,7 +3,7 @@
  * Deliberately NOT an `.ex-btn`: those are 2.75rem tall and carry a fill, and this must sit
  * beside "Start" on the landing bar, or in the corner of an auth screen, without competing
  * with the one control on the page that is meant to be pressed. A quiet square that gains
- * the copper hairline on hover.
+ * the hairline on hover.
  *
  * Every value is a token, so it flips with the theme and needs no light-mode override.
  */

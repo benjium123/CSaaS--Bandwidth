@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { simulateAssistant, type SimulateOut, type SimulateTurn } from "@/api/assistants";
 import { Button, Drawer, EmptyState, Input, MutationStatus } from "@/components/ui/primitives";
+import { ConsoleEmpty } from "@/components/ui/consoleChrome";
 
 export function SimulatorDrawer({
   open,
@@ -73,35 +74,36 @@ export function SimulatorDrawer({
           description="A test answers with the instructions you have saved, so save before you try it."
         />
       ) : (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
+        <div className="space-y-[14px]">
+          <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
             Talking to {assistantName}. Nobody is called and no message is sent.
           </p>
 
           {turns.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Say something and see how it answers.
-            </p>
+            <ConsoleEmpty>Say something and see how it answers.</ConsoleEmpty>
           ) : (
-            <ul aria-label="Conversation" className="space-y-3">
+            <ul aria-label="Conversation" className="space-y-[11px]">
               {turns.map((turn, index) => (
-                <li key={`${index}-${turn.role}`} className="space-y-1">
-                  <span className="text-xs text-muted-foreground">
+                <li
+                  key={`${index}-${turn.role}`}
+                  className="space-y-[3px] rounded-[14px] bg-[hsl(var(--cx-overlay))] px-[13px] py-[11px]"
+                >
+                  <span className="text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
                     {turn.role === "user" ? "You" : "Assistant"}
                   </span>
-                  <p className="text-sm">{turn.content}</p>
+                  <p className="text-[13.5px]">{turn.content}</p>
                 </li>
               ))}
             </ul>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-[11px]">
             <Input
               aria-label="Your message"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
             />
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-[11px]">
               <Button type="submit" disabled={!canSend}>
                 Send
               </Button>
@@ -114,7 +116,7 @@ export function SimulatorDrawer({
           </form>
 
           {lastReply && (
-            <div className="space-y-2 border-t border-border pt-3 text-xs text-muted-foreground">
+            <div className="space-y-[7px] border-t border-[hsl(var(--cx-line))] pt-[12px] text-[11.5px] text-[hsl(var(--cx-muted))]">
               <p>
                 Tokens: {lastReply.tokens_in} in, {lastReply.tokens_out} out.
               </p>
@@ -126,7 +128,7 @@ export function SimulatorDrawer({
                       <li key={hit.document_id}>
                         <span>{hit.title}</span>
                         {hit.snippet ? (
-                          <span className="block text-xs text-muted-foreground">
+                          <span className="block text-[11.5px] text-[hsl(var(--cx-muted))]">
                             {hit.snippet}
                           </span>
                         ) : null}

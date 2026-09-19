@@ -9,8 +9,8 @@
  *
  * THE TRICK: THE TOKEN NAMES ARE ROLES, NOT COLOURS.
  * `--ex-ink` does not mean "dark", it means THE FIELD. `--ex-bone` does not mean "pale",
- * it means TYPE ON THE FIELD. In the switchboard room the field is dark and the type is
- * warm; in daylight the field is paper and the type is ink. Because every rule in
+ * it means TYPE ON THE FIELD. `--ex-copper` has not meant copper since the palette moved
+ * to the approved graphite-and-azure: it means THE ACCENT. Because every rule in
  * authTheme.css, landing.css, panel.css and surfaces.css was written against the role and
  * never against the literal colour, re-pointing these ten values flips the entire public
  * surface without touching one layout rule. That is the whole design of this file, and it
@@ -31,56 +31,62 @@
  *
  * CONTRAST
  * Every text value below was measured against the field it sits on, not eyeballed. On the
- * paper field (38 30% 95%): ink 15.1, ink-dim 6.3, copper 5.4, copper-soft 6.5, verdigris
- * 5.3, danger 5.6 - all clear AA 4.5 for body text. Paper label on the verdigris fill is
- * 5.6. Note that `--ex-copper-soft` is DARKER than `--ex-copper` here, which is the
- * reverse of the dark theme: in the dark file "soft" means lifted off the ink far enough
- * to carry small text, and on paper carrying small text means going down, not up. The
- * hairline is 1.9 against the field - visible as a milled line, not as a border.
+ * white field: bone 17.79, bone-dim 6.75, accent 4.29, copper-soft 5.57, danger 6.57.
+ * `--ex-copper-soft` is DARKER than `--ex-copper` here, the reverse of the dark theme:
+ * "soft" means the accent that can carry small text, and carrying small text means moving
+ * AWAY from the field - up on ink, down on paper. The hairline is 1.22 against the field,
+ * visible as a milled line rather than as a border.
+ *
+ * TWO PAIRS INHERITED FROM THE APPROVED PALETTE FAIL AA AND ARE LEFT ALONE DELIBERATELY:
+ * `--live` (#0FA97A) on white measures 3.01, which clears 3:1 for the lamps and rules it
+ * mostly draws but not 4.5 for the `.ex-btn-key` label; and `--on-acc` (#FFFFFF) on
+ * `--accent` (#3B76E8) measures 4.29 under the primary control's 0.875rem label. Both are
+ * values the design approved, so they are reported, not quietly corrected here.
  */
 
 .auth-surface.auth-surface.is-light {
   /* Palette ------------------------------------------------------------------ */
-  --ex-ink: 38 30% 95%;
-  --ex-ink-raise: 38 34% 98%;
-  --ex-ink-high: 38 18% 90%;
-  --ex-bone: 197 34% 11%;
-  --ex-bone-dim: 197 14% 34%;
-  --ex-copper: 24 68% 36%;
+  --ex-ink: 0 0% 100%;                 /* base     #FFFFFF */
+  --ex-ink-raise: 220 23.1% 97.5%;     /* surface  #F7F8FA */
+  --ex-ink-high: 214 24.1% 94.3%;      /* overlay  #EDF0F4 */
+  --ex-bone: 218 16% 9.8%;             /* text     #15181D */
+  --ex-bone-dim: 217 11.1% 37.1%;      /* subtle   #545C69 */
+  --ex-copper: 219.22 78.75% 56.9%;    /* accent   #3B76E8 */
+  --ex-accent-2: 220 63.2% 49%;        /* accent-2 #2E63CC */
   /* SOFT IS DARKER THAN BASE HERE. That is not a transposition and it is the one line in
-   * this file that looks like a mistake, so: `--ex-copper-soft` is the copper that can
+   * this file that looks like a mistake, so: `--ex-copper-soft` is the accent that can
    * carry small text, and carrying small text means moving AWAY from the field. On ink the
-   * field is dark, so authTheme.css raises it to 47% - above its own 52% base's usable
-   * floor - after 40% measured 3.64 and failed AA. On paper the field is light, so the same
-   * requirement sends it the other way, to 32% against a 36% base. Both tokens mean the
-   * identical thing; the field moved, so the direction moved with it.
+   * field is dark, so authTheme.css points this at the palette's lighter azure. On paper
+   * the field is white, so the same requirement sends it the other way, to accent-2. Both
+   * tokens mean the identical thing; the field moved, so the direction moved with it.
    *
-   * 32% measures 6.5 on the paper field. "Correcting" it upward to sit above --ex-copper
-   * reintroduces, on light, the exact failure the 47% value exists to prevent on dark. */
-  --ex-copper-soft: 24 62% 32%;
-  --ex-copper-line: 24 30% 70%;
-  --ex-verdigris: 168 72% 26%;
-  --ex-danger: 6 68% 42%;
+   * accent-2 measures 5.57 on white against the base accent's 4.29. "Correcting" it upward
+   * to sit above --ex-copper would drop the 0.5625rem panel legends below AA. */
+  --ex-copper-soft: 220 63.2% 49%;
+  --ex-copper-line: 216 23.8% 91.8%;   /* line     #E5E9EF */
+  --ex-verdigris: 161.32 83.35% 36.25%;/* live     #0FA97A */
+  --ex-danger: 358 68% 42%;
 
   /* The shadcn tokens the vendored primitives read. `--background` and `--foreground`
-   * already point at --ex-ink / --ex-bone in the base file and so flip for free; this one
-   * does not, because it is the label ON the copper fill and the fill got darker. */
-  --primary-foreground: 38 34% 98%;
+   * already point at --ex-ink / --ex-bone in the base file and so flip for free, and
+   * `--primary-foreground` now points at --ex-on-acc, which the palette fixes at #FFFFFF
+   * in BOTH themes - so it no longer needs an override here either. */
 
   color-scheme: light;
 }
 
 /* Atmosphere -----------------------------------------------------------------
- * The base `::before` ends in `linear-gradient(175deg, hsl(197 32% 7%), ...)` - a literal,
- * not a token, so it stays near-black whatever the palette says and would paint a dark
- * slab under a light page. Re-declared here in full. The two glows survive the change of
+ * The base `::before` now opens on `hsl(var(--ex-ink-raise))`, which flips on its own -
+ * but on dark that is a LIFT above the field and on paper --ex-ink-raise is DARKER than
+ * --ex-ink, so inheriting it would put a grey band across the top of a white page. The
+ * light equivalent opens a shade above white instead. The two glows survive the change of
  * field but not at their dark-theme strength: on paper, 0.13 reads as a stain rather than
  * as a direction of light, so both are roughly halved. */
 .auth-surface.auth-surface.is-light::before {
   background:
     radial-gradient(70ch 50ch at 12% -10%, hsl(var(--ex-verdigris) / 0.07), transparent 60%),
     radial-gradient(60ch 45ch at 88% 108%, hsl(var(--ex-copper) / 0.07), transparent 62%),
-    linear-gradient(175deg, hsl(38 44% 97%), hsl(var(--ex-ink)) 55%);
+    linear-gradient(175deg, hsl(220 30% 98.5%), hsl(var(--ex-ink)) 55%);
 }
 
 /* The patchbay lattice is drawn in `--ex-bone`, so it inverts for free - pale dots on ink
@@ -101,24 +107,23 @@
 .auth-surface.is-light .lps-panel {
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.9) inset,
-    0 1px 2px hsl(24 30% 40% / 0.08),
-    0 18px 40px -28px hsl(24 30% 30% / 0.35);
+    0 1px 2px hsl(220 20% 40% / 0.08),
+    0 18px 40px -28px hsl(220 20% 30% / 0.35);
 }
 
 /* Controls ------------------------------------------------------------------- */
 
-/* The primary fill on the AUTH screens stays copper - that is the other session's
- * decision and this file is a theme, not a redesign. It only gets darker, because a 52%
- * copper that reads as a confident fill on ink reads as a highlighter on paper and its
- * label cannot then be dark enough to be legible. */
+/* Same construction as the dark file - accent over accent-2, white label - only the two
+ * azures are the light pair. The gradient runs light-to-dark either way, so the control
+ * has the same shape of light on both fields. */
 .auth-surface.is-light .ex-btn-primary {
-  background: linear-gradient(180deg, hsl(24 66% 40%), hsl(var(--ex-copper)));
-  color: hsl(var(--primary-foreground));
+  background: linear-gradient(180deg, hsl(var(--ex-copper)), hsl(var(--ex-accent-2)));
+  color: hsl(var(--ex-on-acc));
   box-shadow: 0 10px 24px -18px hsl(var(--ex-copper) / 0.8);
 }
 
 .auth-surface.is-light .ex-btn-primary:not(:disabled):hover {
-  background: linear-gradient(180deg, hsl(24 66% 44%), hsl(24 68% 38%));
+  background: linear-gradient(180deg, hsl(220 72% 52%), hsl(220 63% 44%));
   box-shadow: 0 14px 28px -16px hsl(var(--ex-copper) / 0.9);
 }
 
@@ -136,8 +141,10 @@
 .auth-surface.is-light .ex-btn-key {
   background: hsl(var(--ex-verdigris) / 0.08);
   border-color: hsl(var(--ex-verdigris) / 0.45);
-  /* The dark theme lightens this label to 78% to lift it off the ink. On paper it has to
-   * go the other way and become the token itself, which measured 5.3. */
+  /* The dark theme lightens this label to 78% to lift it off the ink. On paper it goes the
+   * other way and becomes the token itself. MEASURED: 3.01 on white, which is below AA for
+   * this 0.875rem label. That number is the approved palette's --live against its --base,
+   * not a choice made here, so it is reported rather than darkened on the quiet. */
   color: hsl(var(--ex-verdigris));
 }
 
@@ -154,7 +161,7 @@
   color: hsl(var(--ex-bone));
   /* A recessed field needs to read as recessed against paper, where the surrounding
    * surface is no longer darker than it. */
-  box-shadow: 0 1px 2px hsl(24 30% 40% / 0.06) inset;
+  box-shadow: 0 1px 2px hsl(220 20% 40% / 0.06) inset;
 }
 
 .auth-surface.is-light .ex-input::placeholder {
@@ -189,8 +196,8 @@
   box-shadow: 0 0 0 3px hsl(var(--ex-danger) / 0.2);
 }
 
-/* `ex-breathe` animates the wait lamp's box-shadow with a LITERAL copper, so it would
- * animate back to the dark theme's values on a light page. Re-declared against the token. */
+/* `ex-breathe` animates the wait lamp's box-shadow through `var(--ex-copper)`, but at the
+ * dark theme's alphas, which are too weak against paper. Re-declared with the light ones. */
 @keyframes ex-breathe-light {
   0%,
   100% {
@@ -211,12 +218,12 @@
  * hue - correct on ink, invisible on paper. Same construction, inverted. */
 .auth-surface.is-light .ex-alert {
   background: hsl(var(--ex-danger) / 0.07);
-  color: hsl(6 60% 32%);
+  color: hsl(358 60% 32%);
 }
 
 .auth-surface.is-light .ex-notice {
   background: hsl(var(--ex-verdigris) / 0.07);
-  color: hsl(168 60% 20%);
+  color: hsl(162 60% 20%);
 }
 
 /* The dial-tone trace is stroked with a literal `--ex-verdigris / 0.55` in AuthShell.tsx's

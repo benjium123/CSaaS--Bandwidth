@@ -131,3 +131,83 @@ export function estimateSmsSegments(text: string): SmsSegmentEstimate {
   const segments = Math.ceil(units / UCS2_MULTI);
   return { encoding: "UCS-2", segments, units, limit: segments * UCS2_MULTI };
 }
+
+// ----------------------------------------------------------------------------------
+// Console list furniture: the short timestamp and the avatar, both from
+// docs/design/console-reference.html's conversation list.
+// ----------------------------------------------------------------------------------
+
+/**
+ * The reference's row timestamps: `3m`, `12m`, `49m`, `1h`, `2h`, `4h`, then `Sep 17`.
+ *
+ * Deliberately NOT `relativeTime` above, which every other surface still uses: that one
+ * says "now" under a minute and "3d" for three days, and prints a numeric locale date
+ * ("9/17/2025") once past a week. The reference's list says neither - it floors at `1m`
+ * (the vocabulary is minutes, not seconds) and switches to a short month/day the moment a
+ * conversation is a day old, which is what keeps the column narrow. Same clock, same
+ * thresholds otherwise; `now` is passed in so a test can pin the boundaries without
+ * faking timers.
+ *
+ * A timestamp in the FUTURE (clock skew between the browser and the server) reads as the
+ * newest thing possible rather than a negative count: `1m`.
+ */
+export function shortRelativeTime(iso: string | null, now: Date = new Date()): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const secs = Math.floor((now.getTime() - then) / 1000);
+  if (secs < 60) return "1m";
+  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
+  const date = new Date(then);
+  // The year only when it is not this one - "Sep 17" in the reference, never "Sep 17 2025"
+  // for something three weeks old.
+  return date.getFullYear() === now.getFullYear()
+    ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date)
+    : new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
+/** Up to two alphanumerics, uppercased - the reference's `AW`, `MB`, `PR`, and `51` for a
+ * bare number with no contact record. Never empty: an unnameable row gets `?`. */
+export function initialsOf(value: string): string {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  // A NAME gives one letter per word ("Ada Whitlock" -> AW). Anything else - a phone
+  // number, a single word - takes its first two characters, which is what makes the
+  // reference's unsaved "(512) 555-0177" read "51" and not "55": a number split on its
+  // spaces is not two names.
+  if (words.length >= 2) {
+    const first = words[0].match(/[A-Za-z]/)?.[0];
+    const second = words[1].match(/[A-Za-z]/)?.[0];
+    if (first && second) return `${first}${second}`.toUpperCase();
+  }
+  const chars = value.match(/[A-Za-z0-9]/g);
+  if (!chars || chars.length === 0) return "?";
+  return chars.slice(0, 2).join("").toUpperCase();
+}
+
+/** How many hues `.cx-avatar[data-hue]` defines in consoleTheme.css. Kept here beside the
+ * hash so the two cannot drift apart silently. */
+export const AVATAR_HUE_COUNT = 7;
+
+/**
+ * A STABLE hue index for a contact, 0..AVATAR_HUE_COUNT-1.
+ *
+ * The reference draws each contact's avatar in a different colour (pink, teal, purple,
+ * green, grey...) and a colour that changes between reloads would be worse than no colour
+ * at all - it is a recognition cue, so it has to be a pure function of the contact.
+ * FNV-1a over the seed, modulo the palette size: no Math.random, no list position, no
+ * render-order dependency, and the same answer in every tab and after every deploy.
+ *
+ * Callers pass the contact's id when there is a contact record and its E.164 when there
+ * is not - both are immutable, unlike the display name, so renaming someone does not
+ * repaint them.
+ */
+export function avatarHueIndex(seed: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    // FNV prime, via shifts: `hash * 16777619` overflows a double's exact-integer range.
+    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
+  }
+  return hash % AVATAR_HUE_COUNT;
+}

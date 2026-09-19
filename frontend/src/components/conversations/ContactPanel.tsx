@@ -1,16 +1,31 @@
+/**
+ * The contact panel, cut back to what console-reference.html's `<aside class="panel">`
+ * draws: a close X, a large avatar, the name, and exactly three `.f` rows — Phone, Email,
+ * Company.
+ *
+ * What was removed, and where it still lives (verified, not assumed):
+ *   Owner / Team  -> ContactsPage's table columns (Owner, Team) and AssignOwnerDrawer,
+ *                    which is the only place either is EDITABLE anyway.
+ *   "Open contact" -> the avatar is now the link to /contacts/:contactId, so the route
+ *                    through to the full record survives without a fifth thing on screen.
+ *   Call / Message buttons -> the Phone row's PhoneNumberMenu already offers Text and
+ *                    Call for this same number, so the pair of icon buttons was a
+ *                    duplicate control, not a capability.
+ *   "Shared with"  -> InboxSettingsPage's InboxGrantEditor, which can also EDIT grants.
+ *
+ * What was NOT removed, because this panel is the ONLY place in the app that can reach
+ * it: Role, Address, contact Notes and the tag list. They are folded into the two
+ * disclosures at the bottom. Deleting them would delete the feature, not relocate it.
+ */
 import * as React from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, MessageSquare, Phone, X } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
-import { useSoftphone } from "@/softphone/SoftphoneProvider";
 import {
   addContactNote,
   fetchContact,
   fetchContactNotes,
-  fetchDepartments,
-  fetchInboxGrants,
-  fetchOrgMembers,
   updateContact,
   updateContactAttributes,
   type Contact,
@@ -19,13 +34,18 @@ import {
 } from "@/api/conversations";
 import { Button, Collapsible, Input, Pill } from "@/components/ui/primitives";
 import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
-import { formatPhone, relativeTime } from "@/lib/format";
+import { avatarHueIndex, formatPhone, initialsOf, relativeTime } from "@/lib/format";
+import { avatarSeedFor } from "./ConversationList";
 import { cn } from "@/lib/utils";
 
-function initialsFor(value: string): string {
-  const match = value.match(/[A-Za-z0-9]/g);
-  if (!match || match.length === 0) return "?";
-  return match.slice(0, 2).join("").toUpperCase();
+/** The reference's `.f`: key on the left, value on the right, a hairline above. */
+function PanelField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="cx-field">
+      <span className="cx-field-k">{label}</span>
+      <span className="cx-field-v min-w-0">{children}</span>
+    </div>
+  );
 }
 
 /** attributes[key] is arbitrary JSON (backend custom fields support number/select kinds
@@ -46,11 +66,25 @@ function EditableField({
   value,
   onSave,
   type = "text",
+  hideLabel = false,
+  align = "start",
+  displayClassName,
+  emptyText = "Add",
 }: {
   label: string;
   value: string;
   onSave: (value: string) => Promise<void>;
   type?: string;
+  /** Set when the field sits inside a `PanelField`, which already prints the label in its
+   * own key column - printing it twice would read as two different fields. The label is
+   * still the control's accessible name; only the visible heading goes. */
+  hideLabel?: boolean;
+  align?: "start" | "center" | "end";
+  displayClassName?: string;
+  /** What the resting control shows when there is no value yet. The panel's three lead
+   * rows pass an em-dash so the row keeps its shape instead of advertising the "Add"
+   * link the approved design does not have. */
+  emptyText?: React.ReactNode;
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(value);
@@ -85,19 +119,24 @@ function EditableField({
     }
   }
 
+  const alignClass =
+    align === "center"
+      ? "justify-center"
+      : align === "end"
+        ? "justify-end"
+        : "justify-start";
+
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-2">
-        <p className="cx-label">
-          {label}
-        </p>
+      <div className={cn("flex items-center gap-2", alignClass)}>
+        {!hideLabel && <p className="cx-label">{label}</p>}
         {status === "saving" && (
           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" /> Saving…
           </span>
         )}
         {status === "saved" && (
-          <span className="text-[10px] text-emerald-400">Saved</span>
+          <span className="text-[10px] text-[hsl(var(--cx-live))]">Saved</span>
         )}
       </div>
       {editing ? (
@@ -142,9 +181,16 @@ function EditableField({
           variant="ghost"
           size="sm"
           onClick={() => setEditing(true)}
-          className="w-full justify-start rounded-md px-2 py-1 text-left text-xs text-foreground hover:bg-muted"
+          aria-label={`Edit ${label}`}
+          className={cn(
+            "w-full rounded-md px-2 py-1 text-xs text-foreground hover:bg-muted",
+            alignClass,
+            align === "end" && "text-right",
+            align === "center" && "text-center",
+            displayClassName,
+          )}
         >
-          {value || "Add"}
+          {value || emptyText}
         </Button>
       )}
       {status === "error" && error && (
@@ -156,20 +202,32 @@ function EditableField({
   );
 }
 
+/** Email and Company can both be blank. The row is still drawn, with a muted em-dash, so
+ * the panel is the same three rows tall for every contact rather than growing and
+ * shrinking as records fill in. */
+function EmptyValue() {
+  return <span className="text-muted-foreground">—</span>;
+}
+
 export function ContactPanel({
   conversation,
-  inbox,
   canSend = true,
+  onClose,
   className,
 }: {
   conversation: Conversation | null;
+  /** Retained for callers; the panel no longer renders anything inbox-scoped (inbox
+   * sharing moved to InboxSettingsPage, which can also edit it). */
   inbox: Inbox | null;
   /** F2: viewers (my_role "viewer") can see the conversation but not act on it. */
   canSend?: boolean;
+  /** The reference's `.panel-close`: the panel is opened on request and must be
+   * dismissable from inside itself, not only from the header button that opened it. Omit
+   * to render no X (a caller that pins the panel open). */
+  onClose?: () => void;
   className?: string;
 }) {
   const { api } = useAuth();
-  const softphone = useSoftphone();
   const queryClient = useQueryClient();
 
   const contactId = conversation?.contact?.id ?? null;
@@ -198,28 +256,6 @@ export function ContactPanel({
     setEmail(attrText(attrs.email));
     setAddress(attrText(attrs.address));
   }, [contactQuery.data, conversation]);
-
-  const grantsQuery = useQuery({
-    queryKey: ["inbox-grants", inbox?.id],
-    queryFn: () => fetchInboxGrants(api, inbox?.id as string),
-    enabled: Boolean(inbox) && inbox?.my_role === "admin",
-  });
-
-  // T6: members/departments queries are enabled for everyone with a contact, not just
-  // admins, so Owner/Team names resolve in the panel. The grants query above stays
-  // admin-only because it authorizes sharing actions.
-  const departmentsQuery = useQuery({
-    queryKey: ["departments"],
-    queryFn: () => fetchDepartments(api),
-    enabled: Boolean(contactId) || inbox?.my_role === "admin",
-  });
-  const membersQuery = useQuery({
-    queryKey: ["org-members"],
-    queryFn: () => fetchOrgMembers(api),
-    // ...or when the admin-only "Shared with" block below needs member names for a
-    // number that is not saved as a contact.
-    enabled: Boolean(contactId) || inbox?.my_role === "admin",
-  });
 
   // Item 3: notes are a proper list via GET/POST /api/v1/contacts/{id}/notes - not a
   // single free-text field on the contact (the old PATCH silently no-op'd; the backend
@@ -257,8 +293,7 @@ export function ContactPanel({
   }
 
   const title =
-    conversation.contact?.display_name ??
-    formatPhone(conversation.contact_e164);
+    conversation.contact?.display_name ?? formatPhone(conversation.contact_e164);
 
   async function saveField(patch: Partial<Contact>) {
     if (!contactId) return;
@@ -277,44 +312,9 @@ export function ContactPanel({
     await queryClient.invalidateQueries({ queryKey: ["contact", contactId] });
   }
 
-  async function startCall() {
-    if (!conversation || !canSend) return;
-    try {
-      await softphone.dial(conversation.contact_e164, conversation.our_e164);
-    } catch {
-      /* softphone surface handles visible error */
-    }
-  }
-
   function focusComposer() {
-    document
-      .querySelector<HTMLInputElement>('input[aria-label="Message"]')
-      ?.focus();
+    document.querySelector<HTMLInputElement>('input[aria-label="Message"]')?.focus();
   }
-
-  const departments = departmentsQuery.data ?? [];
-  const members = membersQuery.data ?? [];
-  const grants = grantsQuery.data ?? [];
-
-  const ownerUserId = contactQuery.data?.owner_user_id ?? null;
-  const departmentId = contactQuery.data?.department_id ?? null;
-
-  // Members/departments errors intentionally do NOT render an error banner: the panel's
-  // job is the contact, and "Unknown" already tells the truth when a value is set but
-  // the directory cannot resolve it.
-  const ownerLabel =
-    ownerUserId == null
-      ? "Unassigned"
-      : membersQuery.isLoading
-        ? "Loading…"
-        : members.find((member) => member.user_id === ownerUserId)?.full_name ?? "Unknown";
-
-  const teamLabel =
-    departmentId == null
-      ? "No team"
-      : departmentsQuery.isLoading
-        ? "Loading…"
-        : departments.find((department) => department.id === departmentId)?.name ?? "Unknown";
 
   // There is NO endpoint that returns a contact's tags today (backend has PUT
   // /contacts/{id}/tags and GET /tags, but ContactOut carries no tags and there is no
@@ -329,56 +329,140 @@ export function ContactPanel({
     (phone) => phone.e164 !== conversation.contact_e164,
   );
 
+  // The reference's `.av.xl`, in the same hue this contact wears in the list and in the
+  // thread header - one person, one colour, everywhere.
+  const avatar = (
+    <span
+      data-hue={avatarHueIndex(avatarSeedFor(conversation))}
+      aria-hidden="true"
+      className="cx-avatar cx-panel-av flex items-center justify-center rounded-full font-semibold"
+    >
+      {initialsOf(title)}
+    </span>
+  );
+
   return (
     <aside
       className={cn(
-        "h-full overflow-y-auto border-l border-border bg-background px-3 py-3 text-foreground",
+        // `relative` is what the close button positions against - without it the X would
+        // anchor to the page and float over whatever is scrolled under it.
+        "cx-panel relative h-full overflow-y-auto border-l border-border p-[22px] text-foreground",
         className,
       )}
       aria-label="Contact panel"
     >
-      <div className="flex flex-col items-center text-center">
-        <div className="cx-avatar flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold">
-          {initialsFor(title)}
-        </div>
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close contact panel"
+          title="Close"
+          className="cx-icon-btn absolute right-3 top-3 grid h-8 w-8 place-items-center"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      )}
+
+      {/* The reference's `.panel-head`: the face, then the name. Nothing else. */}
+      <div className="cx-panel-head">
+        {/* The single route through to the full record. The reference draws a plain
+            block, but a customer must still be able to reach Owner, Team, duplicates,
+            export and erase - the avatar carries it so the head stays two things. */}
         {contactId ? (
-          <div className="mt-2 w-full">
-            <EditableField
-              label="Name"
-              value={name}
-              onSave={async (value) => {
-                await saveField({ display_name: value });
-              }}
-            />
-          </div>
+          <Link
+            to={`/contacts/${contactId}`}
+            // P22 rule: this link can 404 when the contact-visibility policy excludes the
+            // user. That is correct - the panel still shows the conversation, but the
+            // contact record itself is not visible to them.
+            aria-label={`Open contact record for ${title}`}
+            className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--cx-accent))]"
+          >
+            {avatar}
+          </Link>
         ) : (
-          <h2 className="mt-2 text-sm font-semibold text-foreground">{title}</h2>
+          avatar
         )}
 
-        <div className="mt-2 flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={startCall}
-            disabled={!canSend}
-            title={canSend ? undefined : "Read-only inbox — you can view but not call"}
-            aria-label={`Call ${title}`}
-            className="text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
-          >
-            <Phone className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={focusComposer}
-            aria-label={`Message ${title}`}
-            className="text-foreground hover:bg-muted"
-          >
-            <MessageSquare className="h-4 w-4" />
-          </Button>
-        </div>
+        {/* No "NAME" label above it: the name IS the heading. Clicking it renames the
+            contact, which this panel is the only place in the app that can do. */}
+        {contactId ? (
+          <EditableField
+            label="Name"
+            hideLabel
+            align="center"
+            emptyText="Unnamed"
+            // The size/weight are repeated as utilities, not left to `.cx-panel-name`
+            // alone: `cn` is tailwind-merge, so these DELETE the Button's own `text-xs`
+            // and `font-medium`. Relying on the stylesheet would leave the winner to the
+            // import order of index.css vs consoleTheme.css, which is not a thing to bet
+            // the panel's heading on.
+            displayClassName="cx-panel-name h-auto text-[1.25rem] font-semibold"
+            value={name}
+            onSave={async (value) => {
+              await saveField({ display_name: value });
+            }}
+          />
+        ) : (
+          <h2 className="cx-panel-name">{title}</h2>
+        )}
+      </div>
+
+      {/* The three rows the approved design shows, and only these three. */}
+      <div>
+        <PanelField label="Phone">
+          <span className="flex flex-col items-end gap-1">
+            <PhoneNumberMenu
+              e164={conversation.contact_e164}
+              fromE164={conversation.our_e164}
+              onText={focusComposer}
+              disabled={!canSend}
+              disabledReason="Read-only inbox — you can view but not call"
+            />
+            {otherPhones.map((phone) => (
+              <PhoneNumberMenu
+                key={phone.e164}
+                e164={phone.e164}
+                fromE164={conversation.our_e164}
+                onText={focusComposer}
+                disabled={!canSend}
+                disabledReason="Read-only inbox — you can view but not call"
+              />
+            ))}
+          </span>
+        </PanelField>
+        <PanelField label="Email">
+          {contactId ? (
+            <EditableField
+              label="Email"
+              hideLabel
+              align="end"
+              emptyText={<EmptyValue />}
+              value={email}
+              type="email"
+              onSave={async (value) => {
+                await saveAttribute("email", value);
+              }}
+            />
+          ) : (
+            <EmptyValue />
+          )}
+        </PanelField>
+        <PanelField label="Company">
+          {contactId ? (
+            <EditableField
+              label="Company"
+              hideLabel
+              align="end"
+              emptyText={<EmptyValue />}
+              value={company}
+              onSave={async (value) => {
+                await saveAttribute("company", value);
+              }}
+            />
+          ) : (
+            <EmptyValue />
+          )}
+        </PanelField>
       </div>
 
       {!contactId ? (
@@ -386,202 +470,119 @@ export function ContactPanel({
           This number isn’t saved as a contact yet.
         </p>
       ) : (
-        <>
-          <div className="mt-4 space-y-1 border-t border-border pt-3 text-xs text-foreground">
-            <p>
-              Owner: <span className="text-muted-foreground">{ownerLabel}</span>
-            </p>
-            <p>
-              Team: <span className="text-muted-foreground">{teamLabel}</span>
-            </p>
-            {tagsToRender && (
-              <div className="flex flex-wrap items-center gap-1 pt-1">
-                <span className="text-muted-foreground">Tags:</span>
-                {tagsToRender.map((tag) => (
-                  <Pill key={tag} tone="neutral">
-                    {tag}
-                  </Pill>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-3 flex justify-start">
-            {/* P22 rule: this link can 404 when the contact-visibility policy excludes
-                the user. That is correct - the panel still shows the conversation, but
-                the contact record itself is not visible to them. */}
-            <Link
-              to={`/contacts/${contactId}`}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium text-foreground hover:bg-muted"
-            >
-              Open contact
-            </Link>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            <Collapsible storageKey="contact-panel.details" title="Details">
-              <div className="space-y-4">
-                <EditableField
-                  label="Company"
-                  value={company}
-                  onSave={async (value) => {
-                    await saveAttribute("company", value);
-                  }}
-                />
-                <EditableField
-                  label="Role"
-                  value={role}
-                  onSave={async (value) => {
-                    await saveAttribute("role", value);
-                  }}
-                />
-                <div className="space-y-1">
-                  <p className="cx-label">
-                    Phone
-                  </p>
-                  <div className="space-y-1">
-                    <PhoneNumberMenu
-                      e164={conversation.contact_e164}
-                      fromE164={conversation.our_e164}
-                      onText={focusComposer}
-                      disabled={!canSend}
-                      disabledReason="Read-only inbox — you can view but not call"
-                    />
-                    {otherPhones.map((phone) => (
-                      <PhoneNumberMenu
-                        key={phone.e164}
-                        e164={phone.e164}
-                        fromE164={conversation.our_e164}
-                        onText={focusComposer}
-                        disabled={!canSend}
-                        disabledReason="Read-only inbox — you can view but not call"
-                      />
-                    ))}
-                  </div>
+        // NOT part of the approved design, and kept only because this panel is the sole
+        // UI for any of it: /contacts/:contactId renders phones, duplicates, export and
+        // erase, but never Role, Address, tags or the note list. Folded away so the panel
+        // at rest reads as the four things it is supposed to be.
+        <div className="mt-4 space-y-3">
+          {/* Closed by default: at rest the panel is the four things the design asks
+              for, and these are one click away rather than gone. */}
+          <Collapsible
+            storageKey="contact-panel.details"
+            title="Details"
+            defaultOpen={false}
+          >
+            <div className="space-y-4">
+              <EditableField
+                label="Role"
+                value={role}
+                onSave={async (value) => {
+                  await saveAttribute("role", value);
+                }}
+              />
+              <EditableField
+                label="Address"
+                value={address}
+                onSave={async (value) => {
+                  await saveAttribute("address", value);
+                }}
+              />
+              {tagsToRender && (
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="cx-label">Tags</span>
+                  {tagsToRender.map((tag) => (
+                    <Pill key={tag} tone="neutral">
+                      {tag}
+                    </Pill>
+                  ))}
                 </div>
-                <EditableField
-                  label="Email"
-                  value={email}
-                  type="email"
-                  onSave={async (value) => {
-                    await saveAttribute("email", value);
-                  }}
-                />
-                <EditableField
-                  label="Address"
-                  value={address}
-                  onSave={async (value) => {
-                    await saveAttribute("address", value);
-                  }}
-                />
-              </div>
-            </Collapsible>
-
-            <Collapsible storageKey="contact-panel.notes" title="Notes">
-              <div className="space-y-2">
-                {notesQuery.isLoading ? (
-                  <p className="text-xs text-muted-foreground">Loading notes…</p>
-                ) : notesQuery.isError ? (
-                  <p role="alert" className="text-[11px] text-destructive">
-                    {(notesQuery.error as Error).message}
-                  </p>
-                ) : (notesQuery.data ?? []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No notes yet.</p>
-                ) : (
-                  <ul aria-label="Notes" className="space-y-2">
-                    {(notesQuery.data ?? []).map((note) => (
-                      <li
-                        key={note.id}
-                        className="rounded-md border border-border bg-background p-2 text-xs text-foreground"
-                      >
-                        <p className="whitespace-pre-wrap break-words">{note.body}</p>
-                        <p className="mt-1 text-[10px] text-muted-foreground">
-                          {relativeTime(note.created_at)}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                <form
-                  className="space-y-1"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const body = newNote.trim();
-                    if (body && contactId) addNoteMutation.mutate(body);
-                  }}
-                >
-                  <textarea
-                    aria-label="Add note"
-                    value={newNote}
-                    onChange={(e) => setNewNote(e.target.value)}
-                    placeholder="Add a note…"
-                    rows={3}
-                    disabled={addNoteMutation.isPending}
-                    className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-muted-foreground"
-                  />
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="submit"
-                      variant="outline"
-                      size="sm"
-                      disabled={!newNote.trim() || addNoteMutation.isPending}
-                      className="text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      Add note
-                    </Button>
-                    {addNoteMutation.isPending && (
-                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" /> Saving…
-                      </span>
-                    )}
-                  </div>
-                  {addNoteMutation.isError && (
-                    <p role="alert" className="text-[11px] text-destructive">
-                      {(addNoteMutation.error as Error).message}
-                    </p>
-                  )}
-                </form>
-              </div>
-            </Collapsible>
-          </div>
-        </>
-      )}
-
-      {/* P20b: "Shared with" is about the INBOX, not the contact, so it stays OUTSIDE
-          the contactId branch - an admin looking at a number that is not saved as a
-          contact must still see who else can reach this inbox. */}
-        {inbox?.my_role === "admin" && (
-          <Collapsible storageKey="contact-panel.sharing" title="Shared with">
-            <div className="space-y-2">
-              {grants.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  No one else has access to this inbox.
-                </p>
-              ) : (
-                <ul className="space-y-1">
-                  {grants.map((grant) => {
-                    const label =
-                      grant.grantee_type === "department"
-                        ? departments.find((d) => d.id === grant.grantee_id)?.name ??
-                          grant.grantee_id
-                        : members.find((m) => m.user_id === grant.grantee_id)?.full_name ??
-                          grant.grantee_id;
-                    return (
-                      <li
-                        key={`${grant.grantee_type}-${grant.grantee_id}`}
-                        className="flex items-center justify-between rounded-md bg-background px-2 py-1 text-xs text-foreground"
-                      >
-                        <span>{label}</span>
-                        <span className="text-muted-foreground">{grant.role}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
               )}
             </div>
           </Collapsible>
-        )}
+
+          <Collapsible
+            storageKey="contact-panel.notes"
+            title="Notes"
+            defaultOpen={false}
+          >
+            <div className="space-y-2">
+              {notesQuery.isLoading ? (
+                <p className="text-xs text-muted-foreground">Loading notes…</p>
+              ) : notesQuery.isError ? (
+                <p role="alert" className="text-[11px] text-destructive">
+                  {(notesQuery.error as Error).message}
+                </p>
+              ) : (notesQuery.data ?? []).length === 0 ? (
+                <p className="text-xs text-muted-foreground">No notes yet.</p>
+              ) : (
+                <ul aria-label="Notes" className="space-y-2">
+                  {(notesQuery.data ?? []).map((note) => (
+                    <li
+                      key={note.id}
+                      className="rounded-md border border-border bg-background p-2 text-xs text-foreground"
+                    >
+                      <p className="whitespace-pre-wrap break-words">{note.body}</p>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        {relativeTime(note.created_at)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <form
+                className="space-y-1"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const body = newNote.trim();
+                  if (body && contactId) addNoteMutation.mutate(body);
+                }}
+              >
+                <textarea
+                  aria-label="Add note"
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  placeholder="Add a note…"
+                  rows={3}
+                  disabled={addNoteMutation.isPending}
+                  className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-muted-foreground"
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    size="sm"
+                    disabled={!newNote.trim() || addNoteMutation.isPending}
+                    className="text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    Add note
+                  </Button>
+                  {addNoteMutation.isPending && (
+                    <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+                    </span>
+                  )}
+                </div>
+                {addNoteMutation.isError && (
+                  <p role="alert" className="text-[11px] text-destructive">
+                    {(addNoteMutation.error as Error).message}
+                  </p>
+                )}
+              </form>
+            </div>
+          </Collapsible>
+        </div>
+      )}
     </aside>
   );
 }

@@ -7,6 +7,7 @@ import {
   type ContactVisibility,
 } from "@/api/contacts";
 import { Button, Input, Spinner } from "@/components/ui/primitives";
+import { PageHeader, SectionLabel, SurfaceCard } from "@/components/ui/consoleChrome";
 import { SessionsCard } from "@/components/settings/SessionsCard";
 import { PasskeysCard } from "@/components/settings/PasskeysCard";
 import {
@@ -139,67 +140,87 @@ export function SettingsSecurityPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-6">
-      <h1 className="text-lg font-semibold">Security</h1>
+    <div className="mx-auto max-w-3xl space-y-[14px] p-6 sm:p-8">
+      <PageHeader
+        title="Security"
+        description="Sign-in, sessions, and who in the workspace can see what."
+      />
 
-      {message && <p className="text-sm">{message}</p>}
+      {message && (
+        // Deliberately NOT green: this same line says "Two-factor authentication is off."
+        <p className="text-[13px] text-[hsl(var(--cx-text))]">{message}</p>
+      )}
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-[13px] text-[hsl(var(--cx-danger))]">
           {error}
         </p>
       )}
 
-      {!enroll ? (
-        <Button onClick={startEnroll} disabled={enrolling}>
-          Set up two-factor authentication
-        </Button>
-      ) : (
-        <div className="space-y-3 rounded-md border border-border p-4">
-          <p className="text-sm">
-            Add this secret to your authenticator app, then enter the six-digit code.
-          </p>
-          <code className="block break-all rounded bg-muted p-2 text-xs">{enroll.secret}</code>
-          <p className="text-sm">
-            Or open it directly:{" "}
-            <a className="underline" href={enroll.uri}>
-              {enroll.uri}
-            </a>
-          </p>
-          <div className="flex gap-2">
-            <Input
-              readOnly
-              aria-label="Provisioning URI"
-              value={enroll.uri}
-              onFocus={(event) => event.currentTarget.select()}
-            />
-            <Button type="button" variant="outline" onClick={copyUri}>
-              {copied ? "Copied" : "Copy"}
-            </Button>
+      <SurfaceCard className="space-y-[12px]">
+        <SectionLabel>Two-factor authentication</SectionLabel>
+        {!enroll ? (
+          <Button className="rounded-full" onClick={startEnroll} disabled={enrolling}>
+            Set up two-factor authentication
+          </Button>
+        ) : (
+          <div className="space-y-[12px]">
+            <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
+              Add this secret to your authenticator app, then enter the six-digit code.
+            </p>
+            <code className="block break-all rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[11px] text-[12px] text-[hsl(var(--cx-text))]">
+              {enroll.secret}
+            </code>
+            <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
+              Or open it directly:{" "}
+              <a className="break-all underline" href={enroll.uri}>
+                {enroll.uri}
+              </a>
+            </p>
+            <div className="flex gap-[11px]">
+              <Input
+                readOnly
+                aria-label="Provisioning URI"
+                value={enroll.uri}
+                onFocus={(event) => event.currentTarget.select()}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-full"
+                onClick={copyUri}
+              >
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </div>
+            <div className="flex gap-[11px]">
+              <Input
+                aria-label="Authenticator code"
+                inputMode="numeric"
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                disabled={activating}
+              />
+              <Button
+                className="rounded-full"
+                onClick={activate}
+                disabled={code.length < 6 || activating}
+              >
+                Activate
+              </Button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <Input
-              aria-label="Authenticator code"
-              inputMode="numeric"
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              disabled={activating}
-            />
-            <Button onClick={activate} disabled={code.length < 6 || activating}>
-              Activate
-            </Button>
-          </div>
-        </div>
-      )}
+        )}
+      </SurfaceCard>
 
       {totpEnabled && (
-        <div className="space-y-3 rounded-md border border-border p-4">
-          <p className="text-sm font-medium">Disable two-factor authentication</p>
+        <SurfaceCard className="space-y-[12px]">
+          <SectionLabel>Disable two-factor authentication</SectionLabel>
           {disableError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-[13px] text-[hsl(var(--cx-danger))]">
               {disableError}
             </p>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-[11px]">
             <Input
               aria-label="Confirmation code"
               inputMode="numeric"
@@ -216,83 +237,103 @@ export function SettingsSecurityPage() {
             />
             <Button
               variant="outline"
+              className="rounded-full"
               onClick={disable}
               disabled={disableCode.length < 6 || disabling}
             >
               Disable 2FA
             </Button>
           </div>
-        </div>
+        </SurfaceCard>
       )}
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <PasskeysCard />
-      </section>
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <RecoveryCodesCard />
-      </section>
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <ChangePasswordCard />
-      </section>
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <AccountActivityCard />
-      </section>
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <SessionPolicyCard />
-      </section>
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <SessionsCard />
-      </section>
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <LoginHistoryCard scope="me" />
-      </section>
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <OrgSecurityPolicyCard />
-      </section>
+      </SurfaceCard>
 
-      <VerifiedDomainsCard />
-      <SamlSsoCard />
-      <ScimTokensCard />
+      {/* The enterprise cards render their own <Section>; they were the only blocks on
+          this page standing on the bare page background, so they get the same surface. */}
+      <SurfaceCard className="space-y-[12px]">
+        <VerifiedDomainsCard />
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
+        <SamlSsoCard />
+      </SurfaceCard>
+
+      <SurfaceCard className="space-y-[12px]">
+        <ScimTokensCard />
+      </SurfaceCard>
+
+      <SurfaceCard className="space-y-[12px]">
         <LoginHistoryCard scope="org" />
-      </section>
+      </SurfaceCard>
 
-      <section className="space-y-3 rounded-md border border-border p-4">
+      <SurfaceCard className="space-y-[12px]">
         <fieldset>
-          <legend className="text-sm font-medium">Contact visibility</legend>
+          <legend className="text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
+            Contact visibility
+          </legend>
 
           {contactVisQuery.isPending ? (
             <Spinner />
           ) : contactVisQuery.isError ? (
-            <div className="space-y-2">
-              <p role="alert" className="text-sm text-destructive">
+            <div className="mt-[12px] space-y-[11px]">
+              <p role="alert" className="text-[13px] text-[hsl(var(--cx-danger))]">
                 {getErrorMessage(contactVisQuery.error)}
               </p>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
+                className="rounded-full"
                 onClick={() => contactVisQuery.refetch()}
               >
                 Retry
               </Button>
             </div>
           ) : (
-            <div className="mt-2 space-y-3">
+            <div className="mt-[12px] space-y-[8px]">
               {VISIBILITY_OPTIONS.map((option) => {
                 const descriptionId = `${option.id}-description`;
                 const serverValue = contactVisQuery.data?.contact_visibility;
                 return (
-                  <div key={option.value}>
-                    <label htmlFor={option.id} className="flex items-center gap-2 text-sm">
+                  <div
+                    key={option.value}
+                    className="rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[12px] py-[11px]"
+                  >
+                    <label
+                      htmlFor={option.id}
+                      className="flex items-center gap-[10px] text-[13px] text-[hsl(var(--cx-text))]"
+                    >
                       <input
                         id={option.id}
                         type="radio"
@@ -317,7 +358,7 @@ export function SettingsSecurityPage() {
                     </label>
                     <p
                       id={descriptionId}
-                      className="ml-6 text-xs text-muted-foreground"
+                      className="ml-[26px] mt-[4px] text-[11.5px] leading-[1.5] text-[hsl(var(--cx-muted))]"
                     >
                       {option.description}
                     </p>
@@ -328,18 +369,18 @@ export function SettingsSecurityPage() {
           )}
 
           {updateContactVisibility.isPending && (
-            <p className="text-sm text-muted-foreground">Saving…</p>
+            <p className="mt-[11px] text-[13px] text-[hsl(var(--cx-muted))]">Saving…</p>
           )}
           {updateContactVisibility.isSuccess && (
-            <p className="text-sm text-green-400">Saved.</p>
+            <p className="mt-[11px] text-[13px] text-[hsl(var(--cx-live))]">Saved.</p>
           )}
           {updateContactVisibility.isError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="mt-[11px] text-[13px] text-[hsl(var(--cx-danger))]">
               {getErrorMessage(updateContactVisibility.error)}
             </p>
           )}
         </fieldset>
-      </section>
+      </SurfaceCard>
     </div>
   );
 }

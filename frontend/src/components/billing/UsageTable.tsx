@@ -60,32 +60,34 @@ function CallUsageDrawerBody({ callId }: { callId: string }) {
       {events.length === 0 ? (
         <EmptyState title="Nothing was recorded for this call." />
       ) : (
-        <table className="w-full text-sm">
-          <caption className="sr-only">Call usage</caption>
-          <thead>
-            <tr>
-              <th className="text-left font-medium">What you used</th>
-              <th className="text-left font-medium">Amount</th>
-              <th className="text-right font-medium">Price</th>
-            </tr>
-          </thead>
-          <tbody>
-            {events.map((event) => (
-              <tr key={event.id ?? `${event.metric}-${event.quantity}-${event.price_micros}`}>
-                <td>{metricLabel(event.metric)}</td>
-                <td>{formatQuantity(event.metric, event.quantity)}</td>
-                <td className="text-right">{formatCredits(event.price_micros)}</td>
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <caption className="sr-only">Call usage</caption>
+            <thead>
+              <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+                <th className="px-3 py-2.5 font-medium">What you used</th>
+                <th className="px-3 py-2.5 font-medium">Amount</th>
+                <th className="px-3 py-2.5 text-right font-medium">Price</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td>Total for this call</td>
-              <td />
-              <td className="text-right">{formatCredits(callTotal)}</td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {events.map((event) => (
+                <tr key={event.id ?? `${event.metric}-${event.quantity}-${event.price_micros}`}>
+                  <td className="px-3 py-2.5">{metricLabel(event.metric)}</td>
+                  <td className="px-3 py-2.5">{formatQuantity(event.metric, event.quantity)}</td>
+                  <td className="px-3 py-2.5 text-right">{formatCredits(event.price_micros)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-border text-sm font-medium">
+                <td className="px-3 py-2.5">Total for this call</td>
+                <td className="px-3 py-2.5" />
+                <td className="px-3 py-2.5 text-right">{formatCredits(callTotal)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -111,35 +113,37 @@ function UsageSummaryView({
 
   return (
     <div className="space-y-4">
-      <table className="w-full text-sm">
-        <caption className="sr-only">Usage this month</caption>
-        <thead>
-          <tr>
-            <th className="text-left font-medium">What you used</th>
-            <th className="text-left font-medium">Amount</th>
-            <th className="text-right font-medium">Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          {lines.map((line) => (
-            <tr key={line.metric}>
-              <td>{metricLabel(line.metric)}</td>
-              <td>{formatQuantity(line.metric, line.quantity)}</td>
-              <td className="text-right">{formatCredits(line.price_micros)}</td>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-sm">
+          <caption className="sr-only">Usage this month</caption>
+          <thead>
+            <tr className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+              <th className="px-3 py-2.5 font-medium">What you used</th>
+              <th className="px-3 py-2.5 font-medium">Amount</th>
+              <th className="px-3 py-2.5 text-right font-medium">Price</th>
             </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td>Total</td>
-            <td />
-            <td className="text-right">{formatCredits(usageTotalMicros(summary))}</td>
-          </tr>
-        </tfoot>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {lines.map((line) => (
+              <tr key={line.metric}>
+                <td className="px-3 py-2.5">{metricLabel(line.metric)}</td>
+                <td className="px-3 py-2.5">{formatQuantity(line.metric, line.quantity)}</td>
+                <td className="px-3 py-2.5 text-right">{formatCredits(line.price_micros)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-border text-sm font-medium">
+              <td className="px-3 py-2.5">Total</td>
+              <td className="px-3 py-2.5" />
+              <td className="px-3 py-2.5 text-right">{formatCredits(usageTotalMicros(summary))}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
 
       {summary.calls != null && summary.calls.length > 0 ? (
-        <div className="space-y-2">
+        <div className="space-y-1">
           <h3 className="text-sm font-medium">Calls</h3>
           {summary.calls.map((call) => {
             const dateText = call.occurred_at
@@ -152,7 +156,7 @@ function UsageSummaryView({
                 key={call.call_id}
                 type="button"
                 variant="ghost"
-                className="w-full justify-start"
+                className="w-full justify-between gap-3 rounded-md px-3 py-2.5 text-left font-normal"
                 aria-label={`Call on ${dateText}, ${priceText}`}
                 onClick={() => onSelectCall(call.call_id)}
               >

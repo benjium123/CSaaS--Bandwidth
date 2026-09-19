@@ -44,6 +44,30 @@ import {
 } from "@/components/ui/primitives";
 import { RatesDrawer } from "@/components/spend/RatesDrawer";
 import { SpendCard } from "@/components/spend/SpendCard";
+import { avatarHueIndex, initialsOf } from "@/lib/format";
+
+/* ── The console's shape, from docs/design/console-reference.html ───────────────────────
+ * Deliberately local rather than shared: these four pages are being brought onto the
+ * design language in parallel by separate agents, and a new shared module would collide. */
+
+/** A capability chip, one step up the recessed ramp from whatever it sits on. */
+const CHIP = "bg-[hsl(var(--cx-lift))] px-2.5 py-1 text-[hsl(var(--cx-subtle))]";
+
+/** The reference's `.av`: a 50% disc on a 145deg gradient with a two-letter monogram.
+ * `.cx-avatar` (consoleTheme.css) owns the shape, the gradient and the seven hues, and the
+ * hue is a pure hash of the seed so a connection keeps its colour between reloads.
+ * Decorative - the label is spelled out in the heading beside it. */
+function Initials({ seed, label }: { seed: string; label: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-hue={avatarHueIndex(seed)}
+      className="cx-avatar inline-grid h-10 w-10 flex-none place-items-center text-[12px] font-semibold"
+    >
+      {initialsOf(label)}
+    </span>
+  );
+}
 
 type ProbeState = { kind: "result"; data: ProbeOut } | { kind: "error"; message: string };
 
@@ -215,22 +239,32 @@ function ProviderAccountCard({
        ("Auth token" is both Twilio's and Plivo's), so without a landmark every
        getByLabelText across the page is ambiguous - and a screen-reader user has no
        way to tell which connection a field belongs to either. */
-    <Card role="group" aria-label={`${account.label} connection`} className="space-y-4">
+    <Card
+      role="group"
+      aria-label={`${account.label} connection`}
+      className="space-y-4 rounded-xl bg-[hsl(var(--cx-surface))] p-5"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-foreground">{account.label}</h3>
-            <Pill tone={pill.tone}>{pill.label}</Pill>
+        <div className="flex items-start gap-3">
+          <Initials seed={account.id} label={account.label} />
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">
+                {account.label}
+              </h3>
+              <Pill tone={pill.tone}>{pill.label}</Pill>
+            </div>
+            <p className="text-xs text-muted-foreground">{providerName}</p>
+            {account.last_probe_detail && (
+              <p className="text-xs text-muted-foreground">{account.last_probe_detail}</p>
+            )}
           </div>
-          <p className="text-xs text-muted-foreground">{providerName}</p>
-          {account.last_probe_detail && (
-            <p className="text-xs text-muted-foreground">{account.last_probe_detail}</p>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="outline"
+            className="rounded-full px-3.5"
             size="sm"
             aria-label={`Test ${providerName}`}
             disabled={readOnly || probeMutation.isPending}
@@ -244,6 +278,7 @@ function ProviderAccountCard({
           <Button
             type="button"
             variant="outline"
+            className="rounded-full px-3.5"
             size="sm"
             aria-label={confirmingDisable ? `Confirm disable ${providerName}` : `Disable ${providerName}`}
             disabled={readOnly || disableMutation.isPending}
@@ -261,10 +296,10 @@ function ProviderAccountCard({
         </div>
       </div>
 
-      <p className="text-sm text-muted-foreground">{numbersCountText(account.numbers_count)}</p>
-      <p className="text-sm text-muted-foreground">
-        Spend this month: {formatSpendMtd(account.spend_mtd_micros)}
-      </p>
+      <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-lg bg-[hsl(var(--cx-overlay)/0.55)] px-3.5 py-3 text-[13px] text-muted-foreground">
+        <p>{numbersCountText(account.numbers_count)}</p>
+        <p>Spend this month: {formatSpendMtd(account.spend_mtd_micros)}</p>
+      </div>
 
       <form
         onSubmit={(e) => {
@@ -272,9 +307,9 @@ function ProviderAccountCard({
           setLastAction("save");
           saveMutation.mutate();
         }}
-        className="grid gap-3 md:grid-cols-2"
+        className="grid gap-4 md:grid-cols-2"
       >
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <label htmlFor={`${provider}-label`} className="block text-xs text-muted-foreground">
             Label
           </label>
@@ -286,7 +321,7 @@ function ProviderAccountCard({
           />
         </div>
         {fields.map((field) => (
-          <div key={field.name} className="space-y-1">
+          <div key={field.name} className="space-y-1.5">
             <label htmlFor={`${provider}-${field.name}`} className="block text-xs text-muted-foreground">
               {field.label}
             </label>
@@ -307,7 +342,7 @@ function ProviderAccountCard({
           </div>
         ))}
         <div className="md:col-span-2 flex flex-wrap items-center gap-3">
-          <Button type="submit" size="sm" disabled={readOnly || saveMutation.isPending}>
+          <Button type="submit" size="sm" className="rounded-full px-5" disabled={readOnly || saveMutation.isPending}>
             Save
           </Button>
           {lastAction === "save" && (
@@ -360,10 +395,11 @@ function CarrierCard({
   const circuitLoud = statePill !== null && entry.state !== "closed";
 
   return (
-    <li className="space-y-3 rounded-md border border-border p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-foreground">
+    <li className="space-y-3 rounded-lg bg-[hsl(var(--cx-overlay)/0.55)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Initials seed={entry.name} label={providerDisplayName(entry.name)} />
+          <span className="text-[14px] font-semibold text-foreground">
             {providerDisplayName(entry.name)}
           </span>
           <Pill tone={pill.tone}>{pill.label}</Pill>
@@ -376,6 +412,7 @@ function CarrierCard({
         <Button
           type="button"
           size="sm"
+          className="rounded-full px-3.5"
           variant="outline"
           onClick={onProbe}
           disabled={entry.missing.length > 0 || probing || readOnly}
@@ -384,12 +421,14 @@ function CarrierCard({
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-1">
-        <Badge className="bg-muted text-muted-foreground">SMS</Badge>
-        {hasMms(entry) && <Badge className="bg-muted text-muted-foreground">MMS</Badge>}
-        {entry.supports_voice && <Badge className="bg-muted text-muted-foreground">Voice</Badge>}
-        {entry.supports_numbers && <Badge className="bg-muted text-muted-foreground">Numbers</Badge>}
-        {entry.primary && <Badge className="bg-muted text-muted-foreground">Primary</Badge>}
+      {/* The card now sits on `overlay`, so a chip filled with `muted` (which IS overlay)
+          would vanish into it. `lift` is the next step up the same recessed ramp. */}
+      <div className="flex flex-wrap gap-1.5">
+        <Badge className={CHIP}>SMS</Badge>
+        {hasMms(entry) && <Badge className={CHIP}>MMS</Badge>}
+        {entry.supports_voice && <Badge className={CHIP}>Voice</Badge>}
+        {entry.supports_numbers && <Badge className={CHIP}>Numbers</Badge>}
+        {entry.primary && <Badge className={CHIP}>Primary</Badge>}
       </div>
 
       {!entry.live && (
@@ -397,7 +436,7 @@ function CarrierCard({
           <p>{entry.reason}</p>
           {entry.missing.length > 0 && (
             <div className="space-y-1">
-              <code className="block rounded bg-muted p-2 text-[11px] text-foreground">
+              <code className="block rounded-md bg-[hsl(var(--cx-lift)/0.7)] p-2.5 text-[11px] text-foreground">
                 {entry.missing.map((name) => (
                   <div key={name}>{name}</div>
                 ))}
@@ -456,14 +495,14 @@ function CarrierHealthSection({ api, readOnly }: { api: ApiClient; readOnly: boo
   }
 
   return (
-    <section className="space-y-4 rounded-lg border border-border p-4">
-      <h2 className="text-base font-semibold text-foreground">Provider health</h2>
+    <section className="space-y-4 rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-5">
+      <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">Provider health</h2>
       {isLoading ? (
         <Spinner />
       ) : isError ? (
         <div role="alert" className="space-y-2 text-sm text-destructive">
           <p>{(error as Error).message}</p>
-          <Button type="button" variant="outline" size="sm" onClick={() => refetch()}>
+          <Button type="button" variant="outline" size="sm" className="rounded-full px-3.5" onClick={() => refetch()}>
             Retry
           </Button>
         </div>
@@ -513,8 +552,8 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
   }
 
   return (
-    <section className="space-y-4 rounded-lg border border-border p-4">
-      <h2 className="text-base font-semibold text-foreground">Delivery preferences</h2>
+    <section className="space-y-4 rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-5">
+      <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">Delivery preferences</h2>
 
       {error && (
         <p role="alert" className="text-sm text-destructive">
@@ -525,7 +564,7 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
       {isError ? (
         <div role="alert" className="space-y-2 text-sm text-destructive">
           <p>{(queryError as Error).message}</p>
-          <Button type="button" variant="outline" size="sm" onClick={() => refetch()}>
+          <Button type="button" variant="outline" size="sm" className="rounded-full px-3.5" onClick={() => refetch()}>
             Retry
           </Button>
         </div>
@@ -538,11 +577,11 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
               No providers in the preference order yet.
             </p>
           ) : (
-            <ol aria-label="Provider preference order" className="max-w-md space-y-1">
+            <ol aria-label="Provider preference order" className="max-w-md space-y-1.5">
               {policy.preference.map((name, i) => (
                 <li
                   key={name}
-                  className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-sm text-foreground"
+                  className="flex items-center justify-between gap-2 rounded-md bg-[hsl(var(--cx-overlay)/0.55)] px-3.5 py-2.5 text-[13px] text-foreground transition-colors hover:bg-[hsl(var(--cx-overlay))]"
                 >
                   <span>
                     {i + 1}. {providerDisplayName(name)}
@@ -551,6 +590,7 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
                     <Button
                       type="button"
                       size="sm"
+                      className="rounded-full px-3.5"
                       variant="ghost"
                       aria-label={`Move ${providerDisplayName(name)} up`}
                       onClick={() => move(name, -1)}
@@ -561,6 +601,7 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
                     <Button
                       type="button"
                       size="sm"
+                      className="rounded-full px-3.5"
                       variant="ghost"
                       aria-label={`Move ${providerDisplayName(name)} down`}
                       onClick={() => move(name, 1)}
@@ -574,7 +615,7 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
             </ol>
           )}
 
-          <label className="flex items-center gap-2 text-sm text-foreground">
+          <label className="flex items-center gap-3 rounded-md bg-[hsl(var(--cx-overlay)/0.55)] px-3.5 py-2.5 text-[13px] text-foreground">
             <input
               type="checkbox"
               checked={policy.allow_intra_carrier_failover}
@@ -583,7 +624,7 @@ function PolicySection({ api, readOnly }: { api: ApiClient; readOnly: boolean })
             />
             Allow intra-provider failover
           </label>
-          <label className="flex items-center gap-2 text-sm text-foreground">
+          <label className="flex items-center gap-3 rounded-md bg-[hsl(var(--cx-overlay)/0.55)] px-3.5 py-2.5 text-[13px] text-foreground">
             <input
               type="checkbox"
               checked={policy.allow_cross_carrier_failover}
@@ -647,7 +688,7 @@ function SmartRoutingControl({
   }
 
   return (
-    <div role="group" aria-label="Smart routing" className="space-y-3 rounded-lg border border-border p-4">
+    <div role="group" aria-label="Smart routing" className="space-y-3 rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-foreground">Smart routing</p>
@@ -662,6 +703,7 @@ function SmartRoutingControl({
           aria-label="Smart routing"
           variant={smartRoutingOn ? "default" : "outline"}
           size="sm"
+          className="rounded-full px-5"
           disabled={readOnly || isLoading}
           onClick={() => setSmartRoutingOn((on) => !on)}
         >
@@ -686,7 +728,7 @@ function SmartRoutingControl({
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" size="sm" disabled={readOnly || updatePolicy.isPending} onClick={handleSave}>
+        <Button type="button" size="sm" className="rounded-full px-5" disabled={readOnly || updatePolicy.isPending} onClick={handleSave}>
           Save
         </Button>
         {/* Item 45 convention (ProviderAccountCard): MutationStatus renders "Saved"
@@ -795,15 +837,15 @@ function ConnectProviderSection({
       </Select>
 
       {selectedProvider && (
-        <Card className="space-y-3">
+        <Card className="space-y-3 rounded-xl bg-[hsl(var(--cx-surface))] p-5">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               createMutation.mutate();
             }}
-            className="grid gap-3 md:grid-cols-2"
+            className="grid gap-4 md:grid-cols-2"
           >
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <label htmlFor="connect-provider-label" className="block text-xs text-muted-foreground">
                 Name this connection
               </label>
@@ -816,7 +858,7 @@ function ConnectProviderSection({
               />
             </div>
             {fields.map((field) => (
-              <div key={field.name} className="space-y-1">
+              <div key={field.name} className="space-y-1.5">
                 <label htmlFor={`connect-${field.name}`} className="block text-xs text-muted-foreground">
                   {field.label}
                 </label>
@@ -841,6 +883,7 @@ function ConnectProviderSection({
               <Button
                 type="submit"
                 size="sm"
+                className="rounded-full px-5"
                 disabled={readOnly || createMutation.isPending || createIncomplete}
               >
                 Save
@@ -909,12 +952,12 @@ export function ProvidersPage() {
           children and an empty one would render a stray, unlabelled container. */}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold">Providers</h1>
+          <h1 className="text-[19px] font-semibold tracking-[-0.015em]">Providers</h1>
           <p className="text-sm text-muted-foreground">
             Connect the account that sends your messages and places your calls.
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => setRatesOpen(true)}>
+        <Button type="button" variant="outline" size="sm" className="rounded-full px-3.5" onClick={() => setRatesOpen(true)}>
           Rates
         </Button>
       </div>
@@ -924,7 +967,7 @@ export function ProvidersPage() {
       {storageError && (
         <div
           role="alert"
-          className="rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
+          className="rounded-lg border border-destructive bg-destructive/10 px-4 py-3.5 text-sm text-destructive"
         >
           {storageError}
         </div>
@@ -932,10 +975,10 @@ export function ProvidersPage() {
       {numbersQuery.isError && (
         <div
           role="alert"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive bg-destructive/10 px-4 py-3.5 text-sm text-destructive"
         >
           <span>{(numbersQuery.error as Error).message}</span>
-          <Button type="button" variant="outline" size="sm" onClick={() => numbersQuery.refetch()}>
+          <Button type="button" variant="outline" size="sm" className="rounded-full px-3.5" onClick={() => numbersQuery.refetch()}>
             Retry
           </Button>
         </div>
@@ -975,6 +1018,7 @@ export function ProvidersPage() {
             <Button
               type="button"
               variant="outline"
+              className="rounded-full px-3.5"
               size="sm"
               onClick={() => providerAccountsQuery.refetch()}
             >

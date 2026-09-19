@@ -67,10 +67,10 @@ function SsoCertificateStatus({
       role="status"
       className={
         isExpired
-          ? "rounded-md border-l-2 border-red-500 bg-red-500/10 px-3 py-2"
+          ? "rounded-lg border-l-2 border-[hsl(var(--cx-danger))] bg-[hsl(var(--cx-danger)/0.1)] px-3.5 py-3"
           : days <= 7
-            ? "rounded-md border-l-2 border-amber-500 bg-amber-500/10 px-3 py-2"
-            : "rounded-md border-l-2 border-border bg-muted px-3 py-2"
+            ? "rounded-lg border-l-2 border-[hsl(var(--cx-flag))] bg-[hsl(var(--cx-flag)/0.1)] px-3.5 py-3"
+            : "rounded-lg border-l-2 border-border bg-muted px-3.5 py-3"
       }
     >
       <p className="text-sm font-medium">
@@ -175,7 +175,7 @@ export function VerifiedDomainsCard() {
 
   return (
     <Section
-      className="rounded-md border border-border p-4"
+      className="rounded-lg border border-border p-4"
       title="Verified domains"
       description="Prove your company owns its email domain. Single sign-on and user sync only work for verified domains."
     >
@@ -186,7 +186,7 @@ export function VerifiedDomainsCard() {
           {(domains.data ?? []).map((row) => (
             <li
               key={row.id}
-              className="space-y-2 rounded-md border border-border p-3"
+              className="space-y-2.5 rounded-lg border border-border p-3.5"
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">{row.domain}</span>
@@ -219,7 +219,7 @@ export function VerifiedDomainsCard() {
                 </>
               )}
               {canWrite && (
-                <div className="flex gap-2">
+                <div className="flex gap-2.5">
                   {!row.verified && (
                     <Button
                       type="button"
@@ -246,7 +246,7 @@ export function VerifiedDomainsCard() {
         </ul>
       )}
       {canWrite && (
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           <Input
             aria-label="Domain to verify"
             placeholder="acme.com"
@@ -331,7 +331,7 @@ export function SamlSsoCard() {
 
   return (
     <Section
-      className="rounded-md border border-border p-4"
+      className="rounded-lg border border-border p-4"
       title="SAML single sign-on"
       description="For Okta, Microsoft Entra ID, Google Workspace, OneLogin and other SAML identity providers."
     >
@@ -484,12 +484,12 @@ export function ScimTokensCard() {
 
   return (
     <Section
-      className="rounded-md border border-border p-4"
+      className="rounded-lg border border-border p-4"
       title="User sync (SCIM)"
       description="Let your identity provider add people and remove leavers automatically. Removing someone there ends their access here at once."
     >
       {created ? (
-        <div className="space-y-2 rounded-md border border-border p-3">
+        <div className="space-y-2.5 rounded-lg border border-border p-3.5">
           <p className="text-sm font-medium">
             Copy this token now. It will not be shown again.
           </p>
@@ -510,11 +510,11 @@ export function ScimTokensCard() {
       ) : active.length === 0 ? (
         <p className="text-sm text-muted-foreground">No SCIM tokens yet.</p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="space-y-2.5">
           {active.map((t) => (
             <li
               key={t.id}
-              className="flex flex-wrap items-center justify-between gap-2 text-sm"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3.5 py-2.5 text-sm"
             >
               <span>
                 {t.name}{" "}
@@ -539,7 +539,7 @@ export function ScimTokensCard() {
         </ul>
       )}
       {canCreate ? (
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           <Input
             aria-label="SCIM token name"
             placeholder="Okta"

@@ -8,6 +8,7 @@ import {
   ConversationList,
   FilterChips,
   FILTER_CHIPS,
+  FILTER_LABELS,
   MAX_VISIBLE_CHIPS,
   type FilterChip,
 } from "./ConversationList";
@@ -90,30 +91,67 @@ function renderList(items: Conversation[]) {
   return renderWithProviders(<ConversationList {...props} />, client);
 }
 
-const sixChips: FilterChip[] = [...FILTER_CHIPS, { filter: "all", label: "All" }];
-// Fable decision: MAX_VISIBLE_CHIPS dropped to 4, so the real FILTER_CHIPS set (5) now
-// collapses by default. This four-item slice exercises the direct-button branch that
-// FILTER_CHIPS itself no longer reaches.
-const fourChips: FilterChip[] = FILTER_CHIPS.slice(0, 4);
+// The collapse branch is no longer reachable through FILTER_CHIPS itself (three chips,
+// limit four), so these synthetic sets keep both branches of FilterChips under test.
+const sixChips: FilterChip[] = [
+  ...FILTER_CHIPS,
+  { filter: "unread", label: "Unread" },
+  { filter: "snoozed", label: "Snoozed" },
+  { filter: "overdue", label: "Overdue" },
+];
+const fourChips: FilterChip[] = [...FILTER_CHIPS, { filter: "unread", label: "Unread" }];
 
 describe("p26 filter chips", () => {
-  it("collapse rule is live: the five default chips already exceed the limit", () => {
-    // Previously this pinned FILTER_CHIPS.length === MAX_VISIBLE_CHIPS (dormant rule).
-    // Fable chose to ship the collapsed form now: dropping the limit below the default
-    // chip count so the dropdown renders without waiting for a sixth chip.
+  // console-reference.html: "four reduced to three - All, Unresponded, Important."
+  it("is exactly three chips, in the reference's order", () => {
+    expect(FILTER_CHIPS.map((chip) => chip.label)).toEqual([
+      "All",
+      "Unresponded",
+      "Important",
+    ]);
+    expect(FILTER_CHIPS.map((chip) => chip.filter)).toEqual([
+      "all",
+      "unresponded",
+      "important",
+    ]);
+    // Three is under the collapse limit, so they render as pills, not a dropdown.
     expect(MAX_VISIBLE_CHIPS).toBe(4);
-    expect(FILTER_CHIPS.length).toBeGreaterThan(MAX_VISIBLE_CHIPS);
+    expect(FILTER_CHIPS.length).toBeLessThanOrEqual(MAX_VISIBLE_CHIPS);
   });
 
-  it("collapses the default five chips into a single Filter trigger", () => {
+  it("renders the three default chips as buttons, with no Filter trigger", () => {
     const onFilterChange = vi.fn();
     const client = makeStubClient({});
     renderWithProviders(<FilterChips filter="open" onFilterChange={onFilterChange} />, client);
 
-    expect(screen.getByRole("button", { name: /^Filter/ })).toBeTruthy();
     for (const chip of FILTER_CHIPS) {
-      expect(screen.queryByRole("button", { name: chip.label })).toBeNull();
+      expect(screen.getByRole("button", { name: chip.label })).toBeTruthy();
     }
+    expect(screen.queryByRole("button", { name: /^Filter/ })).toBeNull();
+  });
+
+  // Unread / Snoozed / Overdue were dropped AS FILTERS, not as behaviour: the unread dot
+  // and the SLA "Overdue" chip still render on a row, and ConversationHeader still
+  // snoozes. If one is re-added as a chip, this is the test to change.
+  it("offers no Unread, Snoozed or Overdue chip", () => {
+    const client = makeStubClient({});
+    renderWithProviders(<FilterChips filter="open" onFilterChange={() => {}} />, client);
+
+    for (const label of ["Unread", "Snoozed", "Overdue"]) {
+      expect(screen.queryByRole("button", { name: label })).toBeNull();
+    }
+  });
+
+  it("keeps the widest scope reachable: All maps to filter=all, which includes snoozed", async () => {
+    // "open" hides anything snoozed into the future (backend conversations.py), so with
+    // the Snoozed chip gone this pill is the only way back to a snoozed conversation.
+    const user = userEvent.setup();
+    const onFilterChange = vi.fn();
+    const client = makeStubClient({});
+    renderWithProviders(<FilterChips filter="open" onFilterChange={onFilterChange} />, client);
+
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(onFilterChange).toHaveBeenLastCalledWith("all");
   });
 
   it("renders four chips as buttons without a Filter trigger, at the collapse limit", () => {
@@ -133,18 +171,18 @@ describe("p26 filter chips", () => {
   it("marks only the active chip with aria-pressed=true, at the collapse limit", () => {
     const client = makeStubClient({});
     renderWithProviders(
-      <FilterChips chips={fourChips} filter="snoozed" onFilterChange={() => {}} />,
+      <FilterChips chips={fourChips} filter="important" onFilterChange={() => {}} />,
       client,
     );
 
     for (const chip of fourChips) {
       expect(
         screen.getByRole("button", { name: chip.label }).getAttribute("aria-pressed"),
-      ).toBe(chip.filter === "snoozed" ? "true" : "false");
+      ).toBe(chip.filter === "important" ? "true" : "false");
     }
   });
 
-  it("toggles Snoozed on and back to open via the collapsed default menu", async () => {
+  it("toggles Unresponded on and back to open as a pill", async () => {
     const user = userEvent.setup();
     const onFilterChange = vi.fn();
     const client = makeStubClient({});
@@ -153,36 +191,39 @@ describe("p26 filter chips", () => {
       client,
     );
 
-    await user.click(screen.getByRole("button", { name: /^Filter/ }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Snoozed" }));
-    expect(onFilterChange).toHaveBeenLastCalledWith("snoozed");
+    await user.click(screen.getByRole("button", { name: "Unresponded" }));
+    expect(onFilterChange).toHaveBeenLastCalledWith("unresponded");
 
-    await user.click(screen.getByRole("button", { name: /^Filter/ }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Snoozed" }));
+    // Pressing the active pill again is the only way back to the resting "open" scope
+    // now that the Open/All dropdown is gone - so it has to work.
+    await user.click(screen.getByRole("button", { name: "Unresponded" }));
     expect(onFilterChange).toHaveBeenLastCalledWith("open");
   });
 
-  it("clicking Overdue in the collapsed default menu calls onFilterChange with overdue", async () => {
+  it("toggles Important on and back to open as a pill", async () => {
     const user = userEvent.setup();
     const onFilterChange = vi.fn();
     const client = makeStubClient({});
-    renderWithProviders(<FilterChips filter="open" onFilterChange={onFilterChange} />, client);
+    renderWithProviders(
+      <FilterChipsToggleHarness initialFilter="open" onFilterChange={onFilterChange} />,
+      client,
+    );
 
-    await user.click(screen.getByRole("button", { name: /^Filter/ }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Overdue" }));
-    expect(onFilterChange).toHaveBeenLastCalledWith("overdue");
+    await user.click(screen.getByRole("button", { name: "Important" }));
+    expect(onFilterChange).toHaveBeenLastCalledWith("important");
+
+    await user.click(screen.getByRole("button", { name: "Important" }));
+    expect(onFilterChange).toHaveBeenLastCalledWith("open");
   });
 
-  it("marks only the active chip as checked in the collapsed default menu", async () => {
-    const user = userEvent.setup();
+  it("marks only the active chip with aria-pressed among the three defaults", () => {
     const client = makeStubClient({});
-    renderWithProviders(<FilterChips filter="snoozed" onFilterChange={() => {}} />, client);
+    renderWithProviders(<FilterChips filter="important" onFilterChange={() => {}} />, client);
 
-    await user.click(screen.getByRole("button", { name: /^Filter/ }));
     for (const chip of FILTER_CHIPS) {
       expect(
-        screen.getByRole("menuitemradio", { name: chip.label }).getAttribute("aria-checked"),
-      ).toBe(chip.filter === "snoozed" ? "true" : "false");
+        screen.getByRole("button", { name: chip.label }).getAttribute("aria-pressed"),
+      ).toBe(chip.filter === "important" ? "true" : "false");
     }
   });
 
@@ -246,40 +287,49 @@ describe("p26 filter chips", () => {
     expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
   });
 
-  it("names the Open/All menu after the active filter, including the two new ones", () => {
-    // The old ternary chain fell through to "Unresponded" for anything it did not name,
-    // so adding Snoozed and Overdue would have made the menu lie about what is on.
-    const client = makeStubClient({});
-
-    for (const [filter, label] of [
-      ["snoozed", "Snoozed"],
-      ["overdue", "Overdue"],
-      ["unresponded", "Unresponded"],
-    ] as const) {
-      const view = renderWithProviders(
-        <ConversationList
-          items={[]}
-          selectedContactE164={null}
-          onSelect={() => {}}
-          tab="chats"
-          onTabChange={() => {}}
-          filter={filter}
-          onFilterChange={() => {}}
-          q=""
-          onQChange={() => {}}
-          hasNextPage={false}
-          isFetchingNextPage={false}
-          isLoading={false}
-          onLoadMore={() => {}}
-        />,
-        client,
-      );
-      // The chip with the same word is also on screen, so pick the menu TRIGGER by its
-      // aria-haspopup rather than by name.
-      const trigger = view.container.querySelector('button[aria-haspopup="menu"]');
-      expect(trigger?.textContent).toContain(label);
-      view.unmount();
+  it("still names every filter value exactly once, including the ones with no chip", () => {
+    // The Open/All dropdown is gone (the All chip replaced it), but FILTER_LABELS is what
+    // stopped the old ternary chain from labelling two different filters "Unresponded" -
+    // so the Record itself stays pinned. Every value ConversationFilter admits must still
+    // have its own word.
+    const filters: ConversationFilter[] = [
+      "open",
+      "unread",
+      "unresponded",
+      "important",
+      "all",
+      "snoozed",
+      "overdue",
+    ];
+    for (const filter of filters) {
+      expect(FILTER_LABELS[filter]).toBeTruthy();
     }
+    expect(new Set(Object.values(FILTER_LABELS)).size).toBe(filters.length);
+    expect(Object.keys(FILTER_LABELS).sort()).toEqual([...filters].sort());
+  });
+
+  it("renders no Open/All dropdown beside the pills", () => {
+    const client = makeStubClient({});
+    const view = renderWithProviders(
+      <ConversationList
+        items={[]}
+        selectedContactE164={null}
+        onSelect={() => {}}
+        tab="chats"
+        onTabChange={() => {}}
+        filter="open"
+        onFilterChange={() => {}}
+        q=""
+        onQChange={() => {}}
+        hasNextPage={false}
+        isFetchingNextPage={false}
+        isLoading={false}
+        onLoadMore={() => {}}
+      />,
+      client,
+    );
+
+    expect(view.container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
   });
 
   it("shows Overdue in a row whose sla is breached", () => {

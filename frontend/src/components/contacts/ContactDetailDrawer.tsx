@@ -18,6 +18,10 @@ import {
   useEraseContact,
   useMergeContacts,
 } from "@/api/contactsPro";
+import {
+  InitialsAvatar,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
 import { Button, Drawer, Input, Spinner } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 
@@ -77,20 +81,35 @@ export function ContactDetailDrawer({
 
   return (
     <Drawer open onClose={onClose} title={contact.display_name}>
-      <div className="space-y-6">
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold">Phone numbers</h3>
+      <div className="space-y-[14px]">
+        {/* The reference's panel head: the face, centred, above the fields. The name is
+            already the Drawer's title, so it is NOT repeated here - the avatar is
+            decorative and announces nothing. */}
+        <div className="flex justify-center pb-1">
+          <InitialsAvatar
+            name={contact.display_name}
+            seed={contact.id}
+            size="xl"
+          />
+        </div>
+
+        <SurfaceCard className="space-y-2">
+          <h3 className="text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
+            Phone numbers
+          </h3>
           {contact.phones.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No phone numbers</p>
+            <p className="text-[13px] text-[hsl(var(--cx-muted))]">No phone numbers</p>
           ) : (
-            <p className="text-sm">
+            <p className="text-[13.5px]">
               {contact.phones.map((phone) => formatPhone(phone.e164)).join(", ")}
             </p>
           )}
-        </section>
+        </SurfaceCard>
 
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold">Possible duplicates</h3>
+        <SurfaceCard className="space-y-2">
+          <h3 className="text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
+            Possible duplicates
+          </h3>
 
           {duplicates.isLoading ? <Spinner label="Looking for duplicates" /> : null}
           {duplicates.isError ? (
@@ -107,7 +126,7 @@ export function ContactDetailDrawer({
               {duplicates.data.map((candidate) => (
                 <div
                   key={candidate.contact_id}
-                  className="flex items-start gap-2 rounded-md border border-border p-2"
+                  className="flex items-start gap-[11px] rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px]"
                 >
                   <input
                     type="checkbox"
@@ -121,8 +140,13 @@ export function ContactDetailDrawer({
                     checked={selectedIds.includes(candidate.contact_id)}
                     onChange={() => toggleCandidate(candidate.contact_id)}
                   />
+                  <InitialsAvatar
+                    name={candidate.display_name}
+                    seed={candidate.contact_id}
+                    size="sm"
+                  />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">{candidate.display_name}</p>
+                    <p className="text-[13.5px] font-semibold">{candidate.display_name}</p>
                     <p className="text-sm text-muted-foreground">
                       {candidate.phones.length > 0
                         ? candidate.phones.map((phone) => formatPhone(phone)).join(", ")
@@ -136,7 +160,7 @@ export function ContactDetailDrawer({
               ))}
 
               {selectedIds.length > 0 ? (
-                <div className="space-y-2 rounded-md border border-border p-3">
+                <div className="space-y-2 rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[14px]">
                   <h4 className="text-sm font-medium">
                     If you merge, this is what you get
                   </h4>
@@ -199,10 +223,10 @@ export function ContactDetailDrawer({
               {getErrorMessage(mergeMutation.error)}
             </p>
           ) : null}
-        </section>
+        </SurfaceCard>
 
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold">
+        <SurfaceCard className="space-y-2">
+          <h3 className="text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Download this person&apos;s data
           </h3>
           <p className="text-sm text-muted-foreground">
@@ -231,11 +255,11 @@ export function ContactDetailDrawer({
               {downloadError}
             </p>
           ) : null}
-        </section>
+        </SurfaceCard>
 
         {canErase ? (
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-destructive">
+          <SurfaceCard className="space-y-2 border-[hsl(var(--cx-danger)/0.4)]">
+            <h3 className="text-[11.5px] font-semibold text-destructive">
               Erase this person
             </h3>
             <p className="text-sm text-muted-foreground">
@@ -248,7 +272,7 @@ export function ContactDetailDrawer({
                 {eraseMutation.data.message}
               </p>
             ) : eraseConfirming ? (
-              <div className="space-y-3 rounded-md border border-destructive p-3">
+              <div className="space-y-3 rounded-[14px] border border-destructive p-[14px]">
                 <h4 className="text-sm font-medium">
                   Erase {contact.display_name}? This cannot be undone.
                 </h4>
@@ -324,7 +348,7 @@ export function ContactDetailDrawer({
                 {getErrorMessage(eraseMutation.error)}
               </p>
             ) : null}
-          </section>
+          </SurfaceCard>
         ) : null}
       </div>
     </Drawer>

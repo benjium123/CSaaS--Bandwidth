@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/primitives";
+import { BANNER_PRIORITY, BannerSlot } from "@/components/shell/BannerSlot";
 import { useGate } from "@/api/capabilities";
 import { useAuth } from "@/auth/AuthContext";
 import {
@@ -54,18 +55,28 @@ export function LowBalanceBanner() {
       : WARNING_COPY[warning];
 
   return (
-    <div role="status" className="border-b border-border bg-muted px-4 py-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">{copy.title}</p>
-          <p className="mt-0.5 text-sm text-muted-foreground">{copy.body}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button type="button" onClick={() => navigate("/settings/billing")}>
+    <BannerSlot priority={BANNER_PRIORITY.credits}>
+      {/* One slim line. The title and the body both stay - the body is the part that says
+          whether sending has actually stopped - but they sit side by side and truncate
+          rather than stacking into a card above the inbox. */}
+      <div
+        role="status"
+        className="flex items-center gap-3 border-b border-border bg-muted px-4 py-1.5"
+      >
+        <p className="min-w-0 flex-1 truncate text-sm">
+          <span className="font-semibold">{copy.title}</span>
+          {/* The separator is its own aria-hidden node so the title and the body each stay
+              a single exact-text element for assistive tech and for the tests. */}
+          <span aria-hidden="true" className="text-muted-foreground"> — </span>
+          <span className="text-muted-foreground">{copy.body}</span>
+        </p>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button type="button" size="sm" onClick={() => navigate("/settings/billing")}>
             Add credits
           </Button>
           <Button
             type="button"
+            size="sm"
             variant="ghost"
             aria-label="Dismiss"
             onClick={() => {
@@ -77,6 +88,6 @@ export function LowBalanceBanner() {
           </Button>
         </div>
       </div>
-    </div>
+    </BannerSlot>
   );
 }

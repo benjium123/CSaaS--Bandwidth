@@ -2,16 +2,17 @@
  *
  * Each one sits in a recessed well at the foot of its card, so the card reads as a panel
  * with an inset window rather than as a card with a picture pasted on. Everything is drawn
- * from the Exchange tokens: copper is structure, verdigris is the only signal, and both
- * flip for free when authTheme.light.css re-points them - there is not one literal colour
- * in this file, which is why none of it needs a light-theme override.
+ * from the surface tokens: the rule colour is structure, the green is the only signal,
+ * and both flip for free when authTheme.light.css re-points them - the one literal left in
+ * this file is a neutral inset shadow, which is why none of it needs a light-theme
+ * override.
  */
 
 .lpf {
   border: 1px solid hsl(var(--lp-rule) / 0.7);
   border-radius: 3px;
   background: hsl(var(--ex-ink) / 0.55);
-  box-shadow: 0 1px 2px hsl(197 60% 2% / 0.25) inset;
+  box-shadow: 0 1px 2px hsl(223 30% 2% / 0.25) inset;
   padding: 0.625rem 0.6875rem;
   min-width: 0;
   overflow: hidden;
@@ -58,10 +59,10 @@
   height: auto;
 }
 
-/* Set on the <text> elements. Martian Mono at this size is what makes the branch
+/* Set on the <text> elements. The tracking, not a second family, is what makes the branch
  * labels read as panel legends rather than as a chart's axis. */
 .lpf-svg-label {
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 8px;
   letter-spacing: 0.06em;
 }

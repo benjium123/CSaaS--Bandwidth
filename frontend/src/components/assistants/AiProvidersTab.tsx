@@ -82,7 +82,7 @@ function Readiness({
     return (
       <div className="space-y-2">
         <Pill tone="info">Using CSaaS keys</Pill>
-        <p className="text-sm text-muted-foreground">You pay for what your assistants use.</p>
+        <p className="text-[13px] text-[hsl(var(--cx-subtle))]">You pay for what your assistants use.</p>
       </div>
     );
   }
@@ -91,7 +91,7 @@ function Readiness({
     return (
       <div className="space-y-2">
         <Pill tone="success">Ready</Pill>
-        <p className="text-sm text-muted-foreground">Your assistants can go live.</p>
+        <p className="text-[13px] text-[hsl(var(--cx-subtle))]">Your assistants can go live.</p>
       </div>
     );
   }
@@ -101,13 +101,13 @@ function Readiness({
       <Pill tone="warning">Still needed</Pill>
       {/* An empty list would render "Add a connection for: ." - if the server says not ready
           but names nothing, say the honest general thing instead. */}
-      <p className="text-sm text-muted-foreground">
+      <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
         {missingKinds.length > 0
           ? `Add a connection for: ${missingKindWords(missingKinds)}.`
           : "Connect a language model, speech recognition and a voice before going live."}
       </p>
       {missingKinds.length > 0 && (
-        <ul aria-label="What is still needed" className="space-y-1 text-sm text-muted-foreground">
+        <ul aria-label="What is still needed" className="space-y-1 text-[13px] text-[hsl(var(--cx-subtle))]">
           {missingKinds.map((kind) => (
             <li key={kind}>Add a {AI_KIND_WORDS[kind]} connection.</li>
           ))}
@@ -199,11 +199,11 @@ function AiProviderAccountCard({ account }: { account: AiProviderAccount }) {
             <h3 className="text-sm font-semibold text-foreground">{account.label}</h3>
             <Pill tone={pill.tone}>{pill.label}</Pill>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
             {aiProviderLabel(account.provider)} · {AI_KIND_WORDS[account.kind]}
           </p>
           {account.last_probe_detail && (
-            <p className="text-xs text-muted-foreground">{account.last_probe_detail}</p>
+            <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">{account.last_probe_detail}</p>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -268,7 +268,7 @@ function AiProviderAccountCard({ account }: { account: AiProviderAccount }) {
         className="grid gap-3 md:grid-cols-2"
       >
         <div className="space-y-1">
-          <label htmlFor={`${account.id}-label`} className="block text-xs text-muted-foreground">
+          <label htmlFor={`${account.id}-label`} className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
             Label
           </label>
           <Input
@@ -279,7 +279,7 @@ function AiProviderAccountCard({ account }: { account: AiProviderAccount }) {
         </div>
         {fields.map((field) => (
           <div key={field.name} className="space-y-1">
-            <label htmlFor={`${account.id}-${field.name}`} className="block text-xs text-muted-foreground">
+            <label htmlFor={`${account.id}-${field.name}`} className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
               {field.label}
             </label>
             {/* F2: the value comes from local state for EVERY field, secret ones included.
@@ -296,7 +296,7 @@ function AiProviderAccountCard({ account }: { account: AiProviderAccount }) {
               placeholder={field.secret ? "stored — leave blank to keep" : undefined}
             />
             {field.secret && account.has_credentials && (
-              <span className="text-xs text-muted-foreground">Key saved</span>
+              <span className="text-[11.5px] text-[hsl(var(--cx-muted))]">Key saved</span>
             )}
           </div>
         ))}
@@ -463,7 +463,7 @@ function ConnectAiProviderSection() {
             className="grid gap-3 md:grid-cols-2"
           >
             <div className="space-y-1">
-              <label htmlFor="connect-ai-label" className="block text-xs text-muted-foreground">
+              <label htmlFor="connect-ai-label" className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
                 Name this connection
               </label>
               <Input
@@ -475,7 +475,7 @@ function ConnectAiProviderSection() {
             </div>
             {fields.map((field) => (
               <div key={field.name} className="space-y-1">
-                <label htmlFor={`connect-ai-${field.name}`} className="block text-xs text-muted-foreground">
+                <label htmlFor={`connect-ai-${field.name}`} className="block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
                   {field.label}
                 </label>
                 <Input
@@ -490,7 +490,7 @@ function ConnectAiProviderSection() {
               </div>
             ))}
             {createIncomplete && (
-              <p className="md:col-span-2 text-xs text-destructive">
+              <p className="md:col-span-2 text-xs text-[hsl(var(--cx-danger))]">
                 Missing: {missingFields.join(", ")}
               </p>
             )}
@@ -551,13 +551,13 @@ export function AiProvidersTab() {
     <div className="mx-auto max-w-5xl space-y-8 p-6 text-foreground">
       <div className="space-y-1">
         <h1 className="text-lg font-semibold">AI providers</h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
           Choose whose keys your assistants use, and connect the ones you bring yourself.
         </p>
       </div>
 
       <Card className="space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-[11px]">
           <div
             role="radiogroup"
             aria-label="Whose keys your assistants use"
@@ -597,7 +597,7 @@ export function AiProvidersTab() {
         {settingsQuery.isLoading ? (
           <Spinner label="Loading settings" />
         ) : settingsQuery.isError ? (
-          <div role="alert" className="space-y-2 text-sm text-destructive">
+          <div role="alert" className="space-y-2 text-sm text-[hsl(var(--cx-danger))]">
             <p>Settings are unavailable.</p>
             <Button
               type="button"
@@ -617,9 +617,9 @@ export function AiProvidersTab() {
 
       <Section title="Connected providers">
         {providersQuery.isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading connections…</p>
+          <p className="text-[13px] text-[hsl(var(--cx-subtle))]">Loading connections…</p>
         ) : providersQuery.isError ? (
-          <div role="alert" className="space-y-2 text-sm text-destructive">
+          <div role="alert" className="space-y-2 text-sm text-[hsl(var(--cx-danger))]">
             <p>Connections are unavailable.</p>
             <Button
               type="button"

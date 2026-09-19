@@ -18,7 +18,7 @@ import {
   type InboxGrant,
   type OrgMember,
 } from "@/api/conversations";
-import { formatPhone } from "@/lib/format";
+import { avatarHueIndex, formatPhone, initialsOf } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   Button,
@@ -26,9 +26,49 @@ import {
   EmptyState,
   Input,
   MutationStatus,
+  Pill,
   Section,
   Select,
 } from "@/components/ui/primitives";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+
+/* ── The console's shape, from docs/design/console-reference.html ───────────────────────
+ * Deliberately local rather than shared: these four pages are being brought onto the
+ * design language in parallel by separate agents, and a new shared module would collide. */
+
+/** What a column header used to say, said once per field instead. */
+const FIELD_LABEL =
+  "block text-[11px] font-semibold uppercase tracking-[0.07em] text-[hsl(var(--cx-muted))]";
+
+/** The reference's line-rail `.av`: a 50% disc on a 145deg gradient, and for a LINE the
+ * hue is user data rather than palette - `.cx-line-avatar` reads it from `--cx-line-av`.
+ * Fed from the DRAFT colour, so the disc repaints as the admin drags the colour picker and
+ * shows what saving would actually do. Decorative: the name is in the field beside it. */
+function LineAvatar({ inbox, draftColor }: { inbox: Inbox; draftColor: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{ "--cx-line-av": draftColor } as React.CSSProperties}
+      className="cx-line-avatar mb-0.5 inline-grid h-10 w-10 flex-none place-items-center text-[12px] font-semibold text-[hsl(var(--cx-on-acc))]"
+    >
+      {initialsOf(inbox.name)}
+    </span>
+  );
+}
+
+/** The same disc where the hue is NOT user data - a department has no colour of its own,
+ * so it takes one of the seven palette hues, hashed off its immutable id. */
+function Initials({ seed, label }: { seed: string; label: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-hue={avatarHueIndex(seed)}
+      className="cx-avatar inline-grid h-9 w-9 flex-none place-items-center text-[11px] font-semibold"
+    >
+      {initialsOf(label)}
+    </span>
+  );
+}
 
 // F17: this is a plain filter, not a hook (it calls no hooks itself) - the `use` prefix
 // was misleading.
@@ -115,16 +155,21 @@ function DepartmentSection() {
 
   return (
     <Section title="Departments" description="Create and organize departments.">
-      <form className="flex items-center gap-2" onSubmit={handleCreate}>
+      <form
+        className="flex items-center gap-3 rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-3.5"
+        onSubmit={handleCreate}
+      >
         <Input
           aria-label="New department name"
           placeholder="Department name"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          className="h-9 w-auto flex-1 px-2 text-sm"
+          className="h-9 w-auto flex-1 px-3 text-sm"
         />
+        {/* The reference's `.send`: a primary action is a pill. */}
         <Button
           type="submit"
+          className="rounded-full px-5"
           disabled={!newName.trim() || createMutation.isPending}
         >
           Create
@@ -193,19 +238,21 @@ function DepartmentRow({
   return (
     <Card
       className={cn(
-        "p-3",
+        "rounded-xl border-border bg-[hsl(var(--cx-surface))] p-3.5",
         !department.is_active && "opacity-60",
       )}
     >
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <Initials seed={department.id} label={department.name} />
         <Input
           aria-label={`Department name ${department.name}`}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="h-8 px-2 text-sm"
+          className="w-auto min-w-[12rem] flex-1"
         />
         <Button
           type="button"
+          className="rounded-full px-5"
           disabled={busy}
           onClick={() => patchMutation.mutate({ name })}
         >
@@ -213,6 +260,7 @@ function DepartmentRow({
         </Button>
         <Button
           type="button"
+          className="rounded-full px-5"
           disabled={busy}
           aria-pressed={department.is_active}
           onClick={() => patchMutation.mutate({ is_active: !department.is_active })}
@@ -227,7 +275,7 @@ function DepartmentRow({
           aria-label={`Delete ${department.name}`}
           variant="ghost"
           size="icon"
-          className="ml-auto h-8 w-8 text-muted-foreground hover:text-destructive"
+          className="ml-auto h-9 w-9 text-muted-foreground hover:text-destructive"
         >
           <Trash2 className="h-4 w-4" />
         </Button>
@@ -243,8 +291,8 @@ function DepartmentRow({
         />
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">Members</span>
+      <div className="mt-3.5 flex flex-wrap items-center gap-3 rounded-lg bg-[hsl(var(--cx-overlay)/0.55)] p-3">
+        <span className={FIELD_LABEL}>Members</span>
         <Select
           aria-label={`Members for ${department.name}`}
           multiple
@@ -253,7 +301,7 @@ function DepartmentRow({
             const values = Array.from(e.currentTarget.selectedOptions).map((o) => o.value);
             setSelectedIds(values);
           }}
-          className="h-24 w-full min-w-0 px-2 py-1 text-xs"
+          className="h-24 w-full min-w-0 px-2.5 py-1.5 text-xs"
         >
           {members.map((member) => (
             <option key={member.user_id} value={member.user_id}>
@@ -263,6 +311,7 @@ function DepartmentRow({
         </Select>
         <Button
           type="button"
+          className="rounded-full px-5"
           disabled={busy}
           onClick={() => membersMutation.mutate(selectedIds)}
         >
@@ -344,10 +393,10 @@ function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
   }
 
   return (
-    <Card className="mt-3 p-3">
-      <p className="text-xs font-medium text-foreground">Grants</p>
+    <Card className="rounded-lg border-transparent bg-[hsl(var(--cx-overlay)/0.55)] p-3.5">
+      <p className={FIELD_LABEL}>Grants</p>
 
-      <div className="mt-2 space-y-1">
+      <div className="mt-2.5 space-y-2">
         {draftGrants.map((grant) => {
           const label =
             grant.grantee_type === "department"
@@ -357,7 +406,7 @@ function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
           return (
             <div
               key={`${grant.grantee_type}-${grant.grantee_id}`}
-              className="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs text-foreground"
+              className="flex items-center gap-2.5 rounded-md bg-[hsl(var(--cx-lift)/0.7)] px-3 py-2 text-xs text-foreground"
             >
               {grant.grantee_type === "department" ? (
                 <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -383,12 +432,12 @@ function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
         })}
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-3">
         <Select
           aria-label="Grantee type"
           value={granteeType}
           onChange={(e) => setGranteeType(e.target.value as "department" | "user")}
-          className="h-8 px-2 text-xs"
+          className="h-9 px-2.5 text-xs"
         >
           <option value="user">User</option>
           <option value="department">Department</option>
@@ -397,7 +446,7 @@ function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
           aria-label="Grantee"
           value={granteeId}
           onChange={(e) => setGranteeId(e.target.value)}
-          className="h-8 min-w-40 px-2 text-xs"
+          className="h-9 min-w-40 px-2.5 text-xs"
         >
           <option value="">Select…</option>
           {granteeType === "department"
@@ -416,13 +465,14 @@ function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
           aria-label="Grant role"
           value={grantRole}
           onChange={(e) => setGrantRole(e.target.value as "member" | "viewer")}
-          className="h-8 px-2 text-xs"
+          className="h-9 px-2.5 text-xs"
         >
           <option value="member">Can send & call</option>
           <option value="viewer">Can view</option>
         </Select>
         <Button
           type="button"
+          className="rounded-full px-5"
           onClick={addGrant}
           disabled={!granteeId}
         >
@@ -430,6 +480,7 @@ function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
         </Button>
         <Button
           type="button"
+          className="rounded-full px-5"
           onClick={() => saveGrantsMutation.mutate(draftGrants)}
           disabled={saveGrantsMutation.isPending}
         >
@@ -478,19 +529,14 @@ function InboxesTable({ inboxes }: { inboxes: Inbox[] }) {
 
   return (
     <>
-      <Card className="overflow-x-auto p-0">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">Name</th>
-              <th className="px-3 py-2 font-medium">Color</th>
-              <th className="px-3 py-2 font-medium">Number</th>
-              <th className="px-3 py-2 font-medium">Your role</th>
-              <th className="px-3 py-2 font-medium">Reply times</th>
-              <th className="px-3 py-2 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
+      {/* WAS a six-column table with a full-width grants row wedged underneath every line.
+          It is a FORM PER INBOX, so it is now the card the reference actually draws: 14px
+          corners, 11-14px padding, and the line's own colour carried by the circular
+          avatar (`.cx-line-avatar`, the same treatment the reference's line rail uses).
+          Nothing was dropped - name, colour, number, your role, both reply times, Save and
+          the grants editor are all still here, each under the label the column header used
+          to carry. */}
+      <div className="space-y-3">
             {inboxes.map((inbox) => {
               const draft = drafts[inbox.id] ?? seedDraft(inbox);
               const rowSaving =
@@ -542,101 +588,105 @@ function InboxesTable({ inboxes }: { inboxes: Inbox[] }) {
               }
 
               return (
-                <React.Fragment key={inbox.id}>
-                  <tr className="bg-muted">
-                    <td className="px-3 py-2">
+                <div
+                  key={inbox.id}
+                  className="space-y-3.5 rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-3.5"
+                >
+                  <div className="flex flex-wrap items-end gap-3">
+                    <LineAvatar inbox={inbox} draftColor={draft.color} />
+                    <div className="min-w-[11rem] flex-1 space-y-1.5">
+                      <span className={FIELD_LABEL}>Name</span>
                       <Input
                         aria-label={`Inbox name ${inbox.name}`}
                         value={draft.name}
                         onChange={(e) => updateDraft({ name: e.target.value })}
-                        className="h-8 w-full px-2 text-xs"
+                        className="w-full"
                       />
-                    </td>
-                    <td className="px-3 py-2">
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className={FIELD_LABEL}>Color</span>
                       <Input
                         aria-label={`Inbox color ${inbox.name}`}
                         type="color"
                         value={draft.color}
                         onChange={(e) => updateDraft({ color: e.target.value })}
-                        className="h-8 w-14 px-1 py-1"
+                        className="h-9 w-16 cursor-pointer p-1"
                       />
-                    </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {formatPhone(inbox.e164)}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{inbox.my_role}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">
-                            First reply within (minutes)
-                          </span>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={44640}
-                            aria-label={`First reply within (minutes) for ${inbox.name}`}
-                            value={draft.firstReplyMinutes}
-                            onChange={(e) =>
-                              updateDraft({ firstReplyMinutes: e.target.value })
-                            }
-                            className="h-8 w-24 px-2 text-xs"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">
-                            Resolve within (minutes)
-                          </span>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={44640}
-                            aria-label={`Resolve within (minutes) for ${inbox.name}`}
-                            value={draft.resolveMinutes}
-                            onChange={(e) =>
-                              updateDraft({ resolveMinutes: e.target.value })
-                            }
-                            className="h-8 w-24 px-2 text-xs"
-                          />
-                        </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className={FIELD_LABEL}>Number</span>
+                      <p className="whitespace-nowrap py-1.5 text-[13px] text-foreground">
+                        {formatPhone(inbox.e164)}
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className={FIELD_LABEL}>Your role</span>
+                      <p className="py-1">
+                        <Pill tone="info">{inbox.my_role}</Pill>
+                      </p>
+                    </div>
+                    <div className="ml-auto flex flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        {/* The reference's `.send`: a primary action is a pill. */}
+                        <Button
+                          type="button"
+                          className="rounded-full px-5"
+                          disabled={rowSaving}
+                          onClick={handleSave}
+                        >
+                          {rowSaving ? "Saving…" : "Save"}
+                        </Button>
+                        <MutationStatus
+                          pending={false}
+                          error={rowError ? saveMutation.error : undefined}
+                          className="text-[10px]"
+                        />
                       </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            disabled={rowSaving}
-                            onClick={handleSave}
-                          >
-                            {rowSaving ? "Saving…" : "Save"}
-                          </Button>
-                          <MutationStatus
-                            pending={false}
-                            error={rowError ? saveMutation.error : undefined}
-                            className="text-[10px]"
-                          />
-                        </div>
-                        {validationMessage ? (
-                          <p role="alert" className="text-xs text-destructive">
-                            {validationMessage}
-                          </p>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-border bg-background">
-                    <td colSpan={6} className="px-3 py-2">
-                      <InboxGrantEditor inbox={inbox} />
-                    </td>
-                  </tr>
-                </React.Fragment>
+                      {validationMessage ? (
+                        <p role="alert" className="text-xs text-destructive">
+                          {validationMessage}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-lg bg-[hsl(var(--cx-overlay)/0.55)] px-3.5 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground">
+                        First reply within (minutes)
+                      </span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={44640}
+                        aria-label={`First reply within (minutes) for ${inbox.name}`}
+                        value={draft.firstReplyMinutes}
+                        onChange={(e) => updateDraft({ firstReplyMinutes: e.target.value })}
+                        className="h-9 w-24"
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground">
+                        Resolve within (minutes)
+                      </span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={44640}
+                        aria-label={`Resolve within (minutes) for ${inbox.name}`}
+                        value={draft.resolveMinutes}
+                        onChange={(e) => updateDraft({ resolveMinutes: e.target.value })}
+                        className="h-9 w-24"
+                      />
+                    </div>
+                  </div>
+
+                  <InboxGrantEditor inbox={inbox} />
+                </div>
               );
             })}
-          </tbody>
-        </table>
-      </Card>
-      <p className="mt-2 text-xs text-muted-foreground">
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
         Leave a box blank to stop tracking that time.
       </p>
     </>
@@ -644,6 +694,10 @@ function InboxesTable({ inboxes }: { inboxes: Inbox[] }) {
 }
 
 export function InboxSettingsPage() {
+  // The console follows the one stored theme preference the front door writes. See
+  // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
+  // every wrapper in the console on the same commit rather than only its own.
+  const { theme } = useSurfaceTheme();
   const { api } = useAuth();
   const inboxesQuery = useQuery({
     queryKey: ["inboxes"],
@@ -678,8 +732,10 @@ export function InboxSettingsPage() {
   }
 
   return (
-    <div className="dark mx-auto max-w-5xl space-y-8 bg-background p-6 text-foreground">
-      <h1 className="text-lg font-semibold text-foreground">Inbox settings</h1>
+    <div className={cn(surfaceThemeClass(theme), "mx-auto max-w-5xl space-y-7 bg-background p-6 text-foreground")}>
+      <h1 className="text-[19px] font-semibold tracking-[-0.015em] text-foreground">
+        Inbox settings
+      </h1>
       <DepartmentSection />
       <Section title="Inboxes" description="Manage the inboxes you administer.">
         <InboxesTable inboxes={admin} />

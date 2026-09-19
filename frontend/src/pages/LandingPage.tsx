@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
-import "@fontsource-variable/archivo/wdth.css";
-import "@fontsource-variable/martian-mono/wght.css";
+import "@fontsource-variable/onest/wght.css";
 import "@/auth/authTheme.css";
 import "@/auth/authTheme.light.css";
 import "@/pages/landing.css";

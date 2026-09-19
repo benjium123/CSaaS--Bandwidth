@@ -43,4 +43,36 @@ describe("ErrorBoundary", () => {
 
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
   });
+
+  it("renders no navigation when given none - the root boundary in main.tsx sits above" +
+     " the router and the auth provider", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(
+      <ErrorBoundary>
+        <Bomb />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+  });
+
+  it("renders the nav it is given, and clears the error when resetKey changes", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const view = render(
+      <ErrorBoundary nav={<nav aria-label="Error recovery">way out</nav>} resetKey="/inbox">
+        <Bomb />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByRole("navigation", { name: "Error recovery" })).toBeInTheDocument();
+
+    // Navigating must actually put the boundary back to work - React holds an error state
+    // forever otherwise, and a link in the fallback would change the URL and nothing else.
+    view.rerender(
+      <ErrorBoundary nav={<nav aria-label="Error recovery">way out</nav>} resetKey="/contacts">
+        <p>Recovered</p>
+      </ErrorBoundary>,
+    );
+    expect(screen.getByText("Recovered")).toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
+  });
 });

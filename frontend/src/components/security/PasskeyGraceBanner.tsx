@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { Button } from "@/components/ui/primitives";
+import { BANNER_PRIORITY, BannerSlot } from "@/components/shell/BannerSlot";
 import "@/auth/authTheme.css";
 
 /** P42: owners, admins, billing staff and operators must sign in with a passkey. Shown until
@@ -19,25 +20,41 @@ export function PasskeyGraceBanner() {
   const expired = until !== null && until.getTime() < Date.now();
 
   return (
-    <div role="status" aria-label="Passkey required" className="ex-strip px-4 py-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="ex-label mb-1.5 flex items-center gap-2">
+    <BannerSlot priority={BANNER_PRIORITY.passkey}>
+      {/* `.ex-strip` (src/auth/authTheme.css, NOT ours) is a DELIBERATELY ALWAYS-DARK strip:
+          it hardcodes its own #1A1D24 background and pins --ex-copper/--ex-verdigris so the
+          saturated hues cannot follow the theme. It does NOT pin a dim-text token, so the
+          console's --cx-subtle (which --ex-bone-dim aliases to inside `.console-surface`)
+          flips to a DARK grey in light mode and would land at roughly 2.2:1 on this strip.
+          The dim copy below is therefore white-at-opacity — theme-invariant, like the
+          surface it sits on, and matching the `text-white` it shares a line with. It is not
+          a palette literal and it is not --cx-subtle, for that reason. */}
+      <div role="status" aria-label="Passkey required" className="ex-strip px-4 py-[9px]">
+        <div className="flex items-center gap-[11px]">
+          <div className="ex-label flex shrink-0 items-center gap-2">
             <span className={`ex-lamp ${expired ? "ex-lamp-fault" : "ex-lamp-wait"}`} />
             {expired ? "Passkey required" : "Passkey required soon"}
           </div>
-          <p className="text-sm font-semibold text-white">
-            {expired ? "Add a passkey to use admin features" : "Add a passkey to your account"}
+          <p className="min-w-0 flex-1 truncate text-[13px]">
+            <span className="font-semibold text-white">
+              {expired ? "Add a passkey to use admin features" : "Add a passkey to your account"}
+            </span>
+            <span aria-hidden="true" className="text-white/55"> — </span>
+            <span className="text-white/70">
+              Accounts with admin or billing access sign in with a passkey - it cannot be phished.
+              {until && !expired ? ` Required from ${until.toLocaleDateString()}.` : ""}
+            </span>
           </p>
-          <p className="mt-0.5 text-sm text-neutral-400">
-            Accounts with admin or billing access sign in with a passkey - it cannot be phished.
-            {until && !expired ? ` Required from ${until.toLocaleDateString()}.` : ""}
-          </p>
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0"
+            onClick={() => navigate("/settings/team?tab=security")}
+          >
+            Add a passkey
+          </Button>
         </div>
-        <Button type="button" onClick={() => navigate("/settings/team?tab=security")}>
-          Add a passkey
-        </Button>
       </div>
-    </div>
+    </BannerSlot>
   );
 }

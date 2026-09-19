@@ -69,11 +69,11 @@ export function PasskeysCard({ onAdded }: { onAdded?: () => void }) {
       {list.isPending ? (
         <Spinner label="Loading passkeys" />
       ) : list.data && list.data.length > 0 ? (
-        <ul className="space-y-2">
+        <ul className="space-y-2.5">
           {list.data.map((p) => (
             <li
               key={p.id}
-              className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+              className="flex items-center justify-between gap-3 rounded-md border border-border px-3.5 py-2.5"
             >
               <div className="min-w-0">
                 <p className="truncate text-sm">{p.name}</p>
@@ -102,7 +102,7 @@ export function PasskeysCard({ onAdded }: { onAdded?: () => void }) {
       )}
 
       {supported ? (
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           <Input
             aria-label="Passkey name"
             placeholder="e.g. Work laptop"

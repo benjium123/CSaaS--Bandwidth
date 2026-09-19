@@ -26,6 +26,7 @@ import {
   Select,
   Spinner,
 } from "@/components/ui/primitives";
+import { SectionLabel } from "@/components/ui/consoleChrome";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -283,14 +284,22 @@ export function FlowsPage() {
   }, [flows]);
 
   return (
-    <div className="grid h-full grid-cols-[minmax(280px,340px)_1fr]">
-      <aside className="flex min-h-0 flex-col divide-y divide-border overflow-y-auto border-r border-border">
+    <div className="grid h-full grid-cols-[minmax(280px,340px)_1fr] bg-[hsl(var(--cx-base))]">
+      {/* The reference's nav rail: `--cx-surface`, a `--cx-line` hairline, 16/12 padding
+          and 12px list rows. Nothing in here is square. */}
+      <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] p-3">
         <div>
-          <div className="flex items-center justify-between gap-2 border-b border-border p-3">
-            <h1 className="text-lg font-semibold">Flows</h1>
+          <div className="flex items-center justify-between gap-2 px-2 pb-3 pt-2">
+            <div className="min-w-0">
+              <SectionLabel>Call routing</SectionLabel>
+              <h1 className="mt-0.5 text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
+                Flows
+              </h1>
+            </div>
             <Button
               type="button"
               size="sm"
+              className="rounded-full"
               onClick={() => {
                 setSelectedName(null);
                 setCreatingNew(true);
@@ -302,11 +311,14 @@ export function FlowsPage() {
           {isLoading ? (
             <Spinner label="Loading flows" />
           ) : error ? (
-            <div className="space-y-2 p-4">
-              <p role="alert" className="text-sm text-destructive">
+            <div className="space-y-2 p-2">
+              <p
+                role="alert"
+                className="rounded-[12px] border border-[hsl(var(--cx-danger)/0.4)] bg-[hsl(var(--cx-danger)/0.09)] px-3 py-2 text-[13px] text-[hsl(var(--cx-danger))]"
+              >
                 {(error as Error).message}
               </p>
-              <Button type="button" size="sm" variant="outline" onClick={() => refetch()}>
+              <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={() => refetch()}>
                 Retry
               </Button>
             </div>
@@ -315,12 +327,12 @@ export function FlowsPage() {
                state, and a second button with the same accessible name makes every
                getByRole("button", {name: "New flow"}) ambiguous. Point at it instead. */
             <EmptyState
-              className="m-4"
+              className="m-2"
               title="No flows yet."
               description="Use New flow above to route incoming calls."
             />
           ) : (
-            <ul aria-label="Flows">
+            <ul aria-label="Flows" className="space-y-0.5">
               {latestByName.map((f) => (
                 <li key={f.name}>
                   <Button
@@ -332,11 +344,14 @@ export function FlowsPage() {
                       setSelectedName(f.name);
                     }}
                     className={cn(
-                      "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-normal hover:bg-muted",
-                      f.name === selectedName && !creatingNew && "bg-muted",
+                      "flex h-auto w-full items-center justify-between gap-2 rounded-[12px] px-3 py-2.5 text-left text-[13.5px] font-normal transition-colors",
+                      "text-[hsl(var(--cx-subtle))] hover:bg-[hsl(var(--cx-overlay))] hover:text-[hsl(var(--cx-text))]",
+                      f.name === selectedName &&
+                        !creatingNew &&
+                        "bg-[hsl(var(--cx-overlay))] text-[hsl(var(--cx-text))]",
                     )}
                   >
-                    <span className="truncate font-medium">{f.name}</span>
+                    <span className="truncate font-semibold">{f.name}</span>
                     <Pill tone={flowStatusTone(f.status)}>
                       v{f.version} {f.status}
                     </Pill>
@@ -350,7 +365,7 @@ export function FlowsPage() {
         <BindNumberSection api={api} flows={flows ?? []} />
       </aside>
 
-      <section className="min-h-0 overflow-y-auto p-6">
+      <section className="min-h-0 overflow-y-auto p-6 sm:p-8">
         {creatingNew ? (
           <FlowEditor
             api={api}
@@ -404,11 +419,13 @@ function FlowVersionsEditor({ api, name }: { api: import("@/api/client").ApiClie
     <div className="space-y-4">
       {/* A heading plus one action row, not a Section: `Section` requires children and a
           self-closing one would render an empty, unlabelled container. */}
-      <div className="flex items-start justify-between gap-4">
-        <h2 className="min-w-0 truncate text-sm font-semibold">{name}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-[18px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] px-5 py-4">
+        <h2 className="min-w-0 truncate text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
+          {name}
+        </h2>
         <div className="flex shrink-0 items-center gap-2">
           <div className="flex items-center gap-2">
-            <label className="text-xs text-muted-foreground" htmlFor="flow-version-select">
+            <label className="text-[11.5px] text-[hsl(var(--cx-muted))]" htmlFor="flow-version-select">
               Version
             </label>
             <Select
@@ -428,6 +445,7 @@ function FlowVersionsEditor({ api, name }: { api: import("@/api/client").ApiClie
               type="button"
               size="sm"
               variant="outline"
+              className="rounded-full"
               onClick={activate}
               disabled={selected.status === "active" || activateFlow.isPending}
             >
@@ -559,10 +577,10 @@ function FlowEditor({
       title={mode === "create" ? "New flow" : "Edit flow"}
       description={mode === "create" ? "Build the initial version of the flow." : "Edit this version's definition."}
     >
-      <form className="max-w-2xl space-y-4" onSubmit={save}>
+      <form className="max-w-2xl space-y-5" onSubmit={save}>
         {mode === "create" && (
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor="new-flow-name">
+            <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor="new-flow-name">
               Flow name
             </label>
             <Input
@@ -576,7 +594,7 @@ function FlowEditor({
         )}
 
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="flow-entry-node">
+          <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor="flow-entry-node">
             Entry node
           </label>
           <Select
@@ -595,14 +613,14 @@ function FlowEditor({
         </div>
 
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">Nodes</h3>
-          <Button type="button" size="sm" variant="outline" onClick={addNode}>
+          <h3 className="text-[13.5px] font-semibold text-[hsl(var(--cx-text))]">Nodes</h3>
+          <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={addNode}>
             Add node
           </Button>
         </div>
 
         {generalErrors.length > 0 && (
-          <ul role="alert" className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <ul role="alert" className="space-y-1 rounded-[14px] border border-[hsl(var(--cx-danger)/0.4)] bg-[hsl(var(--cx-danger)/0.09)] p-4 text-[13px] text-[hsl(var(--cx-danger))]">
             {generalErrors.map((msg, i) => (
               <li key={i}>{msg}</li>
             ))}
@@ -646,7 +664,7 @@ function FlowEditor({
         </div>
 
         <div className="flex gap-2">
-          <Button type="submit" disabled={!canSubmit || saving}>
+          <Button type="submit" className="rounded-full" disabled={!canSubmit || saving}>
             {saving ? "Saving…" : mode === "create" ? "Create flow" : "Save as new version"}
           </Button>
         </div>
@@ -703,9 +721,9 @@ function NodeCard({
   );
 
   return (
-    <Card className="space-y-3 p-3" data-node-id={id}>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="text-xs text-muted-foreground" htmlFor={`node-id-${id}`}>
+    <Card className="space-y-3 rounded-[14px] p-4" data-node-id={id}>
+      <div className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--cx-line))] pb-3">
+        <label className="text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`node-id-${id}`}>
           Node id
         </label>
         <Input
@@ -721,7 +739,7 @@ function NodeCard({
             commitRename();
           }}
         />
-        <label className="text-xs text-muted-foreground" htmlFor={`node-type-${id}`}>
+        <label className="text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`node-type-${id}`}>
           Type
         </label>
         <Select
@@ -737,7 +755,7 @@ function NodeCard({
             </option>
           ))}
         </Select>
-        <Button type="button" size="sm" variant="destructive" className="ml-auto" onClick={onRemove}>
+        <Button type="button" size="sm" variant="destructive" className="ml-auto rounded-full" onClick={onRemove}>
           Remove
         </Button>
       </div>
@@ -745,7 +763,7 @@ function NodeCard({
       {node.type === "menu" && (
         <div className="space-y-2">
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor={`menu-prompt-${id}`}>
+            <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`menu-prompt-${id}`}>
               Prompt
             </label>
             <Input
@@ -756,7 +774,7 @@ function NodeCard({
             />
           </div>
           <div className="space-y-1">
-            <span className="block text-xs text-muted-foreground">Digit options</span>
+            <span className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]">Digit options</span>
             {node.options.map((row, i) => (
               <div key={i} className="flex items-center gap-2">
                 <Input
@@ -804,7 +822,7 @@ function NodeCard({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor={`menu-timeout-${id}`}>
+              <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`menu-timeout-${id}`}>
                 Timeout node
               </label>
               <Select
@@ -818,7 +836,7 @@ function NodeCard({
               </Select>
             </div>
             <div className="space-y-1">
-              <label className="block text-xs text-muted-foreground" htmlFor={`menu-invalid-${id}`}>
+              <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`menu-invalid-${id}`}>
                 Invalid-digit node
               </label>
               <Select
@@ -833,7 +851,7 @@ function NodeCard({
             </div>
           </div>
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor={`menu-retries-${id}`}>
+            <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`menu-retries-${id}`}>
               Invalid retries
             </label>
             <Input
@@ -847,7 +865,7 @@ function NodeCard({
               onChange={(e) => onChange({ ...node, invalid_retries: Number(e.target.value) })}
             />
           </div>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-[11.5px] leading-[1.5] text-[hsl(var(--cx-muted))]">
             Speech-intent menus are not in v1 - only DTMF digit routing.
           </p>
         </div>
@@ -856,7 +874,7 @@ function NodeCard({
       {node.type === "hours" && (
         <div className="space-y-2">
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor={`hours-bh-${id}`}>
+            <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`hours-bh-${id}`}>
               Business hours <span aria-hidden="true">*</span>
             </label>
             <Select
@@ -879,7 +897,7 @@ function NodeCard({
           <div className="grid grid-cols-3 gap-2">
             {(["open", "closed", "holiday"] as const).map((branch) => (
               <div key={branch} className="space-y-1">
-                <label className="block text-xs capitalize text-muted-foreground" htmlFor={`hours-${branch}-${id}`}>
+                <label className="block text-[11.5px] font-medium capitalize text-[hsl(var(--cx-muted))]" htmlFor={`hours-${branch}-${id}`}>
                   {branch} <span aria-hidden="true">*</span>
                 </label>
                 <Select
@@ -902,7 +920,7 @@ function NodeCard({
       {node.type === "ring_group" && (
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor={`rg-${id}`}>
+            <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`rg-${id}`}>
               Ring group
             </label>
             <Select
@@ -921,7 +939,7 @@ function NodeCard({
             </Select>
           </div>
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor={`rg-no-answer-${id}`}>
+            <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`rg-no-answer-${id}`}>
               No-answer node
             </label>
             <Select
@@ -939,7 +957,7 @@ function NodeCard({
 
       {node.type === "queue" && (
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor={`queue-${id}`}>
+          <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`queue-${id}`}>
             Queue
           </label>
           <Select
@@ -961,7 +979,7 @@ function NodeCard({
 
       {node.type === "assistant" && (
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor={`assistant-${id}`}>
+          <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`assistant-${id}`}>
             Assistant <span aria-hidden="true">*</span>
           </label>
           <Select
@@ -979,11 +997,11 @@ function NodeCard({
             ))}
           </Select>
           {assistants.length === 0 && (
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-[11.5px] leading-[1.5] text-[hsl(var(--cx-muted))]">
               You have no assistants yet. Create one in Settings, then come back here.
             </p>
           )}
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-[11.5px] leading-[1.5] text-[hsl(var(--cx-muted))]">
             The assistant answers and handles the call from this point on.
           </p>
         </div>
@@ -991,7 +1009,7 @@ function NodeCard({
 
       {node.type === "voicemail" && (
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor={`vm-greeting-${id}`}>
+          <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`vm-greeting-${id}`}>
             Greeting
           </label>
           <Input
@@ -1006,7 +1024,7 @@ function NodeCard({
       {node.type === "speak" && (
         <div className="grid grid-cols-[1fr_160px] gap-2">
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor={`speak-text-${id}`}>
+            <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`speak-text-${id}`}>
               Text
             </label>
             <Input
@@ -1017,7 +1035,7 @@ function NodeCard({
             />
           </div>
           <div className="space-y-1">
-            <label className="block text-xs text-muted-foreground" htmlFor={`speak-next-${id}`}>
+            <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`speak-next-${id}`}>
               Next node
             </label>
             <Select
@@ -1035,7 +1053,7 @@ function NodeCard({
 
       {node.type === "transfer" && (
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor={`transfer-to-${id}`}>
+          <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`transfer-to-${id}`}>
             Transfer to <span aria-hidden="true">*</span>
           </label>
           <Input
@@ -1047,16 +1065,18 @@ function NodeCard({
             value={node.to}
             onChange={(e) => onChange({ ...node, to: e.target.value })}
           />
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-[11.5px] leading-[1.5] text-[hsl(var(--cx-muted))]">
             Ends the call flow by transferring to this number - it has no outgoing node.
           </p>
         </div>
       )}
 
-      {node.type === "hangup" && <p className="text-xs text-muted-foreground">Ends the call.</p>}
+      {node.type === "hangup" && (
+        <p className="text-[12px] text-[hsl(var(--cx-muted))]">Ends the call.</p>
+      )}
 
       {errors.length > 0 && (
-        <ul role="alert" className="space-y-1 text-xs text-destructive">
+        <ul role="alert" className="space-y-1 rounded-[12px] bg-[hsl(var(--cx-danger)/0.09)] px-3 py-2 text-[12px] text-[hsl(var(--cx-danger))]">
           {errors.map((msg, i) => (
             <li key={i}>{msg}</li>
           ))}
@@ -1095,10 +1115,13 @@ function BindNumberSection({
   }
 
   return (
-    <Section title="Bind number to flow" className="p-3">
+    <Section
+      title="Bind number to flow"
+      className="rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-4"
+    >
       <form className="space-y-2" onSubmit={bind}>
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="bind-number">
+          <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor="bind-number">
             Number
           </label>
           <Select
@@ -1117,7 +1140,7 @@ function BindNumberSection({
           </Select>
         </div>
         <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground" htmlFor="bind-flow">
+          <label className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor="bind-flow">
             Flow (active version)
           </label>
           <Select
@@ -1140,7 +1163,7 @@ function BindNumberSection({
           success={ok ? "Bound." : null}
           pendingLabel="Binding…"
         />
-        <Button type="submit" size="sm" disabled={!numberId || bindFlow.isPending}>
+        <Button type="submit" size="sm" className="rounded-full" disabled={!numberId || bindFlow.isPending}>
           Bind
         </Button>
       </form>

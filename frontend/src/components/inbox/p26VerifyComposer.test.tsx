@@ -28,7 +28,7 @@ describe("P26 verify - composer", () => {
       client,
     );
 
-    const noteTab = screen.getByRole("tab", { name: "Note" });
+    const noteTab = screen.getByRole("tab", { name: "Internal note" });
     expect(noteTab).toBeDisabled();
     expect(noteTab).toHaveAttribute(
       "title",

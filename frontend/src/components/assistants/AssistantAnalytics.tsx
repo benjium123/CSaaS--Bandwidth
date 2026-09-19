@@ -13,12 +13,11 @@ import {
   type AnalyticsRangeDays,
 } from "@/api/assistantOps";
 import {
-  Button,
-  Card,
   EmptyState,
   Section,
   Spinner,
 } from "@/components/ui/primitives";
+import { ConsoleCard, FilterPill } from "@/components/ui/consoleChrome";
 
 export function AssistantAnalyticsStrip({
   days,
@@ -42,7 +41,7 @@ export function AssistantAnalyticsStrip({
 
   if (query.isError) {
     return (
-      <p role="alert" className="text-sm text-destructive">
+      <p role="alert" className="text-[13px] text-[hsl(var(--cx-danger))]">
         {(query.error as Error).message}
       </p>
     );
@@ -80,16 +79,20 @@ export function AssistantAnalyticsStrip({
   return (
     <div
       role="list"
-      className={`grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6 ${
+      className={`grid grid-cols-2 gap-[11px] sm:grid-cols-3 lg:grid-cols-6 ${
         className ?? ""
       }`}
     >
       {tiles.map((tile) => (
         <div role="listitem" key={tile.label}>
-          <Card className="space-y-1">
-            <p className="text-xs text-muted-foreground">{tile.label}</p>
-            <p className="text-lg font-semibold text-foreground">{tile.value}</p>
-          </Card>
+          <ConsoleCard className="space-y-[3px]">
+            <p className="text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]">
+              {tile.label}
+            </p>
+            <p className="text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
+              {tile.value}
+            </p>
+          </ConsoleCard>
         </div>
       ))}
     </div>
@@ -104,17 +107,16 @@ export function AssistantAnalyticsPanel(): React.JSX.Element {
       title="Activity"
       description="Across all of your assistants."
       actions={
-        <div role="group" aria-label="Range" className="flex gap-2">
+        <div role="group" aria-label="Range" className="flex gap-[7px]">
           {ANALYTICS_RANGE_DAYS.map((opt) => (
-            <Button
+            <FilterPill
               key={opt}
-              type="button"
-              variant={days === opt ? "default" : "outline"}
-              size="sm"
+              active={days === opt}
+              aria-pressed={days === opt}
               onClick={() => setDays(opt)}
             >
               {opt}d
-            </Button>
+            </FilterPill>
           ))}
         </div>
       }

@@ -1,6 +1,6 @@
 import { Check } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useGate } from "@/api/capabilities";
+import { useGate, type OrgCapabilities } from "@/api/capabilities";
 import { Button, Card, Pill, Section } from "@/components/ui/primitives";
 
 type Step = {
@@ -10,20 +10,30 @@ type Step = {
   hint?: string;
 };
 
+/**
+ * The one definition of "this workspace is finished setting up".
+ *
+ * Exported because two places now depend on the SAME answer: this checklist, which hides
+ * itself, and the Setup entry in the rail, which must appear exactly when the checklist has
+ * something to show. Written twice they would drift, and the rail would become either a
+ * dead link to an empty page or a missing link to a page with work on it.
+ */
+export function isWorkspaceFullySetUp(org: OrgCapabilities): boolean {
+  return (
+    org.has_provider &&
+    org.has_number &&
+    org.member_count > 1 &&
+    org.registration_state !== "none"
+  );
+}
+
 export function OnboardingChecklist() {
   const gate = useGate();
   const navigate = useNavigate();
   const org = gate.org;
 
   if (!org) return null;
-
-  const fullySetUp =
-    org.has_provider &&
-    org.has_number &&
-    org.member_count > 1 &&
-    org.registration_state !== "none";
-
-  if (fullySetUp) return null;
+  if (isWorkspaceFullySetUp(org)) return null;
 
   const steps: Step[] = [
     { label: "Connect a provider", to: "/settings/providers", done: org.has_provider },

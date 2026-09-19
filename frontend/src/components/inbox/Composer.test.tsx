@@ -26,7 +26,7 @@ describe("Composer reply/note toggle", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByRole("tab", { name: "Note" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Internal note" })).toHaveAttribute(
       "aria-selected",
       "false",
     );
@@ -37,12 +37,12 @@ describe("Composer reply/note toggle", () => {
     const client = makeStubClient({});
 
     renderWithProviders(<Composer onSend={onSend} />, client);
-    expect(screen.getByRole("tab", { name: "Note" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Internal note" })).toBeDisabled();
     cleanup();
 
     const client2 = makeStubClient({});
     renderWithProviders(<Composer onSend={onSend} threadId="t1" />, client2);
-    expect(screen.getByRole("tab", { name: "Note" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: "Internal note" })).toBeEnabled();
   });
 
   it("switching to Note relabels the field to Note and shows the privacy sentence", async () => {
@@ -52,7 +52,7 @@ describe("Composer reply/note toggle", () => {
       client,
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Internal note" }));
 
     expect(screen.getByLabelText("Note")).toBeInTheDocument();
     expect(
@@ -78,7 +78,7 @@ describe("Composer reply/note toggle", () => {
     });
 
     renderWithProviders(<Composer onSend={onSend} threadId="t1" />, client);
-    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Internal note" }));
     await userEvent.type(screen.getByLabelText("Note"), "hello note");
     await userEvent.click(screen.getByRole("button", { name: "Post note" }));
 
@@ -111,7 +111,7 @@ describe("Composer reply/note toggle", () => {
       <Composer onSend={vi.fn().mockResolvedValue(undefined)} threadId="t1" />,
       client,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Internal note" }));
     await userEvent.type(screen.getByLabelText("Note"), "hello");
     await userEvent.click(screen.getByRole("button", { name: "Post note" }));
 
@@ -125,7 +125,7 @@ describe("Composer reply/note toggle", () => {
       client,
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Internal note" }));
     await userEvent.type(screen.getByLabelText("Note"), "@a");
 
     const option = await screen.findByRole("option", { name: "Ada Lovelace" });
@@ -154,7 +154,7 @@ describe("Composer reply/note toggle", () => {
       <Composer onSend={vi.fn().mockResolvedValue(undefined)} threadId="t1" />,
       client,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Internal note" }));
     await userEvent.type(screen.getByLabelText("Note"), "@a");
     await userEvent.click(await screen.findByRole("option", { name: "Ada Lovelace" }));
     await userEvent.click(screen.getByRole("button", { name: "Post note" }));
@@ -193,7 +193,7 @@ describe("Composer reply/note toggle", () => {
       <Composer onSend={vi.fn().mockResolvedValue(undefined)} threadId="t1" />,
       client,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Internal note" }));
     const field = screen.getByLabelText("Note");
     await userEvent.type(field, "@a");
     await userEvent.click(await screen.findByRole("option", { name: "Ada Lovelace" }));
@@ -235,7 +235,7 @@ describe("Composer reply/note toggle", () => {
       <Composer onSend={vi.fn().mockResolvedValue(undefined)} threadId="t1" />,
       client,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Internal note" }));
     const field = screen.getByLabelText("Note");
     await userEvent.type(field, "@a");
     await screen.findByRole("option", { name: "Ada Lovelace" });
@@ -317,7 +317,7 @@ describe("Composer reply/note toggle", () => {
     );
 
     expect(screen.getByText(/segment/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Internal note" }));
     expect(screen.queryByText(/segment/)).toBeNull();
   });
 
@@ -328,7 +328,7 @@ describe("Composer reply/note toggle", () => {
       client,
     );
 
-    expect(screen.getByRole("tab", { name: "Note" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Internal note" })).toBeDisabled();
   });
 
   it("has NO separate templates button while the composer is idle", () => {

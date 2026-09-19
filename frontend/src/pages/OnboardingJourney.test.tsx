@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OnboardingPage } from "@/pages/OnboardingPage";
@@ -6,6 +6,9 @@ import { SignUpPage } from "@/pages/SignUpPage";
 import { LandingPage } from "@/pages/LandingPage";
 import type { KycPerson, KycProfile, KycStatus } from "@/api/kyc";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
+import { Shell } from "@/App";
+import { Sidebar } from "@/components/shell/Sidebar";
+import { __resetSurfaceThemeForTests } from "@/auth/useSurfaceTheme";
 
 /**
  * The verification journey.
@@ -419,5 +422,163 @@ describe("AuthAside — the equipment spec rows are gone", () => {
     ]) {
       expect(screen.queryByText(gone)).toBeNull();
     }
+  });
+});
+
+/**
+ * The console's theme, and the one preference behind it.
+ *
+ * WHAT THESE TESTS CANNOT DO. Vitest runs with `css: false`, so no stylesheet is ever
+ * parsed here and nothing below is evidence that the light console is READABLE. Contrast
+ * was measured by computing the WCAG ratio for every pair the light theme introduces; that
+ * work lives in the comment header of consoleTheme.light.css and cannot be asserted from
+ * jsdom. What these tests do pin is the wiring: which class the console emits, and that the
+ * control inside the console writes the same storage key the front door reads. Those are
+ * the two things that broke - the console was hardcoded `dark`, so signing in flipped the
+ * product under someone who had just chosen light.
+ *
+ * Each theme assertion is written as a PAIR - light must emit `is-light` AND NOT `dark`,
+ * dark must emit `dark` AND NOT `is-light`. A lone `not.toContain("dark")` would pass just
+ * as happily on a Shell that rendered no className at all, or that failed to mount.
+ *
+ * BOTH cases must also emit `console-surface`, and that is a THIRD thing, not a restatement
+ * of the theme. `console-surface` is the scope selector consoleTheme.css hangs its token
+ * block off - the one that re-points --background, --foreground, --border, --primary, --muted
+ * and --muted-foreground at the approved palette - while `is-light`/`dark` only choose WHICH
+ * palette. The class used to sit on ConversationsPage alone, so every other console page fell
+ * outside the scope and rendered the generic shadcn tokens: the reported "no page has had its
+ * theme changed". It is theme-independent by construction, so it is asserted in both cases;
+ * a regression that dropped it would otherwise still pass the light/dark pair.
+ */
+/** The Shell and the Sidebar both mount the capability gate, which needs a real shape. */
+function themeStubClient() {
+  return makeStubClient({
+    "/api/v1/auth/me": ME,
+    "/api/v1/me/capabilities": {
+      permissions: ["org:read", "org:update"],
+      org: { has_provider: false, has_number: false, member_count: 1, registration_state: "none" },
+    },
+  });
+}
+
+describe("Shell — the console follows the one stored theme preference", () => {
+  const KEY = "csaas.surface-theme";
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    __resetSurfaceThemeForTests();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    __resetSurfaceThemeForTests();
+  });
+
+  /** The Shell's own wrapper: the first element carrying one of the two theme classes. */
+  function shellWrapper(container: HTMLElement): HTMLElement {
+    const found = container.querySelector<HTMLElement>(".dark, .is-light");
+    if (!found) throw new Error("the Shell rendered neither theme class");
+    return found;
+  }
+
+  it("emits is-light and never dark when the stored preference is light", () => {
+    window.localStorage.setItem(KEY, "light");
+    const { container } = renderWithProviders(
+      <Shell>
+        <div>console body</div>
+      </Shell>,
+      themeStubClient(),
+    );
+
+    expect(screen.getByText("console body")).toBeTruthy();
+    const classes = shellWrapper(container).className.split(/\s+/);
+    expect(classes).toContain("is-light");
+    expect(classes).not.toContain("dark");
+    expect(classes).toContain("console-surface");
+  });
+
+  it("emits dark and never is-light when the stored preference is dark", () => {
+    window.localStorage.setItem(KEY, "dark");
+    const { container } = renderWithProviders(
+      <Shell>
+        <div>console body</div>
+      </Shell>,
+      themeStubClient(),
+    );
+
+    expect(screen.getByText("console body")).toBeTruthy();
+    const classes = shellWrapper(container).className.split(/\s+/);
+    expect(classes).toContain("dark");
+    expect(classes).not.toContain("is-light");
+    expect(classes).toContain("console-surface");
+  });
+
+  it("defaults to the same light the front door defaults to when nothing is stored", () => {
+    // The default lives in useSurfaceTheme and is deliberately light, so a first-time
+    // visitor meets the same product on both sides of the sign-in form. If that default is
+    // ever reversed this test is the one that should be changed, not worked around.
+    const { container } = renderWithProviders(
+      <Shell>
+        <div>console body</div>
+      </Shell>,
+      themeStubClient(),
+    );
+
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+    const classes = shellWrapper(container).className.split(/\s+/);
+    expect(classes).toContain("is-light");
+    expect(classes).not.toContain("dark");
+    expect(classes).toContain("console-surface");
+  });
+});
+
+describe("Sidebar — the console's theme control is the front door's control", () => {
+  const KEY = "csaas.surface-theme";
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    __resetSurfaceThemeForTests();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    __resetSurfaceThemeForTests();
+  });
+
+  it("writes the key the public surface reads, under the accessible name of the ACTION", async () => {
+    window.localStorage.setItem(KEY, "dark");
+    renderWithProviders(<Sidebar />, themeStubClient());
+
+    // On a dark console the control offers LIGHT - the name states what pressing it does,
+    // not where you are. Finding it by that name is also what proves ThemeToggle itself was
+    // reused rather than a second control invented in the rail.
+    const button = await screen.findByRole("button", { name: "Switch to the light theme" });
+    await userEvent.click(button);
+
+    expect(window.localStorage.getItem(KEY)).toBe("light");
+    // And back, so this cannot pass on a control that only ever writes "light".
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Switch to the dark theme" }),
+    );
+    expect(window.localStorage.getItem(KEY)).toBe("dark");
+  });
+
+  it("moves the rail's own wrapper, not only the stored value", async () => {
+    window.localStorage.setItem(KEY, "dark");
+    const { container } = renderWithProviders(
+      <Sidebar />,
+      themeStubClient(),
+    );
+
+    const aside = container.querySelector("aside");
+    expect(aside).toBeTruthy();
+    expect(aside!.className.split(/\s+/)).toContain("dark");
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Switch to the light theme" }),
+    );
+
+    expect(aside!.className.split(/\s+/)).toContain("is-light");
+    expect(aside!.className.split(/\s+/)).not.toContain("dark");
   });
 });

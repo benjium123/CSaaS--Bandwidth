@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { statusCopy, useKycProfile } from "@/api/kyc";
 import { Button } from "@/components/ui/primitives";
+import { BANNER_PRIORITY, BannerSlot } from "@/components/shell/BannerSlot";
 
 /** P41: tells the workspace why calling and texting are (or soon will be) unavailable.
  * Not dismissible - it reflects a hard gate, not a nudge. Hidden once approved. */
@@ -20,22 +21,28 @@ export function VerificationBanner() {
   );
 
   return (
-    <div
-      role="status"
-      aria-label="Business verification"
-      className="border-b border-border bg-muted px-4 py-3"
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">{copy.title}</p>
-          <p className="mt-0.5 text-sm text-muted-foreground">{copy.body}</p>
-        </div>
+    <BannerSlot priority={BANNER_PRIORITY.verification}>
+      <div
+        role="status"
+        aria-label="Business verification"
+        className="flex items-center gap-[11px] border-b border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-4 py-[9px]"
+      >
+        <p className="min-w-0 flex-1 truncate text-[13px] text-[hsl(var(--cx-text))]">
+          <span className="font-semibold">{copy.title}</span>
+          <span aria-hidden="true" className="text-[hsl(var(--cx-muted))]"> — </span>
+          <span className="text-[hsl(var(--cx-subtle))]">{copy.body}</span>
+        </p>
         {actionable && (
-          <Button type="button" onClick={() => navigate("/onboarding")}>
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0"
+            onClick={() => navigate("/onboarding")}
+          >
             {profileQ.data.status === "draft" ? "Get verified" : "Open verification"}
           </Button>
         )}
       </div>
-    </div>
+    </BannerSlot>
   );
 }
