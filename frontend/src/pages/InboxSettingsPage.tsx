@@ -18,8 +18,9 @@ import {
   type InboxGrant,
   type OrgMember,
 } from "@/api/conversations";
-import { avatarHueIndex, formatPhone, initialsOf } from "@/lib/format";
+import { formatPhone, initialsOf } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { InitialsAvatar } from "@/components/ui/consoleChrome";
 import {
   Button,
   Card,
@@ -32,9 +33,7 @@ import {
 } from "@/components/ui/primitives";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 
-/* ── The console's shape, from docs/design/console-reference.html ───────────────────────
- * Deliberately local rather than shared: these four pages are being brought onto the
- * design language in parallel by separate agents, and a new shared module would collide. */
+/* ── The console's shape, from docs/design/console-reference.html ─────────────────────── */
 
 /** What a column header used to say, said once per field instead. */
 const FIELD_LABEL =
@@ -52,20 +51,6 @@ function LineAvatar({ inbox, draftColor }: { inbox: Inbox; draftColor: string })
       className="cx-line-avatar mb-0.5 inline-grid h-10 w-10 flex-none place-items-center text-[12px] font-semibold text-[hsl(var(--cx-on-acc))]"
     >
       {initialsOf(inbox.name)}
-    </span>
-  );
-}
-
-/** The same disc where the hue is NOT user data - a department has no colour of its own,
- * so it takes one of the seven palette hues, hashed off its immutable id. */
-function Initials({ seed, label }: { seed: string; label: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      data-hue={avatarHueIndex(seed)}
-      className="cx-avatar inline-grid h-9 w-9 flex-none place-items-center text-[11px] font-semibold"
-    >
-      {initialsOf(label)}
     </span>
   );
 }
@@ -243,7 +228,9 @@ function DepartmentRow({
       )}
     >
       <div className="flex flex-wrap items-center gap-3">
-        <Initials seed={department.id} label={department.name} />
+        {/* This disc's hue is NOT user data: a department has no colour of its own, so it
+            takes one of the seven palette hues, hashed off its immutable id. */}
+        <InitialsAvatar size="row" seed={department.id} name={department.name} />
         <Input
           aria-label={`Department name ${department.name}`}
           value={name}

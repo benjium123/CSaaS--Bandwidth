@@ -44,30 +44,12 @@ import {
 } from "@/components/ui/primitives";
 import { RatesDrawer } from "@/components/spend/RatesDrawer";
 import { SpendCard } from "@/components/spend/SpendCard";
-import { avatarHueIndex, initialsOf } from "@/lib/format";
+import { InitialsAvatar } from "@/components/ui/consoleChrome";
 
-/* ── The console's shape, from docs/design/console-reference.html ───────────────────────
- * Deliberately local rather than shared: these four pages are being brought onto the
- * design language in parallel by separate agents, and a new shared module would collide. */
+/* ── The console's shape, from docs/design/console-reference.html ─────────────────────── */
 
 /** A capability chip, one step up the recessed ramp from whatever it sits on. */
 const CHIP = "bg-[hsl(var(--cx-lift))] px-2.5 py-1 text-[hsl(var(--cx-subtle))]";
-
-/** The reference's `.av`: a 50% disc on a 145deg gradient with a two-letter monogram.
- * `.cx-avatar` (consoleTheme.css) owns the shape, the gradient and the seven hues, and the
- * hue is a pure hash of the seed so a connection keeps its colour between reloads.
- * Decorative - the label is spelled out in the heading beside it. */
-function Initials({ seed, label }: { seed: string; label: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      data-hue={avatarHueIndex(seed)}
-      className="cx-avatar inline-grid h-10 w-10 flex-none place-items-center text-[12px] font-semibold"
-    >
-      {initialsOf(label)}
-    </span>
-  );
-}
 
 type ProbeState = { kind: "result"; data: ProbeOut } | { kind: "error"; message: string };
 
@@ -246,7 +228,7 @@ function ProviderAccountCard({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <Initials seed={account.id} label={account.label} />
+          <InitialsAvatar size="head" seed={account.id} name={account.label} />
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">
@@ -398,7 +380,7 @@ function CarrierCard({
     <li className="space-y-3 rounded-lg bg-[hsl(var(--cx-overlay)/0.55)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2.5">
-          <Initials seed={entry.name} label={providerDisplayName(entry.name)} />
+          <InitialsAvatar size="head" seed={entry.name} name={providerDisplayName(entry.name)} />
           <span className="text-[14px] font-semibold text-foreground">
             {providerDisplayName(entry.name)}
           </span>

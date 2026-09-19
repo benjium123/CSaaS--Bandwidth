@@ -19,6 +19,9 @@
  * `.cx-avatar` is that same stylesheet's avatar: a 145deg gradient with a stable per-seed
  * hue. `InitialsAvatar` is a thin wrapper so a page listing people does not each
  * re-implement the initials + hue pair.
+ *
+ * The `CONSOLE_*` constants are the shared shape for the console's list tables, and
+ * `AVATAR_SIZES` carries the two off-scale avatar sizes the collapsed pages used.
  */
 import * as React from "react";
 
@@ -144,11 +147,34 @@ export const FilterPill = React.forwardRef<
   );
 });
 
+/**
+ * The console's shared table shape.
+ *
+ * The reference has no dense table, so `border-separate` + `border-spacing-y` turns each
+ * `<tr>` into a rounded card rather than a ruled strip, and the first and last cell carry
+ * the list-row radius. `CONSOLE_CELL` is the reference's 11px/14px row padding, not a
+ * table's 8px.
+ */
+export const CONSOLE_PANEL = "rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-2";
+export const CONSOLE_TABLE = "w-full border-separate border-spacing-y-1.5 text-[13px]";
+export const CONSOLE_HEAD =
+  "px-3.5 pb-2 pt-1 text-left text-[11px] font-semibold uppercase tracking-[0.07em] text-[hsl(var(--cx-muted))]";
+export const CONSOLE_ROW =
+  "bg-[hsl(var(--cx-overlay)/0.55)] transition-colors hover:bg-[hsl(var(--cx-overlay))]";
+export const CONSOLE_CELL = "px-3.5 py-[11px] align-middle";
+export const CONSOLE_CELL_L = `${CONSOLE_CELL} rounded-l-md`;
+export const CONSOLE_CELL_R = `${CONSOLE_CELL} rounded-r-md`;
+
 const AVATAR_SIZES = {
   sm: "h-7 w-7 text-[10.5px]",
   md: "h-[34px] w-[34px] text-[12px]",
   lg: "h-[38px] w-[38px] text-[13px]",
   xl: "h-16 w-16 text-[21px]",
+  // Off the reference's own avatar scale: carried over verbatim from the four pages whose
+  // local `Initials` helpers were collapsed into `InitialsAvatar`, so that the collapse did
+  // not change any rendered size.
+  row: "h-9 w-9 text-[11px]",
+  head: "h-10 w-10 text-[12px]",
 } as const;
 
 /**

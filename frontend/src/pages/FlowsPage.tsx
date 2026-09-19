@@ -26,7 +26,7 @@ import {
   Select,
   Spinner,
 } from "@/components/ui/primitives";
-import { SectionLabel } from "@/components/ui/consoleChrome";
+import { SectionLabel, SurfaceCard } from "@/components/ui/consoleChrome";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -314,7 +314,7 @@ export function FlowsPage() {
             <div className="space-y-2 p-2">
               <p
                 role="alert"
-                className="rounded-[12px] border border-[hsl(var(--cx-danger)/0.4)] bg-[hsl(var(--cx-danger)/0.09)] px-3 py-2 text-[13px] text-[hsl(var(--cx-danger))]"
+                className="rounded-[var(--cx-r-sm,12px)] border border-[hsl(var(--cx-danger)/0.4)] bg-[hsl(var(--cx-danger)/0.09)] px-3 py-2 text-[13px] text-[hsl(var(--cx-danger))]"
               >
                 {(error as Error).message}
               </p>
@@ -344,7 +344,7 @@ export function FlowsPage() {
                       setSelectedName(f.name);
                     }}
                     className={cn(
-                      "flex h-auto w-full items-center justify-between gap-2 rounded-[12px] px-3 py-2.5 text-left text-[13.5px] font-normal transition-colors",
+                      "flex h-auto w-full items-center justify-between gap-2 rounded-[var(--cx-r-sm,12px)] px-3 py-2.5 text-left text-[13.5px] font-normal transition-colors",
                       "text-[hsl(var(--cx-subtle))] hover:bg-[hsl(var(--cx-overlay))] hover:text-[hsl(var(--cx-text))]",
                       f.name === selectedName &&
                         !creatingNew &&
@@ -419,7 +419,7 @@ function FlowVersionsEditor({ api, name }: { api: import("@/api/client").ApiClie
     <div className="space-y-4">
       {/* A heading plus one action row, not a Section: `Section` requires children and a
           self-closing one would render an empty, unlabelled container. */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-[18px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] px-5 py-4">
+      <SurfaceCard className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
         <h2 className="min-w-0 truncate text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
           {name}
         </h2>
@@ -453,7 +453,7 @@ function FlowVersionsEditor({ api, name }: { api: import("@/api/client").ApiClie
             </Button>
           </div>
         </div>
-      </div>
+      </SurfaceCard>
 
       <MutationStatus error={activateError} />
 
@@ -620,7 +620,7 @@ function FlowEditor({
         </div>
 
         {generalErrors.length > 0 && (
-          <ul role="alert" className="space-y-1 rounded-[14px] border border-[hsl(var(--cx-danger)/0.4)] bg-[hsl(var(--cx-danger)/0.09)] p-4 text-[13px] text-[hsl(var(--cx-danger))]">
+          <ul role="alert" className="space-y-1 rounded-[var(--cx-r-md,14px)] border border-[hsl(var(--cx-danger)/0.4)] bg-[hsl(var(--cx-danger)/0.09)] p-4 text-[13px] text-[hsl(var(--cx-danger))]">
             {generalErrors.map((msg, i) => (
               <li key={i}>{msg}</li>
             ))}
@@ -721,7 +721,7 @@ function NodeCard({
   );
 
   return (
-    <Card className="space-y-3 rounded-[14px] p-4" data-node-id={id}>
+    <Card className="space-y-3 p-4" data-node-id={id}>
       <div className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--cx-line))] pb-3">
         <label className="text-[11.5px] font-medium text-[hsl(var(--cx-muted))]" htmlFor={`node-id-${id}`}>
           Node id
@@ -1076,7 +1076,7 @@ function NodeCard({
       )}
 
       {errors.length > 0 && (
-        <ul role="alert" className="space-y-1 rounded-[12px] bg-[hsl(var(--cx-danger)/0.09)] px-3 py-2 text-[12px] text-[hsl(var(--cx-danger))]">
+        <ul role="alert" className="space-y-1 rounded-[var(--cx-r-sm,12px)] bg-[hsl(var(--cx-danger)/0.09)] px-3 py-2 text-[12px] text-[hsl(var(--cx-danger))]">
           {errors.map((msg, i) => (
             <li key={i}>{msg}</li>
           ))}
@@ -1117,7 +1117,7 @@ function BindNumberSection({
   return (
     <Section
       title="Bind number to flow"
-      className="rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-4"
+      className="rounded-[var(--cx-r-md,14px)] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-4"
     >
       <form className="space-y-2" onSubmit={bind}>
         <div className="space-y-1">

@@ -19,50 +19,24 @@ import {
   useUpdateRole,
   type RoleOut,
 } from "@/api/roles";
+import {
+  CONSOLE_CELL as CELL,
+  CONSOLE_CELL_L as CELL_L,
+  CONSOLE_CELL_R as CELL_R,
+  CONSOLE_HEAD as HEAD,
+  CONSOLE_PANEL as PANEL,
+  CONSOLE_ROW as ROW,
+  CONSOLE_TABLE as TABLE,
+  InitialsAvatar,
+} from "@/components/ui/consoleChrome";
 import { Button, Input, Pill, Select, Spinner, type PillTone } from "@/components/ui/primitives";
 import { RoleMatrix } from "@/components/team/RoleMatrix";
-import { avatarHueIndex, initialsOf } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /* ── The console's list shape, from docs/design/console-reference.html ──────────────────
- * The reference has no dense table: it has ROWS on a recessed fill that breathe, with a
- * circular two-letter avatar wherever a person or a line is named. These three constants
- * are that shape expressed for a <table>, which is the element the rows have to stay -
- * TeamPage.test.tsx walks `closest("tr")` to scope its queries to one role.
- *
- * `border-separate` + `border-spacing-y` is what lets a table row be a ROUNDED CARD rather
- * than a ruled strip: the gap between rows replaces `divide-y`, and the first/last cell
- * carry the 12px list-row radius (`rounded-md` -> --cx-r-sm via tailwind.config.js).
- * Colour is tokens only: --cx-surface for the panel, --cx-overlay for the row. */
-const PANEL = "rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-2";
-const TABLE = "w-full border-separate border-spacing-y-1.5 text-[13px]";
-const HEAD =
-  "px-3.5 pb-2 pt-1 text-left text-[11px] font-semibold uppercase tracking-[0.07em] text-[hsl(var(--cx-muted))]";
-const ROW =
-  "bg-[hsl(var(--cx-overlay)/0.55)] transition-colors hover:bg-[hsl(var(--cx-overlay))]";
-/** 11px vertical / 14px horizontal - the reference's row padding, not a table's 8px. */
-const CELL = "px-3.5 py-[11px] align-middle";
-const CELL_L = `${CELL} rounded-l-md`;
-const CELL_R = `${CELL} rounded-r-md`;
-
-/** The reference's `.av`: a 50% disc on a 145deg gradient with a two-letter monogram.
- * `.cx-avatar` (consoleTheme.css) owns both, and the hue is a pure hash of the seed so a
- * person keeps their colour between reloads. Decorative: the name is always in the row
- * beside it, so this is aria-hidden rather than a second announcement of it. */
-function Initials({ seed, label, className }: { seed: string; label: string; className?: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      data-hue={avatarHueIndex(seed)}
-      className={cn(
-        "cx-avatar inline-grid h-9 w-9 flex-none place-items-center text-[11px] font-semibold",
-        className,
-      )}
-    >
-      {initialsOf(label)}
-    </span>
-  );
-}
+ * The panel, the row and the cell padding are the shared console constants now
+ * (components/ui/consoleChrome.tsx). The <table> stays: it is the element the rows have to
+ * be - TeamPage.test.tsx walks `closest("tr")` to scope its queries to one role. */
 
 const INVITABLE_ROLES = [
   { value: "admin", label: "Admin" },
@@ -304,7 +278,11 @@ export function TeamPage() {
                       <tr key={member.user_id} className={ROW}>
                         <td className={CELL_L}>
                           <span className="flex items-center gap-3">
-                            <Initials seed={member.user_id} label={member.full_name} />
+                            <InitialsAvatar
+                              size="row"
+                              seed={member.user_id}
+                              name={member.full_name}
+                            />
                             <span className="font-semibold text-foreground">{member.full_name}</span>
                           </span>
                         </td>
@@ -367,7 +345,7 @@ export function TeamPage() {
                         <tr key={invite.id} className={ROW}>
                           <td className={CELL_L}>
                             <span className="flex items-center gap-3">
-                              <Initials seed={invite.id} label={invite.email} />
+                              <InitialsAvatar size="row" seed={invite.id} name={invite.email} />
                               <span className="font-medium text-foreground">{invite.email}</span>
                             </span>
                           </td>

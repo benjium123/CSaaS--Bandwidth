@@ -32,6 +32,16 @@ import {
 } from "@/api/numbers";
 import { formatMicros, monthToDateRange, useSpendSummary } from "@/api/spend";
 import {
+  CONSOLE_CELL as CELL,
+  CONSOLE_CELL_L as CELL_L,
+  CONSOLE_CELL_R as CELL_R,
+  CONSOLE_HEAD as HEAD,
+  CONSOLE_PANEL as PANEL,
+  CONSOLE_ROW as ROW,
+  CONSOLE_TABLE as TABLE,
+  InitialsAvatar,
+} from "@/components/ui/consoleChrome";
+import {
   Button,
   Card,
   EmptyState,
@@ -43,7 +53,7 @@ import {
   Spinner,
   type PillTone,
 } from "@/components/ui/primitives";
-import { avatarHueIndex, formatPhone, initialsOf } from "@/lib/format";
+import { formatPhone } from "@/lib/format";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { cn } from "@/lib/utils";
 
@@ -53,39 +63,7 @@ import { cn } from "@/lib/utils";
  * twelve columns per number and none of them may be dropped to tidy the layout - but
  * `border-separate` + `border-spacing-y` turns each row into a rounded card rather than a
  * ruled strip, with the 12px list-row radius on the first and last cell (`rounded-md` ->
- * --cx-r-sm, see tailwind.config.js). Colour is tokens only.
- *
- * Deliberately local rather than shared: these four pages are being brought onto the
- * design language in parallel by separate agents, and a new shared module would collide. */
-const PANEL = "rounded-xl border border-border bg-[hsl(var(--cx-surface))] p-2";
-const TABLE = "w-full border-separate border-spacing-y-1.5 text-[13px]";
-const HEAD =
-  "px-3.5 pb-2 pt-1 text-left text-[11px] font-semibold uppercase tracking-[0.07em] text-[hsl(var(--cx-muted))]";
-const ROW =
-  "bg-[hsl(var(--cx-overlay)/0.55)] transition-colors hover:bg-[hsl(var(--cx-overlay))]";
-/** 11px vertical / 14px horizontal - the reference's row padding, not a table's 8px. */
-const CELL = "px-3.5 py-[11px] align-middle";
-const CELL_L = `${CELL} rounded-l-md`;
-const CELL_R = `${CELL} rounded-r-md`;
-
-/** The reference's `.av`: a 50% disc on a 145deg gradient with a two-letter monogram.
- * `.cx-avatar` (consoleTheme.css) owns the shape, the gradient and the seven hues; the hue
- * is a pure hash of the seed so a line keeps its colour between reloads. Decorative - the
- * number is always spelled out in the cell beside it. */
-function Initials({ seed, label, className }: { seed: string; label: string; className?: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      data-hue={avatarHueIndex(seed)}
-      className={cn(
-        "cx-avatar inline-grid h-9 w-9 flex-none place-items-center text-[11px] font-semibold",
-        className,
-      )}
-    >
-      {initialsOf(label)}
-    </span>
-  );
-}
+ * --cx-r-sm, see tailwind.config.js). Colour is tokens only. */
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
   bandwidth: "Bandwidth",
@@ -409,7 +387,7 @@ function NumberRow({
         <span className="flex items-center gap-3">
           {/* A number IS a line, so it takes the reference's line avatar treatment. Seeded
               on the immutable id, labelled with whatever a human would read it by. */}
-          <Initials seed={number.id} label={number.inbox_name ?? formatPhone(number.e164)} />
+          <InitialsAvatar size="row" seed={number.id} name={number.inbox_name ?? formatPhone(number.e164)} />
           <span className="whitespace-nowrap font-semibold text-foreground">
             {formatPhone(number.e164)}
           </span>
@@ -703,7 +681,7 @@ function OrderNumberSection({
                 <tr key={r.e164} className={ROW}>
                   <td className={CELL_L}>
                     <span className="flex items-center gap-3">
-                      <Initials seed={r.e164} label={formatPhone(r.e164)} />
+                      <InitialsAvatar size="row" seed={r.e164} name={formatPhone(r.e164)} />
                       <span className="whitespace-nowrap font-semibold text-foreground">
                         {formatPhone(r.e164)}
                       </span>
