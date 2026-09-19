@@ -154,6 +154,11 @@ class Settings(BaseSettings):
     #: P40: a second outbound trunk that reaches the PSTN through a SignalWire SIP domain
     #: app. Calls from a signalwire number use it; everything else keeps the Telnyx trunk.
     livekit_sip_signalwire_trunk_id: str = ""
+    #: P42: INBOUND trunk ids, kept in sync (`numbers`) by `voice_plane/trunk_sync.py`
+    #: instead of manual trunk recreation. Empty = that carrier's trunk is not ours to
+    #: sync (e.g. the CRM's own shared LiveKit instance).
+    livekit_sip_telnyx_inbound_trunk_id: str = ""
+    livekit_sip_signalwire_inbound_trunk_id: str = ""
 
     signalwire_enabled: bool | None = None
     signalwire_project_id: str = ""

@@ -235,6 +235,27 @@ class LiveKitApi:
             },
         )
 
+    # P42: trunk number membership. Thin wrappers over `_twirp` so `trunk_sync.py`
+    # never has to know the request/response shapes; `service` is "SIP" for all four.
+    # The running server tonight (v1.8.4) answers the Update* pair with a 404
+    # `bad_route` (no such RPC) - `_twirp` turns that into `LiveKitApiError`, which
+    # `trunk_sync.py` catches. These wrappers do not catch anything themselves.
+    async def get_sip_inbound_trunk(self, trunk_id: str) -> dict:
+        return await self._twirp("SIP", "GetSIPInboundTrunk", {"sip_trunk_id": trunk_id})
+
+    async def get_sip_outbound_trunk(self, trunk_id: str) -> dict:
+        return await self._twirp("SIP", "GetSIPOutboundTrunk", {"sip_trunk_id": trunk_id})
+
+    async def update_sip_inbound_trunk(self, trunk_id: str, update: dict) -> dict:
+        return await self._twirp(
+            "SIP", "UpdateSIPInboundTrunk", {"sip_trunk_id": trunk_id, "update": update}
+        )
+
+    async def update_sip_outbound_trunk(self, trunk_id: str, update: dict) -> dict:
+        return await self._twirp(
+            "SIP", "UpdateSIPOutboundTrunk", {"sip_trunk_id": trunk_id, "update": update}
+        )
+
     async def create_agent_dispatch(
         self, *, room: str, agent_name: str, metadata: str = ""
     ) -> dict:
