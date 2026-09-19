@@ -42,6 +42,8 @@ import {
 } from "./settingsSections";
 import { INBOX_RAIL_PATHS, useRailNav } from "@/components/shell/Sidebar";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+import { TenDlcRegistration } from "@/components/registration";
+import { TollFreeVerificationCard } from "@/components/registration/TollFreeVerificationCard";
 
 export type { SettingsSectionId } from "./settingsSections";
 export { SETTINGS_SECTIONS } from "./settingsSections";
@@ -300,19 +302,25 @@ function WorkspaceGeneral() {
   );
 }
 
+/**
+ * Texting registration: 10DLC (a company, per EIN) and toll-free verification (one number).
+ * They are separate regimes and are deliberately two panels rather than one wizard.
+ *
+ * Both self-gate on `compliance:manage` for writes and `compliance:read` for the list, which
+ * is exactly what backend/app/api/routes/registration.py requires, so this section does not
+ * gate them again - one gate, in the component that owns the request.
+ *
+ * NOTE for anyone extending this: pressing submit does NOT transmit anything to TCR or a
+ * carrier. services/registration.py advances an internal state machine and makes no outbound
+ * call; the status only moves when someone POSTs the /status callback. The copy in these
+ * panels says so, and there are tests asserting the misleading phrasings never come back.
+ */
 function MessagingSection() {
-  const navigate = useNavigate();
-
   return (
-    <EmptyState
-      title="Messaging settings are on the way"
-      description="Texting registration lives with your phone numbers for now."
-      action={
-        <Button type="button" variant="outline" onClick={() => navigate("/settings/numbers")}>
-          Go to phone numbers
-        </Button>
-      }
-    />
+    <div className="space-y-[18px]">
+      <TenDlcRegistration />
+      <TollFreeVerificationCard />
+    </div>
   );
 }
 
