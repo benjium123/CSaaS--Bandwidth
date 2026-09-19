@@ -41,7 +41,15 @@ from app.models import (
     SecurityAlert,
 )
 from app.services import audit as audit_svc
-from app.services import ban_list, kyc_checks, kyc_risk, sanctions, stripe_client
+from app.services import (
+    ban_list,
+    didit_client,
+    identity_provider,
+    kyc_checks,
+    kyc_risk,
+    sanctions,
+    stripe_client,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -299,19 +307,26 @@ async def start_person_verification(
             raise PermissionDeniedError(
                 f"Only {person.full_name} can repeat their own ID check", code="not_your_identity"
             )
-    created = await stripe_client.create_verification_session(
+    # P44: which provider runs the check is configuration. Everything above this line -
+    # including the not_your_identity refusal - happens before any provider is touched, so
+    # the rule holds identically whichever provider is active.
+    provider = identity_provider.get_provider(settings)
+    started = await provider.start(
         settings,
-        metadata={
-            "purpose": "kyc_person",
-            "org_id": str(person.org_id),
-            "person_id": str(person.id),
-        },
+        org_id=person.org_id,
+        person_id=person.id,
+        email=person.email,
         return_url=return_url,
     )
-    person.stripe_verification_session_id = created["id"]
+    if started.provider == "stripe":
+        # The Stripe column stays authoritative for Stripe sessions: handle_identity_event
+        # looks the person up by it, and rows created before P44 have only this column.
+        person.stripe_verification_session_id = started.session_id
+    person.identity_provider = started.provider
+    person.provider_session_id = started.session_id
     person.status = "pending"
     person.last_error = None
-    return created["url"]
+    return started.url
 
 
 PERSON_STATUS_RANK = {
@@ -355,6 +370,48 @@ async def apply_person_outcome(session: AsyncSession, person: KycPerson, outcome
     return True
 
 
+async def _apply_person_event(
+    session: AsyncSession, settings: Settings, org_id: uuid.UUID, person: KycPerson, outcome: dict
+) -> None:
+    """Apply one provider outcome to a person and everything that follows from it.
+
+    Shared by the Stripe and the Didit webhook handlers so the two can never drift on the
+    identity-mismatch alert, the re-screening or the audit record - those are KYC policy,
+    not provider detail.
+    """
+    same_person = await apply_person_outcome(session, person, outcome)
+    if not same_person:
+        session.add(
+            SecurityAlert(
+                id=uuid.uuid4(),
+                kind="identity_mismatch",
+                org_id=org_id,
+                user_id=person.user_id,
+                status="open",
+                detail={
+                    "person": person.full_name,
+                    "role": person.role,
+                    "reason": "Re-verification was completed with a different person's ID",
+                },
+            )
+        )
+    elif person.status == "verified":
+        # P43: screening must use the REAL identity, not the name typed before the ID
+        # check finished.
+        profile = await get_profile(session, org_id)
+        if profile is not None and profile.status not in ("draft",):
+            await rescreen(session, settings, profile)
+            await refresh_risk(session, settings, profile)
+    audit_svc.record(
+        session,
+        org_id,
+        action="kyc.person_verification",
+        target_type="kyc_person",
+        target_id=str(person.id),
+        detail={"status": person.status},
+    )
+
+
 async def handle_identity_event(session: AsyncSession, settings: Settings, event: dict) -> None:
     """identity.verification_session.* webhook. The event only says WHICH session changed;
     the outcome is always re-read from Stripe with verified outputs expanded."""
@@ -381,43 +438,98 @@ async def handle_identity_event(session: AsyncSession, settings: Settings, event
         if person is None:
             log.warning("identity_event_unknown_person", vs=vs_id)
             return
-        same_person = await apply_person_outcome(session, person, outcome)
-        if not same_person:
-            session.add(
-                SecurityAlert(
-                    id=uuid.uuid4(),
-                    kind="identity_mismatch",
-                    org_id=org_id,
-                    user_id=person.user_id,
-                    status="open",
-                    detail={
-                        "person": person.full_name,
-                        "role": person.role,
-                        "reason": "Re-verification was completed with a different person's ID",
-                    },
-                )
-            )
-        elif person.status == "verified":
-            # P43: screening must use the REAL identity, not the name typed before the ID
-            # check finished.
-            profile = await get_profile(session, org_id)
-            if profile is not None and profile.status not in ("draft",):
-                await rescreen(session, settings, profile)
-                await refresh_risk(session, settings, profile)
-        audit_svc.record(
-            session,
-            org_id,
-            action="kyc.person_verification",
-            target_type="kyc_person",
-            target_id=str(person.id),
-            detail={"status": person.status},
-        )
+        await _apply_person_event(session, settings, org_id, person, outcome)
     elif purpose == "step_up":
         from app.services import kyc_step_up
 
         await kyc_step_up.apply_outcome(session, vs_id, outcome)
     else:
         log.warning("identity_event_unknown_purpose", vs=vs_id, purpose=purpose)
+
+
+async def _didit_person(session: AsyncSession, payload: dict) -> KycPerson | None:
+    """Find the person a Didit webhook belongs to, or None.
+
+    The session id is the primary key into our rows. ``vendor_data`` (our KycPerson id) is
+    only a fallback for the window where a webhook overtakes the write that stored the
+    session id, and it is accepted ONLY when that person has no other session recorded -
+    otherwise a webhook could steer an outcome onto a person whose session it does not own.
+    """
+    session_id = payload.get("session_id")
+    person = None
+    if session_id:
+        person = (
+            await session.execute(
+                sa.select(KycPerson).where(
+                    KycPerson.provider_session_id == str(session_id),
+                    KycPerson.identity_provider == "didit",
+                )
+            )
+        ).scalar_one_or_none()
+    if person is not None:
+        return person
+    try:
+        vendor_id = uuid.UUID(str(payload.get("vendor_data")))
+    except (TypeError, ValueError):
+        return None
+    candidate = await session.get(KycPerson, vendor_id)
+    if candidate is None:
+        return None
+    if candidate.provider_session_id not in (None, str(session_id)):
+        log.warning("didit_event_session_mismatch", session=str(session_id))
+        return None
+    return candidate
+
+
+async def handle_didit_event(session: AsyncSession, settings: Settings, payload: dict) -> None:
+    """Apply one verified Didit webhook payload. The caller has already authenticated the
+    signature, the timestamp and the event id; this function only decides what it means."""
+    outcome = didit_client.outcome_from_payload(payload)
+    if outcome is None:
+        # A status we do not map (including "Not Started" and anything unknown) is not a
+        # transition we are willing to invent, so the person is left exactly as they are.
+        log.warning("didit_event_ignored_status", status=str(payload.get("status")))
+        return
+    metadata = payload.get("metadata") or {}
+    try:
+        org_id = uuid.UUID(str(metadata.get("org_id")))
+    except (TypeError, ValueError):
+        log.warning("didit_event_bad_org", session=str(payload.get("session_id")))
+        return
+    set_org_context(session, org_id)
+    person = await _didit_person(session, payload)
+    if person is None or person.org_id != org_id:
+        log.warning("didit_event_unknown_person", session=str(payload.get("session_id")))
+        return
+
+    if outcome["status"] == "pending":
+        # "Awaiting User" only says the person has not finished yet. It may arrive after a
+        # later event, so it ratchets forward from not_started and never drags a person
+        # back out of processing or verified.
+        if PERSON_STATUS_RANK.get(person.status, 0) < PERSON_STATUS_RANK["pending"]:
+            person.status = "pending"
+        return
+
+    if outcome["status"] == "verified" and person.identity_hash is not None:
+        # A RE-verification is only safe to accept when we can prove it is the same human,
+        # and Didit's webhook carries no verified name or date of birth for us to hash
+        # (we refuse to guess at the shape of its `decision` object). Rather than
+        # un-verify the person or silently accept a possible stranger, the check parks in
+        # processing so a human decides; approval_blockers already refuses anything that
+        # is not "verified", so this fails closed.
+        person.status = "processing"
+        person.last_error = "identity_unconfirmed: re-verification needs an operator review"
+        audit_svc.record(
+            session,
+            org_id,
+            action="kyc.person_verification",
+            target_type="kyc_person",
+            target_id=str(person.id),
+            detail={"status": person.status, "provider": "didit"},
+        )
+        return
+
+    await _apply_person_event(session, settings, org_id, person, outcome)
 
 
 # --------------------------------------------------------------------------------------

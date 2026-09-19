@@ -26,7 +26,7 @@ from app.providers import registry_org
 from app.providers.bandwidth import webhooks as bw_webhooks
 from app.providers.telnyx.voice import TelnyxVoiceCommandError
 from app.providers.voice import Hangup, Pause, Speak, StartRecording, VoiceCommand
-from app.services import assistant_dispatch, credits, stripe_client
+from app.services import assistant_dispatch, credits, didit_client, stripe_client
 from app.services import calling_settings as calling_settings_svc
 from app.services import calls as calls_svc
 from app.services import credentials as credential_svc
@@ -664,6 +664,62 @@ async def livekit_webhook(
         log.exception("call_monitor_hook_failed", event_type=event.get("event"))
 
     return JSONResponse(status_code=200, content={"status": "ok"})
+
+
+@router.post("/didit")
+async def didit_webhook(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """P44: Didit identity verification results.
+
+    Authenticity, freshness and idempotency are all settled before any KYC state moves:
+    didit_client.verify_webhook proves the payload (not just the envelope) came from Didit
+    and is inside the replay window, and the event ledger below makes a retried delivery a
+    no-op. Didit retries at ~1 and ~4 minutes on 5xx/404/timeout and then stops, so a
+    handler that raises leaves no ledger row and the retry is processed normally.
+    """
+    payload_bytes = await request.body()
+    payload = didit_client.verify_webhook(
+        request.app.state.settings, payload_bytes, request.headers
+    )
+
+    event_id = payload.get("event_id")
+    if event_id:
+        from datetime import datetime, timezone
+
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models import IdentityWebhookEvent
+
+        ledger_id = f"didit:{event_id}"[:320]
+        if await session.get(IdentityWebhookEvent, ledger_id) is not None:
+            return Response(status_code=204)
+        try:
+            async with session.begin_nested():
+                session.add(
+                    IdentityWebhookEvent(
+                        id=ledger_id,
+                        provider="didit",
+                        event_type=str(payload.get("webhook_type") or "")[:128] or None,
+                        received_at=datetime.now(timezone.utc),
+                    )
+                )
+                await session.flush()
+        except IntegrityError:
+            return Response(status_code=204)
+    else:
+        # A payload with no event_id cannot be deduplicated, so it is processed without a
+        # ledger row rather than dropped - exactly what the Stripe endpoint does. The
+        # handlers below are themselves write-idempotent (a verified person stays
+        # verified), which is what keeps that safe.
+        log.warning("didit_webhook_without_event_id", session=str(payload.get("session_id")))
+
+    from app.services import kyc as kyc_svc
+
+    await kyc_svc.handle_didit_event(session, request.app.state.settings, payload)
+    await session.commit()
+    return Response(status_code=204)
 
 
 @router.post("/stripe")

@@ -219,6 +219,14 @@ class KycPerson(Base, TenantScoped, TimestampMixin):
     stripe_verification_session_id: Mapped[str | None] = mapped_column(
         sa.String(64), nullable=True, unique=True
     )
+    #: P44: the provider-neutral pair. ``identity_provider`` is "stripe" or "didit" and
+    #: ``provider_session_id`` is that provider's own session id. The Stripe column above
+    #: stays authoritative for Stripe rows (existing rows have only it), so neither column
+    #: replaces it - they sit alongside it.
+    identity_provider: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
+    provider_session_id: Mapped[str | None] = mapped_column(
+        sa.String(128), nullable=True, unique=True
+    )
     status: Mapped[str] = mapped_column(
         sa.String(24), nullable=False, default="not_started", server_default="not_started"
     )
@@ -317,6 +325,25 @@ class FraudIdentifier(Base, TimestampMixin):
         GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+
+
+class IdentityWebhookEvent(Base):
+    """Every identity-provider webhook event id we have processed - durable replay
+    protection for providers other than Stripe.
+
+    Stripe keeps its own ledger (``stripe_events``) and that table is not reused here:
+    Stripe event ids and Didit event ids come from different issuers, so one primary key
+    space shared between them could collide, and the two ledgers have different retention
+    and different blast radii.
+    """
+
+    __tablename__ = "identity_webhook_events"
+
+    #: "<provider>:<event_id>" so two providers can never collide on an id.
+    id: Mapped[str] = mapped_column(sa.String(320), primary_key=True)
+    provider: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    event_type: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
+    received_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
 
 class StripeEvent(Base):

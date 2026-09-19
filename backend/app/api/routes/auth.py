@@ -30,8 +30,10 @@ from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import audit as audit_svc
+from app.services import defaults as defaults_svc
 from app.services import identity as identity_svc
 from app.services import invites as invites_svc
+from app.services import kyc as kyc_svc
 from app.services import lockout, login_flow, passkey_policy, password_policy
 from app.services import operators as operators_svc
 
@@ -44,6 +46,9 @@ class RegisterIn(BaseModel):
     full_name: str = ""
     #: Required unless this is the very first account on the instance.
     invite_token: str = ""
+    #: Optional. Names the workspace a self-serve signup gets; when it is absent the email
+    #: domain is used instead.
+    company_name: str = ""
 
 
 class LoginIn(BaseModel):
@@ -93,6 +98,35 @@ class MeOut(BaseModel):
     passkey_grace_until: datetime | None = None
     permissions: list[str]
     memberships: list[MembershipOut]
+
+
+#: Second-level labels that are part of a public suffix rather than the registrable name.
+#: Deliberately a short fixed list instead of a public-suffix-list dependency: this only
+#: produces a DEFAULT workspace name the owner can rename at any time, so an approximation
+#: is fine and a dependency (plus its update cadence) is not worth it here.
+_MULTI_LABEL_SUFFIXES = {"co", "com", "org", "net", "ac", "gov"}
+
+
+def _signup_org_name(payload: RegisterIn) -> str:
+    """Name for the workspace a self-serve signup gets."""
+    explicit = payload.company_name.strip()
+    if explicit:
+        return explicit
+
+    # Split on the LAST "@", not the first: a local part may legally contain a quoted "@",
+    # and splitting on the first would read a domain other than the one that receives mail.
+    domain = str(payload.email).rsplit("@", 1)[-1].strip().lower()
+    labels = [label for label in domain.split(".") if label]
+    # Drop the final label (the TLD), then drop the new final label too when it is a
+    # second-level public suffix, so acme-corp.co.uk -> acme-corp.
+    if labels:
+        labels.pop()
+    if labels and labels[-1] in _MULTI_LABEL_SUFFIXES:
+        labels.pop()
+    name = " ".join(labels).replace("-", " ").replace("_", " ").strip().title()
+    # Fall back to the full domain, then to a fixed name, so create_org_with_owner's slugify
+    # never receives an empty name (it would otherwise fall back to the slug "org").
+    return name or domain or "My Workspace"
 
 
 async def _log_and_fail(
@@ -160,13 +194,20 @@ async def register(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> MeOut:
-    """Registration is INVITE-ONLY once the instance has an owner.
+    """Three cases, in this order.
 
-    The single exception is first-run: while no account exists at all there is nobody who
-    could issue an invitation, so the first registration is allowed and becomes the owner.
-    That gate is a COUNT of users rather than a config flag - a flag can be left switched
-    on by accident and silently reopen the instance months later; this condition flips
-    itself the moment the first account exists and can never drift back.
+    1. An ``invite_token`` is present: it is ALWAYS resolved and redeemed, whatever
+       ``bootstrap`` says, and the account joins the org the invitation names.
+    2. No token, and open registration is on or this is first-run: a self-serve signup,
+       which gets its own brand-new workspace.
+    3. No token and neither of those: refused - registration is invite-only once the
+       instance has an owner.
+
+    The first-run exception exists because while no account exists at all there is nobody
+    who could issue an invitation, so the first registration is allowed and becomes the
+    owner. That gate is a COUNT of users rather than a config flag - a flag can be left
+    switched on by accident and silently reopen the instance months later; this condition
+    flips itself the moment the first account exists and can never drift back.
     """
     settings: Settings = request.app.state.settings
     await enforce_rate_limit(request, f"register:{payload.email}")
@@ -174,14 +215,21 @@ async def register(
         session
     )
 
+    # A token in the payload wins over ``bootstrap``: an invitation names an org and a role,
+    # so honouring open registration first would drop both on the floor and hand the invitee
+    # an empty workspace of their own instead of the one they were invited to - and leave the
+    # invitation unspent. With public signup on, a token is the caller telling us which
+    # branch they mean. An invalid, expired or wrong-address token still raises here rather
+    # than falling through to a self-serve signup, because that would turn "your invitation
+    # expired" into "you silently got your own empty workspace".
     invite = None
-    if not bootstrap:
-        if not payload.invite_token:
-            raise ValidationFailedError(
-                "This instance is invite-only. Ask an administrator for an invitation."
-            )
+    if payload.invite_token:
         invite = await invites_svc.find_redeemable(
             session, payload.invite_token, payload.email
+        )
+    elif not bootstrap:
+        raise ValidationFailedError(
+            "This instance is invite-only. Ask an administrator for an invitation."
         )
 
     await password_policy.check(settings, payload.password, email=payload.email)
@@ -191,14 +239,49 @@ async def register(
     if invite is not None:
         await session.flush()
         await invites_svc.redeem(session, invite, user.id)
+    else:
+        # A self-serve signup has no invite to carry an org, so without this the account
+        # would have no workspace at all and nowhere to land - KYC and onboarding both hang
+        # off an org. The defaults and the KYC profile are created here for parity with
+        # POST /orgs, because onboarding and the verification gate both look them up and an
+        # org missing either is a broken half-state. Note the POST /orgs "one unverified
+        # workspace at a time" KYC check is deliberately NOT applied here: this is the
+        # account's first workspace, so there cannot be another one in flight.
+        await session.flush()
+        org = await orgs_repo.create_org_with_owner(
+            session, name=_signup_org_name(payload), owner_id=user.id
+        )
+        await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
+        set_org_context(session, org.id)
+        await kyc_svc.get_or_create_profile(session, org.id)
     await session.commit()
+    if invite is not None:
+        return MeOut(
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            totp_enabled=user.totp_enabled,
+            permissions=[],
+            memberships=[],
+        )
+    # The owner role holds the "*" wildcard, and /me expands it to the full permission set,
+    # so returning the same expansion here lets the client land in the new workspace without
+    # a second round trip. identity_verification is left at its default because GET /me is
+    # where that is computed.
     return MeOut(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
-        permissions=[],
-        memberships=[],
+        permissions=sorted(PERMISSIONS),
+        memberships=[
+            MembershipOut(
+                org_id=org.id,
+                org_name=org.name,
+                org_slug=org.slug,
+                role_name="owner",
+            )
+        ],
     )
 
 

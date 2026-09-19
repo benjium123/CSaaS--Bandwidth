@@ -442,7 +442,12 @@ async def check_website(
         detail["domain_created"] = created.isoformat()
         detail["domain_age_days"] = age_days
         if age_days < 90:
-            problems.append(f"the domain is only {age_days} days old")
+            # The DATE, not our threshold. "only 12 days old" is the one customer-visible
+            # summary that taught an applicant which bar they had failed to clear, and a
+            # registration date is a public RDAP fact they can look up about their own
+            # domain. The age stays in `detail` for the operator, where the threshold
+            # belongs.
+            problems.append(f"the domain was registered on {created.isoformat()}")
     else:
         detail["domain_created"] = None
 

@@ -112,6 +112,13 @@ def _return_url(settings: Settings, requested: str | None, fallback_path: str) -
     return base + fallback_path
 
 
+def _is_owner(ctx) -> bool:
+    """Owner = the wildcard role, which is how every other gate in this codebase asks."""
+    from app.models.rbac import WILDCARD
+
+    return WILDCARD in (ctx.role.permissions or [])
+
+
 def _viewer(ctx) -> uuid.UUID | None:
     """The signed-in member, or None for an API key. Only used to answer "is this person
     you?" - an API key is nobody, and gets `is_you: false` on every person."""
@@ -161,7 +168,13 @@ def _document_out(d: KycDocument) -> dict:
     }
 
 
-async def _profile_out(session: AsyncSession, profile, viewer_id: uuid.UUID | None = None) -> dict:
+async def _profile_out(
+    session: AsyncSession,
+    profile,
+    viewer_id: uuid.UUID | None = None,
+    *,
+    owner: bool = False,
+) -> dict:
     persons = await kyc_checks.persons_for(session, profile.org_id)
     documents = (
         (
@@ -220,6 +233,16 @@ async def _profile_out(session: AsyncSession, profile, viewer_id: uuid.UUID | No
         "submitted_at": profile.submitted_at.isoformat() if profile.submitted_at else None,
         "decided_at": profile.decided_at.isoformat() if profile.decided_at else None,
         "decision_reason": profile.decision_reason if profile.status == "rejected" else None,
+        # OWNERS ONLY, and the asymmetry is deliberate rather than an oversight being tidied
+        # up. The suspension mail already carries this reason, so nothing is being withheld -
+        # but that mail goes to the OWNERS, while this payload is behind `org:read`, which is
+        # every member. A compliance suspension can name an individual, and the member most
+        # likely to be reading it is the one it is about. `decision_reason` is not a precedent:
+        # a rejected org is pre-approval with a couple of people in it, a suspended org is a
+        # live business with staff.
+        "suspension_reason": (
+            profile.suspension_reason if profile.status == "suspended" and owner else None
+        ),
         "limits": profile.limits,
         "deposit_required_cents": profile.deposit_required_cents,
         "next_reverification_at": (
@@ -231,7 +254,7 @@ async def _profile_out(session: AsyncSession, profile, viewer_id: uuid.UUID | No
 @router.get("/profile")
 async def get_profile(ctx: Annotated[OrgContext, Depends(require_permission("org:read"))]) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
-    out = await _profile_out(ctx.session, profile, _viewer(ctx))
+    out = await _profile_out(ctx.session, profile, _viewer(ctx), owner=_is_owner(ctx))
     await ctx.session.commit()
     return out
 
@@ -256,7 +279,7 @@ async def put_business(
         )
         background.add_task(_run_automation, request.app, ctx.org.id, True)
     await ctx.session.commit()
-    return await _profile_out(ctx.session, profile, _viewer(ctx))
+    return await _profile_out(ctx.session, profile, _viewer(ctx), owner=_is_owner(ctx))
 
 
 @router.put("/profile/use-case")
@@ -279,7 +302,8 @@ async def put_use_case(
         request.app.state.settings, profile, payload.model_dump(mode="python")
     )
     await ctx.session.commit()
-    return {"result": result, **(await _profile_out(ctx.session, profile, _viewer(ctx)))}
+    out = await _profile_out(ctx.session, profile, _viewer(ctx), owner=_is_owner(ctx))
+    return {"result": result, **out}
 
 
 @router.post("/persons", status_code=201)
@@ -465,7 +489,7 @@ async def accept_agreement(
         version=payload.version,
     )
     await ctx.session.commit()
-    return await _profile_out(ctx.session, profile, _viewer(ctx))
+    return await _profile_out(ctx.session, profile, _viewer(ctx), owner=_is_owner(ctx))
 
 
 @router.post("/submit")
@@ -490,7 +514,7 @@ async def submit(
     await ctx.session.commit()
     # P43: documents, registry fallback, risk and the AI decision pack - no human needed.
     background.add_task(_run_automation, request.app, ctx.org.id, False)
-    return await _profile_out(ctx.session, profile, _viewer(ctx))
+    return await _profile_out(ctx.session, profile, _viewer(ctx), owner=_is_owner(ctx))
 
 
 @router.post("/me/verify")

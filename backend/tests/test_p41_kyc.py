@@ -211,6 +211,22 @@ async def _make_operator(client, session, email: str, role: str = "admin") -> st
     return token
 
 
+async def _signup_org(client, token: str, name: str) -> dict:
+    """The workspace this account works in.
+
+    Registration now hands a self-serve signup its own workspace (auth.py::register), and
+    "only one unverified workspace at a time" then makes a second POST /orgs a 409 - which
+    is the rule working, not a bug. So take the workspace registration gave us and create
+    one only when it gave us none. Written as a fallback rather than dropping create_org
+    outright because an account can still legitimately arrive without one (an invited
+    member does), and because this then survives org-on-signup changing shape again.
+    """
+    me = (await client.get("/api/v1/auth/me", headers=auth_headers(token))).json()
+    if me.get("memberships"):
+        return {"id": me["memberships"][0]["org_id"]}
+    return await create_org(client, token, name)
+
+
 async def _complete_application(
     client,
     created,
@@ -321,7 +337,7 @@ async def test_new_business_is_blocked_until_approved(kyc_app, session, kyc_sett
     client, app, carrier, created, outcomes = kyc_app
     _write_sanctions(kyc_settings, ["IVAN BADGUY", "EVIL CORP LTD"])
     token = await register_and_login(client, "jane@acme-plumbing.example")
-    org = await create_org(client, token, "Acme")
+    org = await _signup_org(client, token, "Acme")
     h = auth_headers(token, org["id"])
 
     # Draft: no numbers, no texts.
@@ -401,7 +417,7 @@ async def test_new_business_is_blocked_until_approved(kyc_app, session, kyc_sett
 async def test_identity_webhook_is_idempotent_and_never_unverifies(kyc_app, session):
     client, app, carrier, created, outcomes = kyc_app
     token = await register_and_login(client, "idem@example.com")
-    org = await create_org(client, token, "Idem")
+    org = await _signup_org(client, token, "Idem")
     h = auth_headers(token, org["id"])
     r = await client.post(
         "/api/v1/kyc/persons",
@@ -456,7 +472,7 @@ async def test_identity_webhook_is_idempotent_and_never_unverifies(kyc_app, sess
 async def test_documents_are_validated_and_encrypted(kyc_app, session, kyc_settings):
     client, app, *_ = kyc_app
     token = await register_and_login(client, "docs@example.com")
-    org = await create_org(client, token, "Docs")
+    org = await _signup_org(client, token, "Docs")
     h = auth_headers(token, org["id"])
 
     r = await client.post(
@@ -532,7 +548,7 @@ async def test_high_risk_needs_documents_and_sanctions_match_blocks(
     app.state.fake_ai.document = {**app.state.fake_ai.document, "address_matches": None}
     _write_sanctions(kyc_settings, ["Jane Smith"])
     token = await register_and_login(client, "risky@acme-plumbing.example")
-    org = await create_org(client, token, "Risky")
+    org = await _signup_org(client, token, "Risky")
     await _complete_application(client, created, outcomes, token, org["id"], vertical="debt_relief")
     r = await client.post("/api/v1/kyc/submit", headers=auth_headers(token, org["id"]))
     assert r.status_code == 200, r.text
@@ -572,7 +588,7 @@ async def test_rejected_and_banned_business_cannot_return(kyc_app, session, kyc_
     client, app, carrier, created, outcomes = kyc_app
     _write_sanctions(kyc_settings, ["NOBODY LISTED"])
     token = await register_and_login(client, "scam@acme-plumbing.example")
-    org = await create_org(client, token, "Scam One")
+    org = await _signup_org(client, token, "Scam One")
     await _complete_application(
         client, created, outcomes, token, org["id"], registration_number="EIN-99-0000001"
     )
@@ -593,7 +609,7 @@ async def test_rejected_and_banned_business_cannot_return(kyc_app, session, kyc_
 
     # Same people come back with a new account and a new company name.
     token2 = await register_and_login(client, "fresh@newname.example")
-    org2 = await create_org(client, token2, "Totally New Co")
+    org2 = await _signup_org(client, token2, "Totally New Co")
     await _complete_application(
         client, created, outcomes, token2, org2["id"], registration_number="EIN-99-0000001"
     )
@@ -612,7 +628,7 @@ async def test_companies_house_registry_check(kyc_app, session, kyc_settings):
     client, app, *_ = kyc_app
     kyc_settings.companies_house_api_key = type(kyc_settings.companies_house_api_key)("ch_key")
     token = await register_and_login(client, "uk@example.com")
-    org = await create_org(client, token, "UK")
+    org = await _signup_org(client, token, "UK")
     org_id = uuid.UUID(org["id"])
     set_org_context(session, org_id)
     profile = (await session.execute(sa.select(KycProfile))).scalar_one()
@@ -641,7 +657,7 @@ async def test_companies_house_registry_check(kyc_app, session, kyc_settings):
 # --------------------------------------------------------------------------------------
 async def _approved_org(client, session, email: str, name: str) -> tuple[str, dict]:
     token = await register_and_login(client, email)
-    org = await create_org(client, token, name)
+    org = await _signup_org(client, token, name)
     set_org_context(session, uuid.UUID(org["id"]))
     profile = (await session.execute(sa.select(KycProfile))).scalar_one()
     profile.status = "approved"
@@ -879,9 +895,15 @@ async def test_unverified_admin_of_approved_business_needs_id_check(kyc_app, ses
 
 
 async def test_only_one_unverified_workspace_at_a_time(kyc_app):
+    """The first workspace now arrives with the account itself (auth.py::register), so THAT
+    is the unverified one holding the door shut. The rule under test is unchanged: while a
+    workspace is unverified, a second one is refused. Asserting the signup workspace exists
+    first matters - without it a 409 could just as well mean the account had no workspace
+    and the rule had stopped firing for a different reason."""
     client, *_ = kyc_app
     token = await register_and_login(client, "many@example.com")
-    await create_org(client, token, "First")
+    me = (await client.get("/api/v1/auth/me", headers=auth_headers(token))).json()
+    assert len(me["memberships"]) == 1, me
     r = await client.post("/api/v1/orgs", json={"name": "Second"}, headers=auth_headers(token))
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "kyc_pending_elsewhere"
@@ -1042,3 +1064,225 @@ async def test_me_says_whether_a_member_still_needs_their_own_id_check(kyc_app, 
     await session.commit()
     assert await state(admin_token) == "verified"
     assert await gate_refuses(admin_token) is False
+
+
+# ======================================================================================
+# The decision emails. They have existed since d0fb1e0 and nothing covered them - grepping
+# the suite for the subject lines, `_email_decision` and `DECISION_EMAILS` returns nothing.
+# An untested notification path is the same family as everything else in this audit: it
+# looks present, and it could have stopped working at any point without anything going red.
+# `mailer.send` appends to `mailer.outbox` when `app_env == "test"`, so the means to test it
+# was there the whole time.
+# ======================================================================================
+def _mail_body(msg) -> str:
+    """The plain-text part. `mailer._build` sends multipart/alternative, so
+    `get_content()` on the top-level message raises KeyError rather than returning anything."""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == 'text/plain':
+                return part.get_content()
+        return ''
+    return msg.get_content()
+
+
+async def _submitted_org(client, session, email: str, name: str) -> tuple[str, dict]:
+    """An org sitting in `submitted`, which is where an operator decision starts."""
+    token = await register_and_login(client, email)
+    # Registration may or may not hand out a workspace of its own depending on where the
+    # self-serve signup work has got to, and "only one unverified workspace at a time" makes
+    # creating a second one a 409. Take whatever registration gave us, and create one only
+    # when it gave us nothing, so this helper survives that change landing either way.
+    me = (await client.get("/api/v1/auth/me", headers=auth_headers(token))).json()
+    if me.get("memberships"):
+        org = {"id": me["memberships"][0]["org_id"]}
+    else:
+        org = await create_org(client, token, name)
+    org_id = uuid.UUID(org["id"])
+    set_org_context(session, org_id)
+    # Scoped to THIS org rather than scalar_one() over the table: registration may create a
+    # workspace of its own, and a bare select would then find two profiles and raise.
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "submitted"
+    await session.commit()
+    return token, org
+
+
+async def test_operator_decisions_email_the_owners(kyc_app, session):
+    """needs_info and rejected together, because the property is the SET: an operator
+    decision must never be silent. Approval is the test directly below - it needed its own
+    because a real approval has to clear every check first."""
+    from app.services import mailer
+
+    client, _app, *_ = kyc_app
+    ops = await _make_operator(client, session, "decide@platform.example")
+    oh = auth_headers(ops)
+
+    # --- needs_info: the operator's own words reach the customer ----------------------
+    _token, org = await _submitted_org(client, session, "owner@needs.example", "Needs Co")
+    mailer.outbox.clear()
+    r = await client.post(
+        f"/api/v1/ops/applications/{org['id']}/request-info",
+        json={"message": "Please upload a utility bill dated in the last 90 days."},
+        headers=oh,
+    )
+    assert r.status_code == 200, r.text
+    assert len(mailer.outbox) == 1, mailer.outbox
+    sent = mailer.outbox[-1]
+    assert "owner@needs.example" in sent["To"]
+    assert "more information" in sent["Subject"]
+    assert "utility bill dated in the last 90 days" in _mail_body(sent)
+
+    # --- rejected: the reason travels with the decision -------------------------------
+    _token, org = await _submitted_org(client, session, "owner@rej.example", "Rej Co")
+    mailer.outbox.clear()
+    r = await client.post(
+        f"/api/v1/ops/applications/{org['id']}/reject",
+        json={"reason": "The registry shows this company as dissolved.", "ban": False},
+        headers=oh,
+    )
+    assert r.status_code == 200, r.text
+    assert len(mailer.outbox) == 1, mailer.outbox
+    sent = mailer.outbox[-1]
+    assert "owner@rej.example" in sent["To"]
+    assert "could not be verified" in sent["Subject"]
+    assert "dissolved" in _mail_body(sent)
+
+
+async def test_an_approval_email_never_carries_the_operators_private_note(
+    kyc_app, session, monkeypatch
+):
+    """The approve route takes a `note`, and the customer must not see it. That holds today
+    because the approved template has no `{message}` placeholder and `_email_decision` passes
+    none - a property worth a lock rather than a coincidence worth trusting, since the other
+    two templates DO interpolate and the obvious "make them consistent" refactor is the thing
+    that would break it.
+
+    `kyc_svc.approve` is stubbed because this is a test about the EMAIL. A real approval has
+    to clear registry, sanctions and document checks, which the end-to-end test above already
+    drives; repeating that setup here would make this test fail for reasons that have nothing
+    to do with what it asserts.
+    """
+    from app.services import kyc as kyc_svc
+    from app.services import mailer
+
+    client, _app, *_ = kyc_app
+    ops = await _make_operator(client, session, "approve@platform.example")
+    _token, org = await _submitted_org(client, session, "owner@app.example", "App Co")
+
+    async def approve_without_checks(_session, _settings, profile, _operator_id, _note):
+        kyc_svc.transition(profile, "approved")
+
+    monkeypatch.setattr(kyc_svc, "approve", approve_without_checks)
+    mailer.outbox.clear()
+    r = await client.post(
+        f"/api/v1/ops/applications/{org['id']}/approve",
+        json={"note": "INTERNAL: watch this one, thin trading history"},
+        headers=auth_headers(ops),
+    )
+    assert r.status_code == 200, r.text
+    assert len(mailer.outbox) == 1, mailer.outbox
+    sent = mailer.outbox[-1]
+    assert "owner@app.example" in sent["To"]
+    assert "verified" in sent["Subject"]
+    body = _mail_body(sent)
+    assert "INTERNAL" not in body, "the operator's private note reached the customer"
+    assert "thin trading history" not in body
+
+
+async def test_a_decision_email_goes_to_owners_only(kyc_app, session):
+    """`_owner_emails` joins on the owner role. A compliance decision naming a business's
+    shortcomings is the owner's mail, not every member's - and the member most likely to be
+    reading a shared inbox is the one a rejection may be about."""
+    from app.models import OrgMembership, Role
+    from app.services import mailer
+
+    client, _app, *_ = kyc_app
+    ops = await _make_operator(client, session, "owneronly@platform.example")
+    _token, org = await _submitted_org(client, session, "owner@only.example", "Only Co")
+    org_id = uuid.UUID(org["id"])
+    await register_and_login(client, "staff@only.example")
+    set_org_context(session, org_id)
+    staff_role = (
+        await session.execute(sa.select(Role).where(Role.name == "agent"))
+    ).scalar_one()
+    staff = (
+        await session.execute(sa.select(User).where(User.email == "staff@only.example"))
+    ).scalar_one()
+    session.add(
+        OrgMembership(id=uuid.uuid4(), org_id=org_id, user_id=staff.id, role_id=staff_role.id)
+    )
+    await session.commit()
+
+    mailer.outbox.clear()
+    r = await client.post(
+        f"/api/v1/ops/applications/{org['id']}/reject",
+        json={"reason": "Could not verify the registered address.", "ban": False},
+        headers=auth_headers(ops),
+    )
+    assert r.status_code == 200, r.text
+    recipients = mailer.outbox[-1]["To"]
+    assert "owner@only.example" in recipients
+    assert "staff@only.example" not in recipients
+
+
+async def test_braces_in_an_operator_message_cannot_break_the_email(kyc_app, session):
+    """`body.format(message=...)` formats the TEMPLATE, so the operator's text is an
+    argument and not a format string - `str.format` does not recurse into substituted
+    values. Reasoned through with a peer and then pinned, because "we worked out that it's
+    safe" is exactly the kind of conclusion that stops being true after a refactor to
+    f-strings or a template engine."""
+    from app.services import mailer
+
+    client, _app, *_ = kyc_app
+    ops = await _make_operator(client, session, "braces@platform.example")
+    _token, org = await _submitted_org(client, session, "owner@braces.example", "Braces Co")
+    mailer.outbox.clear()
+    nasty = "Send us {legal_name} and {0} and {} - literally, with the braces."
+    r = await client.post(
+        f"/api/v1/ops/applications/{org['id']}/request-info",
+        json={"message": nasty},
+        headers=auth_headers(ops),
+    )
+    assert r.status_code == 200, r.text
+    assert nasty in _mail_body(mailer.outbox[-1])
+
+
+async def test_a_failed_decision_email_leaves_the_decision_standing_and_says_nothing(
+    kyc_app, session, monkeypatch
+):
+    """The decision commits BEFORE the email is attempted, and `mailer.send` reports failure
+    by returning False rather than raising (mailer.py:88). So a dead SMTP host cannot undo or
+    500 a decision that already succeeded - which would leave an operator staring at an error
+    for work that went through, and clicking it again.
+
+    The other half of that trade is pinned here deliberately rather than fixed: the failure is
+    INVISIBLE. `_email_decision` discards the return value, so a rejected customer is never
+    told and the only trace is a log line. Surfacing it is an operator-console change and
+    belongs to whoever owns that screen; this test is where they will find the fact.
+    """
+    from app.services import mailer
+
+    client, _app, *_ = kyc_app
+    ops = await _make_operator(client, session, "silent@platform.example")
+    _token, org = await _submitted_org(client, session, "owner@silent.example", "Silent Co")
+
+    async def never_sends(*_args, **_kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(mailer, "send", never_sends)
+    r = await client.post(
+        f"/api/v1/ops/applications/{org['id']}/reject",
+        json={"reason": "No.", "ban": False},
+        headers=auth_headers(ops),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "rejected", "the decision must survive a mail failure"
+    # The gap, stated as an assertion so it cannot be closed by accident and go unnoticed.
+    # Keyed on a DELIVERY signal rather than the word "email": the application detail legitimately
+    # carries a business_email field, so a bare substring check would fail for the wrong reason.
+    assert not any(k in r.text for k in ("email_sent", "email_failed", "email_status")), (
+        "if the response now reports delivery, the invisible-failure gap has been closed - "
+        "update this test rather than deleting it"
+    )
