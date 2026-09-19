@@ -208,6 +208,12 @@ from app.models.security import (
     UserPasskey,
     WebauthnChallenge,
 )
+from app.models.subscriptions import (
+    ENTITLED_SUBSCRIPTION_STATUSES,
+    SUBSCRIPTION_STATUSES,
+    Subscription,
+    is_entitled,
+)
 from app.models.spend import (
     DEFAULT_RATES_MICROS,
     SPEND_METRICS,
@@ -348,6 +354,10 @@ __all__ = [
     "InvoiceLine",
     "Plan",
     "PlanAllowance",
+    "ENTITLED_SUBSCRIPTION_STATUSES",
+    "SUBSCRIPTION_STATUSES",
+    "Subscription",
+    "is_entitled",
     "DEFAULT_NOTIFICATION_PREFS",
     "NOTIFICATION_PREF_KEYS",
     "PushSubscription",

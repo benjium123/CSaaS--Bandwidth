@@ -13,7 +13,16 @@ every org. Every outbound path calls ``require_telephony_allowed`` before the cr
 Inbound traffic is never refused here - a suspended business's customers can still reach
 it until an operator releases the numbers.
 
-With KYC_ENFORCED off nothing is checked (development and pre-P41 tests).
+With KYC_ENFORCED off nothing in the verification block is checked (development and
+pre-P41 tests).
+
+A SECOND, independent requirement sits beside verification: an entitled Stripe
+subscription (models/subscriptions.is_entitled). It is behind
+REQUIRE_SUBSCRIPTION_FOR_TELEPHONY, which defaults to FALSE - with it off the
+subscription is not even queried and this gate behaves exactly as it did before
+subscriptions existed. Its refusal code is "subscription_required", deliberately
+distinct from "account_not_verified" so the console can tell "verify your business"
+apart from "choose a plan".
 """
 
 from __future__ import annotations
@@ -40,6 +49,7 @@ REFUSAL_PUBLIC_TEXT = {
     "account_suspended": "Not sent - this account is suspended.",
     "daily_limit_reached": "Not sent - today's texting limit for this account was reached.",
     "account_paused": "Not sent - calling and texting are paused while we review this account.",
+    "subscription_required": "Not sent - choose a plan to start texting.",
 }
 
 
@@ -76,56 +86,68 @@ async def refusal(
     monitored = await monitor_score.refusal(session, settings, org_id, kind)
     if monitored is not None:
         return monitored
-    if not settings.kyc_enforced:
-        return None
-    profile = await _profile(session, org_id)
-    if profile is None:
-        return "account_not_verified"
-    if profile.status == "suspended":
-        return "account_suspended"
-    if profile.status not in KYC_TELEPHONY_STATUSES:
-        return "account_not_verified"
+    # Business verification. Unchanged: every line below is what it always was, now
+    # nested under the flag it was already guarded by, so the subscription check can
+    # run after it rather than being skipped by its early return.
+    if settings.kyc_enforced:
+        profile = await _profile(session, org_id)
+        if profile is None:
+            return "account_not_verified"
+        if profile.status == "suspended":
+            return "account_suspended"
+        if profile.status not in KYC_TELEPHONY_STATUSES:
+            return "account_not_verified"
 
-    if profile.deposit_required_cents:
-        from app.services import credits
+        if profile.deposit_required_cents:
+            from app.services import credits
 
-        if await credits.balance(session, org_id) < profile.deposit_required_cents * 10_000:
-            return "deposit_required"
+            if await credits.balance(session, org_id) < profile.deposit_required_cents * 10_000:
+                return "deposit_required"
 
-    limits = profile.limits or {}
-    now = now or datetime.now(timezone.utc)
-    if kind == "sms" and limits.get("daily_texts") is not None:
-        sent = (
-            await session.execute(
-                sa.select(sa.func.count(Message.id)).where(
-                    Message.org_id == org_id,
-                    Message.direction == "outbound",
-                    Message.created_at >= _day_start(now),
+        limits = profile.limits or {}
+        now = now or datetime.now(timezone.utc)
+        if kind == "sms" and limits.get("daily_texts") is not None:
+            sent = (
+                await session.execute(
+                    sa.select(sa.func.count(Message.id)).where(
+                        Message.org_id == org_id,
+                        Message.direction == "outbound",
+                        Message.created_at >= _day_start(now),
+                    )
                 )
-            )
-        ).scalar_one()
-        if sent >= limits["daily_texts"]:
-            return "daily_limit_reached"
-    if kind == "call" and limits.get("daily_calls") is not None:
-        placed = (
-            await session.execute(
-                sa.select(sa.func.count(Call.id)).where(
-                    Call.org_id == org_id,
-                    Call.direction == "outbound",
-                    Call.created_at >= _day_start(now),
+            ).scalar_one()
+            if sent >= limits["daily_texts"]:
+                return "daily_limit_reached"
+        if kind == "call" and limits.get("daily_calls") is not None:
+            placed = (
+                await session.execute(
+                    sa.select(sa.func.count(Call.id)).where(
+                        Call.org_id == org_id,
+                        Call.direction == "outbound",
+                        Call.created_at >= _day_start(now),
+                    )
                 )
-            )
-        ).scalar_one()
-        if placed >= limits["daily_calls"]:
-            return "daily_limit_reached"
-    if kind == "number" and limits.get("max_numbers") is not None:
-        held = (
-            await session.execute(
-                sa.select(sa.func.count(OrgNumber.id)).where(OrgNumber.org_id == org_id)
-            )
-        ).scalar_one()
-        if held >= limits["max_numbers"]:
-            return "number_limit_reached"
+            ).scalar_one()
+            if placed >= limits["daily_calls"]:
+                return "daily_limit_reached"
+        if kind == "number" and limits.get("max_numbers") is not None:
+            held = (
+                await session.execute(
+                    sa.select(sa.func.count(OrgNumber.id)).where(OrgNumber.org_id == org_id)
+                )
+            ).scalar_one()
+            if held >= limits["max_numbers"]:
+                return "number_limit_reached"
+
+    # Second, INDEPENDENT requirement, and the flag defaults to False: with it off the
+    # subscription is never queried, so an org that has never heard of a plan is refused
+    # nothing it was allowed yesterday. Verification keeps precedence above - an
+    # unverified business is told to verify, not to go and pick a plan it cannot use.
+    if settings.require_subscription_for_telephony:
+        from app.services import subscriptions as subscriptions_svc
+
+        if not await subscriptions_svc.has_entitled_subscription(session, org_id):
+            return "subscription_required"
     return None
 
 
@@ -150,6 +172,12 @@ def _raise_for(code: str) -> None:
             "Calling and texting are paused while our team reviews recent activity on this "
             "account. You can send us an explanation from the console.",
             code="account_paused",
+        )
+    if code == "subscription_required":
+        # Its own code, never AccountNotVerifiedError: "verify your business" and "choose a
+        # plan" are different actions and the console must not conflate them.
+        raise PermissionDeniedError(
+            "Choose a plan to start calling and texting", code="subscription_required"
         )
     if code == "number_limit_reached":
         raise PermissionDeniedError(

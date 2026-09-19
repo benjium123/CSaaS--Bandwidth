@@ -17,8 +17,13 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
 from app.auth.deps import OrgContext, check_org_selfie_step_up, require_permission
-from app.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
-from app.models import Call, CreditLedgerEntry, PaymentMethod
+from app.errors import (
+    FeatureUnavailableError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationFailedError,
+)
+from app.models import Call, CreditLedgerEntry, PaymentMethod, Plan
 from app.services import ai_usage, credits, stripe_client
 from app.services import audit as audit_svc
 from app.services import spend as spend_svc
@@ -46,6 +51,10 @@ def _checkout_urls(settings) -> tuple[str, str]:
 
 class TopupIn(BaseModel):
     amount_micros: int
+
+
+class SubscriptionCheckoutIn(BaseModel):
+    plan_code: str
 
 
 class AutoRechargeIn(BaseModel):
@@ -266,6 +275,55 @@ async def create_topup(
         actor_user_id=actor_user,
         actor_api_key_id=actor_key,
         detail={"amount_micros": amount},
+    )
+    await ctx.session.commit()
+
+    return {"checkout_url": checkout["url"]}
+
+
+@router.post("/subscription/checkout")
+async def create_subscription_checkout(
+    payload: SubscriptionCheckoutIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:billing"))],
+    request: Request,
+) -> dict:
+    """Start Stripe Checkout for a monthly plan. Same owner permission as a top-up."""
+    code = (payload.plan_code or "").strip()
+    plan = await ctx.session.get(Plan, code) if code else None
+    if plan is None or not plan.is_active:
+        raise NotFoundError("Plan not found")
+
+    # THE MONEY GUARD. A plan whose Stripe price id is not configured cannot be bought,
+    # and the refusal names the plan so the operator knows exactly which one to fix. The
+    # alternative - falling back to some locally computed amount - would charge a real
+    # card an amount nobody at Stripe ever agreed to.
+    if not (plan.stripe_price_id or "").strip():
+        raise FeatureUnavailableError(
+            f"Plan {plan.name} ({plan.code}) is not available for checkout yet - "
+            "its Stripe price id is not configured."
+        )
+
+    settings = request.app.state.settings
+    success_url, cancel_url = _checkout_urls(settings)
+    checkout = await stripe_client.create_subscription_checkout_session(
+        settings,
+        org=ctx.org,
+        price_id=plan.stripe_price_id.strip(),
+        plan_code=plan.code,
+        success_url=success_url,
+        cancel_url=cancel_url,
+    )
+
+    actor_user, actor_key = _actor(ctx)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="billing.subscription_started",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=actor_user,
+        actor_api_key_id=actor_key,
+        detail={"plan_code": plan.code},
     )
     await ctx.session.commit()
 

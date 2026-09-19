@@ -109,6 +109,58 @@ async def create_checkout_session(
     return {"id": session_obj["id"], "url": session_obj["url"]}
 
 
+async def create_subscription_checkout_session(
+    settings,
+    *,
+    org,
+    price_id: str,
+    plan_code: str,
+    success_url: str,
+    cancel_url: str,
+    customer_id: str | None = None,
+    customer_email: str | None = None,
+) -> dict:
+    """Create a Checkout Session for a recurring plan subscription.
+
+    No micros conversion here, unlike the top-up above: a recurring Stripe Price owns its
+    own amount, and the caller must pass a real ``price_...`` id that an operator created.
+    A plan without one cannot reach this function - the route refuses first and names the
+    plan - because inventing a price id would charge a customer an amount nobody chose.
+    """
+    price_id = (price_id or "").strip()
+    if not price_id:
+        raise ValidationFailedError("This plan is not available for purchase yet.")
+
+    stripe = _stripe(settings)
+    metadata = {"org_id": str(org.id), "kind": "subscription", "plan_code": plan_code}
+
+    params: dict[str, Any] = {
+        "mode": "subscription",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        # A Checkout Session's metadata is NOT copied onto the Subscription object, and the
+        # customer.subscription.* webhooks carry only the Subscription. Without this second
+        # copy, every renewal, cancellation and status change would arrive unattributable
+        # to an org. Same trap as payment_intent_data above.
+        "metadata": metadata,
+        "subscription_data": {"metadata": metadata},
+    }
+    # Never both: Stripe rejects a session that names a customer and an email.
+    if customer_id:
+        params["customer"] = customer_id
+    elif customer_email:
+        params["customer_email"] = customer_email
+
+    session_obj = await _run_sync(stripe.checkout.Session.create, **params)
+    log.info("stripe_subscription_checkout_created", org_id=str(org.id), plan_code=plan_code)
+    return {
+        "id": session_obj["id"],
+        "url": session_obj["url"],
+        "subscription_id": session_obj.get("subscription"),
+    }
+
+
 async def charge_off_session(
     settings,
     *,

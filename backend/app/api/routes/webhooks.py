@@ -32,6 +32,7 @@ from app.services import calls as calls_svc
 from app.services import credentials as credential_svc
 from app.services import messaging as svc
 from app.services import routing_exec as routing_exec_svc
+from app.services import subscriptions as subscriptions_svc
 from app.services import supervisor as supervisor_svc
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
@@ -779,6 +780,14 @@ async def stripe_webhook(
         from app.services import kyc as kyc_svc
 
         await kyc_svc.handle_identity_event(session, request.app.state.settings, event)
+        await session.commit()
+        return Response(status_code=204)
+
+    if event_type in subscriptions_svc.HANDLED_EVENT_TYPES:
+        # Replay protection is the StripeEvent ledger above - a second delivery of the same
+        # event id already returned 204 and never reached here, so the handler itself does
+        # not need (and must not add) a second idempotency key.
+        await subscriptions_svc.handle_event(session, event)
         await session.commit()
         return Response(status_code=204)
 

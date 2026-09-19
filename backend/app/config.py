@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     #: Telephony (texting, calling, number orders) is refused for an org whose business
     #: verification is not approved. Tests turn it off; see services/telephony_access.py.
     kyc_enforced: bool = True
+    #: Telephony additionally requires an ENTITLED Stripe subscription (see
+    #: models/subscriptions.is_entitled). DEFAULT FALSE and deliberately so: with it off the
+    #: gate is not even queried and behaves exactly as it did before subscriptions existed,
+    #: so no existing deployment loses telephony the day this ships. Turn it on only once
+    #: real Stripe prices are configured and customers have had a chance to subscribe.
+    require_subscription_for_telephony: bool = False
     #: ISO-3166 alpha-2 countries businesses may verify from, and logins are expected from.
     #: P43: US and UK only for now (Canada's registry support stays in the code; add CA here
     #: to switch it back on).
