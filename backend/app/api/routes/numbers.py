@@ -6,6 +6,7 @@ from typing import Annotated
 
 import phonenumbers
 import sqlalchemy as sa
+import structlog
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
@@ -31,8 +32,10 @@ from app.services import flows as flows_svc
 from app.services import provider_accounts as provider_accounts_svc
 from app.services import reputation as reputation_svc
 from app.services import telephony_access, telephony_billing
+from app.voice_plane import trunk_sync
 
 router = APIRouter(prefix="/api/v1/numbers", tags=["numbers"])
+log = structlog.get_logger("numbers")
 
 
 def to_e164(raw: str, region: str = "US") -> str:
@@ -254,6 +257,19 @@ async def add_number(
         await ctx.session.rollback()
         # e164 is globally unique: a number belongs to exactly one org, ever.
         raise ConflictError(f"{normalized} is already registered") from exc
+
+    # P42: an imported number should be callable immediately, not after a manual trunk
+    # rebuild. Never allowed to fail the request - trunk_sync already swallows its own
+    # LiveKit errors; this guards against anything else.
+    try:
+        await trunk_sync.ensure_number(
+            getattr(request.app.state, "livekit", None),
+            request.app.state.settings,
+            carrier_name,
+            normalized,
+        )
+    except Exception:
+        log.exception("trunk_sync_ensure_number_failed", e164=normalized, carrier=carrier_name)
     return await _out(ctx.session, number)
 
 
@@ -682,6 +698,19 @@ async def release(
     number.released_at = datetime.now(timezone.utc)
     _audit_number(ctx, "number.released", number)
     await ctx.session.commit()
+
+    # P42: pull the number off the trunk it was dialable on. A failure here must never
+    # turn a successful release into an error response - the row is already released,
+    # and the sweeper's reconcile pass heals a trunk that drifted.
+    try:
+        await trunk_sync.remove_number(
+            getattr(request.app.state, "livekit", None),
+            request.app.state.settings,
+            number.carrier,
+            number.e164,
+        )
+    except Exception:
+        log.exception("trunk_sync_remove_number_failed", e164=number.e164, carrier=number.carrier)
     return await _out(ctx.session, number)
 
 

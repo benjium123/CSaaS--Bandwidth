@@ -44,7 +44,13 @@ x-logging: &default-logging
 
 services:
   livekit:
-    image: livekit/livekit-server:v1.8
+    # P42 (2026-09-19): bumped from v1.8 (built 2025-03-02) to the 1.13 line - v1.8 has
+    # no UpdateSIPInboundTrunk/UpdateSIPOutboundTrunk RPC (twirp 404 bad_route), which
+    # forced a delete+recreate (losing the trunk id and dispatch rule) every time a
+    # number was bought or released. See docs/PLAN_P42_TRUNK_SYNC.md. Operator step
+    # after pulling: restart `livekit` then `livekit-sip`, verify inbound + outbound on
+    # the 469 and a 972.
+    image: livekit/livekit-server:v1.13.7
     restart: unless-stopped
     command: --config /etc/livekit.yaml
     volumes:

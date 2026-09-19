@@ -19,6 +19,7 @@ from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.models import OrgNumber
 from app.providers import registry_org
 from app.services import credentials as credential_svc
+from app.voice_plane import trunk_sync
 
 log = structlog.get_logger("sweeper.number_orders")
 
@@ -58,7 +59,12 @@ def _pollable_carrier_names(carriers: object) -> list[str]:
 
 
 async def poll_pending_number_orders(
-    session: AsyncSession, carriers: object, *, limit: int = 25, settings: object | None = None
+    session: AsyncSession,
+    carriers: object,
+    *,
+    limit: int = 25,
+    settings: object | None = None,
+    livekit: object | None = None,
 ) -> int:
     """Poll pending number orders, org by org, committing each row.
 
@@ -67,6 +73,11 @@ async def poll_pending_number_orders(
     priming block below). Only carriers whose adapter has the optional `order_status`
     method are polled - filtered in SQL (never a Python-side skip) so a run of unpollable
     rows ahead of a pollable one can never starve it out of the per-pass `limit`.
+
+    `livekit` (P42, optional, `app.state.livekit`): a settled-active order gets its
+    number added to its carrier's LiveKit trunk here, the same way a manually-added
+    number does in api/routes/numbers.py - trunk_sync itself is a no-op when `livekit`
+    is None or the carrier has no configured trunk.
     """
     if carriers is None or limit <= 0:
         return 0
@@ -239,6 +250,18 @@ async def poll_pending_number_orders(
                     )
                     await session.rollback()
                     continue
+
+                if status == "active":
+                    try:
+                        await trunk_sync.ensure_number(
+                            livekit, settings, number.carrier, number.e164
+                        )
+                    except Exception:
+                        log.exception(
+                            "trunk_sync_ensure_number_failed",
+                            e164=number.e164,
+                            carrier=number.carrier,
+                        )
         finally:
             registry_org.CURRENT_ORG_ID.reset(org_token)
             set_org_context(session, None)
