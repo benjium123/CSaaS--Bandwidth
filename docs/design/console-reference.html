@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   Cut down to what's actually used.
+
+   Sidebar: Activity → Notifications, Analytics gone, and the whole Views block
+   (Important / Unresponded / Snoozed) gone — those were duplicating the filter
+   row two columns over.
+   Filters: four reduced to three — All, Unresponded, Important.
+   Contact panel: hidden until asked for. The thread takes the full width, which
+   is where the space belongs when you're reading a conversation.
+   Panel contents: name, phone, email, company. Nothing else.
+
+   COLOUR: cool graphite with an azure send, which is where this started before
+   I wandered off into copper and then lavender. No orange anywhere — not in the
+   accent, not in the avatars, not in the note.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="dark"] {
+  --base:     #15171C;
+  --surface:  #1A1D24;
+  --overlay:  #23272F;
+  --lift:     #2D323C;
+  --text:     #E8EAED;
+  --subtle:   #A0A6B0;
+  --muted:    #6E7681;
+  --line:     #262A32;
+  --accent:   #5B8DEF;   /* what we send, and the active filter */
+  --accent-2: #4A7BDB;
+  --on-acc:   #FFFFFF;
+  --live:     #3ECF8E;   /* a call — the only other saturated colour */
+  --flag:     #E8C468;   /* a note. Yellow, not orange. */
+  --shadow:   0 18px 40px -24px rgba(0,0,0,.75);
+}
+:root[data-theme="light"] {
+  --base:     #FFFFFF;
+  --surface:  #F7F8FA;
+  --overlay:  #EDF0F4;
+  --lift:     #E1E6ED;
+  --text:     #15181D;
+  --subtle:   #545C69;
+  --muted:    #878F9C;
+  --line:     #E5E9EF;
+  --accent:   #3B76E8;
+  --accent-2: #2E63CC;
+  --on-acc:   #FFFFFF;
+  --live:     #0FA97A;
+  --flag:     #B98A16;
+  --shadow:   0 10px 30px -18px rgba(21,24,29,.22);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--base); color: var(--text);
+  font-family: "Onest", ui-sans-serif, system-ui, sans-serif; font-size: 14px;
+  font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.sec { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+
+@supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; scrollbar-color: var(--lift) transparent; } }
+*::-webkit-scrollbar { width: 12px; height: 12px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--lift); border: 4px solid transparent; background-clip: content-box; border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+
+/* The panel is a column that collapses to zero. Transitioning grid-template-columns
+   keeps the thread growing smoothly into the space instead of snapping. */
+.app { display: grid; grid-template-columns: 240px 342px minmax(0,1fr) 0px; height: 100%; transition: grid-template-columns .28s cubic-bezier(.4,0,.2,1); }
+.app[data-panel="open"] { grid-template-columns: 240px 342px minmax(0,1fr) 300px; }
+.panel { overflow: hidden; }
+
+.av { position: relative; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 600; color: #fff; }
+.av.lg { width: 38px; height: 38px; font-size: 13px; }
+.av.sm { width: 28px; height: 28px; font-size: 10.5px; }
+.av.xl { width: 64px; height: 64px; font-size: 21px; }
+/* A thin ring in the colour of the line the conversation arrived on. */
+.av::after { content: ""; position: absolute; inset: -3.5px; border-radius: 50%; border: 2px solid var(--ring, transparent); }
+.av.xl::after { inset: -5px; }
+.ln-main { --ring: var(--accent); }
+.ln-support { --ring: var(--live); }
+.ln-uk { --ring: #B98AE8; }
+
+/* 1 · NAV ------------------------------------------------------------------ */
+.nav { background: var(--surface); border-right: 1px solid var(--line); padding: 16px 12px; overflow-y: auto; }
+.brand { display: flex; align-items: center; gap: 11px; padding: 6px 8px 18px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 700; font-size: 12.5px; background: linear-gradient(145deg, var(--accent), var(--accent-2)); color: #fff; }
+.brand-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.nav-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 10px; border-radius: 10px; color: var(--subtle); font-size: 13.5px; transition: background-color .15s, color .15s; }
+.nav-item:hover { background: var(--overlay); color: var(--text); }
+.nav-item svg { width: 17px; height: 17px; flex: none; opacity: .85; }
+.nav-sec { padding: 20px 10px 8px; }
+
+.ln { display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 10px; border-radius: 12px; text-align: left; transition: background-color .15s; }
+.ln:hover, .ln[aria-current="true"] { background: var(--overlay); }
+.ln-name { font-size: 13px; font-weight: 600; line-height: 1.3; }
+.ln-num { font-size: 11.5px; color: var(--muted); }
+.ln-count { margin-left: auto; font-size: 11px; font-weight: 700; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: grid; place-items: center; background: var(--accent); color: var(--on-acc); }
+
+/* 2 · LIST ----------------------------------------------------------------- */
+.list { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.list-top { padding: 18px 18px 0; display: flex; align-items: center; gap: 22px; }
+.tab { font-size: 15.5px; font-weight: 600; color: var(--muted); padding-bottom: 12px; letter-spacing: -.01em; }
+.tab:hover { color: var(--subtle); }
+.tab[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.icon-btn { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--subtle); transition: background-color .15s, color .15s; }
+.icon-btn:hover { background: var(--overlay); color: var(--text); }
+.icon-btn[aria-pressed="true"] { background: var(--overlay); color: var(--text); }
+.icon-btn svg { width: 17px; height: 17px; }
+
+.pills { display: flex; gap: 7px; padding: 14px 18px; }
+.pill { padding: 6px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--subtle); background: var(--overlay); transition: background-color .15s, color .15s; }
+.pill:hover { color: var(--text); background: var(--lift); }
+.pill[aria-pressed="true"] { background: var(--accent); color: var(--on-acc); font-weight: 600; }
+
+.rows { overflow-y: auto; padding: 2px 10px 16px; min-height: 0; }
+.row { display: flex; gap: 12px; width: 100%; padding: 12px; border-radius: 14px; text-align: left; align-items: flex-start; transition: background-color .15s; }
+.row:hover, .row[aria-current="true"] { background: var(--overlay); }
+.row-body { min-width: 0; flex: 1; }
+.row-line { display: flex; align-items: baseline; gap: 8px; }
+.row-name { font-size: 14px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-when { margin-left: auto; font-size: 11.5px; color: var(--muted); flex: none; }
+.row-prev { margin-top: 3px; font-size: 13px; color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-prev b { color: var(--text); font-weight: 600; }
+.unread { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.row-star { width: 13px; height: 13px; flex: none; fill: var(--flag); color: var(--flag); }
+/* Important is a flag on the person, so it lights the star and leaves everything else
+   alone. Unread is about one message, so it bolds the row and brings the dot back. */
+.icon-btn.star[aria-pressed="true"] { color: var(--flag); }
+.icon-btn.star[aria-pressed="true"] svg { fill: var(--flag); }
+.icon-btn[aria-pressed="true"]#unreadBtn { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.row.is-unread .row-name { font-weight: 700; }
+.row.is-unread .row-prev { color: var(--text); }
+
+/* 3 · THREAD --------------------------------------------------------------- */
+.thread { display: flex; flex-direction: column; min-height: 0; }
+.thread-top { display: flex; align-items: center; gap: 13px; padding: 15px 24px; border-bottom: 1px solid var(--line); }
+/* The name is the way into the details — click it, or the panel button. */
+.who { display: flex; align-items: center; gap: 13px; border-radius: 12px; padding: 4px 8px 4px 4px; margin: -4px 0 -4px -4px; transition: background-color .15s; }
+.who:hover { background: var(--overlay); }
+.thread-name { font-size: 17px; font-weight: 600; letter-spacing: -.015em; text-align: left; }
+.thread-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; display: flex; align-items: center; gap: 7px; }
+.ln-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.call-btn { margin-left: auto; display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--on-acc); background: var(--live); transition: filter .15s; }
+.call-btn:hover { filter: brightness(1.07); }
+.call-btn svg { width: 15px; height: 15px; }
+
+.msgs { flex: 1; overflow-y: auto; padding: 26px 24px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+.day { align-self: center; font-size: 11.5px; font-weight: 500; color: var(--muted); padding: 4px 14px; border-radius: 999px; background: var(--overlay); }
+.grp { display: flex; flex-direction: column; gap: 4px; max-width: 62%; }
+.grp.out { align-self: flex-end; align-items: flex-end; }
+.grp-who { font-size: 12px; color: var(--muted); margin-bottom: 3px; padding: 0 4px; font-weight: 500; }
+.bubble { padding: 11px 15px; border-radius: 18px; font-size: 14.5px; line-height: 1.55; background: var(--overlay); border-bottom-left-radius: 6px; }
+.grp .bubble:not(:last-of-type) { border-bottom-left-radius: 18px; }
+.grp.out .bubble { background: var(--accent); color: var(--on-acc); border-bottom-left-radius: 18px; border-bottom-right-radius: 6px; }
+.grp.out .bubble:not(:last-of-type) { border-bottom-right-radius: 18px; }
+.m-when { font-size: 11px; color: var(--muted); padding: 2px 4px 0; }
+.note { align-self: center; width: 100%; max-width: 62%; padding: 13px 16px; border-radius: 14px; background: color-mix(in srgb, var(--flag) 11%, transparent); border: 1px solid color-mix(in srgb, var(--flag) 26%, transparent); }
+.note-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12.5px; }
+.note-tag { color: var(--flag); font-weight: 700; }
+.callcard { align-self: center; width: 100%; max-width: 62%; padding: 13px 16px; border-radius: 14px; background: var(--overlay); display: flex; align-items: center; gap: 12px; font-size: 13.5px; }
+.play { margin-left: auto; padding: 6px 13px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--subtle); background: var(--lift); }
+.play:hover { color: var(--text); }
+
+.composer { padding: 14px 24px 20px; }
+.composer-box { border-radius: 18px; background: var(--surface); border: 1px solid var(--line); padding: 14px 16px; transition: border-color .2s, box-shadow .2s; }
+.composer-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent); }
+.composer-box input { width: 100%; background: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 14.5px; padding: 0 0 12px; }
+.composer-box input::placeholder { color: var(--muted); }
+.composer-row { display: flex; align-items: center; gap: 4px; }
+.send { margin-left: auto; display: flex; align-items: center; gap: 8px; padding: 9px 18px; border-radius: 999px; background: var(--accent); color: var(--on-acc); font-weight: 600; font-size: 13.5px; transition: filter .15s; }
+.send:hover { filter: brightness(1.07); }
+.send svg { width: 15px; height: 15px; }
+
+/* 4 · PANEL — four things, and only when asked for. ------------------------- */
+.panel { background: var(--surface); border-left: 1px solid var(--line); }
+.panel-in { width: 300px; height: 100%; padding: 22px; overflow-y: auto; }
+.panel-head { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; padding: 14px 0 24px; }
+.panel-name { font-size: 20px; font-weight: 600; letter-spacing: -.015em; }
+.panel-close { position: absolute; top: 18px; right: 18px; }
+.f { display: flex; align-items: baseline; gap: 12px; padding: 11px 2px; border-top: 1px solid var(--line); }
+.f-k { font-size: 13px; color: var(--muted); width: 72px; flex: none; }
+.f-v { font-size: 13.5px; text-align: right; margin-left: auto; word-break: break-word; }
+
+.toggle { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 3px; padding: 4px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.toggle button { padding: 8px 18px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--subtle); }
+.toggle button[aria-pressed="true"] { background: var(--accent); color: var(--on-acc); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.app > *:nth-child(-n+3) { animation: rise .5s cubic-bezier(.22,.85,.25,1) both; }
+.app > *:nth-child(2) { animation-delay: 60ms } .app > *:nth-child(3) { animation-delay: 120ms }
+@media (prefers-reduced-motion: reduce) { .app > * { animation: none } .app { transition: none } }
+</style>
+</head>
+<body>
+
+<div class="toggle" role="group" aria-label="Theme">
+  <button data-theme-set="dark" aria-pressed="true">Dark</button>
+  <button data-theme-set="light" aria-pressed="false">Light</button>
+</div>
+
+<div class="app" id="app" data-panel="closed">
+  <nav class="nav">
+    <div class="brand"><span class="brand-mark">A</span><span class="brand-name">Acme Plumbing</span></div>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search</button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>Notifications</button>
+
+    <div class="nav-sec sec">Workspace</div>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Contacts</button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/></svg>Campaigns</button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2 2 2 0 1 1 4 0A1.7 1.7 0 0 0 18.4 5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9 2 2 0 1 1 0 4z"/></svg>Settings</button>
+
+    <div class="nav-sec sec">Lines</div>
+    <button class="ln" aria-current="true">
+      <span class="av sm" style="background:linear-gradient(145deg,#5B8DEF,#4A7BDB)">MN</span>
+      <span><span class="ln-name">Main line</span><br><span class="ln-num">(512) 555-0100</span></span>
+      <span class="ln-count">2</span>
+    </button>
+    <button class="ln">
+      <span class="av sm" style="background:linear-gradient(145deg,#3ECF8E,#2BA873)">SP</span>
+      <span><span class="ln-name">Support</span><br><span class="ln-num">(512) 555-0142</span></span>
+    </button>
+    <button class="ln">
+      <span class="av sm" style="background:linear-gradient(145deg,#B98AE8,#8E63C4)">UK</span>
+      <span><span class="ln-name">Sales</span><br><span class="ln-num">+44 20 7000 0123</span></span>
+    </button>
+  </nav>
+
+  <section class="list">
+    <div class="list-top">
+      <button class="tab" aria-selected="true">Chats</button>
+      <button class="tab" aria-selected="false">Calls</button>
+      <span style="margin-left:auto;display:flex;gap:5px">
+        <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg></button>
+        <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 4 12a8.4 8.4 0 0 1 8.5-9 8.4 8.4 0 0 1 8.5 8.5z"/></svg></button>
+      </span>
+    </div>
+    <div class="pills">
+      <button class="pill" aria-pressed="true">All</button>
+      <button class="pill">Unresponded</button>
+      <button class="pill">Important</button>
+    </div>
+    <div class="rows">
+      <button class="row"><span class="av lg ln-main" style="background:linear-gradient(145deg,#E36A8C,#C24D70)">AW</span><span class="row-body"><span class="row-line"><span class="row-name">Ada Whitlock</span><span class="row-when">3m</span></span><span class="row-prev">That works — can you do Thursday at 9?</span></span></button>
+      <button class="row"><span class="av lg ln-main" style="background:linear-gradient(145deg,#4FB3C9,#2F8A9E)">MB</span><span class="row-body"><span class="row-line"><span class="unread"></span><span class="row-name">Marcus Bell</span><span class="row-when">12m</span></span><span class="row-prev">Missed call · 42s voicemail</span></span></button>
+      <button class="row" aria-current="true" id="rowPriya"><span class="av lg ln-main" style="background:linear-gradient(145deg,#B98AE8,#8E63C4)">PR</span><span class="row-body"><span class="row-line"><span class="unread" id="pDot" hidden></span><svg id="pStar" class="row-star" hidden viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path d="m12 3 2.7 5.7 6.3.9-4.5 4.4 1 6.3L12 17.4 6.5 20.3l1-6.3L3 9.6l6.3-.9z"/></svg><span class="row-name" id="pName">Priya Raman</span><span class="row-when">49m</span></span><span class="row-prev" id="pPrev"><b>You:</b> Perfect, thank you! Speak tomorrow.</span></span></button>
+      <button class="row"><span class="av lg ln-uk" style="background:linear-gradient(145deg,#3ECF8E,#2BA873)">TH</span><span class="row-body"><span class="row-line"><span class="row-name">Tom Halliday</span><span class="row-when">1h</span></span><span class="row-prev">Is the 0800 number included in the plan?</span></span></button>
+      <button class="row"><span class="av lg ln-main" style="background:linear-gradient(145deg,#8792A6,#68738A)">51</span><span class="row-body"><span class="row-line"><span class="row-name">(512) 555-0177</span><span class="row-when">2h</span></span><span class="row-prev">STOP</span></span></button>
+      <button class="row"><span class="av lg ln-support" style="background:linear-gradient(145deg,#5B8DEF,#4A7BDB)">DO</span><span class="row-body"><span class="row-line"><span class="row-name">Dana Okafor</span><span class="row-when">4h</span></span><span class="row-prev"><b>You:</b> Outbound call · 6m 12s</span></span></button>
+      <button class="row"><span class="av lg ln-support" style="background:linear-gradient(145deg,#DB6BB0,#B44C8E)">HM</span><span class="row-body"><span class="row-line"><span class="row-name">Helen Mbeki</span><span class="row-when">Sep 17</span></span><span class="row-prev">Can someone call me back about porting?</span></span></button>
+    </div>
+  </section>
+
+  <section class="thread">
+    <div class="thread-top">
+      <button class="who" onclick="togglePanel()">
+        <span class="av lg ln-main" style="background:linear-gradient(145deg,#B98AE8,#8E63C4)">PR</span>
+        <span>
+          <div class="thread-name">Priya Raman</div>
+          <div class="thread-sub"><span>(512) 555-0119</span><span class="ln-dot"></span><span>Main line</span></div>
+        </span>
+      </button>
+      <button class="call-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>Call</button>
+      <span style="display:flex;gap:3px;margin-left:8px">
+        <!-- Marks THEIR most recent message unread, so the conversation comes back to
+             the top of the list as something still owed a reply. -->
+        <button class="icon-btn" id="unreadBtn" aria-pressed="false" title="Mark as unread" onclick="markUnread()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button>
+        <!-- Flags the CONTACT, not the message — it stays important across every
+             future conversation with them. -->
+        <button class="icon-btn star" id="importantBtn" aria-pressed="false" title="Mark as important" onclick="markImportant()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3 2.7 5.7 6.3.9-4.5 4.4 1 6.3L12 17.4 6.5 20.3l1-6.3L3 9.6l6.3-.9z"/></svg></button>
+        <button class="icon-btn" id="panelBtn" aria-pressed="false" title="Contact details" onclick="togglePanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+      </span>
+    </div>
+
+    <div class="msgs">
+      <span class="day">Wednesday</span>
+      <div class="callcard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="width:17px;height:17px;color:var(--live)"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+        Outbound call · 6:12
+        <button class="play">▷ Play recording</button>
+      </div>
+
+      <div class="grp">
+        <div class="grp-who">Priya Raman</div>
+        <div class="bubble">Hi — following up on the quote you sent last week. Is the porting fee a one-off?</div>
+        <div class="bubble">And can we keep our existing numbers?</div>
+        <div class="m-when">9:42</div>
+      </div>
+
+      <div class="grp out">
+        <div class="grp-who">Jordan · Main line</div>
+        <div class="bubble">Morning Priya — yes, one-off per number, and we waive it above 20 numbers.</div>
+        <div class="bubble">Every one of them. Here's the porting checklist.</div>
+        <div class="m-when">9:47 ✓</div>
+      </div>
+
+      <div class="note">
+        <div class="note-top"><span class="note-tag">Internal note</span><span style="color:var(--muted)">Jordan Ellis</span></div>
+        <div style="font-size:13.5px;line-height:1.55;color:var(--subtle)">Heads up: Priya is the decision maker, but billing sign-off goes through Marcus.</div>
+      </div>
+
+      <div class="grp">
+        <div class="bubble">Perfect, thank you! Speak tomorrow.</div>
+        <div class="m-when">10:31</div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-box">
+        <input placeholder="Write a message…" />
+        <div class="composer-row">
+          <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12.5 12.5 21a5 5 0 0 1-7-7l8.5-8.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3l8-8"/></svg></button>
+          <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4h16v10H8l-4 4z"/></svg></button>
+          <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+          <span style="font-size:11.5px;color:var(--muted);margin-left:10px">1 segment</span>
+          <button class="send">Send<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M4 12h14"/><path d="m12 6 6 6-6 6"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="panel-in" style="position:relative">
+      <button class="icon-btn panel-close" onclick="togglePanel()" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <div class="panel-head">
+        <span class="av xl ln-main" style="background:linear-gradient(145deg,#B98AE8,#8E63C4)">PR</span>
+        <span class="panel-name">Priya Raman</span>
+      </div>
+      <div class="f"><span class="f-k">Phone</span><span class="f-v">(512) 555-0119</span></div>
+      <div class="f"><span class="f-k">Email</span><span class="f-v">priya@whitlock.co</span></div>
+      <div class="f"><span class="f-k">Company</span><span class="f-v">Whitlock &amp; Daughters</span></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+  /* Mark as unread — their LAST inbound message, not the whole thread. The row goes
+     bold and the dot returns, which is how it re-enters the "owed a reply" pile. */
+  function markUnread() {
+    const b = document.getElementById("unreadBtn");
+    const on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", String(on));
+    document.getElementById("rowPriya").classList.toggle("is-unread", on);
+    document.getElementById("pDot").hidden = !on;
+    document.getElementById("pPrev").innerHTML = on
+      ? "Perfect, thank you! Speak tomorrow."          // their message, back as unread
+      : "<b>You:</b> Perfect, thank you! Speak tomorrow.";
+  }
+
+  /* Mark as important — a flag on the CONTACT. It persists past this conversation,
+     which is why it shows as a star on the person rather than on a message. */
+  function markImportant() {
+    const b = document.getElementById("importantBtn");
+    const on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", String(on));
+    b.title = on ? "Remove from important" : "Mark as important";
+    document.getElementById("pStar").hidden = !on;
+  }
+
+  function togglePanel() {
+    const app = document.getElementById("app");
+    const open = app.dataset.panel === "open";
+    app.dataset.panel = open ? "closed" : "open";
+    document.getElementById("panelBtn").setAttribute("aria-pressed", String(!open));
+  }
+  const btns = document.querySelectorAll(".toggle button");
+  btns.forEach((b) => b.addEventListener("click", () => {
+    document.documentElement.dataset.theme = b.dataset.themeSet;
+    btns.forEach((o) => o.setAttribute("aria-pressed", String(o === b)));
+  }));
+</script>
+</body>
+</html>
