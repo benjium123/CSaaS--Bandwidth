@@ -1,0 +1,220 @@
+/**
+ * "The Exchange", in daylight.
+ *
+ * WHY THIS IS A SEPARATE FILE AND NOT AN EDIT TO authTheme.css
+ * The dark theme is owned and actively edited by another session. Everything here is
+ * additive: one extra class on the surface wrapper turns the light theme on, and with the
+ * class absent not a single rule in this file matches. Deleting this file and its import
+ * restores the dark-only product exactly.
+ *
+ * THE TRICK: THE TOKEN NAMES ARE ROLES, NOT COLOURS.
+ * `--ex-ink` does not mean "dark", it means THE FIELD. `--ex-bone` does not mean "pale",
+ * it means TYPE ON THE FIELD. In the switchboard room the field is dark and the type is
+ * warm; in daylight the field is paper and the type is ink. Because every rule in
+ * authTheme.css, landing.css, panel.css and surfaces.css was written against the role and
+ * never against the literal colour, re-pointing these ten values flips the entire public
+ * surface without touching one layout rule. That is the whole design of this file, and it
+ * is why the names are NOT renamed to something that reads more naturally in light.
+ *
+ * WHAT STILL HAS TO BE OVERRIDDEN BY HAND
+ * Only the things that are dark-surface TECHNIQUES rather than colours: a lit atmosphere
+ * behind a dark field, an inset bone highlight along a top edge, a deep black drop shadow,
+ * and the few places where a literal hsl() was written instead of a token. Those are all
+ * below, each with the reason it cannot simply inherit.
+ *
+ * SPECIFICITY
+ * The base file styles controls as `.auth-surface .ex-btn-primary` (0,2,0). Every override
+ * here is written `.auth-surface.is-light .ex-*` (0,3,0) so it wins DETERMINISTICALLY,
+ * rather than depending on the order Vite happens to emit the two stylesheets. The token
+ * block uses `.auth-surface.auth-surface.is-light` (0,3,0) to beat the base file's own
+ * doubled `.auth-surface.auth-surface` (0,2,0). Do not "tidy" these to single classes.
+ *
+ * CONTRAST
+ * Every text value below was measured against the field it sits on, not eyeballed. On the
+ * paper field (38 30% 95%): ink 15.1, ink-dim 6.3, copper 5.4, copper-soft 6.5, verdigris
+ * 5.3, danger 5.6 - all clear AA 4.5 for body text. Paper label on the verdigris fill is
+ * 5.6. Note that `--ex-copper-soft` is DARKER than `--ex-copper` here, which is the
+ * reverse of the dark theme: in the dark file "soft" means lifted off the ink far enough
+ * to carry small text, and on paper carrying small text means going down, not up. The
+ * hairline is 1.9 against the field - visible as a milled line, not as a border.
+ */
+
+.auth-surface.auth-surface.is-light {
+  /* Palette ------------------------------------------------------------------ */
+  --ex-ink: 38 30% 95%;
+  --ex-ink-raise: 38 34% 98%;
+  --ex-ink-high: 38 18% 90%;
+  --ex-bone: 197 34% 11%;
+  --ex-bone-dim: 197 14% 34%;
+  --ex-copper: 24 68% 36%;
+  --ex-copper-soft: 24 62% 32%;
+  --ex-copper-line: 24 30% 70%;
+  --ex-verdigris: 168 72% 26%;
+  --ex-danger: 6 68% 42%;
+
+  /* The shadcn tokens the vendored primitives read. `--background` and `--foreground`
+   * already point at --ex-ink / --ex-bone in the base file and so flip for free; this one
+   * does not, because it is the label ON the copper fill and the fill got darker. */
+  --primary-foreground: 38 34% 98%;
+
+  color-scheme: light;
+}
+
+/* Atmosphere -----------------------------------------------------------------
+ * The base `::before` ends in `linear-gradient(175deg, hsl(197 32% 7%), ...)` - a literal,
+ * not a token, so it stays near-black whatever the palette says and would paint a dark
+ * slab under a light page. Re-declared here in full. The two glows survive the change of
+ * field but not at their dark-theme strength: on paper, 0.13 reads as a stain rather than
+ * as a direction of light, so both are roughly halved. */
+.auth-surface.auth-surface.is-light::before {
+  background:
+    radial-gradient(70ch 50ch at 12% -10%, hsl(var(--ex-verdigris) / 0.07), transparent 60%),
+    radial-gradient(60ch 45ch at 88% 108%, hsl(var(--ex-copper) / 0.07), transparent 62%),
+    linear-gradient(175deg, hsl(38 44% 97%), hsl(var(--ex-ink)) 55%);
+}
+
+/* The patchbay lattice is drawn in `--ex-bone`, so it inverts for free - pale dots on ink
+ * become ink dots on paper, which is what a real panel looks like from the front. It only
+ * needs taking down: at 0.85 the same dots that whisper on a dark field read as grain on
+ * a light one. */
+.auth-surface.auth-surface.is-light::after {
+  opacity: 0.4;
+}
+
+/* Surfaces -------------------------------------------------------------------
+ * `.ex-plate` and `.lps-panel` both lift a surface off a DARK field using two tricks that
+ * have no meaning on paper: a 1px inset highlight along the top edge (light catching a
+ * raised edge, invisible when the surface is already the lightest thing on screen) and a
+ * near-black 70px drop shadow (correct on ink, soot on paper). Replaced with the light
+ * equivalent: a soft neutral shadow and a hairline that darkens rather than lightens. */
+.auth-surface.is-light .ex-plate,
+.auth-surface.is-light .lps-panel {
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.9) inset,
+    0 1px 2px hsl(24 30% 40% / 0.08),
+    0 18px 40px -28px hsl(24 30% 30% / 0.35);
+}
+
+/* Controls ------------------------------------------------------------------- */
+
+/* The primary fill on the AUTH screens stays copper - that is the other session's
+ * decision and this file is a theme, not a redesign. It only gets darker, because a 52%
+ * copper that reads as a confident fill on ink reads as a highlighter on paper and its
+ * label cannot then be dark enough to be legible. */
+.auth-surface.is-light .ex-btn-primary {
+  background: linear-gradient(180deg, hsl(24 66% 40%), hsl(var(--ex-copper)));
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 10px 24px -18px hsl(var(--ex-copper) / 0.8);
+}
+
+.auth-surface.is-light .ex-btn-primary:not(:disabled):hover {
+  background: linear-gradient(180deg, hsl(24 66% 44%), hsl(24 68% 38%));
+  box-shadow: 0 14px 28px -16px hsl(var(--ex-copper) / 0.9);
+}
+
+.auth-surface.is-light .ex-btn-quiet {
+  background: hsl(var(--ex-ink-raise));
+  border-color: hsl(var(--ex-copper-line));
+  color: hsl(var(--ex-bone));
+}
+
+.auth-surface.is-light .ex-btn-quiet:not(:disabled):hover {
+  border-color: hsl(var(--ex-copper) / 0.7);
+  background: hsl(var(--ex-ink-high) / 0.7);
+}
+
+.auth-surface.is-light .ex-btn-key {
+  background: hsl(var(--ex-verdigris) / 0.08);
+  border-color: hsl(var(--ex-verdigris) / 0.45);
+  /* The dark theme lightens this label to 78% to lift it off the ink. On paper it has to
+   * go the other way and become the token itself, which measured 5.3. */
+  color: hsl(var(--ex-verdigris));
+}
+
+.auth-surface.is-light .ex-btn-key:not(:disabled):hover {
+  background: hsl(var(--ex-verdigris) / 0.14);
+  border-color: hsl(var(--ex-verdigris) / 0.75);
+}
+
+/* Fields --------------------------------------------------------------------- */
+.auth-surface.is-light .ex-input {
+  background: hsl(var(--ex-ink-raise));
+  border-color: hsl(var(--ex-copper-line));
+  border-bottom-color: hsl(var(--ex-copper) / 0.5);
+  color: hsl(var(--ex-bone));
+  /* A recessed field needs to read as recessed against paper, where the surrounding
+   * surface is no longer darker than it. */
+  box-shadow: 0 1px 2px hsl(24 30% 40% / 0.06) inset;
+}
+
+.auth-surface.is-light .ex-input::placeholder {
+  color: hsl(var(--ex-bone-dim) / 0.65);
+}
+
+.auth-surface.is-light .ex-input:focus-visible {
+  background: hsl(var(--ex-ink-raise));
+  border-color: hsl(var(--ex-verdigris) / 0.8);
+  /* The dark theme's focus ring is a 26px verdigris BLOOM - light spilling out of a lit
+   * component. Paper does not glow, so the same state is carried by a tighter, denser
+   * double ring instead of a halo. */
+  box-shadow:
+    0 0 0 1px hsl(var(--ex-verdigris) / 0.5),
+    0 0 0 3px hsl(var(--ex-verdigris) / 0.14);
+}
+
+/* Status --------------------------------------------------------------------- */
+
+/* The lamps keep their hues and lose their bloom: a glow is a light source seen in a dark
+ * room, and on paper it turns into a smudge around the dot. The ring stays, because the
+ * ring is what makes a 7px dot read as a lamp rather than as a bullet point. */
+.auth-surface.is-light .ex-lamp-live {
+  box-shadow: 0 0 0 3px hsl(var(--ex-verdigris) / 0.18);
+}
+
+.auth-surface.is-light .ex-lamp-wait {
+  box-shadow: 0 0 0 3px hsl(var(--ex-copper) / 0.2);
+}
+
+.auth-surface.is-light .ex-lamp-fault {
+  box-shadow: 0 0 0 3px hsl(var(--ex-danger) / 0.2);
+}
+
+/* `ex-breathe` animates the wait lamp's box-shadow with a LITERAL copper, so it would
+ * animate back to the dark theme's values on a light page. Re-declared against the token. */
+@keyframes ex-breathe-light {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 3px hsl(var(--ex-copper) / 0.2);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 6px hsl(var(--ex-copper) / 0.05);
+  }
+}
+
+.auth-surface.is-light .ex-lamp-wait {
+  animation-name: ex-breathe-light;
+}
+
+/* Both of these set a literal high-lightness text colour to sit on a 0.08 tint of the same
+ * hue - correct on ink, invisible on paper. Same construction, inverted. */
+.auth-surface.is-light .ex-alert {
+  background: hsl(var(--ex-danger) / 0.07);
+  color: hsl(6 60% 32%);
+}
+
+.auth-surface.is-light .ex-notice {
+  background: hsl(var(--ex-verdigris) / 0.07);
+  color: hsl(168 60% 20%);
+}
+
+/* The dial-tone trace is stroked with a literal `--ex-verdigris / 0.55` in AuthShell.tsx's
+ * inline SVG attribute, which picks up the token and so darkens correctly on its own. It
+ * is listed here only so the next person does not go looking for why it was missed. */
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-surface.is-light .ex-lamp-wait {
+    animation: none;
+  }
+}

@@ -47,3 +47,4 @@ pgdata/
 miniodata/
 *.log
 .venv-agents/
+.deepseek/

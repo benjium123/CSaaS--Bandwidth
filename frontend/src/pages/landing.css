@@ -1,17 +1,26 @@
 /* The front of the product, in the Exchange language.
  *
- * Everything here is scoped under `.lp`, which is mounted inside `.auth-surface` so the
- * palette in authTheme.css applies. No new colours: ink, bone, copper, verdigris, and the
- * two families already loaded (Archivo Variable wide for nameplate voice, Martian Mono for
- * labels). A landing page that invented its own palette would make the first click into the
- * product a change of subject.
+ * Scoped under `.lp`, mounted inside `.auth-surface` so the palette in authTheme.css
+ * applies. No new colours: ink, bone, copper, verdigris, and the two families already
+ * loaded (Archivo Variable wide for nameplate voice, Martian Mono for machine output).
  *
- * The motif is a patch field - the jack panel of a manual exchange. It is drawn with two
- * repeating gradients rather than an image, so it costs nothing, scales to any viewport and
- * needs no CSP allowance.
+ * The motif is a patch field - the jack panel of a manual exchange - drawn with a
+ * repeating gradient rather than an image, so it costs nothing, scales to any viewport
+ * and needs no CSP allowance.
+ *
+ * COPPER IS THE ACCENT, matching the auth screens one click away: the headline accent, the
+ * primary fill, the step numerals and the rules. VERDIGRIS keeps the single meaning it has
+ * in authTheme.css - live, verified, in progress - and is reached through .ex-lamp-live and
+ * the focus ring, never through --lp-signal. Spending it anywhere else is what makes a lamp
+ * stop reading as a lamp.
  */
 
 .lp {
+  /* Aliases so the intent is legible at every use site. */
+  --lp-signal: var(--ex-copper);
+  --lp-rule:   var(--ex-copper-line);
+  --lp-index:  var(--ex-copper-soft);
+
   position: relative;
   /* Explicit width: the page is also mounted as a flex child in the design preview, where
    * a block root would shrink to its content and silently collapse the 2-column hero. */
@@ -21,7 +30,9 @@
 }
 
 /* The patch field: a grid of copper jacks, far enough down that it reads as texture rather
- * than pattern, fading out before it reaches the content it sits behind. */
+ * than pattern, fading out before it reaches the content it sits behind. A single copper
+ * layer: the original had a second verdigris lattice over it, which spent the status colour
+ * on wallpaper. */
 .lp::before {
   content: "";
   position: absolute;
@@ -30,10 +41,8 @@
   pointer-events: none;
   z-index: 0;
   background-image:
-    radial-gradient(circle at center, hsl(var(--ex-copper) / 0.16) 1px, transparent 1.6px),
-    radial-gradient(circle at center, hsl(var(--ex-verdigris) / 0.1) 1px, transparent 1.6px);
-  background-size: 34px 34px, 34px 34px;
-  background-position: 0 0, 17px 17px;
+    radial-gradient(circle at center, hsl(var(--lp-rule) / 0.22) 1px, transparent 1.6px);
+  background-size: 34px 34px;
   mask-image: linear-gradient(180deg, hsl(0 0% 0% / 0.85), transparent 72%);
 }
 
@@ -52,7 +61,7 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid hsl(var(--ex-copper-line) / 0.55);
+  border-bottom: 1px solid hsl(var(--lp-rule) / 0.55);
   background: hsl(var(--ex-ink) / 0.82);
   backdrop-filter: blur(10px);
 }
@@ -61,6 +70,17 @@
   display: flex;
   align-items: baseline;
   gap: 0.625rem;
+}
+
+.lp-mark-name {
+  font-size: 1.125rem;
+  color: hsl(var(--ex-bone));
+}
+
+.lp-bar-anchors {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
 }
 
 .lp-bar-links {
@@ -84,13 +104,28 @@
   gap: 2.5rem;
 }
 
+.lp-hero > * {
+  min-width: 0;
+}
+
 @media (min-width: 62rem) {
   .lp-hero {
-    grid-template-columns: 1.05fr 0.95fr;
+    grid-template-columns: 1.02fr 1fr;
     align-items: center;
     padding: 5.5rem 0 4.5rem;
     gap: 3.5rem;
   }
+
+  /* The console continues past the frame like a real rack unit. */
+  .lp-hero-surface {
+    margin-right: calc(50% - 50vw);
+  }
+}
+
+/* Below 62rem the bleed is removed and the console is clipped to the container. */
+.lp-hero-surface {
+  overflow: hidden;
+  min-width: 0;
 }
 
 .lp-h1 {
@@ -105,6 +140,15 @@
   margin: 1rem 0 0;
 }
 
+/* The accent is copper, and it is copper for a specific reason: this is THE SAME SENTENCE
+ * as the headline in AuthShell's aside, which a visitor sees one click later on the login
+ * and signup screens. There it is set plain, in copper, at the surrounding width. Two
+ * treatments of one sentence, a click apart, is the kind of difference nobody can name and
+ * everybody notices - so this matches it exactly.
+ *
+ * An earlier revision set this in bone with a narrowed width axis and a drawn rule
+ * underneath. It was a better piece of typography in isolation and it is gone deliberately;
+ * if the aside's treatment ever changes, this is the other half of the pair. */
 .lp-h1 em {
   font-style: normal;
   color: hsl(var(--ex-copper));
@@ -133,108 +177,34 @@
   color: hsl(var(--ex-bone-dim) / 0.85);
 }
 
-/* The panel: a switchboard drawn in CSS, not a screenshot. Decorative, and marked
- * aria-hidden in the markup - every claim it appears to make is made in real copy
- * elsewhere on the page. */
-.lp-panel {
-  position: relative;
-  border: 1px solid hsl(var(--ex-copper-line) / 0.85);
-  border-radius: 4px;
-  background: linear-gradient(180deg, hsl(var(--ex-ink-raise) / 0.97), hsl(var(--ex-ink) / 0.9));
-  box-shadow:
-    0 1px 0 hsl(var(--ex-bone) / 0.05) inset,
-    0 30px 70px -34px hsl(197 60% 2% / 0.95);
-  overflow: hidden;
-}
-
-.lp-panel::before {
-  content: "";
-  position: absolute;
-  inset: -1px auto auto -1px;
-  height: 2px;
-  width: calc(100% + 2px);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    hsl(var(--ex-copper) / 0.9) 18%,
-    hsl(var(--ex-verdigris) / 0.85) 52%,
-    hsl(var(--ex-copper) / 0.9) 82%,
-    transparent
-  );
-  animation: ex-charge 1.2s cubic-bezier(0.22, 0.8, 0.2, 1) 300ms both;
-}
-
-.lp-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem 0.875rem;
-  border-bottom: 1px solid hsl(var(--ex-copper-line) / 0.6);
-}
-
-.lp-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 0.875rem;
-  border-bottom: 1px solid hsl(var(--ex-copper-line) / 0.35);
-}
-
-.lp-row:last-child {
-  border-bottom: 0;
-}
-
-.lp-row.is-on {
-  background: hsl(var(--ex-copper) / 0.06);
-}
-
-.lp-who {
-  font-size: 0.8125rem;
-  color: hsl(var(--ex-bone));
-  line-height: 1.3;
-}
-
-.lp-prev {
-  display: block;
-  margin-top: 0.1875rem;
-  font-size: 0.75rem;
-  color: hsl(var(--ex-bone-dim));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lp-when {
-  font-family: "Martian Mono Variable", ui-monospace, monospace;
-  font-size: 0.5625rem;
-  letter-spacing: 0.1em;
-  color: hsl(var(--ex-bone-dim) / 0.8);
+/* Keyboard focus stays VERDIGRIS across the whole public surface, matching authTheme's
+ * .ex-btn:focus-visible. Copper is the brand accent now, and a focus ring in the brand
+ * colour is indistinguishable from ordinary ornament - the indicator has to be the one
+ * colour nothing else on the page is spending. */
+.lp a:focus-visible {
+  outline: 2px solid hsl(var(--ex-verdigris));
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 /* Sections ------------------------------------------------------------------ */
 .lp-sec {
+  position: relative;
   padding: 3.25rem 0;
-  border-top: 1px solid hsl(var(--ex-copper-line) / 0.45);
 }
 
-.lp-sec-grid {
-  display: grid;
-  gap: 1.5rem;
-}
-
-/* Grid items default to min-width:auto, so a long cell in the right-hand column pushes the
- * column wider than the wrap and the text runs off the page. */
-.lp-sec-grid > * {
-  min-width: 0;
-}
-
-@media (min-width: 52rem) {
-  .lp-sec-grid {
-    grid-template-columns: 14rem 1fr;
-    gap: 3rem;
-  }
+/* Milled rule between sections: a gradient bar, not a browser-drawn 1px border. */
+.lp-sec::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--lp-rule)),
+    hsl(var(--lp-rule) / 0.15) 70%,
+    transparent
+  );
 }
 
 .lp-h2 {
@@ -255,13 +225,73 @@
   max-width: 54ch;
 }
 
-.lp-body + .lp-body {
-  margin-top: 0.875rem;
-}
-
 .lp-body b {
   color: hsl(var(--ex-bone));
   font-weight: 500;
+}
+
+/* 01 - centred copy, then the Thread surface full-bleed below. */
+.lp-sec-centred {
+  max-width: 46rem;
+  margin-inline: auto;
+}
+
+.lp-bleed {
+  margin-top: 2rem;
+  min-width: 0;
+}
+
+@media (min-width: 62rem) {
+  .lp-bleed {
+    margin-inline: calc(50% - 50vw);
+    padding-inline: 1rem;
+  }
+}
+
+/* 02 / 03 - split sections. The rhythm alternates: 02 is surface-left, 03 is copy-left. */
+.lp-sec-split {
+  display: grid;
+  gap: 2rem;
+}
+
+.lp-sec-split > * {
+  min-width: 0;
+}
+
+@media (min-width: 62rem) {
+  .lp-sec-split {
+    grid-template-columns: 1.15fr 20rem;
+    gap: 3rem;
+    align-items: start;
+  }
+
+  /* Surface-left carries the patch panel, and the panel is legible a good deal narrower
+   * than the prose is. At 1.15fr/20rem the copy column came out 320px - which the
+   * paragraph survives and the role list below it does not, since that list alone wants
+   * ~292px of fixed columns. The panel gives the width back. */
+  .lp-sec-split.is-surface-left {
+    grid-template-columns: minmax(0, 1fr) 24rem;
+  }
+
+  .lp-sec-split.is-surface-left .lp-sec-surface {
+    order: 1;
+  }
+
+  .lp-sec-split.is-surface-left .lp-sec-copy {
+    order: 2;
+  }
+}
+
+/* Below 62rem the copy comes first in visual order in both cases, so the surface never
+ * precedes its own explanation on a phone. */
+.lp-sec-copy {
+  order: 1;
+  min-width: 0;
+}
+
+.lp-sec-surface {
+  order: 2;
+  min-width: 0;
 }
 
 /* Lines: the access model, as a rack of labelled strips rather than three cards. */
@@ -272,24 +302,43 @@
   gap: 0;
 }
 
+/* Role label in a fixed gutter, then the lead and its qualifier STACKED in one flexible
+ * column. The three-across version is a holdover from when this list ran the full width
+ * of the page; in the split section's copy column the third cell collapsed to ~88px and
+ * set "Reads it, answers it, calls from it." as three ragged lines. The patch panel
+ * beside it already shows who holds which line, so this list is annotation and should
+ * read as prose, not as a table competing with the drawing. */
 .lp-line {
   display: grid;
-  grid-template-columns: 5.25rem 7.5rem 1fr;
+  grid-template-columns: 5.25rem minmax(0, 1fr);
   align-items: baseline;
   gap: 0.875rem;
   padding: 0.8125rem 0;
-  border-top: 1px dotted hsl(var(--ex-copper-line) / 0.8);
+  border-top: 1px dotted hsl(var(--lp-rule) / 0.8);
   font-size: 0.875rem;
   color: hsl(var(--ex-bone-dim));
 }
 
 .lp-line:last-child {
-  border-bottom: 1px dotted hsl(var(--ex-copper-line) / 0.8);
+  border-bottom: 1px dotted hsl(var(--lp-rule) / 0.8);
 }
 
 .lp-line dd {
   margin: 0;
   min-width: 0;
+  grid-column: 2;
+}
+
+/* The qualifier sits under the lead rather than beside it. */
+.lp-line dd + dd {
+  margin-top: 0.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: hsl(var(--ex-bone-dim) / 0.85);
+}
+
+.lp-line-lead {
+  color: hsl(var(--ex-bone));
 }
 
 .lp-line dt {
@@ -297,35 +346,38 @@
   font-size: 0.5625rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: hsl(var(--ex-copper));
+  color: hsl(var(--lp-index));
 }
 
 /* Steps: numerals on a rule, not a row of boxes. */
 .lp-steps {
   margin-top: 1.5rem;
-  counter-reset: lp;
   display: grid;
   gap: 0;
 }
 
 .lp-step {
   display: grid;
-  grid-template-columns: 2.75rem 1fr;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
   gap: 1rem;
   padding: 1.125rem 0;
-  border-top: 1px solid hsl(var(--ex-copper-line) / 0.5);
+  border-top: 1px solid hsl(var(--lp-rule) / 0.5);
 }
 
 .lp-step:last-child {
-  border-bottom: 1px solid hsl(var(--ex-copper-line) / 0.5);
+  border-bottom: 1px solid hsl(var(--lp-rule) / 0.5);
 }
 
 .lp-step-n {
   font-family: "Martian Mono Variable", ui-monospace, monospace;
   font-size: 0.6875rem;
   letter-spacing: 0.08em;
-  color: hsl(var(--ex-copper));
+  color: hsl(var(--lp-index));
   padding-top: 0.125rem;
+}
+
+.lp-step-body {
+  min-width: 0;
 }
 
 .lp-step-t {
@@ -342,19 +394,40 @@
   max-width: 52ch;
 }
 
+.lp-steps-note {
+  margin-top: 1.5rem;
+}
+
 /* Close --------------------------------------------------------------------- */
 .lp-close {
+  position: relative;
   padding: 4rem 0 3rem;
-  border-top: 1px solid hsl(var(--ex-copper-line) / 0.45);
   text-align: center;
 }
 
-.lp-close .lp-cta {
+.lp-close::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--lp-rule)),
+    hsl(var(--lp-rule) / 0.15) 70%,
+    transparent
+  );
+}
+
+.lp-close-lede {
+  margin: 1rem auto 0;
+}
+
+.lp-close-cta {
   justify-content: center;
 }
 
 .lp-foot {
-  border-top: 1px solid hsl(var(--ex-copper-line) / 0.45);
+  position: relative;
   padding: 1.5rem 0 2.5rem;
   display: flex;
   flex-wrap: wrap;
@@ -363,6 +436,19 @@
   gap: 1rem;
   font-size: 0.75rem;
   color: hsl(var(--ex-bone-dim) / 0.8);
+}
+
+.lp-foot::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--lp-rule)),
+    hsl(var(--lp-rule) / 0.15) 70%,
+    transparent
+  );
 }
 
 .lp-foot-links {
@@ -377,9 +463,296 @@
   animation-delay: var(--d, 0ms);
 }
 
+/* Mobile: the anchors drop. No hamburger, no JS drawer for four anchors. */
+@media (max-width: 51.99rem) {
+  .lp-bar-anchors {
+    display: none;
+  }
+}
+
+/* Narrow phones: the bar still held the wordmark, the theme control, a "Sign in" link and
+ * the "Start" button, and at 360px that is one item too many - "Sign in" wrapped onto two
+ * lines and shoved "Start" off the edge. `overflow-x: clip` on .lp meant the page reported
+ * no horizontal scroll at all while the primary call to action was half missing, so this
+ * is a case measurement alone does not catch and only looking does.
+ *
+ * "Sign in" is the one to drop: it is still in the hero, still in the footer, and the
+ * button beside it leads to the same place for anyone who has no account yet. The theme
+ * control stays, because it is the only route to it on this surface. */
+@media (max-width: 26rem) {
+  .lp-bar {
+    gap: 0.625rem;
+    padding-inline: 1rem;
+  }
+
+  .lp-bar-links .ex-link {
+    display: none;
+  }
+}
+
+/* Reduced motion: turn off the rise and the accent draw, and resolve the accent rule to
+ * its FINAL state so it is never left hidden. */
 @media (prefers-reduced-motion: reduce) {
-  .lp-rise,
-  .lp-panel::before {
+  .lp-rise {
     animation: none;
   }
+
+}
+
+/* ===========================================================================
+ * THEME CONTROL, RACK, GRID, CHIPS, FAQ - and the light-theme overrides.
+ * ========================================================================= */
+
+/* Section heads -------------------------------------------------------------
+ * The numbered sections that carry a grid rather than a surface share one head
+ * block, so the eyebrow and heading rhythm stays identical across the page. */
+.lp-sec-head {
+  max-width: 38rem;
+  margin-bottom: 2rem;
+}
+
+/* The rack ------------------------------------------------------------------
+ * Six capability cards. The pattern the better competitors use and the one this
+ * page was missing: a short claim, the name of the thing that does it, and - on
+ * the cards where it earns its space - a small drawing of that one thing. The
+ * drawing is pinned to the bottom with `margin-top: auto`, so cards in the same
+ * row agree on where their art starts however long the claim wraps. */
+.lp-rack {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  /* A 1px gap over a ruled background: the cards read as modules milled into one
+   * panel rather than as six cards floating apart. */
+  background: hsl(var(--lp-rule) / 0.55);
+  border: 1px solid hsl(var(--lp-rule) / 0.55);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+@media (min-width: 40rem) {
+  .lp-rack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 62rem) {
+  .lp-rack {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.lp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-width: 0;
+  padding: 1.375rem 1.25rem 1.25rem;
+  background: hsl(var(--ex-ink-raise) / 0.92);
+}
+
+.lp-card-claim {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.4;
+  color: hsl(var(--ex-bone));
+  text-wrap: balance;
+}
+
+.lp-card-tag {
+  color: hsl(var(--lp-index));
+}
+
+.lp-card-art {
+  margin-top: auto;
+  padding-top: 1rem;
+}
+
+/* The safety grid -----------------------------------------------------------
+ * Title plus one sentence, six times. No icons in circles: the Exchange language
+ * has no icon set, and inventing one here would be the single most generic move
+ * available. The copper rule along the top of each item is the whole ornament. */
+.lp-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1.75rem 2.5rem;
+}
+
+@media (min-width: 44rem) {
+  .lp-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 66rem) {
+  .lp-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.lp-grid-item {
+  min-width: 0;
+  padding-top: 0.875rem;
+  border-top: 1px solid hsl(var(--lp-rule) / 0.8);
+}
+
+.lp-grid-t {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: hsl(var(--ex-bone));
+}
+
+.lp-grid-b {
+  margin: 0.4375rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: hsl(var(--ex-bone-dim));
+}
+
+.lp-grid-note {
+  margin-top: 2.25rem;
+}
+
+/* Made for ------------------------------------------------------------------ */
+.lp-chips {
+  list-style: none;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lp-chip {
+  padding: 0.4375rem 0.75rem;
+  border: 1px solid hsl(var(--lp-rule) / 0.9);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  color: hsl(var(--ex-bone-dim));
+  background: hsl(var(--ex-ink-raise) / 0.5);
+}
+
+.lp-fit-note {
+  margin-top: 1.5rem;
+}
+
+/* Questions -----------------------------------------------------------------
+ * Native <details>. The marker is suppressed and replaced by a drawn plus/minus
+ * so it can be copper and can rotate; `list-style: none` and the WebKit
+ * pseudo-element are both needed, since Safari ignores the former on <summary>. */
+.lp-faq {
+  border-top: 1px solid hsl(var(--lp-rule) / 0.7);
+  max-width: 52rem;
+}
+
+.lp-q {
+  border-bottom: 1px solid hsl(var(--lp-rule) / 0.7);
+}
+
+.lp-q-s {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.0625rem 0.25rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: hsl(var(--ex-bone));
+  transition: color 140ms ease;
+}
+
+.lp-q-s::-webkit-details-marker {
+  display: none;
+}
+
+.lp-q-s:hover {
+  color: hsl(var(--lp-signal));
+}
+
+.lp-q-s:focus-visible {
+  outline: 2px solid hsl(var(--ex-verdigris));
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* The mark: two 1px bars, one of which is rotated away when the panel opens. */
+.lp-q-mark {
+  position: relative;
+  flex: none;
+  width: 11px;
+  height: 11px;
+}
+
+.lp-q-mark::before,
+.lp-q-mark::after {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto 0;
+  height: 1px;
+  background: hsl(var(--lp-index));
+  transition: transform 220ms cubic-bezier(0.22, 0.85, 0.25, 1);
+}
+
+.lp-q-mark::after {
+  transform: rotate(90deg);
+}
+
+.lp-q[open] .lp-q-mark::after {
+  transform: rotate(0deg);
+}
+
+.lp-q-a {
+  margin: 0;
+  padding: 0 2.75rem 1.25rem 0.25rem;
+  max-width: 62ch;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: hsl(var(--ex-bone-dim));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-q-mark::before,
+  .lp-q-mark::after {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * LIGHT THEME, landing-specific.
+ *
+ * authTheme.light.css re-points the tokens, so almost everything above follows
+ * without a line of help. These are the exceptions, and they are exceptions for
+ * ONE reason: they are the rules where this file wrote a literal colour rather
+ * than a token, because the dark theme needed a hand-mixed value.
+ *
+ * SPECIFICITY, and this is the part that will bite whoever edits it next.
+ * `.lp.lp .ex-btn-primary` and `.auth-surface.is-light .ex-btn-primary` are BOTH
+ * (0,3,0). They tie, and a tie is settled by stylesheet emit order - which Vite
+ * decides, not us. So every landing rule that must win in light mode is written
+ * `.lp.lp.is-light` (0,4,0). Dropping one of those classes does not look like a
+ * bug until a production build happens to order the two files the other way.
+ * ------------------------------------------------------------------------- */
+
+/* On paper the jack field is a copper line at 70% lightness rather than 24%, so
+ * the same 0.22 alpha that reads as texture on ink all but disappears. */
+.lp.is-light::before {
+  background-image:
+    radial-gradient(circle at center, hsl(var(--lp-rule) / 0.55) 1px, transparent 1.6px);
+}
+
+/* The bar's blur sits over paper now, so it needs more of it to stay legible as
+ * the console drawing scrolls underneath. */
+.lp.is-light .lp-bar {
+  background: hsl(var(--ex-ink) / 0.9);
+}
+
+.lp.is-light .lp-card {
+  background: hsl(var(--ex-ink-raise));
 }

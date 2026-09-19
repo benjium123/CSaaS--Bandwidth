@@ -33,6 +33,9 @@ import * as React from "react";
 import "@fontsource-variable/archivo/wdth.css";
 import "@fontsource-variable/martian-mono/wght.css";
 import "@/auth/authTheme.css";
+import "@/auth/authTheme.light.css";
+import { ThemeToggle } from "@/auth/ThemeToggle";
+import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { cn } from "@/lib/utils";
 
 /** Stagger helper: every revealed element declares its place in the arrival sequence. */
@@ -50,10 +53,26 @@ export function AuthSurface({
   /** Replaced wholesale by `/report`, which is a public safety form, not a sign-in. */
   aside?: React.ReactNode;
 }) {
+  const { theme, toggle } = useSurfaceTheme();
   return (
-    // `dark` as well as `auth-surface`: the scope re-points the shared tokens, and the
-    // class keeps any `dark:` variant inside a shared primitive behaving correctly.
-    <div className="auth-surface dark flex min-h-full w-full flex-col lg:flex-row">
+    // The second class is the THEME. `dark` is not decorative and is still emitted in the
+    // dark case for the reason authTheme.css gives - it keeps any `dark:` variant inside a
+    // shared primitive behaving correctly - and `is-light` is what authTheme.light.css
+    // hangs its overrides off. `surfaceThemeClass` makes the two mutually exclusive by
+    // construction rather than by remembering at each call site.
+    //
+    // Default is LIGHT, by the operator's decision: the front door is light unless this
+    // person has chosen otherwise, and the operating system is not consulted. Under test
+    // that means the surface renders light, which changes no assertion - vitest runs with
+    // `css: false`, and nothing in the suite asserts on either theme class.
+    <div
+      className={`auth-surface ${surfaceThemeClass(theme)} flex min-h-full w-full flex-col lg:flex-row`}
+    >
+      {/* Top right of the surface, above both columns, so it is in the same place whether
+          the aside is present, replaced (`/report`) or stacked above on a phone. */}
+      <div className="absolute right-4 top-4 z-30 lg:right-6 lg:top-6">
+        <ThemeToggle theme={theme} onToggle={toggle} />
+      </div>
       {aside === undefined ? <AuthAside /> : aside}
       <main className="flex flex-1 items-center justify-center px-5 py-10 sm:px-8 lg:py-16">
         <div className="w-full max-w-[27rem]">{children}</div>
