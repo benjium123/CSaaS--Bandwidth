@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import time
 from typing import Any, Mapping
 
@@ -297,6 +298,67 @@ STATUS_MAP: dict[str, str | None] = {
 }
 
 
+def _id_verification(payload: dict) -> dict:
+    """The first ``decision.id_verifications`` entry, or an empty dict.
+
+    Didit reports every feature as a PLURAL ARRAY (``id_verifications``, never
+    ``id_verification``) because a workflow can run the same feature more than once.
+    The first element is the one the decision is based on.
+
+    Every layer here is defensive on purpose: ``decision`` is absent on non-terminal
+    statuses, the array can be missing or EMPTY, and an element can be a non-mapping.
+    A webhook that raises is worse than one that yields no identity, because the
+    caller already fails closed on missing identity.
+    """
+    decision = payload.get("decision")
+    if not isinstance(decision, dict):
+        return {}
+    reports = decision.get("id_verifications")
+    if not isinstance(reports, list) or not reports:
+        return {}
+    first = reports[0]
+    return first if isinstance(first, dict) else {}
+
+
+def _text(value: Any) -> str | None:
+    """A trimmed non-empty string, or None. Numbers and nulls become None."""
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
+#: ``YYYY-MM-DD`` possibly followed by a time component.
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
+
+
+def _normalise_dob(value: Any) -> str | None:
+    """Return the date of birth as ``YYYY-MM-DD``, the format Stripe's path produces.
+
+    ``kyc.identity_hash`` hashes the dob string verbatim, so two spellings of the same
+    birthday hash to two different values and the same human reads as a stranger on
+    re-verification. Stripe's adapter builds ``f"{year:04d}-{month:02d}-{day:02d}"``;
+    anything we cannot confidently normalise to that becomes None rather than a
+    differently-shaped string that would poison the hash.
+    """
+    text = _text(value)
+    if text is None:
+        return None
+    iso = _ISO_DATE.match(text)
+    if iso:
+        return f"{iso.group(1)}-{iso.group(2)}-{iso.group(3)}"
+    # A slash- or dash-separated date like "03/04/1990" is DELIBERATELY not parsed.
+    # It is ambiguous - day-first across most of the world, month-first in the US - and
+    # Didit documents ISO, so any such value is already off the documented path. There is
+    # no evidence in the payload saying which order it is in, so parsing it is a coin
+    # flip, and the losing side of that flip does not surface as an error. It writes a
+    # hash for the wrong birthday, silently, and then months later a real customer fails
+    # re-verification with `identity_mismatch` and has a security alert raised against
+    # them - and the evidence needed to diagnose it was discarded at this line.
+    # Returning None parks them for a human instead, which is exactly what we already do
+    # with every other payload we cannot read.
+    return None
+
+
 def outcome_from_payload(payload: dict) -> dict | None:
     """Translate a verified webhook payload into the shape the KYC service consumes.
 
@@ -304,24 +366,38 @@ def outcome_from_payload(payload: dict) -> dict | None:
     nothing. It must not crash and must not change the person on a status we do not
     recognise.
 
-    The identity fields (name, dob, document type/country) are always ``None``. Our
-    spec does not pin the shape of Didit's ``decision`` object, so we refuse to guess
-    field names inside it; the KYC service handles the all-None case explicitly.
+    Identity comes from ``decision.id_verifications[0]``. Didit's ``issuing_state`` is
+    the issuing COUNTRY of the document and maps onto our ``document_country``. When a
+    payload carries no usable identity every identity field is None and the KYC service
+    fails closed on it - missing data must never raise.
     """
     status = payload.get("status")
     internal = STATUS_MAP.get(status) if isinstance(status, str) else None
     if internal is None:
         return None
 
+    report = _id_verification(payload)
+    first_name = _text(report.get("first_name"))
+    last_name = _text(report.get("last_name"))
+    full_name = _text(report.get("full_name"))
+    if not first_name and not last_name and full_name:
+        # Some documents give only a single full name field. ``identity_hash`` hashes a
+        # SORTED word set of "first last", so handing the whole name through as the
+        # first name produces exactly the hash a split name would have produced.
+        first_name = full_name
+
     return {
         "session_id": payload.get("session_id"),
         "status": internal,
         "metadata": dict(payload.get("metadata") or {}),
         "vendor_data": payload.get("vendor_data"),
-        "first_name": None,
-        "last_name": None,
-        "dob": None,
-        "document_type": None,
-        "document_country": None,
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": full_name,
+        "dob": _normalise_dob(report.get("date_of_birth")),
+        "document_type": _text(report.get("document_type")),
+        "document_number": _text(report.get("document_number")),
+        # Didit names the issuing country "issuing_state".
+        "document_country": _text(report.get("issuing_state")),
         "error_code": None,
     }

@@ -497,12 +497,229 @@ def test_outcome_from_payload_carries_metadata_and_vendor_data():
     assert result is not None
     assert result["metadata"] == payload["metadata"]
     assert result["vendor_data"] == payload["vendor_data"]
-    # These stay None on purpose: the shape of Didit's ``decision`` object is not pinned
-    # by our spec, and guessing field names there would be worse than admitting we do not
-    # know. The KYC service handles the all-None case explicitly.
+    # This payload's ``decision`` carries no ``id_verifications`` array, so there is no
+    # identity to map and every identity field stays None. The KYC service handles the
+    # all-None case explicitly (it fails closed on re-verification). The mapping itself
+    # is covered below, from ``decision.id_verifications[0]``.
     assert result["first_name"] is None
     assert result["last_name"] is None
     assert result["dob"] is None
     assert result["document_type"] is None
     assert result["document_country"] is None
+    assert result["document_number"] is None
+    assert result["full_name"] is None
     assert result["error_code"] is None
+
+
+# ==================================================================================
+# Identity mapping: decision.id_verifications[0] -> outcome fields
+# ==================================================================================
+
+
+def approved_with_identity(**overrides):
+    """Build an Approved Didit payload with a realistic id_verifications[0] record.
+
+    The recording keys mirror Didit's plural array. ``overrides`` replace keys in
+    that record, so a test can blank a name or supply a malformed date without
+    hand-building a payload.
+    """
+    payload = webhook_payload(status="Approved")
+    record = {
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+        "full_name": "Ada Lovelace",
+        "date_of_birth": "1815-12-10",
+        "document_type": "Passport",
+        "document_number": "P1234567",
+        "issuing_state": "GB",
+    }
+    record.update(overrides)
+    payload["decision"]["id_verifications"] = [record]
+    return payload
+
+
+def test_outcome_from_payload_full_approved_identity_maps_all_fields():
+    """Full Approved payload maps every identity field and still reports verified."""
+    result = didit_client.outcome_from_payload(approved_with_identity())
+
+    assert result is not None
+    assert result["status"] == "verified"
+    assert result["first_name"] == "Ada"
+    assert result["last_name"] == "Lovelace"
+    assert result["full_name"] == "Ada Lovelace"
+    assert result["dob"] == "1815-12-10"
+    assert result["document_type"] == "Passport"
+    assert result["document_number"] == "P1234567"
+    assert result["document_country"] == "GB"
+    assert result["error_code"] is None
+
+
+def test_outcome_from_payload_missing_decision_yields_none_identity_fields():
+    """A payload without decision must not raise, and every identity field is None."""
+    payload = webhook_payload(status="Approved")
+    del payload["decision"]
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result is not None
+    assert result["status"] == "verified"
+    assert result["first_name"] is None
+    assert result["last_name"] is None
+    assert result["full_name"] is None
+    assert result["dob"] is None
+    assert result["document_type"] is None
+    assert result["document_number"] is None
+    assert result["document_country"] is None
+    assert result["error_code"] is None
+
+
+def test_outcome_from_payload_missing_id_verifications_yields_none_identity_fields():
+    """A decision object without id_verifications must fail closed, not raise."""
+    payload = approved_with_identity()
+    del payload["decision"]["id_verifications"]
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result["first_name"] is None
+    assert result["last_name"] is None
+    assert result["full_name"] is None
+    assert result["dob"] is None
+    assert result["document_type"] is None
+    assert result["document_number"] is None
+    assert result["document_country"] is None
+
+
+def test_outcome_from_payload_empty_id_verifications_list_yields_none_identity_fields():
+    """An EMPTY id_verifications list is the case most likely to throw; it must not."""
+    payload = approved_with_identity()
+    payload["decision"]["id_verifications"] = []
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result["first_name"] is None
+    assert result["last_name"] is None
+    assert result["full_name"] is None
+    assert result["dob"] is None
+    assert result["document_type"] is None
+    assert result["document_number"] is None
+    assert result["document_country"] is None
+
+
+def test_outcome_from_payload_id_verifications_not_a_list_yields_none_identity_fields():
+    """A singular id_verification dict (the shape we must NOT accept) yields None."""
+    payload = approved_with_identity()
+    payload["decision"]["id_verifications"] = {
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+        "date_of_birth": "1815-12-10",
+    }
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result["first_name"] is None
+    assert result["last_name"] is None
+    assert result["full_name"] is None
+    assert result["dob"] is None
+
+
+def test_outcome_from_payload_first_id_verification_not_a_dict_yields_none_identity_fields():
+    """Even when the list exists, a non-dict element must yield None identity fields."""
+    payload = approved_with_identity()
+    payload["decision"]["id_verifications"] = ["not-a-dict"]
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result["first_name"] is None
+    assert result["last_name"] is None
+    assert result["full_name"] is None
+    assert result["dob"] is None
+
+
+def test_outcome_from_payload_individual_missing_keys_map_only_what_exists():
+    """A partial record maps only its present keys; the full record proves direction."""
+    full = didit_client.outcome_from_payload(approved_with_identity())
+    assert full["first_name"] == "Ada"
+    assert full["last_name"] == "Lovelace"
+    assert full["document_type"] == "Passport"
+
+    payload = approved_with_identity()
+    payload["decision"]["id_verifications"] = [
+        {"first_name": "Grace", "date_of_birth": "1906-12-09"}
+    ]
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result["first_name"] == "Grace"
+    assert result["dob"] == "1906-12-09"
+    assert result["last_name"] is None
+    assert result["full_name"] is None
+    assert result["document_type"] is None
+    assert result["document_number"] is None
+    assert result["document_country"] is None
+
+
+def test_outcome_from_payload_issuing_state_maps_to_document_country_only():
+    """Didit's issuing_state is the document country; it must not leak as its own key."""
+    result = didit_client.outcome_from_payload(approved_with_identity())
+
+    assert result["document_country"] == "GB"
+    assert "issuing_state" not in result
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("1990-05-04", "1990-05-04"),
+        ("1990-05-04T12:30:00Z", "1990-05-04"),
+        # Ambiguous separated dates are REFUSED, not guessed. "04/05/1990" is the 4th of
+        # May to most of the world and the 5th of April in the US, and nothing in the
+        # payload says which. A wrong guess is not caught anywhere downstream - it hashes
+        # the wrong birthday and resurfaces later as a genuine customer failing
+        # re-verification. None parks them for a human, which is the honest answer.
+        ("04/05/1990", None),
+        ("04-05-1990", None),
+        ("not a date", None),
+        ("", None),
+        (None, None),
+        (19900504, None),
+    ],
+)
+def test_outcome_from_payload_normalises_dob(raw, expected):
+    """Date-of-birth normalisation must match Stripe's YYYY-MM-DD format exactly."""
+    payload = approved_with_identity(date_of_birth=raw)
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result["dob"] == expected
+
+
+def test_outcome_from_payload_full_name_only_fills_first_name_and_hash_matches_split_name():
+    """A full_name-only record hashes like the split name through the sorted word set."""
+    from app.services import kyc
+
+    payload = approved_with_identity()
+    payload["decision"]["id_verifications"] = [
+        {"full_name": "Ada Lovelace", "date_of_birth": "1815-12-10"}
+    ]
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result["first_name"] == "Ada Lovelace"
+    assert result["last_name"] is None
+    assert result["full_name"] == "Ada Lovelace"
+    assert result["dob"] == "1815-12-10"
+
+    full_name_hash = kyc.identity_hash(result["first_name"], result["last_name"], result["dob"])
+    split_name_hash = kyc.identity_hash("Ada", "Lovelace", "1815-12-10")
+    assert full_name_hash is not None
+    assert full_name_hash == split_name_hash
+
+
+def test_outcome_from_payload_blank_strings_are_treated_as_absent():
+    """Whitespace-only name fields are None; the non-blank sibling still maps."""
+    payload = approved_with_identity(first_name="   ")
+
+    result = didit_client.outcome_from_payload(payload)
+
+    assert result["first_name"] is None
+    assert result["last_name"] == "Lovelace"

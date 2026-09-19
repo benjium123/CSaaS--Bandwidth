@@ -510,13 +510,20 @@ async def handle_didit_event(session: AsyncSession, settings: Settings, payload:
             person.status = "pending"
         return
 
-    if outcome["status"] == "verified" and person.identity_hash is not None:
-        # A RE-verification is only safe to accept when we can prove it is the same human,
-        # and Didit's webhook carries no verified name or date of birth for us to hash
-        # (we refuse to guess at the shape of its `decision` object). Rather than
-        # un-verify the person or silently accept a possible stranger, the check parks in
-        # processing so a human decides; approval_blockers already refuses anything that
-        # is not "verified", so this fails closed.
+    if (
+        outcome["status"] == "verified"
+        and person.identity_hash is not None
+        and identity_hash(outcome.get("first_name"), outcome.get("last_name"), outcome.get("dob"))
+        is None
+    ):
+        # A RE-verification is only safe to accept when we can prove it is the same human.
+        # Didit normally carries the verified name and date of birth (from
+        # decision.id_verifications[0]) and the hash comparison in apply_person_outcome
+        # then runs exactly as it does for Stripe - see below. This branch is only the
+        # case where that evidence is genuinely absent: there is nothing to compare, so
+        # rather than un-verify the person or silently accept a possible stranger the
+        # check parks in processing so a human decides. approval_blockers already refuses
+        # anything that is not "verified", so this fails closed.
         person.status = "processing"
         person.last_error = "identity_unconfirmed: re-verification needs an operator review"
         audit_svc.record(

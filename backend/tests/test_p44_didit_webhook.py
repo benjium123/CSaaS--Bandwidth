@@ -198,9 +198,7 @@ async def test_corrupted_signature_is_refused(session, didit_client_app):
     raw, headers = signed(payload)
     headers["X-Signature-V2"] = "0" * len(headers["X-Signature-V2"])
 
-    r = await didit_client_app.post(
-        "/api/v1/webhooks/didit", content=raw, headers=headers
-    )
+    r = await didit_client_app.post("/api/v1/webhooks/didit", content=raw, headers=headers)
     assert r.status_code == 401, r.text
 
     refreshed = await reload_person(session, person.id)
@@ -245,19 +243,21 @@ async def test_duplicate_event_id_is_suppressed_by_ledger(session, didit_client_
     assert (await reload_person(session, person.id)).status == "verified"
 
     rows = (
-        await session.execute(
-            sa.select(IdentityWebhookEvent)
-            .where(IdentityWebhookEvent.id == "didit:evt-A")
-            .execution_options(allow_unscoped=True)
+        (
+            await session.execute(
+                sa.select(IdentityWebhookEvent)
+                .where(IdentityWebhookEvent.id == "didit:evt-A")
+                .execution_options(allow_unscoped=True)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].provider == "didit"
 
 
-async def test_ledger_suppresses_duplicate_not_the_unverify_guard(
-    session, didit_client_app
-):
+async def test_ledger_suppresses_duplicate_not_the_unverify_guard(session, didit_client_app):
     """Test 4 alone cannot distinguish the ledger from apply_person_outcome's
     un-verify guard, because both would leave a verified person verified. This test
     uses a person in a NON-terminal state so the guard cannot be the reason:
@@ -440,10 +440,10 @@ async def test_unknown_session_and_vendor_data_is_a_noop(session):
 
     # No person anywhere changed.
     all_people = (
-        await session.execute(
-            sa.select(KycPerson).execution_options(allow_unscoped=True)
-        )
-    ).scalars().all()
+        (await session.execute(sa.select(KycPerson).execution_options(allow_unscoped=True)))
+        .scalars()
+        .all()
+    )
     assert all(p.status == before_status for p in all_people)
 
 
@@ -470,3 +470,186 @@ async def test_reverification_without_identity_evidence_fails_closed(session):
     assert refreshed.status == "processing"
     assert refreshed.last_error is not None
     assert refreshed.last_error.startswith("identity_unconfirmed")
+
+
+# ==================================================================================
+# D. Identity on the wire: hashing, same-human re-verification, fail-closed
+# ==================================================================================
+
+
+def with_identity(payload, **fields):
+    """Insert a Didit decision with an id_verifications[0] identity record.
+
+    ``fields`` override the default record keys, so the same helper can build a
+    full match, a name mismatch, a missing dob, or anything else the KYC service
+    must fail closed on.
+    """
+    record = {
+        "first_name": "Dan",
+        "last_name": "Owner",
+        "date_of_birth": "1980-04-02",
+        "document_type": "Passport",
+        "document_number": "P1",
+        "issuing_state": "gb",
+    }
+    record.update(fields)
+    payload["decision"] = {"status": payload["status"], "id_verifications": [record]}
+    return payload
+
+
+# profile_status='draft' for every VERIFYING case below: a non-draft profile makes
+# _apply_person_event run rescreen/refresh_risk, which is out of scope here.
+async def test_first_time_didit_verification_with_identity_verifies_and_hashes(session):
+    """First Didit verification with identity evidence must verify and persist the hash."""
+    org, person = await seed_person(
+        session, status="pending", identity_hash=None, profile_status="draft"
+    )
+    payload = with_identity(payload_for(org, person, status="Approved"))
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+
+    refreshed = await reload_person(session, person.id)
+    assert refreshed.status == "verified"
+    assert refreshed.identity_hash is not None
+    assert refreshed.identity_hash == kyc.identity_hash("Dan", "Owner", "1980-04-02")
+    assert refreshed.verified_name == "Dan Owner"
+    assert refreshed.document_type == "Passport"
+    assert refreshed.document_country == "GB"
+
+
+async def test_first_time_didit_verification_without_decision_verifies_but_identity_hash_none(
+    session,
+):
+    """First verification without identity evidence verifies but does NOT store a hash."""
+    org, person = await seed_person(
+        session, status="pending", identity_hash=None, profile_status="draft"
+    )
+    payload = payload_for(org, person, status="Approved")  # no decision
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+
+    refreshed = await reload_person(session, person.id)
+    assert refreshed.status == "verified"
+    assert refreshed.identity_hash is None
+
+
+async def test_reverification_matching_identity_verifies_and_keeps_hash(session):
+    """A matching re-verification is still the same human, so it verifies cleanly."""
+    original_hash = kyc.identity_hash("Dan", "Owner", "1980-04-02")
+    org, person = await seed_person(
+        session, status="pending", identity_hash=original_hash, profile_status="draft"
+    )
+    payload = with_identity(payload_for(org, person, status="Approved"))
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+
+    refreshed = await reload_person(session, person.id)
+    assert refreshed.status == "verified"
+    assert refreshed.identity_hash == original_hash
+    assert refreshed.last_error is None
+
+
+async def test_reverification_different_name_fails_for_input_and_keeps_hash(session):
+    """A different name must not overwrite the stored hash and must require input."""
+    original_hash = kyc.identity_hash("Dan", "Owner", "1980-04-02")
+    org, person = await seed_person(
+        session, status="pending", identity_hash=original_hash, profile_status="draft"
+    )
+    payload = with_identity(
+        payload_for(org, person, status="Approved"), first_name="Eve", last_name="Stranger"
+    )
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+
+    refreshed = await reload_person(session, person.id)
+    assert refreshed.status == "requires_input"
+    assert refreshed.last_error is not None
+    assert refreshed.last_error.startswith("identity_mismatch")
+    assert refreshed.identity_hash == original_hash
+
+
+async def test_reverification_different_dob_fails_for_input_and_keeps_hash(session):
+    """A different date of birth is a different person; the stored hash is untouched."""
+    original_hash = kyc.identity_hash("Dan", "Owner", "1980-04-02")
+    org, person = await seed_person(
+        session, status="pending", identity_hash=original_hash, profile_status="draft"
+    )
+    payload = with_identity(payload_for(org, person, status="Approved"), date_of_birth="1990-01-01")
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+
+    refreshed = await reload_person(session, person.id)
+    assert refreshed.status == "requires_input"
+    assert refreshed.last_error is not None
+    assert refreshed.last_error.startswith("identity_mismatch")
+    assert refreshed.identity_hash == original_hash
+
+
+async def test_reverification_empty_id_verifications_fails_closed(session):
+    """An Approved re-verification with an EMPTY id_verifications list cannot prove
+    same-human, so it parks in processing and keeps the existing hash."""
+    original_hash = kyc.identity_hash("Dan", "Owner", "1980-04-02")
+    org, person = await seed_person(
+        session, status="pending", identity_hash=original_hash, profile_status="draft"
+    )
+    payload = payload_for(org, person, status="Approved")
+    payload["decision"] = {"status": payload["status"], "id_verifications": []}
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+
+    refreshed = await reload_person(session, person.id)
+    assert refreshed.status == "processing"
+    assert refreshed.last_error is not None
+    assert refreshed.last_error.startswith("identity_unconfirmed")
+    assert refreshed.identity_hash == original_hash
+
+
+async def test_reverification_missing_dob_fails_closed(session):
+    """A name without a date of birth cannot form an identity hash, so it also fails
+    closed without touching the stored hash."""
+    original_hash = kyc.identity_hash("Dan", "Owner", "1980-04-02")
+    org, person = await seed_person(
+        session, status="pending", identity_hash=original_hash, profile_status="draft"
+    )
+    payload = with_identity(payload_for(org, person, status="Approved"), date_of_birth=None)
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+
+    refreshed = await reload_person(session, person.id)
+    assert refreshed.status == "processing"
+    assert refreshed.last_error is not None
+    assert refreshed.last_error.startswith("identity_unconfirmed")
+    assert refreshed.identity_hash == original_hash
+
+
+async def test_reverification_different_person_raises_security_alert(session):
+    """A completed re-verification with a different person must create an open
+    identity_mismatch SecurityAlert."""
+    from app.models import SecurityAlert
+
+    original_hash = kyc.identity_hash("Dan", "Owner", "1980-04-02")
+    org, person = await seed_person(
+        session, status="pending", identity_hash=original_hash, profile_status="draft"
+    )
+    payload = with_identity(
+        payload_for(org, person, status="Approved"), first_name="Eve", last_name="Stranger"
+    )
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+
+    refreshed = await reload_person(session, person.id)
+    assert refreshed.status == "requires_input"
+
+    rows = (
+        (
+            await session.execute(
+                sa.select(SecurityAlert)
+                .where(SecurityAlert.kind == "identity_mismatch")
+                .execution_options(allow_unscoped=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].kind == "identity_mismatch"

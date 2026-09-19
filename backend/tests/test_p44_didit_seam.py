@@ -347,3 +347,91 @@ async def test_not_your_identity_refused_under_stripe(session, monkeypatch):
 
     assert exc.value.code == "not_your_identity"
     assert stripe.calls == []
+
+
+# ==================================================================================
+# F. End to end: a Didit-verified person can start a step-up
+# ==================================================================================
+
+
+async def test_didit_verified_person_can_start_a_step_up(session, monkeypatch):
+    """After a Didit identity check, the verified hash must unlock the Stripe step-up."""
+    from app.services import kyc, kyc_step_up
+
+    user = await seed_user(session)
+    org, person = await seed_person(session, status="pending", user_id=user.id)
+
+    payload = {
+        "status": "Approved",
+        "session_id": person.provider_session_id,
+        "vendor_data": str(person.id),
+        "metadata": {
+            "purpose": "kyc_person",
+            "org_id": str(org.id),
+            "person_id": str(person.id),
+        },
+        "decision": {
+            "status": "Approved",
+            "id_verifications": [
+                {
+                    "first_name": "Dan",
+                    "last_name": "Owner",
+                    "date_of_birth": "1980-04-02",
+                }
+            ],
+        },
+    }
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+    await session.flush()
+
+    assert person.identity_hash is not None
+    assert await kyc_step_up.verified_identity_hashes(session, user.id)
+
+    recorder = Recorder(
+        {"id": "vs_1", "url": "https://stripe.example/x", "status": "requires_input"}
+    )
+    monkeypatch.setattr(stripe_client, "create_verification_session", recorder)
+
+    row, url = await kyc_step_up.start(
+        session, didit_settings(), user, action="api_key_create", return_url=RETURN_URL
+    )
+
+    assert url == "https://stripe.example/x"
+    assert row.user_id == user.id
+
+
+async def test_didit_person_without_identity_still_cannot_start_a_step_up(session, monkeypatch):
+    """Without Didit identity evidence, step-up refuses with identity_not_verified
+    before any Stripe I/O."""
+    from app.errors import ValidationFailedError
+    from app.services import kyc, kyc_step_up
+
+    user = await seed_user(session)
+    org, person = await seed_person(session, status="pending", user_id=user.id)
+
+    payload = {
+        "status": "Approved",
+        "session_id": person.provider_session_id,
+        "vendor_data": str(person.id),
+        "metadata": {
+            "purpose": "kyc_person",
+            "org_id": str(org.id),
+            "person_id": str(person.id),
+        },
+    }
+
+    await kyc.handle_didit_event(session, didit_settings(), payload)
+    await session.flush()
+    assert person.identity_hash is None
+
+    recorder = Recorder({"id": "vs_1", "url": "https://stripe.example/x"})
+    monkeypatch.setattr(stripe_client, "create_verification_session", recorder)
+
+    with pytest.raises(ValidationFailedError) as exc:
+        await kyc_step_up.start(
+            session, didit_settings(), user, action="api_key_create", return_url=RETURN_URL
+        )
+
+    assert exc.value.code == "identity_not_verified"
+    assert recorder.calls == []
