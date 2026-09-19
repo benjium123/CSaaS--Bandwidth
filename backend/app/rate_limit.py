@@ -62,6 +62,25 @@ class SlidingWindowLimiter:
 
 _limiter = SlidingWindowLimiter()
 
+#: Routes whose IP ceiling is NOT the global default, resolved by exact path.
+#:
+#: Deliberately a table here rather than an argument at the call site. `/auth/register` is
+#: currently being edited by three sessions at once (a business-email check, org creation on
+#: signup, and this), and a change that needs no line in that function cannot collide with
+#: theirs. It also keeps the policy in one readable place instead of spread across call sites,
+#: so "what are our ceilings" is one file rather than a grep.
+#:
+#: The value is a tuple of (max_requests, window_seconds) buckets, ALL of which are checked.
+#: Two windows stop different attacks: the short one stops a script, the long one stops a
+#: patient script. See the config comment on `registration_ip_burst_max` for why these numbers.
+def _route_ip_buckets(settings: Settings, path: str) -> tuple[tuple[int, int], ...]:
+    if path == "/api/v1/auth/register":
+        return (
+            (settings.registration_ip_burst_max, settings.registration_ip_burst_seconds),
+            (settings.registration_ip_hourly_max, settings.registration_ip_hourly_seconds),
+        )
+    return ()
+
 
 def _client_ip(request: Request) -> str:
     """C3/P42: one trusted-proxy-aware rule for every IP decision (app/net.py)."""
@@ -92,7 +111,21 @@ async def _redis_allow(
     settings: Settings, key: str, max_requests: int, window: int
 ) -> float | None:
     """P42: the same sliding window, shared by every worker through Redis. Returns None when
-    Redis is not configured or fails, so the caller falls back to the in-process limiter."""
+    Redis is not configured or fails, so the caller falls back to the in-process limiter.
+
+    READ THIS BEFORE RAISING THE WORKER COUNT. That fallback is per PROCESS, so with N workers
+    every ceiling in this module silently becomes N times looser - a 5-per-minute registration
+    limit becomes 5 per minute per worker. Nothing reports it, in either direction: a limiter
+    with no shared state simply ALLOWS MORE, so no request fails, no log line appears, and no
+    test goes red. The deployed image ships `--workers 1`, which is why the multiplier is 1
+    today and why the first person to change that number will not notice they weakened every
+    limit on the public front door.
+
+    The protection is elsewhere: `Settings._validate` refuses to boot in production without
+    REDIS_URL. This comment exists anyway because whoever raises the worker count will be
+    reading this file, not that one - and because "required in production" is not the same as
+    "present right now", which is the gap a staging box with one worker and no Redis lives in.
+    """
     from app.services.session_cache import _redis_client
 
     client = _redis_client(settings)
@@ -116,25 +149,49 @@ async def _redis_allow(
 
 
 async def enforce_rate_limit(request: Request, identifier: str) -> None:
+    """Rate-limit this request by client IP and by ``identifier``, tripping on whichever binds.
+
+    BOTH keys are checked, which matters for any route where the caller chooses the identifier:
+    at `/auth/register` the identifier is an email address the attacker picks, so the identifier
+    key alone would never bind. The IP key is the one doing the work there.
+
+    A route may override the IP ceiling (see ``_route_ip_buckets``). The identifier key keeps the
+    global default everywhere: it exists to stop repeated attempts against ONE account or
+    address, which is a different question from how many accounts one machine may create.
+
+    WHAT THIS CANNOT DO. Every bucket resolves through Redis and falls back to an in-process
+    limiter when Redis is unreachable, so a 5-per-minute ceiling silently becomes 5 per minute
+    PER WORKER. The tighter the ceiling the more that fallback matters, which is why open
+    registration in production requires ``REDIS_URL`` (see Settings._validate) rather than
+    trusting that a shared limiter happens to be configured.
+    """
     settings: Settings = request.app.state.settings
     if not settings.rate_limit_enabled:
         return
 
     ip = _client_ip(request)
     base = f"{request.method}:{request.url.path}"
-    keys = (f"{base}:ip:{ip}", f"{base}:identifier:{identifier}")
+
+    default = (settings.rate_limit_max_requests, settings.rate_limit_window_seconds)
+    buckets: list[tuple[str, int, int]] = []
+    route_buckets = _route_ip_buckets(settings, request.url.path)
+    if route_buckets:
+        # The window is part of the key so two ceilings on one route cannot share a counter -
+        # without it the 5/60 and 20/3600 buckets would both consume the same sliding window and
+        # whichever ran first would decide both answers.
+        buckets += [(f"{base}:ip:{ip}:{window}", mx, window) for mx, window in route_buckets]
+    else:
+        # Key shape UNCHANGED for every other route, so no existing counter resets on deploy.
+        buckets.append((f"{base}:ip:{ip}", *default))
+    buckets.append((f"{base}:identifier:{identifier}", *default))
 
     retry_after = 0.0
-    for key in keys:
-        shared = await _redis_allow(
-            settings, key, settings.rate_limit_max_requests, settings.rate_limit_window_seconds
-        )
+    for key, max_requests, window_seconds in buckets:
+        shared = await _redis_allow(settings, key, max_requests, window_seconds)
         retry_after = (
             shared
             if shared is not None
-            else _limiter.allow(
-                key, settings.rate_limit_max_requests, settings.rate_limit_window_seconds
-            )
+            else _limiter.allow(key, max_requests, window_seconds)
         )
         if retry_after:
             break

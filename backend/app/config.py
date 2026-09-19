@@ -136,6 +136,17 @@ class Settings(BaseSettings):
     #: Approved businesses re-verify on this cadence.
     kyc_reverify_days: int = 365
     kyc_reverify_grace_days: int = 14
+    #: Which provider runs KYC person ID checks: "stripe" or "didit". Stripe is the default
+    #: because it is what every existing deployment already runs; see
+    #: services/identity_provider.py, which refuses any other value.
+    kyc_identity_provider: str = "stripe"
+    #: P44 Didit identity verification. Empty key or workflow id means the Didit provider
+    #: answers 503 rather than half-starting a check.
+    didit_api_key: SecretStr = SecretStr("")
+    didit_workflow_id: str = ""
+    #: Shared secret Didit signs its webhooks with (X-Signature-V2).
+    didit_webhook_secret: SecretStr = SecretStr("")
+    didit_base_url: str = "https://verification.didit.me"
 
     # ---------------- P42 enterprise auth ----------------
     password_min_length: int = 12
@@ -180,6 +191,26 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_max_requests: int = 20
     rate_limit_window_seconds: int = 60
+    #: Registration gets its OWN ceilings, because 20/minute is an API-shaped number and
+    #: account creation is not an API call. Under invite-only nobody cared: a valid token was
+    #: the real limit, and the request limit was a formality. Public self-serve signup removes
+    #: the token, and then this is the only thing standing between one address and 1,200
+    #: accounts an hour.
+    #:
+    #: TWO windows rather than one, because they stop different things. The burst limit stops a
+    #: script; the hourly limit stops a patient script. A single number cannot do both without
+    #: being either useless against volume or hostile to a shared office IP.
+    #:
+    #: Deliberately not tighter: `enforce_rate_limit` runs BEFORE password-policy validation,
+    #: so a person fumbling the password rules spends this budget on attempts that created no
+    #: account. Five a minute leaves room for that; three would turn a rejected password into a
+    #: lockout. The hourly figure is sized for NAT - a coworking space or a university can put
+    #: many genuine signups behind one address - while still being ~60x tighter than the
+    #: inherited default.
+    registration_ip_burst_max: int = 5
+    registration_ip_burst_seconds: int = 60
+    registration_ip_hourly_max: int = 20
+    registration_ip_hourly_seconds: int = 3600
 
     # ---------------- datastores ----------------
     database_url: str = "sqlite+aiosqlite:///./dev.db"
@@ -299,6 +330,13 @@ class Settings(BaseSettings):
     #: and the alternative - a conftest that inserts users behind the API - would stop
     #: exercising the real registration path in every one of those tests.
     allow_open_registration: bool = False
+    #: P43: public signup takes work addresses only. On by default so that turning
+    #: ALLOW_OPEN_REGISTRATION on never quietly opens the door to consumer mailboxes too -
+    #: the two decisions should have to be made separately. Only applies to registrations
+    #: with no invite; an invited colleague joins on whatever address their employer used.
+    require_business_email: bool = True
+    #: Comma-separated extra consumer domains, so a newly popular provider needs no deploy.
+    extra_consumer_email_domains: str = ""
 
     # DEV/DEMO ONLY. See providers/loopback.py. The validator below refuses it in
     # production and refuses it alongside a real carrier.
@@ -443,11 +481,55 @@ class Settings(BaseSettings):
                 problems.append("CORS cannot use '*' with credentials in production")
             if "csaas:csaas@" in self.database_url:
                 problems.append("DATABASE_URL still uses the default development credentials")
+            # OPEN REGISTRATION: a requirement, not a refusal.
+            #
+            # This used to refuse the boot outright. That was right while the product was
+            # invite-only, and deleting it now that public self-serve signup is the business
+            # model would be wrong in a specific way: the refusal was not hygiene, it was the
+            # thing that made the flag safe to leave in the codebase. Delete it and the only
+            # surviving record of the decision is an env var somebody flipped once, on a day
+            # nobody remembers, with no statement anywhere of what that flip took away.
+            #
+            # An invite token was doing three jobs beyond letting someone in. It proved
+            # somebody already trusted at this company chose to invite this person. It proved
+            # the address was reachable, because the token arrived there. And it capped account
+            # creation at the rate humans issue invitations, which made the request rate limit a
+            # formality. Public signup removes all three at once, so the conditions below are
+            # what has to be true before the boot is allowed to proceed without them.
+            #
+            # WHAT THIS CANNOT PROMISE. It checks that controls are CONFIGURED, not that they
+            # are effective - a boot check has no other reach. `require_business_email` in
+            # particular only applies to registrations with no invite and only past first-run,
+            # so "the setting is on" is a weaker claim than "every registration is filtered",
+            # and the message below says only the weaker thing on purpose. A domain list also
+            # answers "clean" for every domain it has not heard of, so it filters volume and
+            # establishes nothing about who signed up. The control that actually holds is the
+            # operator's rule that nothing can be purchased before KYC approval - which is why
+            # KYC_ENFORCED is on this list rather than being assumed.
             if self.allow_open_registration:
-                problems.append(
-                    "ALLOW_OPEN_REGISTRATION must be false in production - it disables "
-                    "invite-only signup and lets anyone on the internet create an account"
-                )
+                missing_controls = []
+                if not self.require_business_email:
+                    missing_controls.append(
+                        "REQUIRE_BUSINESS_EMAIL must be true - with open registration it is "
+                        "the only filter on who may create an account"
+                    )
+                if not self.kyc_enforced:
+                    missing_controls.append(
+                        "KYC_ENFORCED must be true - open registration with verification off "
+                        "means anyone who signs up can reach telephony with nothing checked"
+                    )
+                if not self.redis_url.strip():
+                    missing_controls.append(
+                        "REDIS_URL must be set - without it every rate limit falls back to a "
+                        "per-process counter, so the registration ceiling silently multiplies "
+                        "by the worker count and nothing reports that it happened"
+                    )
+                if missing_controls:
+                    problems.append(
+                        "ALLOW_OPEN_REGISTRATION is on, which removes invite-only signup. "
+                        "It is permitted in production only alongside the controls an invite "
+                        "was providing: " + "; ".join(missing_controls)
+                    )
             if not self.redis_url.strip():
                 problems.append(
                     "REDIS_URL is required in production - rate limits and session revocation "
@@ -618,6 +700,9 @@ class Settings(BaseSettings):
         )
         keyed("stripe", {"STRIPE_SECRET_KEY": self.stripe_secret_key,
                          "STRIPE_WEBHOOK_SECRET": self.stripe_webhook_secret})
+        keyed("didit", {"DIDIT_API_KEY": self.didit_api_key,
+                        "DIDIT_WORKFLOW_ID": self.didit_workflow_id},
+              note=" (only needed when KYC_IDENTITY_PROVIDER=didit)")
         keyed("companies_house", {"COMPANIES_HOUSE_API_KEY": self.companies_house_api_key},
               note=" (UK registry checks fall back to manual)")
         keyed("geolite2", {"GEOLITE2_DIR": self.geolite2_dir},
