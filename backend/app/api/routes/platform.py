@@ -39,6 +39,7 @@ from app.services import ai_usage, credits
 from app.services import apikeys as apikeys_svc
 from app.services import audit as audit_svc
 from app.services import spend as spend_svc
+from app.services import telephony_billing as telephony_billing_svc
 from app.services import usage as usage_svc
 from app.services import webhooks_out as webhooks_out_svc
 
@@ -555,6 +556,13 @@ async def patch_platform_billing_org(
             # Re-stamped on every switch-on: traffic from an "off" stretch is never
             # billed retroactively.
             org.telephony_prepaid_since = datetime.now(timezone.utc)
+            # The same rule for number rental. Without this the very next sweeper pass
+            # would bill this org a full month for every number it already holds -
+            # charging for a stretch during which it was not being billed. Their first
+            # charged period starts one month from now instead.
+            # renew_number_rentals guards this at runtime too; stamping here makes the
+            # DATA right rather than relying on the guard staying correct forever.
+            await telephony_billing_svc.stamp_rentals_forward(session, org_id)
 
     audit_svc.record(
         session,

@@ -74,9 +74,12 @@ class Org(Base, TimestampMixin):
     calling_settings: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
     # Prepaid telephony hard gate (migration 0041). When true, outbound SMS/MMS, outbound
     # calls and number orders draw from the prepaid credit balance and are refused when
-    # it cannot cover them; inbound traffic and number rental are charged.
+    # it cannot cover them; inbound traffic and number rental are charged. ON by default
+    # since migration 0055 (pay-as-you-go credits are the money gate); platform ops can
+    # switch a specific org off, and repositories/orgs.create_org_with_owner is what
+    # stamps telephony_prepaid_since for a new org.
     telephony_prepaid: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+        sa.Boolean, nullable=False, default=True, server_default=sa.true()
     )
     #: When the gate was last switched on - calls that started before it are never billed.
     telephony_prepaid_since: Mapped[datetime | None] = mapped_column(

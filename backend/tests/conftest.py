@@ -93,6 +93,11 @@ def make_settings(**overrides) -> Settings:
         # never went through business verification. P41 tests opt back in explicitly.
         "require_2fa_all_users": False,
         "kyc_enforced": False,
+        # Prepaid telephony is ON by default in production (migration 0055). Pre-existing
+        # tests create orgs with a zero credit balance and expect to be able to text and
+        # call, so the suite opts out; tests/test_prepaid_telephony.py turns the gate on
+        # explicitly per org.
+        "telephony_prepaid_default": False,
         # P42: no network in tests; pre-P42 tests register 10-character passwords.
         "hibp_enabled": False,
         "password_min_length": 10,

@@ -12,21 +12,23 @@ Rules
   or caller is never dropped for our billing's sake. That can take the balance below zero;
   the next outbound attempt is then refused until the org tops up.
 - An outbound call holds CALL_RESERVE_MINUTES at dial. While it runs, the sweeper keeps the
-  hold ahead of the minutes used; when the balance can no longer extend it, the call is
-  hung up. At the end the real minutes are charged and every hold released.
+  hold ahead of the seconds used; when the balance can no longer extend it, the call is
+  hung up. At the end the real seconds are charged per second and every hold released.
 - Every charge is idempotent on its ledger reference (message id, call id, number + period)
   so a retried send, a replayed webhook or a re-run sweeper never charges twice.
 - Only traffic after ``orgs.telephony_prepaid_since`` is billed - switching the gate on never
-  retro-charges an org's past calls.
+  retro-charges an org's past calls, and never bills a number for a stretch we were not
+  charging for (the rental clock is stamped forward instead).
 - Customer price = the org's explicit rate price (``provider_rates.price_micros``) when set,
-  else rate-card cost x (1 + DEFAULT_TRAFFIC_MARKUP_BPS), rounded up. Customers never see
-  cost or margin.
+  else the flat, carrier-independent ``PLATFORM_PRICE_MICROS`` table. Those metrics cost the
+  same whichever carrier carries them and are priced (not free) even on an unrated/unknown
+  carrier; only metrics outside the table still fall back to rate-card cost x
+  (1 + DEFAULT_TRAFFIC_MARKUP_BPS), rounded up. Customers never see cost or margin.
 """
 
 from __future__ import annotations
 
 import calendar
-import math
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -54,6 +56,21 @@ CUTOFF_HEADROOM_MINUTES = 1
 BILLING_LOOKBACK = timedelta(days=7)
 #: Rows handled per sweeper pass, per job.
 BATCH = 500
+
+#: Flat, carrier-independent platform price per unit, in micros. Set by the operator:
+#: SMS $0.01/segment, voice $0.005/minute (billed by the second), number $10.00/month.
+#: Customer price no longer derives from carrier cost - the same metric costs the same
+#: whichever carrier carries it, and an unrated/unknown carrier is now priced, not free.
+PLATFORM_PRICE_MICROS: dict[str, int] = {
+    "sms_out": 10_000,
+    "sms_in": 10_000,
+    "mms_out": 10_000,
+    "mms_in": 10_000,
+    "voice_min_out": 5_000,
+    "voice_min_in": 5_000,
+    "number_mrc": 10_000_000,
+    "number_setup": 0,
+}
 
 
 class TelephonyCreditsError(InsufficientCreditsError):
@@ -92,8 +109,14 @@ async def is_prepaid(session: AsyncSession, org_id: uuid.UUID) -> bool:
 async def unit_price(
     session: AsyncSession, org_id: uuid.UUID, provider: str, metric: str
 ) -> int:
-    """Customer price in micros for one unit of `metric` on `provider`. 0 for a carrier
-    with no rate card at all - never guess a price nobody set."""
+    """Customer price in micros for one unit of `metric` on `provider`.
+
+    An explicit per-org ``provider_rates.price_micros`` override always wins. Otherwise a
+    metric in the flat ``PLATFORM_PRICE_MICROS`` table is priced straight from that table -
+    the same price whichever carrier carries it, and a priced metric on an unrated/unknown
+    carrier is no longer free. Only metrics outside that table fall back to rate-card cost x
+    markup, and only those return 0 for a carrier with no rate card at all.
+    """
     set_org_context(session, org_id)
     row = (
         await session.execute(
@@ -105,6 +128,8 @@ async def unit_price(
     ).first()
     if row is not None and row.price_micros is not None:
         return int(row.price_micros)
+    if metric in PLATFORM_PRICE_MICROS:
+        return PLATFORM_PRICE_MICROS[metric]
     cost, _is_override, is_known = await spend.resolve_rate(session, provider, metric)
     if not is_known:
         return 0
@@ -310,6 +335,17 @@ async def charge_segment_correction(
 # ------------------------------------------------------------------------------------
 # Calls
 # ------------------------------------------------------------------------------------
+def voice_price_micros(duration_seconds: int | None, price_per_minute_micros: int) -> int:
+    """Per-second voice charge, rounded UP to the whole micro. Integer arithmetic only.
+
+    charge = ceil(seconds * price_per_minute / 60). A 0-second (or None) call charges 0.
+    """
+    seconds = int(duration_seconds or 0)
+    if seconds <= 0 or price_per_minute_micros <= 0:
+        return 0
+    return (seconds * int(price_per_minute_micros) + 59) // 60
+
+
 def call_hold_reference(call_id: uuid.UUID, n: int = 0) -> str:
     """The ONE place call-hold references are built (the ledger's reference uniqueness is
     what makes a repeated hold a no-op)."""
@@ -321,13 +357,22 @@ def _call_metric(direction: str) -> str:
 
 
 async def require_call_credit(session: AsyncSession, org_id: uuid.UUID, call: Call) -> None:
-    """At an outbound dial: refuse unless at least one minute is covered, then hold up to
-    CALL_RESERVE_MINUTES. No-op when not prepaid. Does not commit."""
+    """At an outbound dial: refuse unless at least ONE MINUTE of talk time is covered, then
+    hold up to CALL_RESERVE_MINUTES. No-op when not prepaid. Does not commit.
+
+    The floor is a minute, not the one second that per-second BILLING would make the
+    smallest chargeable unit, and that is deliberate: the product rule is a hard stop. A
+    call that connects on a second's worth of credit and is hung up by the sweeper a moment
+    later is a worse experience than a clean refusal, and it bills the customer for a call
+    they could not use. Billing itself stays per-second - a 10-second call costs 834 micros,
+    not a minute's 5_000.
+    """
     if not await is_prepaid(session, org_id):
         return
     per_minute = await unit_price(session, org_id, call.carrier, "voice_min_out")
     current = await credits.balance(session, org_id)
-    if current < max(per_minute, 1):
+    minimum = max(voice_price_micros(60, per_minute), 1)
+    if current < minimum:
         raise TelephonyCreditsError()
     hold = min(per_minute * CALL_RESERVE_MINUTES, current)
     if hold > 0:
@@ -386,7 +431,7 @@ def _billable_org_filter():
 
 
 async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = None) -> int:
-    """Charge the real minutes of every finished call of a prepaid org, release its holds
+    """Charge the real seconds of every finished call of a prepaid org, release its holds
     and stamp billed_at. One commit per call, so one bad row never blocks the rest and a
     re-run never charges twice."""
     cutoff = (now or _now()) - BILLING_LOOKBACK
@@ -414,25 +459,29 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
             call = await session.get(Call, call_id)
             if call is None or call.billed_at is not None:
                 continue
-            minutes = spend._ceil_minutes(call.duration_seconds)
-            # Whole minutes, rounded up per leg, netted against the package's included
-            # minutes before a single credit is spent.
+            seconds = max(int(call.duration_seconds or 0), 0)
+            minutes = spend._ceil_minutes(seconds)
+            # The package allowance is denominated in whole MINUTES (plans.take takes integer
+            # minute units), so it absorbs that many whole minutes of the call; every second
+            # beyond the covered minutes is then billed per second at the per-minute price.
             org_row = await _org(session, org_id)
-            covered = (
+            covered_minutes = (
                 await _plan_covers(session, org_row, VOICE_ALLOWANCE_METRIC, minutes)
                 if org_row is not None
                 else 0
             )
-            price = (minutes - covered) * await unit_price(
+            billable_seconds = max(seconds - covered_minutes * 60, 0)
+            per_minute = await unit_price(
                 session, org_id, call.carrier, _call_metric(call.direction)
             )
+            price = voice_price_micros(billable_seconds, per_minute)
             if price > 0:
                 await credits.charge_usage(
                     session,
                     org_id,
                     price,
                     reference=f"call:{call.id}:voice",
-                    note=f"{minutes} min {call.direction} call",
+                    note=f"{seconds}s {call.direction} call",
                 )
             await _release_call_holds(session, org_id, call.id)
             call.billed_at = _now()
@@ -450,7 +499,7 @@ async def enforce_active_calls(
     hangup: Any,
     now: datetime | None = None,
 ) -> int:
-    """Keep each running OUTBOUND call's hold ahead of the minutes it has used. When the
+    """Keep each running OUTBOUND call's hold ahead of the seconds it has used. When the
     balance cannot extend it, hang the call up via ``hangup(session, call)``. Inbound calls
     are never cut off (they are charged at the end instead). Returns calls cut off."""
     moment = now or _now()
@@ -479,10 +528,13 @@ async def enforce_active_calls(
             per_minute = await unit_price(session, org_id, call.carrier, "voice_min_out")
             if per_minute <= 0:
                 continue
-            elapsed = max((moment - _as_utc(call.answered_at)).total_seconds(), 0)
-            used_minutes = math.ceil(elapsed / 60) if elapsed > 0 else 0
+            elapsed_seconds = max(
+                int((moment - _as_utc(call.answered_at)).total_seconds()), 0
+            )
+            used_micros = voice_price_micros(elapsed_seconds, per_minute)
+            headroom_micros = CUTOFF_HEADROOM_MINUTES * per_minute
             held, holds = await _held_for_call(session, org_id, call.id)
-            if (used_minutes + CUTOFF_HEADROOM_MINUTES) * per_minute <= held:
+            if used_micros + headroom_micros <= held:
                 continue
             try:
                 await credits.reserve(
@@ -504,7 +556,7 @@ async def enforce_active_calls(
                     action="call.ended_out_of_credits",
                     target_type="call",
                     target_id=str(call.id),
-                    detail={"used_minutes": used_minutes},
+                    detail={"used_seconds": elapsed_seconds},
                 )
                 await session.commit()
                 await hangup(session, call)
@@ -564,11 +616,42 @@ async def charge_new_number(
     await _charge_rental_period(session, org_id, number, today or _now().date())
 
 
+def _rental_period_in_scope(number: OrgNumber, period_start: date, since: date) -> bool:
+    """Is this rental period inside the stretch we have been billing this org for?
+
+    The number-side mirror of ``_billable_org_filter``'s ``Call.created_at >=
+    Org.telephony_prepaid_since``: nothing is charged for a period that predates the
+    instant the prepaid gate went on for this org, however the row got there and whichever
+    route flipped the flag.
+
+    A number that has never been stamped (``rental_paid_through`` NULL) is judged by when
+    its row was created, because the NULL itself carries no date:
+    - created BEFORE the gate went on -> the org held it through a stretch we were not
+      billing, so charging now would bill for that stretch. Out of scope; the caller stamps
+      it forward and the first charge falls one cycle later.
+    - created AFTER the gate went on -> in scope and charged from today, unchanged. This is
+      what keeps an imported number chargeable rather than silently free forever.
+    """
+    if number.rental_paid_through is None:
+        created = getattr(number, "created_at", None)
+        # An unsaved row has no created_at yet; treat that as in scope rather than silently
+        # granting a free month.
+        return created is None or _as_utc(created).date() >= since
+    return period_start >= since
+
+
 async def renew_number_rentals(session: AsyncSession, *, today: date | None = None) -> int:
     """Charge the next month for every active number of a prepaid org whose rental has run
     out (or was never charged since the gate was switched on). Charged even when it takes
     the balance negative - the number keeps working, and outbound traffic stops until the
-    org tops up. One commit per number."""
+    org tops up. One commit per number.
+
+    A period that predates ``orgs.telephony_prepaid_since`` is never charged - the row's
+    rental clock is stamped one cycle forward instead, so switching the gate on never bills
+    for a stretch we were not charging for. Orgs with no ``telephony_prepaid_since`` are
+    skipped entirely (the mirror of ``_billable_org_filter``): we cannot prove any period is
+    in scope, and refusing to bill what we cannot prove is the safe direction for money.
+    """
     day = today or _now().date()
     rows = (
         await session.execute(
@@ -576,6 +659,7 @@ async def renew_number_rentals(session: AsyncSession, *, today: date | None = No
             .join(Org, Org.id == OrgNumber.org_id)
             .where(
                 Org.telephony_prepaid.is_(True),
+                Org.telephony_prepaid_since.is_not(None),
                 OrgNumber.released_at.is_(None),
                 OrgNumber.status == "active",
                 sa.or_(
@@ -589,20 +673,65 @@ async def renew_number_rentals(session: AsyncSession, *, today: date | None = No
     ).all()
 
     renewed = 0
+    skipped = 0
     for number_id, org_id in rows:
         try:
             set_org_context(session, org_id)
             number = await session.get(OrgNumber, number_id)
             if number is None:
                 continue
+            org_row = await _org(session, org_id)
+            if org_row is None or org_row.telephony_prepaid_since is None:
+                continue
+            since = _as_utc(org_row.telephony_prepaid_since).date()
             period_start = number.rental_paid_through or day
-            await _charge_rental_period(session, org_id, number, period_start)
-            await session.commit()
-            renewed += 1
+            if _rental_period_in_scope(number, period_start, since):
+                await _charge_rental_period(session, org_id, number, period_start)
+                await session.commit()
+                renewed += 1
+            else:
+                # Out of scope: the period predates the instant we started billing this
+                # org. Do not charge it - start the clock at the next cycle instead.
+                number.rental_paid_through = _next_month(day)
+                await session.commit()
+                skipped += 1
         except Exception:
             await session.rollback()
             log.exception("telephony_billing.renew_number_failed", number_id=str(number_id))
+    if skipped:
+        log.info("telephony_billing.rentals_out_of_scope_stamped", count=skipped)
     return renewed
+
+
+async def stamp_rentals_forward(
+    session: AsyncSession, org_id: uuid.UUID, *, today: date | None = None
+) -> int:
+    """On switching an org's prepaid gate ON: stamp the rental clock forward for every
+    active number it already holds and has never billed, so the switch itself never
+    triggers a retroactive month's charge.
+
+    The number-side counterpart of the migration backfill, applied to ONE org at the moment
+    platform ops flips the gate. Without it, flipping the gate on would let the very next
+    ``renew_number_rentals`` pass bill a full month for every number the org already held -
+    charging for a stretch during which it was not being billed. Each stamped number is
+    charged normally from that date on.
+
+    Returns how many numbers were stamped. Does not commit - it rides the caller's
+    transaction, so the switch-on and the stamps land together or not at all.
+    """
+    day = today or _now().date()
+    set_org_context(session, org_id)
+    result = await session.execute(
+        sa.update(OrgNumber)
+        .where(
+            OrgNumber.org_id == org_id,
+            OrgNumber.rental_paid_through.is_(None),
+            OrgNumber.released_at.is_(None),
+            OrgNumber.status == "active",
+        )
+        .values(rental_paid_through=_next_month(day))
+    )
+    return int(result.rowcount or 0)
 
 
 # ------------------------------------------------------------------------------------
