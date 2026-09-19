@@ -27,7 +27,7 @@ MMS_OUT = 10_000  # an MMS is one segment at the SMS price
 VOICE_MIN = 5_000  # $0.005 per minute, billed BY THE SECOND
 MIN_OUT = VOICE_MIN
 MIN_IN = VOICE_MIN
-NUMBER_MRC = 10_000_000  # $10.00 per number per month
+NUMBER_MRC = 15_000_000  # $15.00 per number per month
 NUMBER_SETUP = 0
 
 OPS = {"X-Platform-Ops-Token": TEST_PLATFORM_OPS_TOKEN}
@@ -415,11 +415,13 @@ async def test_number_order_refused_when_the_first_month_is_not_covered(session)
 
 async def test_rental_charged_at_order_then_renewed_monthly_once_per_period(session):
     org = await _new_org(session)
+    # A balance that comfortably covers both months this test charges.
+    START = 3 * NUMBER_MRC
     # This test simulates rental periods in early 2026, so the gate has to have been on
     # since before them - otherwise the (correct) out-of-scope guard in
     # renew_number_rentals skips them as predating our billing of this org.
     await _enable(
-        session, org.id, balance=10_000_000, since=datetime(2025, 1, 1, tzinfo=timezone.utc)
+        session, org.id, balance=START, since=datetime(2025, 1, 1, tzinfo=timezone.utc)
     )
     set_org_context(session, org.id)
     number = OrgNumber(
@@ -431,13 +433,13 @@ async def test_rental_charged_at_order_then_renewed_monthly_once_per_period(sess
     await telephony_billing.charge_new_number(session, org.id, number, today=date(2026, 1, 31))
     await session.commit()
     assert number.rental_paid_through == date(2026, 2, 28), "month-end clamps, never overflows"
-    assert await _balance(session, org.id) == 10_000_000 - NUMBER_MRC
+    assert await _balance(session, org.id) == START - NUMBER_MRC
 
     assert await telephony_billing.renew_number_rentals(session, today=date(2026, 2, 28)) == 1
     set_org_context(session, org.id)
     assert (await session.get(OrgNumber, number.id)).rental_paid_through == date(2026, 3, 28)
     assert await telephony_billing.renew_number_rentals(session, today=date(2026, 2, 28)) == 0
-    assert await _balance(session, org.id) == 10_000_000 - 2 * NUMBER_MRC
+    assert await _balance(session, org.id) == START - 2 * NUMBER_MRC
 
 
 async def test_a_future_rental_stamp_delays_billing_instead_of_disabling_it(session):
@@ -470,7 +472,7 @@ async def test_a_future_rental_stamp_delays_billing_instead_of_disabling_it(sess
     assert await _usage(session, org.id) == []
     assert await _balance(session, org.id) == 0
 
-    # On the stamped date: the natural cycle begins and it IS charged, exactly $10.
+    # On the stamped date: the natural cycle begins and it IS charged, exactly $15.
     assert await telephony_billing.renew_number_rentals(session, today=stamped) == 1
     assert [-row.amount_micros for row in await _usage(session, org.id)] == [NUMBER_MRC]
     assert await _balance(session, org.id) == -NUMBER_MRC
@@ -670,9 +672,32 @@ async def test_flat_prices_are_exact_and_carrier_independent(session):
         )
         assert (
             await telephony_billing.unit_price(session, org.id, carrier, "number_mrc")
-            == 10_000_000
+            == 15_000_000
         )
         assert await telephony_billing.unit_price(session, org.id, carrier, "number_setup") == 0
+
+
+async def test_number_price_is_exactly_fifteen_dollars_and_traffic_is_unchanged(session):
+    """Independent second witness to the price change: the number price is a literal
+    $15.00 a month here, while the traffic prices it must NOT have moved stay pinned to
+    their own literals."""
+    org = await _new_org(session)
+    await _enable(session, org.id, balance=NUMBER_MRC)
+    per_minute = await telephony_billing.unit_price(
+        session, org.id, "bandwidth", "voice_min_out"
+    )
+    month_mrc = await telephony_billing.unit_price(
+        session, org.id, "bandwidth", "number_mrc"
+    )
+    assert month_mrc == 15_000_000  # one month is exactly $15.00
+    assert 2 * month_mrc == 30_000_000  # two months is exactly $30.00
+    assert (
+        await telephony_billing.sms_price(
+            session, org.id, carrier="bandwidth", segments=1, is_mms=False
+        )
+        == 10_000
+    )
+    assert telephony_billing.voice_price_micros(60, per_minute) == 5_000
 
 
 async def test_sms_price_is_exactly_ten_thousand_micros_per_segment(session):
@@ -869,7 +894,7 @@ async def test_three_segment_sms_is_refused_when_only_two_segments_are_funded(se
     )  # 30_000 exactly covers it
 
 
-async def test_number_order_is_refused_below_ten_dollars_and_allowed_at_it(session):
+async def test_number_order_is_refused_below_fifteen_dollars_and_allowed_at_it(session):
     org = await _new_org(session)
     await _enable(session, org.id, balance=NUMBER_MRC - 1)
     with pytest.raises(TelephonyCreditsError):

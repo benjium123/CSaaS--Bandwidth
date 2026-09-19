@@ -58,7 +58,7 @@ BILLING_LOOKBACK = timedelta(days=7)
 BATCH = 500
 
 #: Flat, carrier-independent platform price per unit, in micros. Set by the operator:
-#: SMS $0.01/segment, voice $0.005/minute (billed by the second), number $10.00/month.
+#: SMS $0.01/segment, voice $0.005/minute (billed by the second), number $15.00/month.
 #: Customer price no longer derives from carrier cost - the same metric costs the same
 #: whichever carrier carries it, and an unrated/unknown carrier is now priced, not free.
 PLATFORM_PRICE_MICROS: dict[str, int] = {
@@ -68,7 +68,7 @@ PLATFORM_PRICE_MICROS: dict[str, int] = {
     "mms_in": 10_000,
     "voice_min_out": 5_000,
     "voice_min_in": 5_000,
-    "number_mrc": 10_000_000,
+    "number_mrc": 15_000_000,
     "number_setup": 0,
 }
 
