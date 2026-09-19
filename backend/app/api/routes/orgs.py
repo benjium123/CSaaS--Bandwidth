@@ -19,13 +19,16 @@ from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import WILDCARD, Invite, OrgMembership, Role, User
+from app.models.rbac import is_privileged_permissions
 from app.repositories import orgs as orgs_repo
+from app.repositories import users as users_repo
 from app.services import account_security, contact_visibility
 from app.services import audit as audit_svc
 from app.services import calling_settings as calling_settings_svc
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
 from app.services import kyc as kyc_svc
+from app.services import password_policy
 from app.services import retention as retention_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
@@ -321,6 +324,14 @@ class MemberUpdateIn(BaseModel):
     role_name: str = Field(min_length=1, max_length=64)
 
 
+class MemberCreateIn(BaseModel):
+    email: EmailStr
+    full_name: str = Field(default="", max_length=255)
+    password: str = Field(min_length=1, max_length=256)
+    #: "admin" or "agent". Never "owner" - see services/invites.INVITABLE_ROLES.
+    role_name: str = "agent"
+
+
 async def _get_role_for_org(ctx: OrgContext, role_name: str) -> Role:
     role = (
         await ctx.session.execute(
@@ -344,6 +355,114 @@ def _role_assignable_by(actor_role: Role, target_role: Role) -> bool:
         return True
     target_perms = set(target_role.permissions or [])
     return target_perms.issubset(set(actor_perms))
+
+
+@router.post("/current/members", response_model=MemberOut, status_code=201)
+async def create_member(
+    payload: MemberCreateIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("members:invite"))],
+) -> MemberOut:
+    """Create a member account directly, with the admin choosing the first credential.
+
+    This exists BESIDE the invite flow, never instead of it. On the production box SMTP is
+    not configured, so an emailed accept-invite link can never be delivered and the
+    invitation-only path means nobody can be added at all. An admin who can reach the
+    person out of band can set up the account here and hand the credential over directly.
+    The invite flow is untouched and keeps working exactly as before.
+
+    Owner is refused here for the SAME reason invites refuse it: an account that can delete
+    the workspace and see the billing is transferred deliberately, never minted as a side
+    effect of an email address plus a role string. That is why the role is checked against
+    ``invites.INVITABLE_ROLES`` (which excludes "owner") before anything is written, and
+    why containment mirrors ``create_invite`` - a bare ``members:invite`` holder must not be
+    able to mint themselves an admin account.
+
+    No forced first-login rotation is implemented, and ``password_changed_at`` is left NULL
+    exactly as ``create_user`` leaves it: there is no ``must_change_password`` column and a
+    migration is out of scope. The admin knows the credential, and the
+    ``account.created_by_admin`` audit row is the record of that. Forcing a rotation needs a
+    real column (a future decision), because the only migration-free signal we have
+    (``password_changed_at IS NULL``) is also NULL for every pre-existing account and would
+    drag the entire user base into a rotation prompt.
+    """
+    # The rule that makes "owner" impossible - before any row is written.
+    if payload.role_name not in invites_svc.INVITABLE_ROLES:
+        raise ValidationFailedError(
+            f"Role must be one of: {', '.join(invites_svc.INVITABLE_ROLES)}. "
+            "Ownership is transferred deliberately, never by invitation."
+        )
+
+    new_role = await _get_role_for_org(ctx, payload.role_name)
+
+    # C1: without this a holder of only members:invite could mint themselves an admin.
+    if not _role_assignable_by(ctx.role, new_role):
+        raise PermissionDeniedError(
+            "You cannot create a member with a role that has more permissions than your own."
+        )
+
+    # P41: handing out owner or admin/billing power needs a fresh selfie from the grantor.
+    if _privileged_grant_action(new_role) is not None:
+        await check_org_selfie_step_up(request, ctx, action="admin_grant")
+
+    # The policy service owns the length/strength rule; let its own message reach the admin.
+    await password_policy.check(
+        request.app.state.settings, payload.password, email=payload.email
+    )
+
+    # create_user hashes the password itself and raises ConflictError (409) on a duplicate.
+    user = await users_repo.create_user(
+        ctx.session,
+        email=payload.email,
+        password=payload.password,
+        full_name=payload.full_name,
+    )
+
+    # The session already carries this org's tenant context (require_permission set it) and
+    # the row's org_id equals it, so the before_flush guard accepts it - no allow-unscoped
+    # escape hatch here, and it would only widen the blast radius.
+    ctx.session.add(
+        OrgMembership(
+            id=uuid.uuid4(),
+            org_id=ctx.org.id,
+            user_id=user.id,
+            role_id=new_role.id,
+        )
+    )
+    await ctx.session.flush()
+
+    # TWO audit rows, and NEITHER carries the password. ``credential_set_by_admin`` records
+    # WHY this matters: the credential was chosen by someone else.
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="member.created",
+        target_type="user",
+        target_id=str(user.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={
+            "email": user.email,
+            "role_name": new_role.name,
+            "credential_set_by_admin": True,
+        },
+    )
+    account_security.audit(
+        ctx.session,
+        user.id,
+        "account.created_by_admin",
+        actor_user_id=ctx.actor_user_id,
+        request=request,
+        detail={"org_id": str(ctx.org.id), "role_name": new_role.name},
+    )
+
+    await ctx.session.commit()
+    return MemberOut(
+        user_id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role_name=new_role.name,
+    )
 
 
 @router.delete("/current/members/{user_id}", status_code=204)
@@ -618,12 +737,9 @@ async def revoke_invite(
 # ----------------------------------------------------------------------------------
 # P42: admin reset of a member's sign-in factors, and deactivation
 # ----------------------------------------------------------------------------------
-PRIVILEGED_PERMISSIONS = {"org:billing", "members:update", "roles:write"}
-
-
 def _is_privileged(role: Role) -> bool:
-    perms = set(role.permissions or [])
-    return WILDCARD in perms or bool(perms & PRIVILEGED_PERMISSIONS)
+    # Canonical definition lives in models/rbac.py; this wrapper keeps the local call sites.
+    return is_privileged_permissions(role.permissions)
 
 
 async def _resettable_member(ctx: OrgContext, user_id: uuid.UUID) -> User:

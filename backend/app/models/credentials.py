@@ -34,6 +34,7 @@ ACCOUNT_AUDIT_ACTIONS: tuple[str, ...] = (
     "account.unlocked",
     "account.deactivated",
     "account.reactivated",
+    "account.created_by_admin",
 )
 
 
