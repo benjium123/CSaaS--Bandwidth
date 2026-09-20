@@ -58,6 +58,13 @@ function renderApp(path: string, extraRoutes: Record<string, unknown> = {}) {
     "/api/v1/me/capabilities": { permissions: OWNER_PERMISSIONS, org: NEW_ORG },
     "/api/v1/inboxes": [],
     "/api/v1/orgs/current": { id: "org-1", name: "Org", slug: "org" },
+    // Must be stubbed SEPARATELY even though the line above is a prefix of it. The stub
+    // matcher takes the longest matching key, and with no "/members" key declared the org
+    // stub above is still the longest match - so AssignOwnerDrawer received the org OBJECT
+    // where it expects an ARRAY and threw `.map is not a function`. The ErrorBoundary in
+    // this very shell swallowed it, so the page rendered a crash and the suite stayed green.
+    // A prefix stub answering a different sub-resource is invisible by construction.
+    "/api/v1/orgs/current/members": [],
     "/api/v1/provider-accounts": [],
     // Everything that could put a banner in the shell is quiet unless a test says otherwise.
     "/api/v1/monitoring/status": { level: "normal", message: null, appealed_at: null },
