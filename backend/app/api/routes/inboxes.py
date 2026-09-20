@@ -112,6 +112,78 @@ async def _rows_with_e164(session) -> list[tuple[Inbox, str]]:
     return list((await session.execute(stmt)).all())
 
 
+async def _default_order_groups(ctx: OrgContext) -> tuple[set[uuid.UUID], set[uuid.UUID]]:
+    """(direct_grant_inbox_ids, department_grant_inbox_ids) for the caller - the two
+    "assigned to me" buckets the default Lines order (P44) sorts ahead of everything
+    else. An API-key caller has neither, so both come back empty."""
+    if ctx.actor_user_id is None:
+        return set(), set()
+    direct = set(
+        (
+            await ctx.session.execute(
+                sa.select(InboxGrant.inbox_id).where(
+                    InboxGrant.grantee_type == "user",
+                    InboxGrant.grantee_id == ctx.actor_user_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    dept_ids = list(
+        (
+            await ctx.session.execute(
+                sa.select(DepartmentMember.department_id)
+                .join(Department, Department.id == DepartmentMember.department_id)
+                .where(
+                    DepartmentMember.user_id == ctx.actor_user_id,
+                    Department.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    via_department: set[uuid.UUID] = set()
+    if dept_ids:
+        via_department = set(
+            (
+                await ctx.session.execute(
+                    sa.select(InboxGrant.inbox_id).where(
+                        InboxGrant.grantee_type == "department",
+                        InboxGrant.grantee_id.in_(dept_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return direct, via_department
+
+
+async def _order_for_display(ctx: OrgContext, out: list[InboxOut]) -> list[InboxOut]:
+    """Sort the Lines rail (P44): this member's own dragged order once they have one,
+    else a computed default (their own numbers, then their department's, then the rest -
+    e.g. an admin's full-access view of unassigned numbers - alphabetical within each
+    group). A saved id no longer in ``out`` (access revoked since) is simply absent from
+    the result; an inbox not in a saved order (granted since the last drag) is appended
+    at the end rather than dropped."""
+    saved = ctx.membership.inbox_order if ctx.membership is not None else None
+    if saved:
+        position = {inbox_id: i for i, inbox_id in enumerate(saved)}
+        out.sort(key=lambda item: (position.get(str(item.id), len(position)), item.name.lower()))
+        return out
+    direct, via_department = await _default_order_groups(ctx)
+    def _bucket(item: InboxOut) -> int:
+        if item.id in direct:
+            return 0
+        if item.id in via_department:
+            return 1
+        return 2
+    out.sort(key=lambda item: (_bucket(item), item.name.lower()))
+    return out
+
+
 async def _get_inbox(ctx: OrgContext, inbox_id: uuid.UUID) -> Inbox:
     inbox = await ctx.session.get(Inbox, inbox_id)
     if inbox is None:
@@ -153,7 +225,7 @@ async def list_inboxes(
                 sla_resolution_minutes=inbox.sla_resolution_minutes,
             )
         )
-    return out
+    return await _order_for_display(ctx, out)
 
 
 async def _require_org_member(ctx: OrgContext, user_id: uuid.UUID) -> None:

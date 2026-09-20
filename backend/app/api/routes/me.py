@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth.deps import OrgContext, get_current_org
 from app.compliance import registration
 from app.errors import ValidationFailedError
-from app.models import PERMISSIONS, OrgMembership, OrgNumber, ProviderAccount
+from app.models import PERMISSIONS, Inbox, OrgMembership, OrgNumber, ProviderAccount
 from app.services import notifications as notifications_svc
 
 router = APIRouter(prefix="/api/v1/me", tags=["me"])
@@ -61,6 +61,12 @@ class NotificationsReadIn(BaseModel):
     ids: list[uuid.UUID] | None = None
     # `all` on the wire; `all_` in Python so it never shadows the builtin.
     all_: bool = Field(default=False, alias="all")
+
+
+class InboxOrderIn(BaseModel):
+    #: The Lines rail top-to-bottom, exactly as this member just dragged it. A full
+    #: replacement, never a delta - same PUT-replaces contract as inbox grants.
+    inbox_ids: list[uuid.UUID] = []
 
 
 @router.get("/capabilities", response_model=CapabilitiesOut)
@@ -211,3 +217,38 @@ async def read_my_notifications(
     )
     await ctx.session.commit()
     return {"updated": updated}
+
+
+@router.put("/inbox-order", status_code=204)
+async def set_my_inbox_order(
+    payload: InboxOrderIn,
+    ctx: Annotated[OrgContext, Depends(get_current_org)],
+) -> None:
+    """Save this member's dragged order for the Lines rail (P44).
+
+    An id that is not a real inbox in this org is dropped rather than failing the
+    request: the list a drag produces is exactly what was already on the caller's
+    screen, so a stray id here means a number vanished mid-drag (revoked access,
+    deleted), not a malformed request worth 422ing over. Duplicates collapse to their
+    first occurrence.
+    """
+    if ctx.membership is None:
+        # API keys have no per-member preference row to store this on.
+        return
+    valid_ids = set(
+        (
+            await ctx.session.execute(
+                sa.select(Inbox.id).where(Inbox.id.in_(payload.inbox_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    seen: set[uuid.UUID] = set()
+    ordered: list[str] = []
+    for inbox_id in payload.inbox_ids:
+        if inbox_id in valid_ids and inbox_id not in seen:
+            seen.add(inbox_id)
+            ordered.append(str(inbox_id))
+    ctx.membership.inbox_order = ordered
+    await ctx.session.commit()
