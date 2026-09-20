@@ -627,6 +627,48 @@ cleanup and leaves a postmaster holding its data directory.
 **Run one thing at a time.** Concurrent suites make every failure unattributable, and a
 green result produced while sharing a machine is weaker evidence than one produced alone.
 
+## Trunk numbers are synced by the backend (P42)
+
+Buying, importing, or releasing a number used to require rebuilding the LiveKit SIP trunk by hand (delete + recreate, losing the trunk id and the dispatch rule) because the LiveKit server had no `UpdateSIPInboundTrunk`/`UpdateSIPOutboundTrunk` RPC. That is gone now: `app/voice_plane/trunk_sync.py` adds/removes a number from its carrier's trunk(s) the moment an order settles active, a number is imported, or a number is released - see `docs/PLAN_P42_TRUNK_SYNC.md` for the full decision.
+
+**Requires the LiveKit server on the v1.13 line** (`deploy/livekit/docker-compose.livekit.yml` pins `livekit/livekit-server:v1.13.7`). On the older v1.8 image every trunk_sync call 404s `bad_route` - this is caught, logged as `trunk_sync_unavailable`, and never fails the request; a number just stays off the trunk until the next self-healing pass below.
+
+Configure which trunks the backend is allowed to edit (`.env`, empty = not synced):
+
+```
+LIVEKIT_SIP_TELNYX_INBOUND_TRUNK_ID=
+LIVEKIT_SIP_SIGNALWIRE_INBOUND_TRUNK_ID=
+LIVEKIT_SIP_OUTBOUND_TRUNK_ID=              # already existed (Telnyx outbound)
+LIVEKIT_SIP_SIGNALWIRE_TRUNK_ID=            # already existed (SignalWire outbound)
+```
+
+Never point these at a trunk this deployment does not own - the CRM's shared `telnyx-in` trunk, for one.
+
+**Self-healing:** the sweeper calls `trunk_sync.reconcile()` at most once per 10 minutes, setting each configured trunk's `numbers` to exactly that carrier's active `org_numbers` - this is what fixes a trunk that drifted, and what backfills every existing number the first time a server is upgraded to v1.13. Its count shows up as `trunk_numbers_synced` in the `sweeper_pass` log line.
+
+To force a reconcile pass by hand after upgrading the image:
+
+```bash
+docker exec csaas-api-1 python -c "
+import asyncio
+from app.db.session import get_sessionmaker
+from app.voice_plane import trunk_sync, service as voice_service
+from app.config import Settings
+
+async def main():
+    settings = Settings()
+    lk = voice_service.make_api(settings)
+    async with get_sessionmaker()() as session:
+        print(await trunk_sync.reconcile(session, lk, settings))
+
+asyncio.run(main())
+"
+```
+
+Then confirm at the LiveKit side (`ListSIPInboundTrunk`) that each trunk's `numbers` matches the active `org_numbers` for its carrier, and place a live inbound + outbound test call on one number per carrier.
+
+---
+
 ## Incident quick-checks
 
 No `journalctl` here - everything runs in Docker, so:

@@ -135,6 +135,15 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
             log.exception("sweeper_monitoring_job_failed", job=label)
 SECURITY_LISTS_INTERVAL_SECONDS = 86400
 
+#: P42: trunk_sync.reconcile() is the self-healing LiveKit trunk-membership pass (a full
+#: org_numbers scan + up to 2 LiveKit calls per carrier) - the request-path hooks in
+#: numbers.py/number_orders.py already keep a trunk in sync for the common case, so this
+#: is only for catching drift, not for driving every number change. Module-level (not
+#: app.state) timestamp, same reasoning as the round-robin cursor in number_orders.py:
+#: this loop is one process.
+TRUNK_SYNC_TICK_INTERVAL_SECONDS = 600
+_trunk_sync_last_run: float | None = None
+
 #: 8.18/4.15/6.19: arbitrary constant lock key, one per "the whole sweeper pass". Any
 #: int works for pg_try_advisory_lock - it just needs to be the SAME constant every call
 #: so concurrent workers contend on the identical lock.
@@ -209,6 +218,7 @@ async def _run_once_locked(app) -> dict[str, int]:
     from app.services import usage as usage_svc
     from app.services import voicemail as voicemail_svc
     from app.services import webhooks_out as webhooks_out_svc
+    from app.voice_plane import trunk_sync
 
     store = getattr(app.state, "media_store", None)
     carrier = getattr(app.state, "carrier", None)
@@ -257,7 +267,10 @@ async def _run_once_locked(app) -> dict[str, int]:
         try:
             async with get_sessionmaker()() as session:
                 results["number_orders_polled"] = await number_orders.poll_pending_number_orders(
-                    session, registry, settings=app.state.settings
+                    session,
+                    registry,
+                    settings=app.state.settings,
+                    livekit=getattr(app.state, "livekit", None),
                 )
         except Exception:
             log.exception("sweeper_number_order_poll_failed")
@@ -597,6 +610,28 @@ async def _run_once_locked(app) -> dict[str, int]:
             results["reputation_alerts"] = reputation_counts.get("alerts", 0)
         except Exception:
             log.exception("sweeper_reputation_tick_failed")
+
+    # P42: self-healing LiveKit trunk-number reconcile. Same reserve-the-slot-before-
+    # running discipline as reputation/spend above, at most once per
+    # TRUNK_SYNC_TICK_INTERVAL_SECONDS. A no-op with nothing to log when there is no
+    # LiveKit client configured at all.
+    livekit = getattr(app.state, "livekit", None)
+    if livekit is not None:
+        global _trunk_sync_last_run  # noqa: PLW0603
+        now_monotonic = time.monotonic()
+        if (
+            _trunk_sync_last_run is None
+            or now_monotonic - _trunk_sync_last_run >= TRUNK_SYNC_TICK_INTERVAL_SECONDS
+        ):
+            _trunk_sync_last_run = now_monotonic
+            try:
+                async with get_sessionmaker()() as session:
+                    trunk_counts = await trunk_sync.reconcile(
+                        session, livekit, app.state.settings
+                    )
+                results["trunk_numbers_synced"] = sum(trunk_counts.values())
+            except Exception:
+                log.exception("sweeper_trunk_sync_reconcile_failed")
 
     # P41: derived per-workspace messaging health - today's and yesterday's rollup rows,
     # then the owner/admin warnings. Same hourly gate discipline as reputation above:
