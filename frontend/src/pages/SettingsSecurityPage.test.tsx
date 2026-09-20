@@ -68,6 +68,7 @@ describe("SettingsSecurityPage", () => {
     });
     renderWithProviders(<SettingsSecurityPage />, client);
 
+    await userEvent.type(screen.getByLabelText("Your password"), "hunter2");
     await userEvent.click(
       screen.getByRole("button", { name: "Set up two-factor authentication" }),
     );
@@ -99,6 +100,7 @@ describe("SettingsSecurityPage", () => {
     });
     renderWithProviders(<SettingsSecurityPage />, client);
 
+    await userEvent.type(screen.getByLabelText("Your password"), "hunter2");
     await userEvent.click(
       screen.getByRole("button", { name: "Set up two-factor authentication" }),
     );
@@ -322,5 +324,70 @@ describe("SettingsSecurityPage", () => {
         (entry) => entry.path === "/api/v1/orgs/current/settings" && entry.init.method === "PATCH",
       ),
     ).toBe(false);
+  });
+
+  it("sends the typed password in the enroll request body", async () => {
+    const client = makeStubClient({
+      ...IDENTITY_STUBS,
+      "/api/v1/auth/me": ME_2FA_OFF,
+      "/api/v1/orgs/current/settings": ORG_SETTINGS,
+      "/api/v1/auth/2fa/enroll": {
+        secret: "SECRET123",
+        provisioning_uri: "otpauth://totp/CSaaS:a@example.com?secret=SECRET123",
+      },
+    });
+    renderWithProviders(<SettingsSecurityPage />, client);
+
+    await userEvent.type(screen.getByLabelText("Your password"), "hunter2");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Set up two-factor authentication" }),
+    );
+    await screen.findByLabelText("Provisioning URI");
+
+    const call = client.calls.find((entry) => entry.path === "/api/v1/auth/2fa/enroll");
+    expect(call?.init.method).toBe("POST");
+    expect(call?.init.json).toEqual({ password: "hunter2" });
+  });
+
+  it("keeps the set-up button disabled until a password is typed", async () => {
+    const client = makeStubClient({
+      ...IDENTITY_STUBS,
+      "/api/v1/auth/me": ME_2FA_OFF,
+      "/api/v1/orgs/current/settings": ORG_SETTINGS,
+    });
+    renderWithProviders(<SettingsSecurityPage />, client);
+
+    const button = screen.getByRole("button", {
+      name: "Set up two-factor authentication",
+    });
+    expect(button).toBeDisabled();
+
+    await userEvent.click(button);
+    expect(
+      client.calls.some((entry) => entry.path === "/api/v1/auth/2fa/enroll"),
+    ).toBe(false);
+
+    await userEvent.type(screen.getByLabelText("Your password"), "hunter2");
+    expect(button).not.toBeDisabled();
+  });
+
+  it("surfaces the server's error when the password is wrong", async () => {
+    const client = makeStubClient({
+      ...IDENTITY_STUBS,
+      "/api/v1/auth/me": ME_2FA_OFF,
+      "/api/v1/orgs/current/settings": ORG_SETTINGS,
+      "/api/v1/auth/2fa/enroll": () => {
+        throw new ApiError(401, "unauthenticated", "Incorrect password");
+      },
+    });
+    renderWithProviders(<SettingsSecurityPage />, client);
+
+    await userEvent.type(screen.getByLabelText("Your password"), "wrong-password");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Set up two-factor authentication" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Incorrect password");
+    expect(screen.queryByLabelText("Provisioning URI")).toBeNull();
   });
 });

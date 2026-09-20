@@ -57,6 +57,7 @@ export function SettingsSecurityPage() {
   const { api, me, orgId } = useAuth();
 
   const [enroll, setEnroll] = React.useState<{ secret: string; uri: string } | null>(null);
+  const [enrollPassword, setEnrollPassword] = React.useState("");
   const [code, setCode] = React.useState("");
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -82,11 +83,14 @@ export function SettingsSecurityPage() {
     setError(null);
     setEnrolling(true);
     try {
+      // The endpoint requires a password (PasswordIn) - confirming it stops someone using
+      // an unattended screen from attaching their own authenticator.
       const res = await api.request<{ secret: string; provisioning_uri: string }>(
         "/api/v1/auth/2fa/enroll",
-        { method: "POST" },
+        { method: "POST", json: { password: enrollPassword } },
       );
       setEnroll({ secret: res.secret, uri: res.provisioning_uri });
+      setEnrollPassword("");
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -160,9 +164,30 @@ export function SettingsSecurityPage() {
       <SurfaceCard className="space-y-[12px]">
         <SectionLabel>Two-factor authentication</SectionLabel>
         {!enroll ? (
-          <Button className="rounded-full" onClick={startEnroll} disabled={enrolling}>
-            Set up two-factor authentication
-          </Button>
+          <div className="space-y-[12px]">
+            <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
+              Confirming your password stops someone using an unattended screen from
+              attaching their own authenticator.
+            </p>
+            <div className="flex gap-[11px]">
+              <Input
+                aria-label="Your password"
+                type="password"
+                autoComplete="current-password"
+                placeholder="Confirm your password"
+                value={enrollPassword}
+                onChange={(event) => setEnrollPassword(event.target.value)}
+                disabled={enrolling}
+              />
+              <Button
+                className="rounded-full"
+                onClick={startEnroll}
+                disabled={!enrollPassword || enrolling}
+              >
+                Set up two-factor authentication
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="space-y-[12px]">
             <TotpEnrolment secret={enroll.secret} uri={enroll.uri} />
