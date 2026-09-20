@@ -7,6 +7,7 @@ import {
   type ContactVisibility,
 } from "@/api/contacts";
 import { Button, Input, Spinner } from "@/components/ui/primitives";
+import { TotpEnrolment } from "@/components/security/TotpEnrolment";
 import { PageHeader, SectionLabel, SurfaceCard } from "@/components/ui/consoleChrome";
 import { SessionsCard } from "@/components/settings/SessionsCard";
 import { PasskeysCard } from "@/components/settings/PasskeysCard";
@@ -164,12 +165,7 @@ export function SettingsSecurityPage() {
           </Button>
         ) : (
           <div className="space-y-[12px]">
-            <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
-              Add this secret to your authenticator app, then enter the six-digit code.
-            </p>
-            <code className="block break-all rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[11px] text-[12px] text-[hsl(var(--cx-text))]">
-              {enroll.secret}
-            </code>
+            <TotpEnrolment secret={enroll.secret} uri={enroll.uri} />
             <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
               Or open it directly:{" "}
               <a className="break-all underline" href={enroll.uri}>

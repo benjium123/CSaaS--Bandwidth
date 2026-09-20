@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { PasskeysCard } from "@/components/settings/PasskeysCard";
+import { TotpEnrolment } from "@/components/security/TotpEnrolment";
 import {
   AuthAlert,
   AuthButton,
@@ -118,13 +119,7 @@ export function SecureAccountPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  Add this key to Google Authenticator, 1Password, Authy or similar, then enter
-                  the six-digit code it shows.
-                </p>
-                <code className="ex-mono block break-all rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink)/0.8)] p-3 text-[0.6875rem] leading-relaxed text-[hsl(var(--ex-verdigris))]">
-                  {enroll.secret}
-                </code>
+                <TotpEnrolment secret={enroll.secret} uri={enroll.uri} />
                 <a className="ex-link" href={enroll.uri}>
                   Open in authenticator app
                 </a>
