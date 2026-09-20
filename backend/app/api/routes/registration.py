@@ -3,15 +3,23 @@
 `compliance:manage` throughout. Registration decides what an org is legally permitted to
 send, so it sits with compliance rather than with numbers - an agent who can order a number
 should not be able to declare a use case on the company's behalf.
+
+Two kinds of "submit" exist here and they are NOT the same thing:
+
+* the legacy ``/submit`` routes only advance the LOCAL record - they never contact a
+  carrier and spend nothing;
+* the ``/file-telnyx`` routes make a BILLABLE, non-refundable carrier submission, so they
+  require a platform operator (super admin) on top of ``compliance:manage`` and an explicit
+  ``confirm_non_refundable=true`` acknowledgement.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -24,6 +32,7 @@ from app.errors import (
 from app.models import OrgNumber
 from app.models.numbers import Brand, Campaign, TollFreeVerification
 from app.services import registration as reg
+from app.services import telnyx_brand_filing, telnyx_campaign_filing
 
 router = APIRouter(prefix="/api/v1/registration", tags=["registration"])
 
@@ -101,8 +110,62 @@ async def submit_brand(
     brand_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> BrandOut:
+    """Advance the LOCAL brand record to ``submitted`` - no carrier is contacted.
+
+    This is the legacy local-only path and is kept for compatibility: it spends nothing
+    and never reaches Telnyx. The billable carrier submission lives in
+    ``/brands/{brand_id}/file-telnyx``.
+    """
     brand = await reg.submit_brand(ctx.session, brand_id)
     await ctx.session.commit()
+    return _brand_out(brand)
+
+
+class FileBrandTelnyxIn(BaseModel):
+    """Operator body for a Telnyx brand filing.
+
+    ``confirm_non_refundable`` must be the literal ``true``: a 10DLC brand submission is
+    billed by the carrier and cannot be refunded, so the caller has to say so explicitly
+    rather than opt in by omission.
+    """
+
+    confirm_non_refundable: Literal[True]
+    company_name: str = Field(min_length=1, max_length=255)
+    first_name: str = Field(min_length=1, max_length=255)
+    last_name: str = Field(min_length=1, max_length=255)
+    brand_relationship: str = Field(min_length=1, max_length=255)
+
+
+@router.post("/brands/{brand_id}/file-telnyx", response_model=BrandOut)
+async def file_brand_telnyx(
+    brand_id: uuid.UUID,
+    payload: FileBrandTelnyxIn,
+    request: Request,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> BrandOut:
+    """File this brand with Telnyx - a BILLABLE, non-refundable carrier call.
+
+    Unlike ``/submit`` (which only moves the LOCAL record and never contacts a carrier),
+    this reaches Telnyx and creates a real 10DLC brand that cannot be refunded. It is
+    restricted to a platform operator (super admin) that also holds ``compliance:manage``,
+    and requires an explicit ``confirm_non_refundable=true``. The carrier is only ever
+    called by ``file_brand_with_telnyx`` using the org's configured Telnyx credentials;
+    no secret is read or echoed here.
+    """
+    brand = await ctx.session.get(Brand, brand_id)
+    if brand is None:
+        raise NotFoundError("Brand not found")
+    settings = request.app.state.settings
+    brand = await telnyx_brand_filing.file_brand_with_telnyx(
+        ctx.session,
+        settings,
+        brand,
+        company_name=payload.company_name,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        brand_relationship=payload.brand_relationship,
+    )
     return _brand_out(brand)
 
 
@@ -184,8 +247,56 @@ async def submit_campaign(
     campaign_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> CampaignOut:
+    """Advance the LOCAL campaign record to ``submitted`` - no carrier is contacted.
+
+    Legacy local-only path, kept for compatibility: it spends nothing. Use
+    ``/campaigns/{campaign_id}/file-telnyx`` for the billable Telnyx submission.
+    """
     campaign = await reg.submit_campaign(ctx.session, campaign_id)
     await ctx.session.commit()
+    return await _campaign_out(ctx.session, campaign)
+
+
+class FileCampaignTelnyxIn(BaseModel):
+    """Operator body for a Telnyx campaign filing.
+
+    ``assertions`` is the explicit consent/financial attestation map passed straight through
+    to the carrier payload builder. ``confirm_non_refundable`` must be the literal ``true``:
+    a 10DLC campaign submission is billed by the carrier and cannot be refunded.
+    """
+
+    confirm_non_refundable: Literal[True]
+    assertions: dict[str, bool]
+
+
+@router.post("/campaigns/{campaign_id}/file-telnyx", response_model=CampaignOut)
+async def file_campaign_telnyx(
+    campaign_id: uuid.UUID,
+    payload: FileCampaignTelnyxIn,
+    request: Request,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> CampaignOut:
+    """File this campaign with Telnyx - a BILLABLE, non-refundable carrier call.
+
+    Unlike ``/submit`` (which only moves the LOCAL record and never contacts a carrier),
+    this reaches Telnyx and creates a real 10DLC campaign that cannot be refunded, after
+    the service verifies the parent brand is approved both locally and at Telnyx. It is
+    restricted to a platform operator (super admin) that also holds ``compliance:manage``,
+    and requires an explicit ``confirm_non_refundable=true``. The carrier is only ever
+    called by ``file_campaign_with_telnyx`` using the org's configured Telnyx credentials;
+    no secret is read or echoed here.
+    """
+    campaign = await ctx.session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise NotFoundError("Campaign not found")
+    settings = request.app.state.settings
+    campaign = await telnyx_campaign_filing.file_campaign_with_telnyx(
+        ctx.session,
+        settings,
+        campaign,
+        assertions=payload.assertions,
+    )
     return await _campaign_out(ctx.session, campaign)
 
 
