@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useMutation } from "@tanstack/react-query";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
+import { useGate } from "@/api/capabilities";
 import {
   useCreateInvite,
   useInvites,
@@ -30,6 +31,7 @@ import {
   InitialsAvatar,
 } from "@/components/ui/consoleChrome";
 import { Button, Input, Pill, Select, Spinner, type PillTone } from "@/components/ui/primitives";
+import { AddTeammateDrawer } from "@/components/team/AddTeammateDrawer";
 import { RoleMatrix } from "@/components/team/RoleMatrix";
 import {
   MemberNumbersCell,
@@ -115,8 +117,15 @@ export function TeamPage() {
    *  open at once turns the table into a wall. */
   const [expandedUserId, setExpandedUserId] = React.useState<string | null>(null);
 
+  /** Whether the Add-teammate drawer is open. */
+  const [addOpen, setAddOpen] = React.useState(false);
+
   const canEditRoles = hasPermission(me, orgId, "roles:write");
   const canResetMembers = hasPermission(me, orgId, "members:update");
+  /** Inviting is a capability, not a membership flag. This page already loads capabilities
+   *  through MemberNumbersCell, so useGate adds no extra request. */
+  const gate = useGate();
+  const canInvite = gate.can("members:invite");
   /** Name, Email, Role, Numbers (+ Sign-in). One constant so the expanded row's colSpan
    *  cannot drift away from the header when a column is added. */
   const memberColumnCount = canResetMembers ? 5 : 4;
@@ -254,7 +263,20 @@ export function TeamPage() {
           className="space-y-8"
         >
           <div className="space-y-3">
-            <h1 className="text-[19px] font-semibold tracking-[-0.015em]">Team</h1>
+            {/* Heading on the left, the invitation action on the right - the same header
+                shape the Roles tab uses. The button renders only for people who may invite. */}
+            <div className="flex items-center justify-between">
+              <h1 className="text-[19px] font-semibold tracking-[-0.015em]">Team</h1>
+              {canInvite && (
+                <Button
+                  type="button"
+                  className="rounded-full px-5"
+                  onClick={() => setAddOpen(true)}
+                >
+                  Add teammate
+                </Button>
+              )}
+            </div>
 
             {membersLoading ? (
               <Spinner />
@@ -500,6 +522,12 @@ export function TeamPage() {
               </div>
             )}
           </div>
+
+          {/* Mounted only for people who can invite, so an unauthorised viewer fires no
+              capability-gated requests from the drawer. */}
+          {canInvite && (
+            <AddTeammateDrawer open={addOpen} onClose={() => setAddOpen(false)} />
+          )}
         </div>
       )}
 

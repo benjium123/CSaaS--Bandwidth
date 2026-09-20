@@ -32,6 +32,14 @@ export default defineConfig({
      * CI runner while a real hang still fails the run rather than hanging it. This does NOT
      * paper over a race - a race produces an assertion failure, which no timeout can hide.
      */
+    /**
+     * The deepseek-delegate CLI stages proposed files under .deepseek/sessions/<slug>/
+     * round-NNN/files/ before they are applied. Those are unresolvable copies (their
+     * relative imports point at siblings that only exist in src/), and vitest's default
+     * include glob picks up any *.test.tsx it finds - so one staged suite fails the whole
+     * run with an import error while the real file beside it passes.
+     */
+    exclude: ["**/node_modules/**", "**/dist/**", ".deepseek/**"],
     testTimeout: 20000,
   },
 });

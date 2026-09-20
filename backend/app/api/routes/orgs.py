@@ -9,6 +9,9 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Imported so there is exactly ONE cross-org inbox check in the codebase: inboxes.py does
+# NOT import orgs.py, so this alias is not an import cycle.
+from app.api.routes.inboxes import _get_inbox as _get_inbox_for_org
 from app.auth.deps import (
     OrgContext,
     check_org_selfie_step_up,
@@ -18,7 +21,7 @@ from app.auth.deps import (
 from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
-from app.models import WILDCARD, Invite, OrgMembership, Role, User
+from app.models import WILDCARD, InboxGrant, Invite, OrgMembership, Role, User
 from app.models.rbac import is_privileged_permissions
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
@@ -330,6 +333,9 @@ class MemberCreateIn(BaseModel):
     password: str = Field(min_length=1, max_length=256)
     #: "admin" or "agent". Never "owner" - see services/invites.INVITABLE_ROLES.
     role_name: str = "agent"
+    #: OPTIONAL. Inboxes to grant the new user, role "member", in the SAME transaction
+    #: that creates the account. Empty/absent => byte-identical behaviour to before.
+    inbox_ids: list[uuid.UUID] = []
 
 
 async def _get_role_for_org(ctx: OrgContext, role_name: str) -> Role:
@@ -385,6 +391,14 @@ async def create_member(
     real column (a future decision), because the only migration-free signal we have
     (``password_changed_at IS NULL``) is also NULL for every pre-existing account and would
     drag the entire user base into a rotation prompt.
+
+    Transaction boundary: every row this handler writes - the ``User``, the
+    ``OrgMembership`` and every ``InboxGrant`` - is committed by the SINGLE
+    ``await ctx.session.commit()`` at the very end. There is no nested transaction and no
+    intermediate commit, so any raised error discards the whole thing. That is what makes
+    "create teammate + grant their number(s)" atomic: either the teammate exists with their
+    number(s), or nothing was written at all. The grants are built only AFTER every inbox id
+    has been validated against the caller's org.
     """
     # The rule that makes "owner" impossible - before any row is written.
     if payload.role_name not in invites_svc.INVITABLE_ROLES:
@@ -410,6 +424,29 @@ async def create_member(
         request.app.state.settings, payload.password, email=payload.email
     )
 
+    # ---- OPTIONAL inbox grants, folded into the SAME transaction as the account. ----
+    # Everything here happens BEFORE create_user, so a bad inbox id leaves no user row.
+    granted_inbox_ids: list[uuid.UUID] = []
+    if payload.inbox_ids:
+        # (a) Permission gate. This route is gated on members:invite; without this check a
+        #     bare members:invite holder could hand out inbox access it cannot otherwise
+        #     grant through PUT /api/v1/inboxes/assignments (which requires inboxes:admin).
+        #     Role.grants already short-circuits the wildcard.
+        if not ctx.role.grants("inboxes:admin"):
+            raise PermissionDeniedError(
+                "Granting inboxes requires permission: inboxes:admin"
+            )
+        # (b) De-duplicate preserving order. Repeating an id is NOT an error; it must not
+        #     trip the uq_inbox_grants_inbox_grantee unique constraint.
+        granted_inbox_ids = list(dict.fromkeys(payload.inbox_ids))
+        # (c) Validate EVERY id belongs to the caller's org before anything is written,
+        #     reusing the EXISTING check rather than writing a second one.
+        #     _get_inbox_for_org is the ONE cross-org inbox check (imported at module top).
+        #     Inbox is TenantScoped, so a foreign id resolves to nothing and it raises
+        #     NotFoundError (404) - the whole request is rejected on the FIRST bad id.
+        for inbox_id in granted_inbox_ids:
+            await _get_inbox_for_org(ctx, inbox_id)
+
     # create_user hashes the password itself and raises ConflictError (409) on a duplicate.
     user = await users_repo.create_user(
         ctx.session,
@@ -431,8 +468,35 @@ async def create_member(
     )
     await ctx.session.flush()
 
+    # The grants themselves. grantee_type is ALWAYS "user" here: this code must never write
+    # or delete a "department" row - a department's grant on the same inbox belongs to a
+    # whole team and is none of this handler's business.
+    for inbox_id in granted_inbox_ids:
+        ctx.session.add(
+            InboxGrant(
+                id=uuid.uuid4(),
+                org_id=ctx.org.id,
+                inbox_id=inbox_id,
+                grantee_type="user",
+                grantee_id=user.id,
+                role="member",
+            )
+        )
+
     # TWO audit rows, and NEITHER carries the password. ``credential_set_by_admin`` records
-    # WHY this matters: the credential was chosen by someone else.
+    # WHY this matters: the credential was chosen by someone else. These rows are what makes
+    # "who gave this person this number" answerable later. The ``inbox_ids`` key is added
+    # ONLY when there are grants, so the empty case is byte-identical to before.
+    member_detail: dict = {
+        "email": user.email,
+        "role_name": new_role.name,
+        "credential_set_by_admin": True,
+    }
+    account_detail: dict = {"org_id": str(ctx.org.id), "role_name": new_role.name}
+    if granted_inbox_ids:
+        granted_ids = [str(i) for i in granted_inbox_ids]
+        member_detail["inbox_ids"] = granted_ids
+        account_detail["inbox_ids"] = granted_ids
     audit_svc.record(
         ctx.session,
         ctx.org.id,
@@ -441,11 +505,7 @@ async def create_member(
         target_id=str(user.id),
         actor_user_id=ctx.actor_user_id,
         actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
-        detail={
-            "email": user.email,
-            "role_name": new_role.name,
-            "credential_set_by_admin": True,
-        },
+        detail=member_detail,
     )
     account_security.audit(
         ctx.session,
@@ -453,9 +513,10 @@ async def create_member(
         "account.created_by_admin",
         actor_user_id=ctx.actor_user_id,
         request=request,
-        detail={"org_id": str(ctx.org.id), "role_name": new_role.name},
+        detail=account_detail,
     )
 
+    # ONE transaction: the single commit at the very end, after every validation has passed.
     await ctx.session.commit()
     return MemberOut(
         user_id=user.id,
