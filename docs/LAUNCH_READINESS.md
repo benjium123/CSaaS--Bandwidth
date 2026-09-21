@@ -6,7 +6,7 @@
 > and no live-carrier integration test yet — production Telnyx credentials remain an external
 > prerequisite (§6). Integration evidence below is drawn from verified commits `ddbdd89`,
 > `81df130`, `43e1ff9`, `907b829`, `1d95fbf`, `0719e59`, `9b9e261`, `ef724d8`, `87b63db`,
-> `df849d3`, `c6284e0`.
+> `df849d3`, `c6284e0`, `c45bc0`, `a24d322`.
 
 ## 0. Sources inspected
 
@@ -189,7 +189,13 @@ audit-trail storage remains an owner decision (§3.1, §6).
 
 ## 5. P1 (non-blocking hardening)
 
-- Note that SQLite makes `with_for_update` a no-op (Postgres-only concurrency).
+- **PostgreSQL concurrency (P1-V2) still open.** SQLite makes `with_for_update` a no-op, so
+  the lock/claim behavior used by filing, number association, and reconciliation is
+  unverified under real concurrency. The PostgreSQL **test harness** now exists —
+  `backend/tests/test_telnyx_postgres_concurrency.py` (commit `a24d322`), a `pg_only`
+  two-session brand-filing race test with a mocked carrier transport — but a harness is not
+  verified behavior: with PostgreSQL unavailable the test is skipped, and the actual
+  PostgreSQL race execution has **not** been run, so P1-V2 is **not** closed.
 - Decide the `REQUIRE_NUMBER_REGISTRATION` default for non-Telnyx carriers.
 
 ## 6. Owner decisions, credentials and deploy (not code)
@@ -226,6 +232,9 @@ audit-trail storage remains an owner decision (§3.1, §6).
   the only tightening is an env flag, so the control is opt-in there.
 - **Mock-only confidence.** A shape change in `registration_status`/`verificationStatus` can
   mis-map and silently approve.
+- **Concurrency is unverified on SQLite.** Row-lock/claim code paths run only against SQLite in
+  the suite, where `SELECT … FOR UPDATE` is a no-op; the `pg_only` race-test harness exists but
+  has never executed against PostgreSQL (P1-V2).
 
 ## 8. Verification: offline tests done, live carrier still missing
 
@@ -238,11 +247,20 @@ For the bounded-approval / revocation pass and the order-route guard, targeted r
 **103** evidence/config tests passed, **37** existing affected Telnyx registration tests
 passed, and **29** new refresh/send-gate tests passed, with **Ruff and diff checks clean**.
 The dedicated order-route guard test `backend/tests/test_telnyx_order_campaign_guard.py` was
-added (commit `c6284e0`). A broader selector run reported **587 passed, 2402 deselected, and 1
-failure**: `backend/tests/test_bugfix_area2.py::test_send_message_skips_registration_gate_when_plan_supplied`,
-which fails in prepaid billing (a `TelephonyCreditsError`) **before** reaching the registration
-gate. That failure is **unrelated to this change**, and the broad run is **not** claimed fully
-green.
+added (commit `c6284e0`).
+
+The latest broad selector run (`pytest backend/tests -q -k "telnyx or registration"`) reported
+**588 passed, 1 skipped, 2402 deselected, zero failures (177.94 seconds)**. The single skip is
+`backend/tests/test_telnyx_postgres_concurrency.py`, skipped because PostgreSQL is unavailable
+on this machine. Commit `a24d322` **built the PostgreSQL test harness** — a `pg_only`, real
+two-session brand-filing race test with a mocked carrier transport — but the harness has not
+been executed against a real PostgreSQL, so concurrency behavior remains **unverified** and
+**P1-V2 is not closed** (§5).
+
+Commit `c45bc0` fixes a stale test fixture: the plan-supplied messaging test now sets
+`Org.telephony_prepaid=False` so it reaches the registration gate, with production billing
+behavior unchanged.
+
 Coverage includes approval guards
 (`test_telnyx_brand_approval_guard.py`, `test_telnyx_campaign_tfv_approval_guard.py`): missing
 ref / carrier pending / mismatched id / wrong TFV field / confirmed approval / a repeated
@@ -252,5 +270,6 @@ association (`..._success.py` + `..._failures.py`): success, pending, timeout, w
 repeat markers; payload tests for field and enum validation; TFV filing and reconciliation
 route tests.
 
-**Still missing:** live-carrier verification (production credentials, §6) and an assigned owner
-and audit-trail storage for the written reconciliation runbook (P0, §4.1).
+**Still missing:** live-carrier verification (production credentials, §6); an assigned owner
+and audit-trail storage for the written reconciliation runbook (P0, §4.1); and an executed
+PostgreSQL concurrency leg for **P1-V2** (§5).

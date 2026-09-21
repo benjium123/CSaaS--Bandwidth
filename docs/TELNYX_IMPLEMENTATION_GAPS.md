@@ -34,6 +34,8 @@
   | `87b63db` | Bounded approval evidence — pure `app.compliance.telnyx_approval`, approval-freshness setting, focused tests. |
   | `df849d3` | Enforce fresh approval evidence — atomic evidence on a confirmed `/status`, operator+compliance-guarded read-only POST refresh/revoke routes (carrier GET only), send-gate enforcement. |
   | `c6284e0` | Dedicated Telnyx order-route campaign guard regression test and the TFV reconciliation runbook. |
+  | `c45bc0` | Fix stale plan-supplied messaging test fixture (`Org.telephony_prepaid=False`); production billing behavior unchanged, no assertion weakened. |
+  | `a24d322` | `pg_only` two-session PostgreSQL brand-filing race test **harness** — `backend/tests/test_telnyx_postgres_concurrency.py` (mocked carrier transport); PostgreSQL execution not run here. |
 
 - Where a symbol's exact spelling has drifted from the commits, the `Verify:` grep on the
   row is authoritative; trust the grep and update the row.
@@ -141,6 +143,9 @@ Key TFV module paths referenced above:
   plus operator+compliance-guarded read-only POST approval refresh/revoke routes whose only
   carrier interaction is a GET (F4, F5, F11, F12, F15, F22).
 - `backend/app/compliance/telnyx_approval.py` — bounded approval evidence (F19–F23, `87b63db`).
+- `backend/tests/test_telnyx_postgres_concurrency.py` — `pg_only` PostgreSQL concurrency race
+  test **harness** (P1-V2, `a24d322`); with PostgreSQL unavailable it is skipped and never
+  executed here, so it does not verify behavior.
 - `docs/runbooks/TELNYX_TFV_RECONCILIATION.md` — operator runbook for TFV filing
   reconciliation and controlled marker repair (P0-O1, documentation deliverable, `c6284e0`;
   the named owner and audit-trail assignment remain an `OWNER DECISION`).
@@ -251,8 +256,12 @@ audit-trail storage, and Telnyx support workflow remain `OWNER DECISION`.**
 
 - **P1-V2 (production PostgreSQL concurrency verification).** The test suite runs on SQLite,
   which ignores `SELECT … FOR UPDATE`, so lock/claim behavior used by filing, number
-  association, and reconciliation is unverified under real concurrency. `Verify:` run the
-  relevant tests against PostgreSQL and assert single-winner behavior.
+  association, and reconciliation is unverified under real concurrency. The PostgreSQL **test
+  harness** now exists (`backend/tests/test_telnyx_postgres_concurrency.py`, commit `a24d322`)
+  — a `pg_only`, real two-session brand-filing race test with a mocked carrier transport — but
+  with PostgreSQL unavailable it is skipped and has **never executed against PostgreSQL**, so
+  the race outcome is **unverified** and **P1-V2 is not closed**. A harness is not verified
+  behavior. `Verify:` run the test against PostgreSQL and assert single-winner behavior.
 
 ## 6. Acceptance test matrix
 
@@ -263,13 +272,16 @@ clean**. For the bounded-approval / revocation pass and the order-route guard, t
 reported **103** evidence/config tests passed, **37** existing affected Telnyx registration
 tests passed, and **29** new refresh/send-gate tests passed, with **Ruff and diff checks
 clean**; the dedicated order-route guard test file
-`backend/tests/test_telnyx_order_campaign_guard.py` was added (commit `c6284e0`). A broader
-selector run reported **587 passed, 2402 deselected, and 1 failure** —
-`backend/tests/test_bugfix_area2.py::test_send_message_skips_registration_gate_when_plan_supplied`,
-which fails in prepaid billing (a `TelephonyCreditsError`) **before** reaching the
-registration gate; that failure is **unrelated** to this change and the broad run is **not**
-claimed fully green. No individual test name below was matched to a specific assertion in
-this pass; the matrix records the behavior each row must protect.
+`backend/tests/test_telnyx_order_campaign_guard.py` was added (commit `c6284e0`).
+
+The latest broad selector run (`pytest backend/tests -q -k "telnyx or registration"`) reported
+**588 passed, 1 skipped, 2402 deselected, zero failures (177.94 seconds)**. The single skip is
+`backend/tests/test_telnyx_postgres_concurrency.py`, skipped because PostgreSQL is unavailable
+on this machine; commit `a24d322` built that `pg_only` **harness**, but the real PostgreSQL
+execution is **NOT RUN**, so P1-V2 remains open. Commit `c45bc0` fixes a stale plan-supplied
+messaging test fixture (sets `Org.telephony_prepaid=False`) with production billing behavior
+unchanged. No individual test name below was matched to a specific assertion in this pass; the
+matrix records the behavior each row must protect.
 
 Names are suggestions; place them beside the existing tests that import
 `app.services.registration`. Coverage column values:
@@ -308,14 +320,15 @@ Names are suggestions; place them beside the existing tests that import
 | T24 | `no_auto_post_retry_after_timeout` | timeout on a POST | no second POST is issued automatically | built behavior (F16) |
 | T25 | `terminal_approval_stops_sending_after_revocation` | terminal-approved entity, carrier approval later withdrawn | the send gate refuses on revoked/stale evidence; the terminal status is unchanged | built behavior (F19–F23) |
 | T26 | `order_route_campaign_guard` | order path with a non-carrier-approved campaign | the order is refused | built behavior (F24; `backend/tests/test_telnyx_order_campaign_guard.py`) |
-| T27 | `postgres_single_winner_on_claim` | PostgreSQL, concurrent claim/reconcile | exactly one winner; no duplicate carrier write | **target** (P1-V2) |
+| T27 | `postgres_single_winner_on_claim` | PostgreSQL, concurrent claim/reconcile | exactly one winner; no duplicate carrier write | **target** (P1-V2: `pg_only` harness added `a24d322`, but it is skipped without PostgreSQL and not executed — unverified) |
 | T28 | `approval_evidence_written_on_confirmed_approval` | first carrier-confirmed `approved` `/status` | `carrier_refs["telnyx_approval"]` is written atomically (state `approved`, exact id, UTC `checked_at`, `source="status_decision"`) | built behavior (F19–F21) |
 | T29 | `refresh_route_revokes_evidence_without_status_change` | operator+compliance read-only POST `refresh-telnyx` (carrier GET only) on a terminal-approved entity | evidence moves to `revoked` (or refreshes); the terminal status is unchanged; a carrier error / mismatched id mutates nothing | built behavior (F22) |
 | T30 | `stale_evidence_blocks_send` | approval evidence older than `TELNYX_APPROVAL_MAX_AGE_SECONDS` | the Telnyx campaign/TFV send gate refuses; no carrier query is made | built behavior (F20, F23) |
 
 Tests marked **built behavior** are protected by code paths in the BUILT ledger and the
 aggregate runs above. The test marked **target** (T27) is a criterion for behavior that is not
-yet regression-verified against PostgreSQL; it is explicitly **not** passing on SQLite.
+yet verified against PostgreSQL; the `pg_only` harness exists (commit `a24d322`) but is skipped
+without PostgreSQL and has not been executed, so it is explicitly **not** passing on SQLite.
 
 ## 7. Owner decisions and prerequisites (blockers)
 
@@ -358,6 +371,7 @@ yet regression-verified against PostgreSQL; it is explicitly **not** passing on 
    runbook document is delivered; this owner/audit-trail/support-workflow question remains
    open.
 4. Which code paths rely on `SELECT … FOR UPDATE`, and has each been exercised against
-   PostgreSQL (P1-V2)?
+   PostgreSQL (P1-V2)? The `pg_only` harness (`a24d322`) exists but is skipped without
+   PostgreSQL and has not been executed, so this question is not yet answered.
 5. Should the legacy LOCAL-ONLY `submit_*` paths (D-5, F18) be retired, guarded, or left in
    place with a warning, so a local `submitted` is never mistaken for carrier-submitted?
