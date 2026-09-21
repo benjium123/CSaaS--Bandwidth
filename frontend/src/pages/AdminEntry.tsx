@@ -477,6 +477,14 @@ function AdminLogin() {
                 <SubmitButton pending={pending} pendingLabel="Signing in…">
                   Sign in
                 </SubmitButton>
+                <p className="text-center text-sm">
+                  <Link
+                    to="/forgot-password"
+                    className="font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                  >
+                    Forgot password?
+                  </Link>
+                </p>
               </form>
             )}
 
