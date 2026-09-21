@@ -751,7 +751,20 @@ async def test_send_message_skips_registration_gate_when_plan_supplied(monkeypat
     registration-eligible numbers - send_message must not re-check (and must not 503 on
     a missing OrgNumber row lookup that a plan-based caller may not need)."""
     org_id = uuid.uuid4()
-    session.add(Org(id=org_id, name="Area2 Plan Org", slug="area2-plan-org"))
+    # send_message checks the org's prepaid telephony credit gate on the plan-supplied
+    # path too (the plan is what lets it price the send); that enforcement is correct and
+    # is left untouched. This test only asserts the REGISTRATION gate is skipped, so the
+    # org is created with prepaid off - creating the row directly here bypasses whatever
+    # normally sets telephony_prepaid, and a zero-balance prepaid org raises
+    # TelephonyCreditsError before registration_called can be observed as False.
+    session.add(
+        Org(
+            id=org_id,
+            name="Area2 Plan Org",
+            slug="area2-plan-org",
+            telephony_prepaid=False,
+        )
+    )
     await session.flush()
     fake = FakeCarrier(name="bandwidth")
     set_org_context(session, org_id)
