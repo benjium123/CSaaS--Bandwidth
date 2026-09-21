@@ -27,8 +27,14 @@ A toll-free ``/file-telnyx`` call is different again: the service durably writes
 "pending attempt" marker to ``carrier_refs`` BEFORE the carrier POST, so a second click or
 a retry after an ambiguous create timeout is refused rather than filing twice. That timeout
 may leave no Telnyx request id to look up at all, so the ``/status`` route CANNOT reconcile
-it; resolving the case requires an EXPLICIT external reconciliation - a documented runbook
-or a Telnyx support investigation - before an operator deliberately repairs local state.
+it. The first safe path for that case is the explicit, READ-ONLY operator reconcile route
+``POST /tollfree/{tfv_id}/reconcile-telnyx``: it makes one read-only carrier lookup (the
+filtered verification list), adopts a request id ONLY on exactly one unambiguous,
+exact-match record, never retries the filing and never approves locally. When the carrier
+returns zero, multiple or mismatched records that route refuses too and leaves the pending
+attempt untouched, so those cases still require an EXPLICIT external reconciliation - a
+documented runbook or a Telnyx support investigation - before an operator deliberately
+repairs local state.
 """
 
 from __future__ import annotations
@@ -814,9 +820,12 @@ async def file_tfv_telnyx(
     The service writes a durable "pending attempt" marker to ``carrier_refs`` BEFORE the
     carrier POST, so a second click or a retry is refused instead of filing twice. An
     ambiguous create timeout may leave no Telnyx request id to look up at all, so this
-    cannot be reconciled through ``/status``; the case requires an EXPLICIT external
-    reconciliation - a documented runbook or a Telnyx support investigation - before an
-    operator deliberately repairs local state.
+    cannot be reconciled through ``/status``; use the explicit, READ-ONLY
+    ``POST /tollfree/{tfv_id}/reconcile-telnyx`` route, which performs one exact-match
+    carrier lookup and never retries this POST. When the carrier returns zero, multiple or
+    mismatched records that route refuses too, and the case still requires an EXPLICIT
+    external reconciliation - a documented runbook or a Telnyx support investigation -
+    before an operator deliberately repairs local state.
     """
     tfv = await ctx.session.get(TollFreeVerification, tfv_id)
     if tfv is None:
@@ -829,6 +838,45 @@ async def file_tfv_telnyx(
         tfv,
         fields=fields,
         sole_proprietor=payload.sole_proprietor,
+        client=_injected_http_client(request),
+    )
+    return _tfv_out(tfv)
+
+
+@router.post("/tollfree/{tfv_id}/reconcile-telnyx", response_model=TfvOut)
+async def reconcile_tfv_telnyx(
+    tfv_id: uuid.UUID,
+    request: Request,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> TfvOut:
+    """Explicitly reconcile an ambiguous, timed-out Telnyx toll-free filing.
+
+    The ``/file-telnyx`` service wrote a durable "pending attempt" marker before its
+    carrier POST, so an ambiguous create timeout leaves the record "attempted, outcome
+    unknown" with no request id the ``/status`` route can look up. This is the FIRST safe
+    path for that case: an explicit operator repair that performs exactly ONE read-only
+    carrier lookup (the filtered verification list) and adopts a request id ONLY when that
+    result is unambiguous - exactly one record matching this exact business name and
+    number. It NEVER retries the filing, never POSTs, never creates or spends, and never
+    approves locally; zero, multiple, paginated or mismatched results are refused and still
+    require a documented runbook or a Telnyx support investigation.
+
+    This route is restricted to a platform operator (super admin) that also holds
+    ``compliance:manage``. Because it can never create or spend, it needs no
+    ``confirm_non_refundable`` acknowledgement. It clears no markers, mutates no refs or
+    status and implements no matching itself: every safeguard belongs to
+    ``reconcile_tollfree_filing_with_telnyx``, which owns the carrier call using the org's
+    configured Telnyx credentials; no secret is read or echoed here.
+    """
+    tfv = await ctx.session.get(TollFreeVerification, tfv_id)
+    if tfv is None:
+        raise NotFoundError("Toll-free verification not found")
+    settings = request.app.state.settings
+    tfv = await telnyx_tollfree_filing.reconcile_tollfree_filing_with_telnyx(
+        ctx.session,
+        settings,
+        tfv,
         client=_injected_http_client(request),
     )
     return _tfv_out(tfv)
@@ -855,8 +903,12 @@ async def set_tfv_status(
 
     This route records a registrar decision only. It does NOT reconcile a pending Telnyx
     filing attempt: an ambiguous create timeout may leave no request id to look up, so the
-    pending marker written by ``/file-telnyx`` requires an explicit external reconciliation
-    (a documented runbook or a Telnyx support investigation), not a status change here.
+    pending marker written by ``/file-telnyx`` is not repaired here. Use the explicit,
+    READ-ONLY ``POST /tollfree/{tfv_id}/reconcile-telnyx`` route - the first safe
+    reconciliation path, which adopts a request id only on a single exact-match carrier
+    result - for that; zero, multiple or mismatched results still require an explicit
+    external reconciliation (a documented runbook or a Telnyx support investigation), not a
+    status change here.
     """
     tfv = await ctx.session.get(TollFreeVerification, tfv_id)
     if tfv is None:
