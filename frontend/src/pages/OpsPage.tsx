@@ -28,6 +28,8 @@ import {
 /** P41 operator console: review businesses, handle security alerts, keep the ban list.
  * P42: account support (unlock, reset 2FA, deactivate). */
 
+type AccountType = "business" | "individual";
+
 type QueueItem = {
   org_id: string;
   org_name: string;
@@ -42,6 +44,8 @@ type QueueItem = {
   submitted_at: string | null;
   ai_recommendation?: "approve" | "needs_info" | "reject" | null;
   ai_confidence?: number | null;
+  /** Optional: legacy backends omit it; treat missing as "business". */
+  account_type?: AccountType;
 };
 
 const AI_LABEL: Record<string, string> = { approve: "AI: approve", needs_info: "AI: ask for info", reject: "AI: reject" };
@@ -72,6 +76,8 @@ type Application = {
     verified_name: string | null;
     document_type: string | null;
     document_country: string | null;
+    /** Optional: individual persons may carry a provider hint. */
+    identity_provider?: string | null;
   }[];
   documents: {
     id: string;
@@ -89,6 +95,8 @@ type Application = {
   limits: Record<string, number> | null;
   info_request: string | null;
   suspension_reason: string | null;
+  /** Optional: legacy backends omit it; treat missing as "business". */
+  account_type?: AccountType;
 };
 
 type Alert = { id: string; kind: string; status: string; detail: Record<string, unknown> | null; created_at: string | null };
@@ -146,7 +154,7 @@ function KeyValues({ data }: { data: Record<string, unknown> | null }) {
 }
 
 function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
-  const { api } = useAuth();
+  const { api, me } = useAuth();
   const appQ = useOps<Application>(["application", orgId], `/api/v1/ops/applications/${orgId}`);
   const action = useOpsAction(orgId);
   const [note, setNote] = React.useState("");
@@ -174,6 +182,16 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
 
   const ai = app.checks.ai_summary;
   const decision = app.checks.ai_decision;
+  const individual = app.account_type === "individual";
+  // Only platform admins may approve; the backend is authoritative, this is UI-only.
+  const isAdmin = me?.operator_role === "admin";
+  const canApprove = !individual || isAdmin;
+  // Admin-only blocker: individual accounts require a platform admin to approve. The
+  // handler is already guarded, but the AI Approve button must be disabled too, so we
+  // surface the reason as an extra blocker alongside the server's approval_blockers.
+  const blockers = individual && !isAdmin
+    ? [...app.approval_blockers, "Only a platform admin can approve an individual account."]
+    : app.approval_blockers;
 
   return (
     <div className="space-y-4">
@@ -184,11 +202,33 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
         title={`${String(app.business.legal_name ?? app.org.name)}`}
         description={`Workspace ${app.org.name} · ${app.status.replace(/_/g, " ")}`}
         actions={
-          <Pill tone={app.risk.tier === "high" ? "danger" : "success"}>
-            {app.risk.tier ? `${app.risk.tier} risk` : "not scored"}
-          </Pill>
+          <div className="flex flex-wrap items-center gap-2">
+            <Pill tone={individual ? "info" : "neutral"}>
+              {individual ? "Individual" : "Business"}
+            </Pill>
+            <Pill tone={app.risk.tier === "high" ? "danger" : "success"}>
+              {app.risk.tier ? `${app.risk.tier} risk` : "not scored"}
+            </Pill>
+          </div>
         }
       >
+        {individual && (
+          <Card className="space-y-1.5">
+            <p className="text-sm font-medium">Individual account</p>
+            <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
+              Voice-only: SMS/MMS is not available on individual accounts.
+            </p>
+            <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
+              Identity is verified through Didit, then approved by a platform super-admin.
+            </p>
+            {!isAdmin && (
+              <p className="text-[13px] text-[hsl(var(--cx-flag))]">
+                Only a platform admin can approve an individual account.
+              </p>
+            )}
+          </Card>
+        )}
+
         {app.risk.reasons.length > 0 && (
           <Card>
             <p className="text-sm font-medium">Why this is {app.risk.tier} risk</p>
@@ -201,9 +241,11 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
         <DecisionPackCard
           pack={(decision?.detail as unknown as DecisionPack) ?? null}
           result={decision?.result ?? null}
-          blockers={app.approval_blockers}
+          blockers={blockers}
           pending={action.isPending}
           onApprove={async (approveNote, limits) => {
+            // Guard: individual accounts require a platform admin to approve.
+            if (individual && !isAdmin) return;
             const chosen = {
               ...(limits.daily_calls != null ? { daily_calls: limits.daily_calls } : {}),
               ...(limits.daily_texts != null ? { daily_texts: limits.daily_texts } : {}),
@@ -252,7 +294,10 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
           ))}
         </Card>
 
-        <Card><p className="mb-2 text-sm font-medium">Business</p><KeyValues data={app.business} /></Card>
+        <Card>
+          <p className="mb-2 text-sm font-medium">{individual ? "Personal details" : "Business"}</p>
+          <KeyValues data={app.business} />
+        </Card>
         <Card>
           <p className="mb-2 text-sm font-medium">Declared use case</p>
           <KeyValues data={app.use_case} />
@@ -279,6 +324,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
                 {p.ownership_percent != null ? ` · ${p.ownership_percent}%` : ""}
                 {p.verified_name ? ` · ID says "${p.verified_name}"` : ""}
                 {p.document_country ? ` · ${p.document_type ?? "ID"} from ${p.document_country}` : ""}
+                {p.identity_provider ? ` · via ${p.identity_provider}` : ""}
               </span>
             </div>
           ))}
@@ -315,10 +361,25 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
               {app.approval_blockers.map((b) => <li key={b}>{b}</li>)}
             </ul>
           )}
-          <Textarea aria-label="Reviewer note" rows={2} placeholder="Note, reason, or message to the business" value={note} onChange={(e) => setNote(e.target.value)} />
+          <Textarea
+            aria-label="Reviewer note"
+            rows={2}
+            placeholder={individual ? "Note, reason, or message to the applicant" : "Note, reason, or message to the business"}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
           <div className="flex flex-wrap gap-2">
             {app.status === "submitted" && <Button type="button" variant="outline" onClick={() => run("review")}>Start review</Button>}
-            <Button type="button" disabled={app.approval_blockers.length > 0 || action.isPending} onClick={() => run("approve", { note })}>Approve</Button>
+            <Button
+              type="button"
+              disabled={app.approval_blockers.length > 0 || action.isPending || !canApprove}
+              onClick={() => {
+                if (!canApprove) return;
+                run("approve", { note });
+              }}
+            >
+              Approve
+            </Button>
             <Button type="button" variant="outline" disabled={!note.trim()} onClick={() => run("request-info", { message: note })}>Ask for more info</Button>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={ban} onChange={(e) => setBan(e.target.checked)} />
@@ -401,6 +462,9 @@ function QueueTab({ onOpen }: { onOpen: (orgId: string) => void }) {
                 className="flex w-full flex-wrap items-center gap-2.5 rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] px-4 py-3 text-left transition-colors hover:bg-[hsl(var(--cx-overlay))]"
               >
                 <Pill tone={a.risk_tier === "high" ? "danger" : "neutral"}>{a.risk_tier ?? "—"}</Pill>
+                <Pill tone={a.account_type === "individual" ? "info" : "neutral"}>
+                  {a.account_type === "individual" ? "Individual" : "Business"}
+                </Pill>
                 <span className="text-[13.5px] font-semibold text-[hsl(var(--cx-text))]">{a.legal_name ?? a.org_name}</span>
                 {a.ai_recommendation ? (
                   <Pill tone={a.ai_recommendation === "approve" ? "success" : a.ai_recommendation === "reject" ? "danger" : "warning"}>

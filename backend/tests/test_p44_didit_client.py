@@ -447,7 +447,7 @@ def test_verify_webhook_rejects_malformed_json():
         ("Declined", "requires_input"),
         ("In Review", "processing"),
         ("In Progress", "processing"),
-        ("Resubmitted", "processing"),
+        ("Resubmitted", "requires_input"),
         ("Awaiting User", "pending"),
         ("Abandoned", "canceled"),
         ("Expired", "canceled"),

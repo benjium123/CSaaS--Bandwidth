@@ -70,6 +70,7 @@ from app.compliance import telnyx_approval
 from app.errors import (
     ConflictError,
     NotFoundError,
+    PermissionDeniedError,
     ValidationFailedError,
 )
 from app.models import OrgNumber
@@ -90,6 +91,22 @@ from app.services import (
 from app.services import registration as reg
 
 router = APIRouter(prefix="/api/v1/registration", tags=["registration"])
+
+
+def _require_messaging_enabled(ctx: OrgContext) -> None:
+    """Refuse messaging registration for voice-only (individual) accounts.
+
+    Individual accounts can call but cannot text: 10DLC brands/campaigns and toll-free
+    verification exist only to enable SMS/MMS, so every mutation here is a dead end for
+    them. Reads stay open so the console can still show history. ``account_type`` defaults
+    to ``business`` while the column rolls out, so orgs without it keep their current
+    behavior.
+    """
+    if getattr(ctx.org, "account_type", "business") == "individual":
+        raise PermissionDeniedError(
+            "Individual accounts are voice-only. SMS and MMS are unavailable.",
+            code="individual_messaging_disabled",
+        )
 
 
 # ----------------------------------------------------------------------------------
@@ -486,6 +503,7 @@ async def create_brand(
     payload: BrandIn,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> BrandOut:
+    _require_messaging_enabled(ctx)
     brand = Brand(id=uuid.uuid4(), org_id=ctx.org.id, **payload.model_dump())
     ctx.session.add(brand)
     try:
@@ -507,6 +525,8 @@ async def submit_brand(
     and never reaches Telnyx. The billable carrier submission lives in
     ``/brands/{brand_id}/file-telnyx``.
     """
+
+    _require_messaging_enabled(ctx)
     brand = await reg.submit_brand(ctx.session, brand_id)
     await ctx.session.commit()
     return _brand_out(brand)
@@ -620,6 +640,7 @@ async def create_campaign(
     payload: CampaignIn,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> CampaignOut:
+    _require_messaging_enabled(ctx)
     brand = await ctx.session.get(Brand, payload.brand_id)
     if brand is None:
         raise NotFoundError("Brand not found")
@@ -643,6 +664,8 @@ async def submit_campaign(
     Legacy local-only path, kept for compatibility: it spends nothing. Use
     ``/campaigns/{campaign_id}/file-telnyx`` for the billable Telnyx submission.
     """
+
+    _require_messaging_enabled(ctx)
     campaign = await reg.submit_campaign(ctx.session, campaign_id)
     await ctx.session.commit()
     return await _campaign_out(ctx.session, campaign)
@@ -723,6 +746,7 @@ async def set_campaign_status(
     revokes evidence. Refresh - or revoke - the stored approval evidence with the explicit,
     READ-ONLY ``POST /campaigns/{campaign_id}/refresh-telnyx`` route.
     """
+    _require_messaging_enabled(ctx)
     campaign = await ctx.session.get(Campaign, campaign_id)
     if campaign is None:
         raise NotFoundError("Campaign not found")
@@ -804,6 +828,8 @@ async def set_brand_status(
     revokes evidence. Refresh - or revoke - the stored approval evidence with the explicit,
     READ-ONLY ``POST /brands/{brand_id}/refresh-telnyx`` route.
     """
+
+    _require_messaging_enabled(ctx)
     brand = await ctx.session.get(Brand, brand_id)
     if brand is None:
         raise NotFoundError("Brand not found")
@@ -906,6 +932,7 @@ async def create_tfv(
     payload: TfvIn,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> TfvOut:
+    _require_messaging_enabled(ctx)
     number = await ctx.session.get(OrgNumber, payload.number_id)
     if number is None:
         raise NotFoundError("Number not found")
@@ -931,6 +958,7 @@ async def submit_tfv(
     tfv_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> TfvOut:
+    _require_messaging_enabled(ctx)
     tfv = await reg.submit_tollfree(ctx.session, tfv_id)
     await ctx.session.commit()
     return _tfv_out(tfv)
@@ -1116,6 +1144,8 @@ async def set_tfv_status(
     investigation), not a status change here. To refresh or revoke the stored approval
     evidence, use the explicit, READ-ONLY ``POST /tollfree/{tfv_id}/refresh-telnyx`` route.
     """
+
+    _require_messaging_enabled(ctx)
     tfv = await ctx.session.get(TollFreeVerification, tfv_id)
     if tfv is None:
         raise NotFoundError("Toll-free verification not found")

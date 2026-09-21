@@ -16,6 +16,27 @@ const CAPABILITIES_ORG = {
 
 const COMPLIANCE_MANAGE = ["compliance:read", "compliance:manage"];
 
+/**
+ * The production wrappers wait for a known account type before rendering, so the
+ * AuthProvider's /auth/me must be a real signed-in business identity: full_name plus an
+ * org-1 owner/business membership.
+ */
+const ME_BUSINESS = {
+  id: "u-1",
+  email: "u@example.com",
+  full_name: "Test User",
+  permissions: [],
+  memberships: [
+    {
+      org_id: "org-1",
+      org_name: "Org One",
+      org_slug: "org-one",
+      role_name: "owner",
+      account_type: "business",
+    },
+  ],
+};
+
 type NumberRow = {
   id: string;
   e164: string;
@@ -114,6 +135,7 @@ function routesFor(options: {
   };
 
   return {
+    "/api/v1/auth/me": ME_BUSINESS,
     "/api/v1/me/capabilities": { permissions, org: CAPABILITIES_ORG },
     "/api/v1/numbers": numbers,
     [TFV_PATH]: tfvRoute,
@@ -401,6 +423,7 @@ describe("TollFreeVerificationCard", () => {
 
   it("shows an error and a Retry control when the list fails to load", async () => {
     const client = makeStubClient({
+      "/api/v1/auth/me": ME_BUSINESS,
       "/api/v1/me/capabilities": {
         permissions: COMPLIANCE_MANAGE,
         org: CAPABILITIES_ORG,

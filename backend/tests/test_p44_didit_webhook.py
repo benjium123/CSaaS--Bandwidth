@@ -297,7 +297,7 @@ async def test_ledger_suppresses_duplicate_not_the_unverify_guard(session, didit
         ("Declined", "requires_input"),
         ("In Review", "processing"),
         ("In Progress", "processing"),
-        ("Resubmitted", "processing"),
+        ("Resubmitted", "requires_input"),
         ("Abandoned", "canceled"),
         ("Expired", "canceled"),
         ("Kyc Expired", "canceled"),

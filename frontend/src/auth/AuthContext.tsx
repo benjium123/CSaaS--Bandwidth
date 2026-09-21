@@ -7,6 +7,9 @@ export type Membership = {
   org_name: string;
   org_slug: string;
   role_name: string;
+  /** "business" (default; every pre-existing membership) or "individual". Optional because
+   * older fixtures and cached payloads omit it; nothing here branches on it. */
+  account_type?: "business" | "individual";
   /** NOT SENT BY THE SERVER, and never has been. Verified against a live `/auth/me`:
    * MembershipOut's keys are exactly org_id, org_name, org_slug, role_name,
    * identity_verification. The real permission list arrives TOP-LEVEL on `Me`

@@ -91,6 +91,25 @@ async def reverification_tick(
     for profile in await _profiles(session, "reverification_due"):
         set_org_context(session, profile.org_id)
         started = _aware(profile.next_reverification_at) or now
+        if await kyc_svc._is_individual(session, profile.org_id):
+            if now >= started + timedelta(days=settings.kyc_reverify_grace_days):
+                kyc_svc.transition(profile, "needs_info")
+                profile.info_request = (
+                    "Re-verification is overdue and needs a manual review by a superadmin."
+                )
+                audit_svc.record(
+                    session,
+                    profile.org_id,
+                    action="kyc.reverification_lapsed",
+                    target_type="kyc_profile",
+                    target_id=str(profile.id),
+                )
+                counts["reverification_lapsed"] += 1
+            else:
+                profile.info_request = (
+                    "Re-verification is in progress and needs a manual review by a superadmin."
+                )
+            continue
         owners = [
             p
             for p in await kyc_checks.persons_for(session, profile.org_id)

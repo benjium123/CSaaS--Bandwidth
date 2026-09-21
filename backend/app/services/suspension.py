@@ -179,10 +179,18 @@ async def unsuspend(
     session: AsyncSession, org_id: uuid.UUID, *, operator_id: uuid.UUID, note: str
 ) -> None:
     profile = await kyc_svc.load_for_operator(session, org_id)
-    target = profile.status_before_suspension or "approved"
-    if target not in ("approved", "reverification_due"):
-        target = "approved"
-    kyc_svc.transition(profile, target)
+    if await kyc_svc._is_individual(session, org_id):
+        settings = session.info.get("settings")
+        if settings is None:
+            from app.config import get_active_settings
+
+            settings = get_active_settings()
+        await kyc_svc.approve(session, settings, profile, operator_id, note)
+    else:
+        target = profile.status_before_suspension or "approved"
+        if target not in ("approved", "reverification_due"):
+            target = "approved"
+        kyc_svc.transition(profile, target)
     profile.status_before_suspension = None
     profile.suspended_at = None
     profile.suspended_by = None

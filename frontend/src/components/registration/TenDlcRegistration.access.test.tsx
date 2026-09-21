@@ -72,7 +72,23 @@ function stubRoutes({
 }: StubOptions = {}) {
   return {
     // The AuthProvider fetches this itself; without a stub it throws "No stub for ...".
-    "/api/v1/auth/me": { id: "u-1", email: "u@example.com", permissions: [] },
+    // The production wrappers wait for a known account type, so this must be a real
+    // signed-in business identity: full_name plus an org-1 owner/business membership.
+    "/api/v1/auth/me": {
+      id: "u-1",
+      email: "u@example.com",
+      full_name: "Test User",
+      permissions: [],
+      memberships: [
+        {
+          org_id: "org-1",
+          org_name: "Org One",
+          org_slug: "org-one",
+          role_name: "owner",
+          account_type: "business",
+        },
+      ],
+    },
     "/api/v1/me/capabilities": capabilities(permissions),
     "/api/v1/registration/brands": ((path: string, init: RequestInit & { json?: unknown }) => {
       if ((init.method ?? "GET") === "POST") {

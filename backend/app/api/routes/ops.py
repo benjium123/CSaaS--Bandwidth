@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.deps import OperatorContext, check_step_up, require_operator
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.errors import NotFoundError, ValidationFailedError
+from app.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import (
     FRAUD_IDENTIFIER_KINDS,
     KYC_STATUSES,
@@ -94,7 +94,7 @@ async def queue(
     statuses = (status,) if status else QUEUE_STATUSES
     # JUSTIFIED allow_unscoped: the operator queue lists applications across every org.
     stmt = (
-        sa.select(KycProfile, Org.name)
+        sa.select(KycProfile, Org.name, Org.account_type)
         .join(Org, Org.id == KycProfile.org_id)
         .where(KycProfile.status.in_(statuses))
         .order_by(KycProfile.submitted_at.asc().nulls_last(), KycProfile.created_at.asc())
@@ -107,7 +107,7 @@ async def queue(
     # P43: the AI's recommendation next to each application, so the queue can be cleared
     # from the list. One query for the latest decision pack of every listed business.
     packs: dict[uuid.UUID, dict] = {}
-    org_ids = [p.org_id for p, _name in rows]
+    org_ids = [p.org_id for p, _name, _account_type in rows]
     if org_ids:
         pack_rows = (
             (
@@ -137,6 +137,7 @@ async def queue(
                 "org_name": name,
                 "legal_name": p.legal_name,
                 "country": p.country,
+                "account_type": account_type or "business",
                 "status": p.status,
                 "risk_tier": p.risk_tier,
                 "risk_reasons": p.risk_reasons or [],
@@ -147,7 +148,7 @@ async def queue(
                 "ai_recommendation": packs.get(p.org_id, {}).get("recommendation"),
                 "ai_confidence": packs.get(p.org_id, {}).get("confidence"),
             }
-            for p, name in rows
+            for p, name, account_type in rows
         ],
         "open_security_alerts": open_alerts,
     }
@@ -186,6 +187,7 @@ async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
     return {
         "org": {"id": str(org.id), "name": org.name, "slug": org.slug},
         "status": profile.status,
+        "account_type": org.account_type or "business",
         "business": {
             "country": profile.country,
             "legal_name": profile.legal_name,
@@ -223,6 +225,7 @@ async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
                 "verified_name": p.verified_name,
                 "document_type": p.document_type,
                 "document_country": p.document_country,
+                "identity_provider": getattr(p, "identity_provider", None),
                 "verified_at": _iso(p.verified_at),
                 "last_error": p.last_error,
                 "residential_address": p.residential_address,
@@ -331,10 +334,31 @@ DECISION_EMAILS = {
 }
 
 
+INDIVIDUAL_DECISION_EMAILS = {
+    "approved": (
+        "Your identity is verified",
+        "Good news - your identity passed verification. Calling and phone numbers are now "
+        "available in your workspace. Texting is not available on individual accounts.",
+    ),
+    "needs_info": (
+        "We need a little more information to verify your identity",
+        "Our reviewer needs something else before approving your account:\n\n{message}\n\n"
+        "Open Settings > Identity verification to respond.",
+    ),
+    "rejected": (
+        "Your identity could not be verified",
+        "We were unable to verify your identity, so calling is not available.\n\n"
+        "Reason: {message}\n\nReply to this email if you believe this is a mistake.",
+    ),
+}
+
+
 async def _email_decision(
     request: Request, op: OperatorContext, org_id: uuid.UUID, status: str, message: str = ""
 ) -> None:
-    template = DECISION_EMAILS.get(status)
+    org = await op.session.get(Org, org_id)
+    individual = bool(org is not None and org.account_type == "individual")
+    template = (INDIVIDUAL_DECISION_EMAILS if individual else DECISION_EMAILS).get(status)
     if template is None:
         return
     from app.services import mailer
@@ -369,6 +393,10 @@ async def request_info(
 @router.post("/applications/{org_id}/approve")
 async def approve(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Reviewer) -> dict:
     profile = await kyc_svc.load_for_operator(op.session, org_id)
+    if await kyc_svc._is_individual(op.session, org_id) and op.operator.role != "admin":
+        raise PermissionDeniedError(
+            "An individual account can only be approved by an admin operator"
+        )
     await kyc_svc.approve(op.session, request.app.state.settings, profile, op.user.id, payload.note)
     out = await _done(op, org_id)
     await _email_decision(request, op, org_id, "approved")

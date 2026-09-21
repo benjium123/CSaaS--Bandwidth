@@ -5168,6 +5168,15 @@
       },
       "MembershipOut": {
         "properties": {
+          "account_type": {
+            "default": "business",
+            "enum": [
+              "business",
+              "individual"
+            ],
+            "title": "Account Type",
+            "type": "string"
+          },
           "identity_verification": {
             "default": "not_applicable",
             "title": "Identity Verification",
@@ -11237,6 +11246,15 @@
       },
       "app__api__routes__auth__RegisterIn": {
         "properties": {
+          "account_type": {
+            "default": "business",
+            "enum": [
+              "business",
+              "individual"
+            ],
+            "title": "Account Type",
+            "type": "string"
+          },
           "company_name": {
             "default": "",
             "title": "Company Name",

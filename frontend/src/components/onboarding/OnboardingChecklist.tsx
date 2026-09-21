@@ -19,6 +19,10 @@ type Step = {
  * dead link to an empty page or a missing link to a page with work on it.
  */
 export function isWorkspaceFullySetUp(org: OrgCapabilities): boolean {
+  // Individual accounts only need a provider and a number; no team or texting registration.
+  if (org.account_type === "individual") {
+    return org.has_provider && org.has_number;
+  }
   return (
     org.has_provider &&
     org.has_number &&
@@ -35,21 +39,31 @@ export function OnboardingChecklist() {
   if (!org) return null;
   if (isWorkspaceFullySetUp(org)) return null;
 
-  const steps: Step[] = [
-    { label: "Connect a provider", to: "/settings/providers", done: org.has_provider },
-    { label: "Get a phone number", to: "/settings/numbers", done: org.has_number },
-    { label: "Invite your team", to: "/settings/team", done: org.member_count > 1 },
-    {
-      label: "Register for texting",
-      to: "/settings/numbers",
-      done: org.registration_state !== "none",
-      hint: "Carriers require this before you can text. It takes a few days — we track it for you.",
-    },
-  ];
+  const individual = org.account_type === "individual";
+
+  const steps: Step[] = individual
+    ? [
+        { label: "Connect a provider", to: "/settings/providers", done: org.has_provider },
+        { label: "Get a phone number", to: "/settings/numbers", done: org.has_number },
+      ]
+    : [
+        { label: "Connect a provider", to: "/settings/providers", done: org.has_provider },
+        { label: "Get a phone number", to: "/settings/numbers", done: org.has_number },
+        { label: "Invite your team", to: "/settings/team", done: org.member_count > 1 },
+        {
+          label: "Register for texting",
+          to: "/settings/numbers",
+          done: org.registration_state !== "none",
+          hint: "Carriers require this before you can text. It takes a few days — we track it for you.",
+        },
+      ];
 
   return (
     <Card>
-      <Section title="Finish setting up" description="Four steps and you are live.">
+      <Section
+        title="Finish setting up"
+        description={individual ? "Two steps and you are live." : "Four steps and you are live."}
+      >
         <ol aria-label="Setup steps" className="space-y-3">
           {steps.map((step, index) => (
             <li

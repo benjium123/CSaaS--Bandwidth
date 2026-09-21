@@ -23,9 +23,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import re
 import time
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import httpx
 import structlog
@@ -158,6 +160,15 @@ async def create_session(
             "We could not start identity verification right now. Please try again."
         ) from exc
 
+    # A well-formed JSON body that is not an object (array, string, number, null) has
+    # no ``.get``; treat it as a provider failure rather than letting AttributeError
+    # escape as a 500.
+    if not isinstance(data, dict):
+        log.warning("didit_session_unexpected_shape", status_code=response.status_code)
+        raise FeatureUnavailableError(
+            "We could not start identity verification right now. Please try again."
+        )
+
     session_id = data.get("session_id")
     url = data.get("url")
     if not session_id or not url:
@@ -179,18 +190,61 @@ async def create_session(
 # ------------------------------------------------------------------------------------
 # Webhook verification
 # ------------------------------------------------------------------------------------
+def _normalise_json_numbers(value: Any) -> Any:
+    """Recursively normalise whole-valued floats to ints for canonical signing.
+
+    Didit's V2 canonical form is the JSON re-serialisation of the parsed payload
+    with whole-valued numbers rendered as integers (``1`` not ``1.0``). Python's
+    ``json.loads`` turns ``1`` into ``int`` and ``1.0`` into ``float``, so a payload
+    that arrived as ``1.0`` would otherwise canonicalise differently from the same
+    payload that arrived as ``1`` and the signature would not match.
+
+    ``bool`` is a subclass of ``int`` in Python and must be preserved as-is (``True``
+    is not ``1``). ``None`` and non-integral floats are preserved. Negative zero
+    (``-0.0``) is normalised to ``0`` so it matches the integer form.
+
+    Raises ``ValueError`` on non-finite numbers (NaN/Infinity), which strict JSON
+    cannot represent. The input is never mutated: containers are rebuilt.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            # NaN/Infinity cannot be represented in strict JSON; the caller turns this
+            # into an authentication failure rather than emitting invalid JSON.
+            raise ValueError("non-finite number in payload")
+        if value.is_integer():
+            return int(value)
+        return value
+    if isinstance(value, dict):
+        return {key: _normalise_json_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalise_json_numbers(item) for item in value]
+    return value
+
+
 def canonical_payload(payload: dict) -> bytes:
     """The exact bytes Didit signs for ``X-Signature-V2``.
 
     Didit re-serialises the parsed JSON with sorted keys and no whitespace before
-    signing, so we must reproduce that byte-for-byte. Factored out so tests can sign
-    the same way Didit does instead of hard-coding a fixture.
+    signing, so we must reproduce that byte-for-byte. Whole-valued floats are
+    normalised to ints recursively (including inside nested lists/dicts) so a
+    payload that arrived as ``1.0`` canonicalises identically to one that arrived
+    as ``1``. The input payload is not mutated.
+
+    Raises ``ValueError`` if the payload contains a non-finite number (NaN/Infinity)
+    or cannot be canonically encoded (including unpaired surrogates, which raise
+    ``UnicodeEncodeError`` - a ``ValueError`` subclass); ``verify_webhook`` converts
+    that into an ``UnauthenticatedError`` so a malformed payload never surfaces as a
+    500.
     """
+    normalised = _normalise_json_numbers(payload)
     return json.dumps(
-        payload,
+        normalised,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -225,6 +279,11 @@ def verify_webhook(settings, raw_body: bytes, headers: Mapping[str, str]) -> dic
 
     try:
         payload = json.loads(raw_body)
+        # Reject non-finite numbers (NaN/Infinity) at parse time so BOTH the V2
+        # canonical path and the legacy raw-body X-Signature path fail closed on a
+        # payload that strict JSON cannot represent. The normalised copy is discarded:
+        # the raw body bytes are still what the legacy signature is checked against.
+        _normalise_json_numbers(payload)
     except (ValueError, TypeError) as exc:
         log.warning("didit_webhook_malformed_json")
         raise UnauthenticatedError(_NOT_VERIFIED) from exc
@@ -255,7 +314,15 @@ def verify_webhook(settings, raw_body: bytes, headers: Mapping[str, str]) -> dic
     # Declined decision for an Approved one and still pass verification. Its mere
     # presence must never authenticate a request.
     if signature_v2:
-        ok = _signature_matches(secret, canonical_payload(payload), signature_v2)
+        try:
+            signed_bytes = canonical_payload(payload)
+        except (ValueError, TypeError) as exc:
+            # A payload we cannot canonically encode (non-finite number, unpaired
+            # surrogate, unexpected type) is not one we can authenticate; fail closed
+            # rather than 500.
+            log.warning("didit_webhook_uncanonicalisable")
+            raise UnauthenticatedError(_NOT_VERIFIED) from exc
+        ok = _signature_matches(secret, signed_bytes, signature_v2)
     elif signature_v1:
         # The legacy header signs the raw body bytes as received.
         ok = _signature_matches(secret, raw_body, signature_v1)
@@ -278,8 +345,12 @@ def verify_webhook(settings, raw_body: bytes, headers: Mapping[str, str]) -> dic
 #: Reasoning for the non-obvious rows:
 #: * "Declined" -> "requires_input": a decline is usually a bad photo or a mismatch the
 #:   user can retry, so we ask for more input rather than treating it as a hard failure.
-#: * "In Review"/"In Progress"/"Resubmitted" -> "processing": all three mean Didit is
-#:   still working, so the person must not be moved to a terminal state yet.
+#: * "Resubmitted" -> "requires_input": Didit uses this status when the reviewer has
+#:   asked the user to redo steps. The frontend only renders the retry affordance for
+#:   "requires_input", so mapping it to "processing" would hide the retry the user
+#:   actually needs.
+#: * "In Review"/"In Progress" -> "processing": both mean Didit is still working, so
+#:   the person must not be moved to a terminal state yet.
 #: * "Awaiting User" -> "pending": the ball is in the user's court, not ours.
 #: * "Abandoned"/"Expired"/"Kyc Expired" -> "canceled": the session is over without a
 #:   decision, so the person is left unverified and can start again.
@@ -289,12 +360,19 @@ STATUS_MAP: dict[str, str | None] = {
     "Declined": "requires_input",
     "In Review": "processing",
     "In Progress": "processing",
-    "Resubmitted": "processing",
+    "Resubmitted": "requires_input",
     "Awaiting User": "pending",
     "Abandoned": "canceled",
     "Expired": "canceled",
     "Kyc Expired": "canceled",
     "Not Started": None,
+}
+
+#: Safe, non-provider error codes surfaced to the caller for statuses that need one.
+#: These are OUR strings, never raw provider reasons, so nothing Didit-specific leaks.
+ERROR_CODE_MAP: dict[str, str] = {
+    "Declined": "verification_declined",
+    "Resubmitted": "verification_resubmission_required",
 }
 
 
@@ -352,7 +430,7 @@ def _normalise_dob(value: Any) -> str | None:
     # no evidence in the payload saying which order it is in, so parsing it is a coin
     # flip, and the losing side of that flip does not surface as an error. It writes a
     # hash for the wrong birthday, silently, and then months later a real customer fails
-    # re-verification with `identity_mismatch` and has a security alert raised against
+    # re-verification with `identity_mismatch` and a security alert raised against
     # them - and the evidence needed to diagnose it was discarded at this line.
     # Returning None parks them for a human instead, which is exactly what we already do
     # with every other payload we cannot read.
@@ -386,10 +464,20 @@ def outcome_from_payload(payload: dict) -> dict | None:
         # first name produces exactly the hash a split name would have produced.
         first_name = full_name
 
+    # ``metadata`` is echoed back from our own request, but a signed payload could still
+    # carry a non-dict (list, string, null). Coerce to an empty dict so a malformed
+    # signed payload cannot raise here.
+    raw_metadata = payload.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+
+    # A safe, non-provider error code for statuses that need one. Never a raw Didit
+    # reason: those can carry document data and are not stable across versions.
+    error_code = ERROR_CODE_MAP.get(status) if isinstance(status, str) else None
+
     return {
         "session_id": payload.get("session_id"),
         "status": internal,
-        "metadata": dict(payload.get("metadata") or {}),
+        "metadata": metadata,
         "vendor_data": payload.get("vendor_data"),
         "first_name": first_name,
         "last_name": last_name,
@@ -399,5 +487,5 @@ def outcome_from_payload(payload: dict) -> dict | None:
         "document_number": _text(report.get("document_number")),
         # Didit names the issuing country "issuing_state".
         "document_country": _text(report.get("issuing_state")),
-        "error_code": None,
+        "error_code": error_code,
     }

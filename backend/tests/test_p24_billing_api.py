@@ -490,3 +490,129 @@ async def test_billing_money_routes_require_the_billing_permission(client, sessi
         if owner_code is not None:
             assert r.json()["error"]["code"] == owner_code, r.text
 
+
+async def test_a_supplied_customer_id_cannot_override_the_workspaces_stored_customer(
+    client, session, monkeypatch
+):
+    """The caller does not get to choose the Stripe customer.
+
+    An ``org:billing`` member used to be able to POST any ``customer_id`` and have the
+    card attached to THAT customer. The route must ignore the body and reuse the customer
+    id already persisted on this org's own payment-method rows.
+    """
+    token = await register_and_login(client, "pm-foreign-customer@example.com")
+    org = await create_org(client, token, "PM Foreign Customer Org")
+    org_id = uuid.UUID(org["id"])
+
+    set_org_context(session, org_id)
+    session.add(
+        PaymentMethod(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            stripe_customer_id="cus_this_workspace",
+            stripe_payment_method_id="pm_existing_workspace_card",
+            brand="Visa",
+            last4="1111",
+            is_default=True,
+        )
+    )
+    await session.commit()
+
+    seen: dict = {}
+
+    async def fake_ensure_customer(_settings, *, org, existing_customer_id=None, email=None):
+        seen["org_id"] = org.id
+        seen["existing_customer_id"] = existing_customer_id
+        return existing_customer_id
+
+    async def fake_attach_payment_method(_settings, *, payment_method_id, customer_id):
+        seen["attach_customer_id"] = customer_id
+        return {"id": payment_method_id, "brand": "Visa", "last4": "4242"}
+
+    monkeypatch.setattr(stripe_client, "ensure_customer", fake_ensure_customer)
+    monkeypatch.setattr(
+        stripe_client, "attach_payment_method", fake_attach_payment_method
+    )
+
+    r = await client.post(
+        "/api/v1/billing/payment-methods",
+        json={
+            "stripe_payment_method_id": "pm_new_card",
+            "customer_id": "cus_some_other_business",
+        },
+        headers=auth_headers(token, org["id"]),
+    )
+    assert r.status_code == 201, r.text
+
+    assert seen["org_id"] == org_id
+    assert seen["existing_customer_id"] == "cus_this_workspace"
+    assert seen["attach_customer_id"] == "cus_this_workspace"
+
+    set_org_context(session, org_id)
+    rows = (
+        await session.execute(
+            sa.select(PaymentMethod).where(PaymentMethod.org_id == org_id)
+        )
+    ).scalars().all()
+    by_pm = {row.stripe_payment_method_id: row for row in rows}
+    assert set(by_pm) == {"pm_existing_workspace_card", "pm_new_card"}
+    assert by_pm["pm_new_card"].stripe_customer_id == "cus_this_workspace"
+    assert all(row.stripe_customer_id == "cus_this_workspace" for row in rows)
+    assert "cus_some_other_business" not in {
+        row.stripe_customer_id for row in rows
+    }
+
+
+async def test_first_card_ensures_the_customer_from_the_workspace_identity(
+    client, session, monkeypatch
+):
+    """With no stored row, the customer is ensured against the org, not the request body.
+
+    ``ensure_customer`` must receive this org (so a real Stripe Customer is created with
+    the org's identity) and the id it returns must be the one the card is attached to and
+    stored under - including when the body still carries a foreign ``customer_id``.
+    """
+    token = await register_and_login(client, "pm-first-card@example.com")
+    org = await create_org(client, token, "PM First Card Org")
+    org_id = uuid.UUID(org["id"])
+
+    seen: dict = {}
+
+    async def fake_ensure_customer(_settings, *, org, existing_customer_id=None, email=None):
+        seen["org_id"] = org.id
+        seen["existing_customer_id"] = existing_customer_id
+        return "cus_created_for_this_workspace"
+
+    async def fake_attach_payment_method(_settings, *, payment_method_id, customer_id):
+        seen["attach_customer_id"] = customer_id
+        return {"id": payment_method_id, "brand": "Visa", "last4": "4242"}
+
+    monkeypatch.setattr(stripe_client, "ensure_customer", fake_ensure_customer)
+    monkeypatch.setattr(
+        stripe_client, "attach_payment_method", fake_attach_payment_method
+    )
+
+    r = await client.post(
+        "/api/v1/billing/payment-methods",
+        json={
+            "stripe_payment_method_id": "pm_first_card",
+            "customer_id": "cus_some_other_business",
+        },
+        headers=auth_headers(token, org["id"]),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["is_default"] is True
+
+    assert seen["org_id"] == org_id
+    assert seen["existing_customer_id"] is None
+    assert seen["attach_customer_id"] == "cus_created_for_this_workspace"
+
+    set_org_context(session, org_id)
+    stored = (
+        await session.execute(
+            sa.select(PaymentMethod).where(PaymentMethod.org_id == org_id)
+        )
+    ).scalars().all()
+    assert len(stored) == 1
+    assert stored[0].stripe_customer_id == "cus_created_for_this_workspace"
+    assert stored[0].stripe_customer_id != "cus_some_other_business"

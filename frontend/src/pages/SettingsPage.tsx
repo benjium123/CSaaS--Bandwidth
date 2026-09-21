@@ -316,6 +316,18 @@ function WorkspaceGeneral() {
  * panels says so, and there are tests asserting the misleading phrasings never come back.
  */
 function MessagingSection() {
+  const gate = useGate();
+  // Individual accounts are voice-only: no SMS/MMS registration forms.
+  if (gate.org?.account_type === "individual") {
+    return (
+      <Section title="Messaging">
+        <p className="text-[13.5px] text-[hsl(var(--cx-subtle))]">
+          Individual accounts are voice-only. Texting (SMS/MMS) is not available on this
+          workspace, so there is nothing to register here.
+        </p>
+      </Section>
+    );
+  }
   return (
     <div className="space-y-[18px]">
       <TenDlcRegistration />
@@ -496,7 +508,9 @@ export function SettingsPage() {
                 to={`/settings/${s.id}`}
                 className={settingsNavLinkClass}
               >
-                {s.label}
+                {s.id === "verification" && gate.org?.account_type === "individual"
+                  ? "Identity verification"
+                  : s.label}
               </NavLink>
             ))}
 

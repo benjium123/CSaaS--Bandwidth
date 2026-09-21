@@ -33,6 +33,7 @@ from app.models import (
     KycPerson,
     KycProfile,
     LoginDevice,
+    Org,
     OrgMembership,
     PaymentMethod,
     User,
@@ -544,29 +545,49 @@ async def run_all(
     owns = client is None
     client = client or httpx.AsyncClient(timeout=30.0, headers={"User-Agent": "csaas-kyc/1.0"})
     persons = await persons_for(session, profile.org_id)
+    org = (
+        await session.execute(sa.select(Org).where(Org.id == profile.org_id))
+    ).scalar_one_or_none()
+    is_individual = org is not None and org.account_type == "individual"
     rows: list[KycCheck] = []
     try:
-        for label, coro in (
+        business_checks = (
             ("registry", lambda: check_registry(session, settings, profile, persons, client)),
             ("website", lambda: check_website(session, settings, profile, client)),
-            ("ban_list", lambda: check_ban_list(session, profile, persons)),
-        ):
-            try:
-                rows.append(await coro())
-            except Exception as exc:  # noqa: BLE001 - one broken check must not lose the rest
-                log.exception("kyc_check_failed", check=label, org_id=str(profile.org_id))
-                rows.append(
-                    _record(
-                        session,
-                        profile,
-                        label,
-                        "error",
-                        "This check failed to run",
-                        {"error": str(exc)[:200]},
+        )
+        if not is_individual:
+            for label, coro in business_checks:
+                try:
+                    rows.append(await coro())
+                except Exception as exc:  # noqa: BLE001 - one broken check must not lose the rest
+                    log.exception("kyc_check_failed", check=label, org_id=str(profile.org_id))
+                    rows.append(
+                        _record(
+                            session,
+                            profile,
+                            label,
+                            "error",
+                            "This check failed to run",
+                            {"error": str(exc)[:200]},
+                        )
                     )
+        try:
+            rows.append(await check_ban_list(session, profile, persons))
+        except Exception as exc:  # noqa: BLE001 - one broken check must not lose the rest
+            log.exception("kyc_check_failed", check="ban_list", org_id=str(profile.org_id))
+            rows.append(
+                _record(
+                    session,
+                    profile,
+                    "ban_list",
+                    "error",
+                    "This check failed to run",
+                    {"error": str(exc)[:200]},
                 )
+            )
         rows.append(check_sanctions(session, settings, profile, persons))
-        rows.append(check_email_domain(session, profile))
+        if not is_individual:
+            rows.append(check_email_domain(session, profile))
         rows.append(check_name_match(session, profile, persons))
     finally:
         if owns:
@@ -636,6 +657,11 @@ async def generate_ai_summary(
     client: httpx.AsyncClient | None = None,
 ) -> KycCheck | None:
     """Returns None (and writes nothing) when no AI key is configured."""
+    org = (
+        await session.execute(sa.select(Org).where(Org.id == profile.org_id))
+    ).scalar_one_or_none()
+    if org is not None and org.account_type == "individual":
+        return None
     picked = _pick_provider(settings)
     if picked is None:
         return None

@@ -13,6 +13,8 @@ export type KycStatus =
   | "suspended"
   | "reverification_due";
 
+export type KycAccountType = "business" | "individual";
+
 export type Address = {
   line1: string;
   line2?: string | null;
@@ -67,6 +69,8 @@ export type KycPerson = {
   document_country: string | null;
   verified_at: string | null;
   last_error: string | null;
+  /** Optional provider for this person's ID check (for example "didit"). */
+  identity_provider?: string | null;
   /** P43: where the owner lives now. */
   residential_address?: Address | null;
 };
@@ -87,6 +91,8 @@ export type KycDocument = {
 
 export type KycProfile = {
   status: KycStatus;
+  /** Business or individual verification path. Defaults to business when absent. */
+  account_type?: KycAccountType;
   /** P43: countries a business can verify from (server KYC_COUNTRIES). */
   supported_countries?: string[];
   business: KycBusiness;
@@ -107,6 +113,21 @@ export type KycProfile = {
 };
 
 export const KYC_KEY = ["kyc", "profile"];
+
+/**
+ * Webhook-return UX: after the Didit hosted redirect the webhook may land after our first
+ * GET, so a person can sit in pending/processing until the user refreshes. Poll every 5s
+ * while any person is still in flight; stop as soon as none are. We never infer approval
+ * from a person status - the profile status is whatever the server says.
+ */
+export const KYC_POLL_INTERVAL_MS = 5_000;
+
+const IN_FLIGHT_PERSON_STATUSES: ReadonlyArray<KycPerson["status"]> = ["pending", "processing"];
+
+function hasInFlightPerson(profile: KycProfile | undefined): boolean {
+  if (!profile || !Array.isArray(profile.persons)) return false;
+  return profile.persons.some((p) => IN_FLIGHT_PERSON_STATUSES.includes(p.status));
+}
 
 export const COUNTRY_OPTIONS = [
   { value: "US", label: "United States" },
@@ -166,8 +187,22 @@ export const MISSING_LABELS: Record<string, string> = {
   agreement: "Accept the agreement",
 };
 
-export function missingLabel(key: string): string {
-  if (key.startsWith("use_case.")) return "How you will use calling and texting";
+/** Individual accounts reuse business labels only where the field still applies. */
+export const INDIVIDUAL_MISSING_LABELS: Record<string, string> = {
+  legal_name: "Full legal name",
+  business_email: "Email",
+  business_phone: "Phone",
+  owner: "Your identity details",
+  id_verification: "Didit ID check",
+};
+
+export function missingLabel(key: string, accountType: KycAccountType = "business"): string {
+  if (key.startsWith("use_case.") || (accountType === "individual" && key === "use_case")) {
+    return accountType === "individual" ? "Calling purpose" : "How you will use calling and texting";
+  }
+  if (accountType === "individual") {
+    return INDIVIDUAL_MISSING_LABELS[key] ?? MISSING_LABELS[key] ?? key;
+  }
   return MISSING_LABELS[key] ?? key;
 }
 
@@ -177,6 +212,10 @@ export function useKycProfile(api: ApiClient, enabled = true) {
     queryFn: () => api.request<KycProfile>("/api/v1/kyc/profile"),
     enabled,
     staleTime: 30_000,
+    // TanStack Query v5: refetchInterval may be a function of the query. Returning false
+    // stops the timer. We only poll while a person is still in flight, and never in the
+    // background (refetchIntervalInBackground stays false by default).
+    refetchInterval: (query) => (hasInFlightPerson(query.state.data) ? KYC_POLL_INTERVAL_MS : false),
   });
 }
 
@@ -204,7 +243,50 @@ export async function uploadKycDocument(
   return api.request<KycDocument>("/api/v1/kyc/documents", { method: "POST", body: form });
 }
 
-export function statusCopy(status: KycStatus): { title: string; body: string } | null {
+function individualStatusCopy(status: KycStatus): { title: string; body: string } | null {
+  switch (status) {
+    case "draft":
+      return {
+        title: "Verify your identity to start calling",
+        body: "Complete a Didit ID check. Calling unlocks after super-admin approval. SMS and MMS are unavailable.",
+      };
+    case "submitted":
+    case "in_review":
+      return {
+        title: "Your identity is awaiting super-admin approval",
+        body: "Awaiting super-admin approval. Calling is unavailable until approved. We'll email you. SMS and MMS are unavailable.",
+      };
+    case "needs_info":
+      return {
+        title: "We need a little more information",
+        body: "Open identity verification to see what the reviewer asked for.",
+      };
+    case "rejected":
+      return {
+        title: "Your identity could not be verified",
+        body: "Calling is unavailable for this personal account. SMS and MMS are unavailable. Contact support if you think this is a mistake.",
+      };
+    case "suspended":
+      return {
+        title: "This account is suspended",
+        body: "Calling and number orders are paused following a compliance review. Contact support.",
+      };
+    case "reverification_due":
+      return {
+        title: "Identity re-verification is due",
+        body: "Repeat the quick Didit ID check to keep calling. SMS and MMS are unavailable.",
+      };
+    default:
+      return null;
+  }
+}
+
+export function statusCopy(
+  status: KycStatus,
+  accountType: KycAccountType = "business",
+): { title: string; body: string } | null {
+  if (accountType === "individual") return individualStatusCopy(status);
+
   switch (status) {
     case "draft":
       return {

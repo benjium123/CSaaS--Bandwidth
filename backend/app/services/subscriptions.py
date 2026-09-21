@@ -1,9 +1,10 @@
 """Stripe subscription webhook handling.
 
 This module mirrors Stripe Subscription objects into the local ``subscriptions``
-table and keeps the existing org->plan link (``orgs.plan_code``) pointed at an
-entitled plan when Stripe says a subscription is entitled. It deliberately does
-not commit: the webhook route owns the transaction boundary.
+table and keeps the existing org->plan link (``orgs.plan_code``) in step with Stripe:
+pointed at an entitled subscription's plan while one entitles the org, and cleared when
+the last one stops entitling it (canceled/unpaid/incomplete_expired, or deleted). It
+deliberately does not commit: the webhook route owns the transaction boundary.
 """
 
 from __future__ import annotations
@@ -228,6 +229,44 @@ async def _maybe_update_org_plan_linkage(
         org.plan_started_at = datetime.now(timezone.utc)
 
 
+async def _reconcile_org_plan_linkage(
+    session: AsyncSession, org_id: uuid.UUID
+) -> None:
+    """Re-derive ``orgs.plan_code`` when a subscription stops entitling the org.
+
+    Called when a subscription reaches a terminal non-entitled status (canceled,
+    incomplete_expired, unpaid) or is deleted. The org must stop getting that plan's
+    allowances - but ONLY if no other subscription still entitles it. If another
+    entitled subscription remains, ``orgs.plan_code`` is pointed at THAT subscription's
+    plan instead of being cleared, so a working subscription is never clobbered.
+
+    ``plan_started_at`` is history (the billing anniversary anchor read by
+    ``services/plans.period_for``) and is deliberately left untouched, mirroring
+    ``_maybe_update_org_plan_linkage``, which only ever sets it when it is unset.
+    """
+    # Make the caller's status change visible below, so a subscription that has just
+    # gone non-entitled is not still counted among the org's entitled subscriptions.
+    await session.flush()
+
+    org = await session.get(Org, org_id)
+    if org is None:
+        log.warning(
+            "subscription_org_missing_for_plan_unlink",
+            org_id=str(org_id),
+        )
+        return
+
+    if await has_entitled_subscription(session, org_id):
+        owner = await current_subscription(session, org_id)
+        if owner is not None:
+            org.plan_code = owner.plan_code
+            return
+
+    # Nothing entitles this org any more: stop granting the plan's allowances. Only the
+    # plan link is cleared - plan_started_at stays as the historical anniversary anchor.
+    org.plan_code = None
+
+
 async def current_subscription(
     session: AsyncSession, org_id: uuid.UUID
 ) -> Subscription | None:
@@ -441,7 +480,12 @@ async def _handle_subscription_upsert(
         existing.current_period_end = current_period_end
         existing.cancel_at_period_end = cancel_at_period_end
 
-    await _maybe_update_org_plan_linkage(session, org_id, plan_code, status)
+    if status in TERMINAL_SUBSCRIPTION_STATUSES:
+        # Entitlement has ended: the org only keeps a plan if another subscribed and
+        # entitled subscription still owns one.
+        await _reconcile_org_plan_linkage(session, org_id)
+    else:
+        await _maybe_update_org_plan_linkage(session, org_id, plan_code, status)
 
 
 async def _handle_subscription_deleted(
@@ -463,6 +507,9 @@ async def _handle_subscription_deleted(
 
     set_org_context(session, existing.org_id)
     existing.status = "canceled"
+    # Deletion always ends entitlement, so the org's plan link must be re-derived: cleared
+    # unless another entitled subscription still owns a plan.
+    await _reconcile_org_plan_linkage(session, existing.org_id)
 
 
 async def _handle_invoice_payment_failed(
