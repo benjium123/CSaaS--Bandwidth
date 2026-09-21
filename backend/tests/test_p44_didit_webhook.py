@@ -181,6 +181,11 @@ async def test_signed_approved_verifies_person(session, didit_client_app):
     verified."""
     org, person = await seed_person(session)
     payload = payload_for(org, person, status="Approved")
+    payload["decision"] = {
+        "id_verifications": [
+            {"first_name": "Dan", "last_name": "Owner", "date_of_birth": "1980-04-02"}
+        ]
+    }
 
     r = await post_webhook(didit_client_app, payload)
     assert r.status_code == 204, r.text
@@ -232,6 +237,11 @@ async def test_duplicate_event_id_is_suppressed_by_ledger(session, didit_client_
     org, person = await seed_person(session)
 
     first = payload_for(org, person, status="Approved", event_id="evt-A")
+    first["decision"] = {
+        "id_verifications": [
+            {"first_name": "Dan", "last_name": "Owner", "date_of_birth": "1980-04-02"}
+        ]
+    }
     r = await post_webhook(didit_client_app, first)
     assert r.status_code == 204, r.text
     assert (await reload_person(session, person.id)).status == "verified"
@@ -309,6 +319,11 @@ async def test_status_mapping(session, didit_status, expected):
     above."""
     org, person = await seed_person(session, status="pending", identity_hash=None)
     payload = payload_for(org, person, status=didit_status)
+    payload["decision"] = {
+        "id_verifications": [
+            {"first_name": "Dan", "last_name": "Owner", "date_of_birth": "1980-04-02"}
+        ]
+    }
 
     await kyc.handle_didit_event(session, didit_settings(), payload)
 
@@ -517,10 +532,14 @@ async def test_first_time_didit_verification_with_identity_verifies_and_hashes(s
     assert refreshed.document_country == "GB"
 
 
-async def test_first_time_didit_verification_without_decision_verifies_but_identity_hash_none(
+async def test_first_time_didit_verification_without_decision_requires_input(
     session,
 ):
-    """First verification without identity evidence verifies but does NOT store a hash."""
+    """A first-time DiDIt verification without a decision requires input.
+
+    Incomplete evidence remains retryable, so the user is not verified and
+    no verification timestamp is recorded.
+    """
     org, person = await seed_person(
         session, status="pending", identity_hash=None, profile_status="draft"
     )
@@ -529,7 +548,8 @@ async def test_first_time_didit_verification_without_decision_verifies_but_ident
     await kyc.handle_didit_event(session, didit_settings(), payload)
 
     refreshed = await reload_person(session, person.id)
-    assert refreshed.status == "verified"
+    assert refreshed.status == "requires_input"
+    assert refreshed.verified_at is None
     assert refreshed.identity_hash is None
 
 
