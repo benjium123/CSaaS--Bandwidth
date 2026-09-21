@@ -18,6 +18,10 @@ matching Telnyx reference AND a fresh Telnyx GET both confirms the carrier repor
 approved and returns the same identifier. A decision on its own must never make an unfiled
 campaign or toll-free verification sendable. Any missing reference, missing key, carrier
 error or unconfirmed/unknown status refuses the approval.
+
+A decision that does not actually move the record (already in that status, a stale
+``submitted`` after ``approved``, or a terminal state) is not reported as applied: the
+transaction is rolled back and a conflict is raised instead of a misleading 200.
 """
 
 from __future__ import annotations
@@ -74,6 +78,14 @@ _HTTP_CLIENT_STATE_ATTR = "telnyx_http_client"
 #: The only ``verificationStatus`` the Telnyx toll-free API documents as approved. Any
 #: other value is treated as "not approved" and refuses the decision.
 _TFV_APPROVED_STATUS = "verified"
+
+#: Non-PII message used whenever a decision is a no-op (already current, stale, or
+#: terminal). Kept generic so no record identifier or caller input is leaked.
+_NO_CHANGE_MESSAGE = (
+    "The status decision was ignored because it would not change the record: the "
+    "requested status is already current, is stale relative to a terminal status, or the "
+    "record is terminal."
+)
 
 
 def _secret(value: Any) -> str:
@@ -273,6 +285,23 @@ async def _require_tfv_approved(
             "Telnyx does not currently report this toll-free verification as verified; "
             "refusing to record an approved decision the carrier has not confirmed."
         )
+
+
+# ----------------------------------------------------------------------------------
+# Status application
+# ----------------------------------------------------------------------------------
+async def _apply_status_or_conflict(session: Any, record: Any, payload: StatusIn) -> None:
+    """Apply a status decision, but never report a no-op as success.
+
+    ``advance_status`` is monotonic: it ignores a decision that would not move the record
+    (already current, stale after a terminal status, or terminal). When it reports no
+    change we end the transaction safely and raise, so a caller cannot treat an ignored
+    decision as an applied one.
+    """
+    changed = reg.advance_status(record, payload.status, error=payload.error)
+    if not changed:
+        await session.rollback()
+        raise ConflictError(_NO_CHANGE_MESSAGE)
 
 
 # ----------------------------------------------------------------------------------
@@ -562,7 +591,8 @@ async def set_campaign_status(
     maps to approved. A decision alone must never make an unfiled campaign sendable. Any
     missing reference, missing key, carrier error, mismatched identifier or unconfirmed
     status refuses the approval; non-approved decisions keep the existing monotonic
-    behaviour.
+    behaviour. A decision that changes nothing (already current, stale, or terminal) is not
+    reported as applied: the transaction is rolled back and a conflict is raised.
     """
     campaign = await ctx.session.get(Campaign, campaign_id)
     if campaign is None:
@@ -571,7 +601,7 @@ async def set_campaign_status(
         await _require_campaign_approved(
             ctx.session, request.app.state.settings, request, campaign
         )
-    reg.advance_status(campaign, payload.status, error=payload.error)
+    await _apply_status_or_conflict(ctx.session, campaign, payload)
     await ctx.session.commit()
     return await _campaign_out(ctx.session, campaign)
 
@@ -590,7 +620,9 @@ async def set_brand_status(
     carries a Telnyx brand reference, a fresh Telnyx GET returns that same brand and maps
     to approved. Any missing reference, missing key, carrier error, mismatched identifier
     or unknown status refuses the approval; non-approved decisions keep the existing
-    monotonic behaviour.
+    monotonic behaviour. A decision that changes nothing (already current, stale, or
+    terminal) is not reported as applied: the transaction is rolled back and a conflict is
+    raised.
     """
     brand = await ctx.session.get(Brand, brand_id)
     if brand is None:
@@ -599,7 +631,7 @@ async def set_brand_status(
         await _require_brand_approved(
             ctx.session, request.app.state.settings, request, brand
         )
-    reg.advance_status(brand, payload.status, error=payload.error)
+    await _apply_status_or_conflict(ctx.session, brand, payload)
     await ctx.session.commit()
     return _brand_out(brand)
 
@@ -694,7 +726,9 @@ async def set_tfv_status(
     reports the documented ``verificationStatus`` of ``Verified``. An unfiled verification
     must never become sendable on a decision alone. Any missing reference, missing key,
     carrier error, mismatched identifier or unknown status refuses the approval;
-    non-approved decisions keep the existing monotonic behaviour.
+    non-approved decisions keep the existing monotonic behaviour. A decision that changes
+    nothing (already current, stale, or terminal) is not reported as applied: the
+    transaction is rolled back and a conflict is raised.
     """
     tfv = await ctx.session.get(TollFreeVerification, tfv_id)
     if tfv is None:
@@ -703,6 +737,6 @@ async def set_tfv_status(
         await _require_tfv_approved(
             ctx.session, request.app.state.settings, request, tfv
         )
-    reg.advance_status(tfv, payload.status, error=payload.error)
+    await _apply_status_or_conflict(ctx.session, tfv, payload)
     await ctx.session.commit()
     return _tfv_out(tfv)

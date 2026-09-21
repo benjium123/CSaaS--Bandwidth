@@ -178,3 +178,29 @@ async def test_carrier_confirmed_approved_brand_is_recorded(guard, session):
     assert r.json()["carrier_refs"]["telnyx"] == BRAND_REF
     assert BRAND_REF in str(stub.requests[0].url)
     assert await _stored_status(client, headers, brand_id) == "approved"
+
+
+async def test_repeating_a_confirmed_approval_is_a_conflict(guard, session):
+    """A second identical approval must not be reported as a second success.
+
+    The carrier still confirms the brand, but the local record is already approved, so
+    the decision changes nothing: it is rolled back and refused rather than answered with
+    a misleading 200, and the stored status stays approved.
+    """
+    client, stub = guard
+    brand_id, headers = await _make_brand(client, session, BRAND_REF)
+    stub.payload = {
+        "brandId": BRAND_REF,
+        "status": "OK",
+        "identityStatus": "VERIFIED",
+    }
+
+    first = await _approve(client, headers, brand_id)
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "approved"
+
+    again = await _approve(client, headers, brand_id)
+
+    assert again.status_code == 409, again.text
+    assert len(stub.requests) == 2  # re-confirmed with the carrier before the no-op
+    assert await _stored_status(client, headers, brand_id) == "approved"

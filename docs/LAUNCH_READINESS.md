@@ -2,7 +2,7 @@
 
 > **Status: NOT launch-ready.** Corrects `docs/TELNYX_IMPLEMENTATION_GAPS.md` (predates the
 > filing code) and supersedes earlier drafts; the original is left unedited. Claims cite
-> symbols in the audited files only. No secrets; no live carrier calls, and no live-carrier
+> symbols in the audited files only. No secrets, no live carrier calls, and no live-carrier
 > integration test yet — production Telnyx credentials remain an external prerequisite (§6).
 
 ## 0. Sources inspected
@@ -23,10 +23,11 @@ offline tests in §8. Referenced but not supplied, therefore **UNVERIFIED**:
 - Approval was operator-asserted; it is **now fail-closed** — an `approved` decision is
   accepted only after a fresh Telnyx GET confirms the matching record approved.
 - D2 (no attachment guard) is **built** for Telnyx: the PATCH path uses a carrier association
-  service, the order path refuses a Telnyx `campaign_id` before spend, and the send gate is fail-closed.
-- Still true: `TfvOut` hides `carrier_refs`; TFV has no filing route (§3).
-- Stale docstrings: `telnyx_number_association.py` ("NOT ROUTED") and
-  `telnyx_campaign_filing.py` are both reached from `registration.py`/`numbers.py`.
+  service, the order path refuses a Telnyx `campaign_id` before spend, and the send gate is
+  fail-closed.
+- A `/status` no-op used to return a misleading 200; **now** `_apply_status_or_conflict`
+  rolls back and raises `ConflictError`, never reporting an ignored decision as applied.
+- Still true: `TfvOut` hides `carrier_refs`; TFV has no filing route (§3); two filing docstrings are stale.
 
 ## 2. Actually implemented (EXISTS)
 
@@ -36,8 +37,11 @@ offline tests in §8. Referenced but not supplied, therefore **UNVERIFIED**:
 `_require_tfv_approved`, each of which demands a stored `carrier_refs["telnyx"]`, does a
 fresh Telnyx GET, refuses on any transport/HTTP error, requires the returned id to equal the
 ref, and requires the mapped status approved (`map_brand_status`/`map_campaign_status` ==
-`APPROVED`; TFV `verificationStatus == "verified"`). Tests inject
-`app.state.telnyx_http_client`.
+`APPROVED`; TFV `verificationStatus == "verified"`). Tests inject `app.state.telnyx_http_client`.
+
+**Status application — `_apply_status_or_conflict`.** `advance_status` is monotonic; when it
+returns false (already current, stale after terminal, or terminal) the transaction is rolled
+back and a non-PII `ConflictError` (`_NO_CHANGE_MESSAGE`) is raised — a no-op is never a 200.
 
 **Brand filing — `services/telnyx_brand_filing.py::file_brand_with_telnyx`** (routed at
 `POST /brands/{id}/file-telnyx`). Row-locks; refuses terminal/unknown status and anything
@@ -72,8 +76,8 @@ plus an `assigned` `provisioning` marker matching that campaign and carrier id (
 TFV's `carrier_refs["telnyx"]` (toll-free). Persisted rows only, no carrier call. Non-Telnyx
 carriers keep allow-on-unknown unless `REQUIRE_NUMBER_REGISTRATION`.
 
-**Transports / payload.** `TelnyxRegistrationClient`, `TelnyxTollfreeVerificationClient`,
-the pure `build_tollfree_verification_payload`, single attempt, no auto-retry, no secrets logged.
+**Transports / payload.** `TelnyxRegistrationClient`, `TelnyxTollfreeVerificationClient`, the
+pure `build_tollfree_verification_payload`; single attempt, no auto-retry, no secrets logged.
 
 ## 3. NOT implemented / remaining
 
@@ -81,8 +85,6 @@ the pure `build_tollfree_verification_payload`, single attempt, no auto-retry, n
   TFV at Telnyx or writes its `carrier_refs["telnyx"]`; there is no TFV attempt marker.
 - **Stale approval trusted on send.** The gate trusts persisted local evidence; `approved` is
   terminal, so a later carrier downgrade cannot be reflected.
-- **No-op `/status`.** The status routes discard the `advance_status` bool and commit
-  unconditionally, so an ignored transition still returns 200.
 
 ## 4. P0 launch blockers (ordered)
 
@@ -93,11 +95,10 @@ the pure `build_tollfree_verification_payload`, single attempt, no auto-retry, n
    send path never re-checks the carrier, so a registration Telnyx later fails or suspends
    keeps sending locally, and terminal `approved` cannot be corrected.
 3. **No real credentials / no live verification.** Production Telnyx credentials and an active
-   provider account are external prerequisites, and no test yet exercises the real API (§6, §8).
+   provider account are external prerequisites, and no test exercises the real API (§6, §8).
 
 ## 5. P1 (non-blocking hardening)
 
-- Return a distinguishable result when a `/status` transition is ignored (no-op 200).
 - Surface `carrier_refs` on `TfvOut`; add a TFV attempt marker once its filing exists.
 - Add a dedicated route regression test for the Telnyx order-path guard.
 - Build the runbook for reconciling `carrier_refs`/`provisioning` markers; fix the stale
@@ -110,9 +111,8 @@ the pure `build_tollfree_verification_payload`, single attempt, no auto-retry, n
   current fee/refund schedule from the carrier's published terms (no amounts asserted here).
 - Production Telnyx credentials / active provider account(s), provisioned and rotated outside
   the repo (never in docs or logs); filing and the guards cannot work without them.
-- Whether the manual, carrier-confirmed approval suffices, who is accountable, and the evidence.
-- A named human process to reconcile timeout markers and periodically re-check
-  already-`approved` registrations (P0 #2).
+- Whether carrier-confirmed approval suffices and who is accountable; a named process to
+  reconcile timeout markers and re-check already-`approved` registrations (P0 #2).
 - Per-environment `REQUIRE_NUMBER_REGISTRATION` default; KYC scope; prepaid/settlement policy;
   BYON decision; pricing pass-through.
 - Deploy window and rollback owner; a migration only if `carrier_refs` is proven insufficient.
@@ -126,15 +126,15 @@ the pure `build_tollfree_verification_payload`, single attempt, no auto-retry, n
   the only tightening is an env flag, so the control is opt-in there.
 - **Deadlock pressure to forge evidence.** With TFV approval needing a ref no code writes (P0
   #1), the workaround is hand-editing `carrier_refs` — out-of-band evidence the guard trusts.
-- **Mock-only confidence.** A response-shape change in `registration_status` or TFV
-  `verificationStatus` could mis-map and silently approve.
+- **Mock-only confidence.** A shape change in `registration_status`/`verificationStatus` can
+  mis-map and silently approve.
 
 ## 8. Verification: offline tests done, live carrier still missing
 
-Offline tests (real service + `httpx.MockTransport`, no socket) are **done**: approval guards
+Offline tests (real service + `httpx.MockTransport`) are **done**: approval guards
 (`test_telnyx_brand_approval_guard.py`, `test_telnyx_campaign_tfv_approval_guard.py`) cover
-missing ref / carrier pending / mismatched id / non-`verificationStatus` field / confirmed
-approval; number association (`test_telnyx_number_association_success.py` + `..._failures.py`)
-covers success, pending, timeout marker, wrong-phone marker and repeat marker; payload tests
-cover required-field and enum validation. **Still missing:** live-carrier verification, the
-reconciliation runbook, a Telnyx order-path route regression test, and a TFV filing route.
+missing ref / carrier pending / mismatched id / wrong TFV field / confirmed approval / a
+repeated approval now returning 409; number association (`..._success.py` + `..._failures.py`)
+covers success, pending, timeout, wrong-phone and repeat markers; payload tests cover field
+and enum validation. **Still missing:** live-carrier verification, the reconciliation runbook,
+a Telnyx order-path route regression test, and a TFV filing route.
