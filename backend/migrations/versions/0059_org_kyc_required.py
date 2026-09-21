@@ -1,6 +1,6 @@
 """Add orgs.kyc_required for open-registration identity checks.
 
-Revision ID: 0059_open_registration_kyc_required
+Revision ID: 0059_org_kyc_required
 Revises: 0058_merge_0057_heads
 Create Date: 2026-09-20
 
@@ -20,7 +20,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0059_open_registration_kyc_required"
+revision = "0059_org_kyc_required"
 down_revision = "0058_merge_0057_heads"
 branch_labels = None
 depends_on = None
