@@ -38,6 +38,12 @@ Before changing `PUBLIC_WEB_URL` or `WEBAUTHN_RP_ID`, sign in on the old host an
 
 The backend uses one configured WebAuthn origin/RP. Leaving the old hostname reachable alone does not preserve old passkey authentication after those global settings change. After switching, sign in with the alternate factor and register a new passkey on `ringlite.io`. Verify privileged operations as well as sign-in; do not weaken the privileged passkey policy to make the migration appear successful. If access is blocked, restore the old public origin/RP configuration and complete the account transition before retrying.
 
+## Didit application setup
+
+Use `KYC_IDENTITY_PROVIDER=didit` for business identity checks; individual checks already use Didit. Set `DIDIT_WORKFLOW_ID` to the selected Free KYC workflow, `fc10938c-a05d-41da-926f-36307ef5d9d5`. The backend passes that configured ID in the body of every create-session request.
+
+Supply real `DIDIT_API_KEY` and `DIDIT_WEBHOOK_SECRET` values through the server environment. Preserve existing valid credentials when applying the Ringlite overlay. A truncated key containing an ellipsis or a value such as `<paste from console>` is not usable. Never copy example blanks over working production credentials. No browser SDK key is needed for the existing hosted redirect flow.
+
 ## Provider dashboard callbacks
 
 Change these dashboard destinations only after the new HTTPS site is reachable. These are external provider settings; deploying the repository does not update them automatically.

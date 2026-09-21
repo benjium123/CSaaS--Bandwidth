@@ -652,20 +652,21 @@ async def handle_didit_event(session: AsyncSession, settings: Settings, payload:
 
     if (
         outcome["status"] == "verified"
-        and person.identity_hash is not None
-        and identity_hash(outcome.get("first_name"), outcome.get("last_name"), outcome.get("dob"))
+        and identity_hash(
+            outcome.get("first_name"),
+            outcome.get("last_name"),
+            outcome.get("dob"),
+        )
         is None
+        and not (
+            person.status == "verified"
+            and person.identity_hash is not None
+        )
     ):
-        # A RE-verification is only safe to accept when we can prove it is the same human.
-        # Didit normally carries the verified name and date of birth (from
-        # decision.id_verifications[0]) and the hash comparison in apply_person_outcome
-        # then runs exactly as it does for Stripe - see below. This branch is only the
-        # case where that evidence is genuinely absent: there is nothing to compare, so
-        # rather than un-verify the person or silently accept a possible stranger the
-        # check parks in processing so a human decides. approval_blockers already refuses
-        # anything that is not "verified", so this fails closed.
-        person.status = "processing"
-        person.last_error = "identity_unconfirmed: re-verification needs an operator review"
+        # Initial missing identity details park for retry; a repeat
+        # verification with a prior hash keeps processing.
+        person.status = "processing" if person.identity_hash is not None else "requires_input"
+        person.last_error = 'identity_unconfirmed: identity details are incomplete'
         audit_svc.record(
             session,
             org_id,
@@ -676,6 +677,16 @@ async def handle_didit_event(session: AsyncSession, settings: Settings, payload:
         )
         return
 
+    # Legacy repair: an authenticated, complete same-session event may arrive
+    # for a person that was previously marked verified without an identity
+    # hash. Demote to processing so the event below can populate the missing
+    # hash. This is intentionally narrow and never touches other statuses.
+    if (
+        outcome["status"] == "verified"
+        and person.status == "verified"
+        and person.identity_hash is None
+    ):
+        person.status = "processing"
     await _apply_person_event(session, settings, org_id, person, outcome)
 
 
