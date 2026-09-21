@@ -8,7 +8,7 @@ import { makeStubClient, renderWithProviders } from "@/test/harness";
 /**
  * Personal identity redo.
  *
- * Three ways a personal account can be asked to repeat the Didit check even though the self
+ * Three ways a personal account can be asked to repeat identity verification even though the self
  * person is still marked "verified":
  *   - needs_info with `id_verification` in `missing` (the reviewer asked for a fresh check);
  *   - reverification_due where the last verification predates `next_reverification_at`;
@@ -128,7 +128,7 @@ describe("Individual reverification — needs_info with a stale verified self", 
     render(profile("needs_info", { missing: ["id_verification"] }), new Error("verify failed"));
 
     // The Verify button must be visible even though the self person is still "verified".
-    const button = await screen.findByRole("button", { name: /verify my id with didit/i });
+    const button = await screen.findByRole("button", { name: /verify my id/i });
     expect(button).toBeTruthy();
 
     // The identity section must not be marked complete.
@@ -153,7 +153,7 @@ describe("Individual reverification — reverification_due freshness", () => {
       new Error("verify failed"),
     );
 
-    expect(await screen.findByRole("button", { name: /verify my id with didit/i })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /verify my id/i })).toBeTruthy();
     expect(identityDone()).toBe(false);
   });
 
@@ -196,7 +196,7 @@ describe("Individual reverification — suspended with a stale annual identity",
     );
 
     // The Verify button must be visible even though the self person is still "verified".
-    const button = await screen.findByRole("button", { name: /verify my id with didit/i });
+    const button = await screen.findByRole("button", { name: /verify my id/i });
     expect(button).toBeTruthy();
 
     // The identity section must not be marked complete.
@@ -221,6 +221,6 @@ describe("Individual reverification — suspended with a stale annual identity",
 
     // Wait for the page to render, then assert the Verify button is absent.
     await screen.findByText("Your ID check");
-    expect(screen.queryByRole("button", { name: /verify my id with didit/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /verify my id/i })).toBeNull();
   });
 });

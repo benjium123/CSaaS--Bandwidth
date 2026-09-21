@@ -193,7 +193,7 @@ export const INDIVIDUAL_MISSING_LABELS: Record<string, string> = {
   business_email: "Email",
   business_phone: "Phone",
   owner: "Your identity details",
-  id_verification: "Didit ID check",
+  id_verification: "Identity verification",
 };
 
 export function missingLabel(key: string, accountType: KycAccountType = "business"): string {
@@ -248,7 +248,7 @@ function individualStatusCopy(status: KycStatus): { title: string; body: string 
     case "draft":
       return {
         title: "Verify your identity to start calling",
-        body: "Complete a Didit ID check. Calling unlocks after super-admin approval. SMS and MMS are unavailable.",
+        body: "Complete identity verification. Calling unlocks after super-admin approval. SMS and MMS are unavailable.",
       };
     case "submitted":
     case "in_review":
@@ -274,7 +274,7 @@ function individualStatusCopy(status: KycStatus): { title: string; body: string 
     case "reverification_due":
       return {
         title: "Identity re-verification is due",
-        body: "Repeat the quick Didit ID check to keep calling. SMS and MMS are unavailable.",
+        body: "Repeat identity verification to keep calling. SMS and MMS are unavailable.",
       };
     default:
       return null;

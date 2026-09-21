@@ -49,6 +49,14 @@ function formatAddress(a: Address): string {
     .join(", ");
 }
 
+function normalizeCountry(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function isIsoTwoLetterCountry(value: string): boolean {
+  return /^[A-Z]{2}$/.test(normalizeCountry(value));
+}
+
 export function OwnerResidence({
   person,
   documents,
@@ -65,7 +73,9 @@ export function OwnerResidence({
   const [city, setCity] = React.useState(current?.city ?? "");
   const [region, setRegion] = React.useState(current?.region ?? "");
   const [postal, setPostal] = React.useState(current?.postal_code ?? "");
-  const [country, setCountry] = React.useState(current?.country ?? "US");
+  const [country, setCountry] = React.useState(
+    normalizeCountry(current?.country ?? ""),
+  );
   const [file, setFile] = React.useState<File | null>(null);
   const proofs = documents.filter(
     (d) => d.kind === "proof_of_address" && d.person_id === person.id,
@@ -82,7 +92,7 @@ export function OwnerResidence({
         city,
         region: region || null,
         postal_code: postal,
-        country,
+        country: normalizeCountry(country),
       },
     }),
   );
@@ -175,7 +185,7 @@ export function OwnerResidence({
           />
           <Input
             aria-label={`Country for ${person.full_name}`}
-            placeholder="Country code, e.g. US, CA, GB"
+            placeholder="Any ISO 2-letter country code, e.g. US or CA"
             maxLength={2}
             value={country}
             onChange={(e) => setCountry(e.target.value.toUpperCase())}
@@ -187,7 +197,7 @@ export function OwnerResidence({
               !line1.trim() ||
               !city.trim() ||
               !postal.trim() ||
-              country.length !== 2 ||
+              !isIsoTwoLetterCountry(country) ||
               save.isPending
             }
           >

@@ -203,11 +203,11 @@ function BusinessStep({ profile, editable }: { profile: KycProfile; editable: bo
   );
 }
 
-/** Personal accounts give only the four fields the server needs: no company fields, no
- * registered address. Same endpoint the business form writes to. */
-function PersonalDetailsStep({ profile, editable }: { profile: KycProfile; editable: boolean }) {
+/** Personal accounts ask for only three user-entered fields. The signed-in email is
+ * supplied automatically to the existing profile endpoint. */
+function PersonalDetailsStep({ profile, editable, signedInEmail }: { profile: KycProfile; editable: boolean; signedInEmail: string | null | undefined }) {
   const { api } = useAuth();
-  const [form, setForm] = React.useState<KycBusiness>(profile.business);
+  const [form, setForm] = React.useState<KycBusiness>({ ...profile.business, business_email: profile.business.business_email || signedInEmail || null });
   const save = useKycMutation(api, () =>
     api.request("/api/v1/kyc/profile/business", {
       method: "PUT",
@@ -215,7 +215,7 @@ function PersonalDetailsStep({ profile, editable }: { profile: KycProfile; edita
         Object.entries({
           country: form.country,
           legal_name: form.legal_name,
-          business_email: form.business_email,
+          business_email: signedInEmail || form.business_email,
           business_phone: form.business_phone,
         }).filter(([, v]) => v !== "" && v !== null),
       ),
@@ -232,28 +232,36 @@ function PersonalDetailsStep({ profile, editable }: { profile: KycProfile; edita
         save.mutate(undefined);
       }}
     >
-      <Field label="Country">
-        <Select aria-label="Country" value={form.country ?? ""} onChange={set("country")} disabled={!editable}>
-          <option value="">Choose…</option>
-          {COUNTRY_OPTIONS.filter(
-            (c) => !profile.supported_countries || profile.supported_countries.includes(c.value) || c.value === form.country,
-          ).map((c) => (
-            <option key={c.value} value={c.value}>{c.label}</option>
-          ))}
-        </Select>
+      <Field label="Country" hint="Any country — use its two-letter code">
+        <Input
+          aria-label="Country"
+          value={form.country ?? ""}
+          maxLength={2}
+          pattern="[A-Za-z]{2}"
+          placeholder="e.g. US, CA, DE"
+          onChange={(e) => setForm((f) => ({ ...f, country: e.target.value.toUpperCase() }))}
+          disabled={!editable}
+        />
       </Field>
-      <Field label="Legal name" hint="Exactly as it appears on your ID">
-        <Input aria-label="Legal name" value={form.legal_name ?? ""} onChange={set("legal_name")} disabled={!editable} />
+      <Field label="Full legal name" hint="Exactly as it appears on your ID">
+        <Input aria-label="Full legal name" value={form.legal_name ?? ""} onChange={set("legal_name")} disabled={!editable} />
       </Field>
-      <Field label="Email">
-        <Input aria-label="Email" type="email" value={form.business_email ?? ""} onChange={set("business_email")} disabled={!editable} />
-      </Field>
-      <Field label="Phone">
-        <Input aria-label="Phone" value={form.business_phone ?? ""} onChange={set("business_phone")} disabled={!editable} />
+      <Field label="Phone number">
+        <Input aria-label="Phone number" type="tel" value={form.business_phone ?? ""} onChange={set("business_phone")} disabled={!editable} />
       </Field>
       {editable && (
         <div className="flex flex-wrap items-center gap-[12px] sm:col-span-2">
-          <Button type="submit" disabled={save.isPending}>Save details</Button>
+          <Button
+            type="submit"
+            disabled={
+              save.isPending ||
+              !/^[A-Z]{2}$/.test(form.country ?? "") ||
+              !form.legal_name?.trim() ||
+              !form.business_phone?.trim()
+            }
+          >
+            Save and continue
+          </Button>
           {save.isSuccess && <span className="text-[12.5px] text-[hsl(var(--cx-live))]">Saved</span>}
           {save.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(save.error)}</span>}
         </div>
@@ -276,17 +284,25 @@ function UseCaseStep({ profile, editable, accountType }: { profile: KycProfile; 
     sample_script: "",
   };
   const [form, setForm] = React.useState<KycUseCase>(initial);
+  const [monthlyCallsInput, setMonthlyCallsInput] = React.useState(String(initial.monthly_calls ?? 0));
+  const [monthlyTextsInput, setMonthlyTextsInput] = React.useState(String(initial.monthly_texts ?? 0));
   const save = useKycMutation(api, () =>
     api.request("/api/v1/kyc/profile/use-case", {
       method: "PUT",
       // Personal accounts call only: pin the vertical and drop any texting volume.
-      json: personal ? { ...form, vertical: "personal", monthly_texts: 0 } : form,
+      json: personal
+        ? { ...form, vertical: "personal", monthly_calls: Number(monthlyCallsInput || 0), monthly_texts: 0 }
+        : { ...form, monthly_calls: Number(monthlyCallsInput || 0), monthly_texts: Number(monthlyTextsInput || 0) },
     }),
   );
   const text = (key: keyof KycUseCase) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
-  const num = (key: "monthly_calls" | "monthly_texts") => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [key]: Number(e.target.value || 0) }));
+  const num = (key: "monthly_calls" | "monthly_texts") => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    if (key === "monthly_calls") setMonthlyCallsInput(value);
+    else setMonthlyTextsInput(value);
+    if (value !== "") setForm((f) => ({ ...f, [key]: Number(value) }));
+  };
 
   return (
     <form
@@ -334,11 +350,11 @@ function UseCaseStep({ profile, editable, accountType }: { profile: KycProfile; 
       </Field>
       <div className={personal ? "grid gap-[12px] sm:grid-cols-2" : "grid gap-[12px] sm:grid-cols-3"}>
         <Field label="Calls per month">
-          <Input aria-label="Calls per month" type="number" min={0} value={form.monthly_calls} onChange={num("monthly_calls")} disabled={!editable} />
+          <Input aria-label="Calls per month" type="number" inputMode="numeric" min={0} value={monthlyCallsInput} onChange={num("monthly_calls")} disabled={!editable} />
         </Field>
         {!personal && (
           <Field label="Texts per month">
-            <Input aria-label="Texts per month" type="number" min={0} value={form.monthly_texts} onChange={num("monthly_texts")} disabled={!editable} />
+            <Input aria-label="Texts per month" type="number" inputMode="numeric" min={0} value={monthlyTextsInput} onChange={num("monthly_texts")} disabled={!editable} />
           </Field>
         )}
         <Field label="Countries you contact" hint="Comma separated, e.g. US, CA">
@@ -377,16 +393,20 @@ function PeopleStep({
   editable,
   accountType,
   reverify,
+  detailsReady,
+  signedInEmail,
 }: {
   profile: KycProfile;
   editable: boolean;
   accountType: AccountType;
   reverify: boolean;
+  detailsReady: boolean;
+  signedInEmail: string | null | undefined;
 }) {
-  const { api, me } = useAuth();
+  const { api } = useAuth();
   const personal = accountType === "individual";
-  const [name, setName] = React.useState(personal ? me?.full_name ?? "" : "");
-  const [email, setEmail] = React.useState(personal ? me?.email ?? "" : "");
+  const [name, setName] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [percent, setPercent] = React.useState("100");
   const [isMe, setIsMe] = React.useState(profile.persons.length === 0);
   const [role, setRole] = React.useState<"owner" | "beneficial_owner">(profile.persons.some((p) => p.role === "owner") ? "beneficial_owner" : "owner");
@@ -395,13 +415,25 @@ function PeopleStep({
   const add = useKycMutation(api, () =>
     api.request("/api/v1/kyc/persons", {
       method: "POST",
-      // A personal account has exactly one owner - the signed-in person - so the role and
-      // "is me" flags are fixed and no ownership share is sent at all.
-      json: personal
-        ? { role: "owner", full_name: name.trim(), email: email.trim() || null, is_me: true }
-        : { role, full_name: name.trim(), email: email.trim() || null, ownership_percent: percent ? Number(percent) : null, is_me: isMe },
+      json: { role, full_name: name.trim(), email: email.trim() || null, ownership_percent: percent ? Number(percent) : null, is_me: isMe },
     }),
   );
+  const startPersonal = useKycMutation(api, async () => {
+    const person = await api.request<KycPerson>("/api/v1/kyc/persons", {
+      method: "POST",
+      json: {
+        role: "owner",
+        full_name: profile.business.legal_name?.trim(),
+        email: signedInEmail?.trim() || profile.business.business_email || null,
+        is_me: true,
+      },
+    });
+    const session = await api.request<{ url: string }>(`/api/v1/kyc/persons/${person.id}/verify`, {
+      method: "POST",
+      json: { return_url: window.location.href },
+    });
+    window.location.assign(session.url);
+  });
   const verify = useKycMutation(api, async (person: KycPerson) => {
     const res = await api.request<{ url: string }>(`/api/v1/kyc/persons/${person.id}/verify`, {
       method: "POST",
@@ -419,8 +451,8 @@ function PeopleStep({
 
   // Personal accounts show only the one self owner; business accounts show them all.
   const persons = personal ? profile.persons.slice(0, 1) : profile.persons;
-  // No add form once a person exists on a personal account.
-  const showAdd = editable && (!personal || profile.persons.length === 0);
+  const showAdd = editable && !personal;
+  const showStartPersonal = editable && personal && profile.persons.length === 0 && detailsReady;
 
   return (
     <div className="space-y-[14px]">
@@ -434,7 +466,7 @@ function PeopleStep({
           {persons.map((p) => {
             // Personal: only the signed-in person may act, and only on their own row.
             const canVerify = personal ? p.is_you : true;
-            const showVerify = canVerify && (p.status !== "verified" || reverify) && p.status !== "processing";
+            const showVerify = canVerify && (p.status !== "verified" || reverify) && p.status !== "processing" && (!personal || detailsReady);
             return (
               <li
                 key={p.id}
@@ -465,13 +497,35 @@ function PeopleStep({
                 </div>
                 {showVerify && (
                   <Button type="button" size="sm" className="rounded-full" onClick={() => verify.mutate(p)} disabled={verify.isPending}>
-                    {personal ? "Verify my ID with Didit" : p.is_you ? "Verify my ID" : "Get their ID link"}
+                    {personal ? "Verify my ID" : p.is_you ? "Verify my ID" : "Get their ID link"}
                   </Button>
                 )}
               </li>
             );
           })}
         </ul>
+      )}
+      {personal && !detailsReady && (
+        <p className="rounded-[12px] border border-[hsl(var(--cx-flag)/0.35)] bg-[hsl(var(--cx-flag)/0.12)] p-[11px] text-[12.5px] text-[hsl(var(--cx-text))]">
+          Save your details above before starting your ID check.
+        </p>
+      )}
+      {showStartPersonal && (
+        <div className="flex flex-wrap items-center gap-[12px]">
+          <Button
+            type="button"
+            className="rounded-full"
+            disabled={startPersonal.isPending}
+            onClick={() => startPersonal.mutate(undefined)}
+          >
+            {startPersonal.isPending ? "Starting…" : "Start ID check"}
+          </Button>
+          {startPersonal.isError && (
+            <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">
+              {mutationErrorMessage(startPersonal.error)}
+            </span>
+          )}
+        </div>
       )}
       {link && (
         <div className="space-y-[8px] rounded-[12px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] p-[12px]">
@@ -487,8 +541,6 @@ function PeopleStep({
             e.preventDefault();
             add.mutate(undefined, {
               onSuccess: () => {
-                // Personal: the form disappears once the self owner exists, so keep it as is.
-                if (personal) return;
                 setName("");
                 setEmail("");
                 setIsMe(false);
@@ -522,7 +574,7 @@ function PeopleStep({
           )}
           <div className="flex flex-wrap items-center gap-[12px] sm:col-span-2">
             <Button type="submit" disabled={!name.trim() || add.isPending}>
-              {personal ? "Save identity details" : "Add person"}
+              Add person
             </Button>
             {add.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(add.error)}</span>}
           </div>
@@ -653,7 +705,10 @@ export function VerifyBusinessPage() {
   // the Submit button disabled and the checklist honest.
   const requiredMissing = personal && !selfVerified ? [...profile.missing, "id_verification"] : [...profile.missing];
   const readyToSubmit = requiredMissing.length === 0;
-  // A verified self may still need to re-run Didit during annual re-verification, when the
+  const visibleMissing = personal
+    ? requiredMissing.filter((key) => key !== "business_email")
+    : requiredMissing;
+  // A verified self may still need to re-run identity verification during annual re-verification, when the
   // reviewer asked for a fresh ID check on a needs_info application (annual grace expired),
   // or when a suspended personal account's annual identity has gone stale. In all cases the
   // Verify button must be offered even though p.status is still "verified".
@@ -731,12 +786,22 @@ export function VerifyBusinessPage() {
             )}
           </ConsoleCard>
         ) : null}
+        {editable && !readyToSubmit && (
+          <div className="space-y-[8px] rounded-[12px] border border-[hsl(var(--cx-flag)/0.35)] bg-[hsl(var(--cx-flag)/0.12)] p-[11px]">
+            <p className="text-[13px] font-semibold text-[hsl(var(--cx-text))]">Still needed before you can submit:</p>
+            <ul className="list-disc space-y-[4px] pl-5 text-[12.5px] text-[hsl(var(--cx-muted))]">
+              {[...new Set(visibleMissing.map((m) => missingLabel(m, accountType)))].map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </SurfaceCard>
 
       {personal ? (
         <Anchor id="business">
           <StepCard n={1} title="Your details" done={detailsDone}>
-            <PersonalDetailsStep profile={profile} editable={editable} />
+            <PersonalDetailsStep profile={profile} editable={editable} signedInEmail={me?.email} />
           </StepCard>
         </Anchor>
       ) : (
@@ -758,14 +823,14 @@ export function VerifyBusinessPage() {
         <Anchor id="owners">
           <Anchor id="identity">
             <StepCard n={3} title="Your ID check" done={identityDone}>
-              <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} accountType={accountType} reverify={reverify} />
+              <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} accountType={accountType} reverify={reverify} detailsReady={detailsDone} signedInEmail={me?.email} />
             </StepCard>
           </Anchor>
         </Anchor>
       ) : (
         <Anchor id="owners">
           <StepCard n={3} title="Owners, ID check and home address" done={identityDone}>
-            <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} accountType={accountType} reverify={reverify} />
+            <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} accountType={accountType} reverify={reverify} detailsReady={detailsDone} signedInEmail={me?.email} />
           </StepCard>
         </Anchor>
       )}
@@ -785,20 +850,7 @@ export function VerifyBusinessPage() {
       {editable && (
         <Anchor id="submit">
           <SurfaceCard className="space-y-[12px]">
-            {readyToSubmit ? (
-              <p className="text-[13px] text-[hsl(var(--cx-text))]">Everything is ready. Submit for review.</p>
-            ) : (
-              <div className="space-y-[8px]">
-                <p className="text-[13px] font-semibold text-[hsl(var(--cx-text))]">
-                  Still needed before you can submit:
-                </p>
-                <ul className="list-disc space-y-[4px] pl-5 text-[12.5px] text-[hsl(var(--cx-muted))]">
-                  {[...new Set(requiredMissing.map((m) => missingLabel(m, accountType)))].map((m) => (
-                    <li key={m}>{m}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <p className="text-[13px] text-[hsl(var(--cx-text))]">{readyToSubmit ? "Everything is ready. Submit for review." : "Complete the items above to submit for review."}</p>
             <div className="flex flex-wrap items-center gap-[12px]">
               <Button type="button" className="rounded-full" disabled={!readyToSubmit || submit.isPending} onClick={() => submit.mutate(undefined)}>
                 {submit.isPending ? "Submitting…" : "Submit for review"}
