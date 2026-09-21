@@ -195,7 +195,7 @@ function personPosts(client: ReturnType<typeof makeStubClient>) {
 }
 
 describe("IndividualVerificationPage", () => {
-  it("saves only the four personal fields to /kyc/profile/business", async () => {
+  it("saves the three personal fields and reuses the signed-in email", async () => {
     const client = makeStubClient(
       stubRoutes({
         profile: profile({
@@ -217,18 +217,22 @@ describe("IndividualVerificationPage", () => {
     renderWithProviders(<VerifyBusinessPage />, client);
 
     // Await a real positive render before touching the form.
-    expect(await screen.findByLabelText("Legal name")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Full legal name")).toBeInTheDocument();
     expect(screen.getByLabelText("Country")).toBeInTheDocument();
-    // "Email" is also the label on the person form; target the textbox by its aria label.
-    expect(screen.getByRole("textbox", { name: "Email" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Phone")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /email/i })).toBeNull();
+    expect(screen.getByLabelText("Phone number")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Save details" }));
+    const country = screen.getByLabelText("Country");
+    await userEvent.clear(country);
+    await userEvent.type(country, "de");
+    expect(country).toHaveValue("DE");
+
+    await userEvent.click(screen.getByRole("button", { name: "Save and continue" }));
 
     await waitFor(() => expect(businessCalls(client)).toHaveLength(1));
     const body = businessCalls(client)[0].init.json as Record<string, unknown>;
     expect(body).toEqual({
-      country: "US",
+      country: "DE",
       legal_name: "Ada Lovelace",
       business_email: "ada@example.com",
       business_phone: "+15550100",
@@ -264,26 +268,41 @@ describe("IndividualVerificationPage", () => {
     expect(screen.queryByLabelText("Texts per month")).toBeNull();
     expect(screen.queryByLabelText("Legal business name")).toBeNull();
 
+    const calls = screen.getByLabelText("Calls per month");
+    expect(calls).toHaveAttribute("inputmode", "numeric");
+    await userEvent.clear(calls);
+    await userEvent.type(calls, "125");
+    expect(calls).toHaveValue(125);
+
     await userEvent.click(screen.getByRole("button", { name: "Save use case" }));
 
     await waitFor(() => expect(useCaseCalls(client)).toHaveLength(1));
     const body = useCaseCalls(client)[0].init.json as KycUseCase;
     expect(body.vertical).toBe("personal");
     expect(body.monthly_texts).toBe(0);
+    expect(body.monthly_calls).toBe(125);
     expect(body.description).toBe("Calling customers");
   });
 
-  it("creates a sole self owner with role owner, is_me true and no ownership_percentage", async () => {
-    const client = makeStubClient(stubRoutes());
+  it("starts identity verification from saved details without asking for name or email again", async () => {
+    const client = makeStubClient(stubRoutes({
+      profile: profile({
+        business: emptyBusiness({
+          country: "DE",
+          legal_name: "Ada Lovelace",
+          business_email: "ada@example.com",
+          business_phone: "+491234567",
+        }),
+      }),
+    }));
     renderWithProviders(<VerifyBusinessPage />, client);
 
-    const nameInput = await screen.findByLabelText("Full legal name");
-    // The personal form pre-fills from the signed-in user.
-    expect((nameInput as HTMLInputElement).value).toBe("Ada Lovelace");
+    expect(await screen.findByRole("button", { name: "Start ID check" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /email/i })).toBeNull();
     expect(screen.queryByLabelText("Role")).toBeNull();
     expect(screen.queryByLabelText("Ownership percent")).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Save identity details" }));
+    await userEvent.click(screen.getByRole("button", { name: "Start ID check" }));
 
     await waitFor(() => expect(personPosts(client)).toHaveLength(1));
     const body = personPosts(client)[0].init.json as Record<string, unknown>;
@@ -294,6 +313,7 @@ describe("IndividualVerificationPage", () => {
       is_me: true,
     });
     expect(body).not.toHaveProperty("ownership_percent");
+    expect(await screen.findByRole("alert")).toHaveTextContent("verify stub");
   });
 
   it("does not offer the add form once a person exists", async () => {
@@ -303,8 +323,8 @@ describe("IndividualVerificationPage", () => {
     renderWithProviders(<VerifyBusinessPage />, client);
 
     expect(await screen.findByText(/Ada Lovelace/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Full legal name")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Save identity details" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start ID check" })).toBeNull();
+    expect(screen.queryByLabelText("Person email")).toBeNull();
   });
 
   it("keeps submit unavailable while missing is empty but no verified self owner exists", async () => {
@@ -315,7 +335,8 @@ describe("IndividualVerificationPage", () => {
 
     // Wait for the page to render before asserting the disabled state.
     expect(await screen.findByRole("button", { name: "Submit for review" })).toBeDisabled();
-    expect(screen.getByText("Didit ID check")).toBeInTheDocument();
+    expect(screen.getByText("Identity verification")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/didit/i);
   });
 
   it("never enables submit for a verified person who is not you", async () => {
@@ -367,7 +388,7 @@ describe("IndividualVerificationPage", () => {
     );
     renderWithProviders(<VerifyBusinessPage />, client);
 
-    const button = await screen.findByRole("button", { name: "Verify my ID with Didit" });
+    const button = await screen.findByRole("button", { name: "Verify my ID" });
     await userEvent.click(button);
 
     // The stub returns an Error for /verify, so the mutation surfaces an alert instead of
