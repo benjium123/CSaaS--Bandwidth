@@ -1,4 +1,17 @@
-# Pending operator tasks
+# Ringlite operator tasks
+
+<!-- ringlite-migration-note -->
+> **Ringlite migration notice**
+>
+> - Target domain: https://ringlite.io (deployment pending operator).
+> - Primary carrier: Telnyx.
+> - Didit KYC webhook: https://ringlite.io/api/v1/webhooks/didit
+> - Telnyx messaging webhook: https://ringlite.io/api/v1/webhooks/telnyx/messaging
+> - Domain cutover details: [RINGLITE_DOMAIN_CUTOVER.md](RINGLITE_DOMAIN_CUTOVER.md)
+>
+> Old dated tasks below are historical and should be re-verified.
+> Optional carrier adapters are not required for the primary Telnyx path.
+
 
 Things only the operator can do, in the order that matters. Kept here so they survive a
 session. Tick them off by deleting the line. Updated 2026-09-16.
@@ -8,9 +21,9 @@ The receipts check right after the P41 deploy showed NO delivery receipt has eve
 server on ANY carrier. Bandwidth and Telnyx have carried real traffic, so their dashboard-side
 webhook URLs were never pointed here; every text on them has shown "sent" forever.
 - [ ] Bandwidth: Messaging → Applications → the messaging application → callback URL =
-      `https://csaas.sabinepropertygroup.net/api/v1/webhooks/bandwidth/messaging`
+      `https://ringlite.io/api/v1/webhooks/bandwidth/messaging`
 - [ ] Telnyx: Messaging → Programmable Messaging → the messaging profile → webhook URL =
-      `https://csaas.sabinepropertygroup.net/api/v1/webhooks/telnyx/messaging`
+      `https://ringlite.io/api/v1/webhooks/telnyx/messaging`
 - [ ] Twilio (if ever used): the number's status callback → `.../webhooks/twilio/messaging`
 - [ ] Send one text on each carrier, then ask Fable to run the receipts check
       (`GET /api/v1/platform/messaging/receipts-check`, operator token) - a recent

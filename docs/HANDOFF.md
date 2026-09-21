@@ -1,5 +1,13 @@
 # Handoff — state, decisions outstanding, and traps
 
+<!-- ringlite-migration-note -->
+> **Historical document.** Original brands, domains, carrier choices and
+> deployment facts are retained verbatim below. The current product is
+> **Ringlite**, target domain https://ringlite.io, primary carrier **Telnyx**,
+> with deployment pending operator verification. See
+> [RINGLITE_DOMAIN_CUTOVER.md](RINGLITE_DOMAIN_CUTOVER.md) for the domain cutover plan.
+
+
 Written 2026-09-20 at the end of a long session. Everything below was verified at the
 time of writing; re-verify anything you are about to act on, because this repo is worked
 on by several sessions at once.

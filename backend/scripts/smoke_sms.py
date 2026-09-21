@@ -22,7 +22,7 @@ BASE = os.environ.get("SMOKE_BASE_URL", "").rstrip("/")
 TOKEN = os.environ.get("SMOKE_TOKEN", "")
 ORG_ID = os.environ.get("SMOKE_ORG_ID", "")
 RECIPIENT = os.environ.get("BANDWIDTH_TEST_RECIPIENT", "")
-BODY = os.environ.get("SMOKE_BODY", "CSaaS P1b smoke test - please ignore")
+BODY = os.environ.get("SMOKE_BODY", "Ringlite P1b smoke test - please ignore")
 TIMEOUT_S = int(os.environ.get("SMOKE_TIMEOUT", "120"))
 
 

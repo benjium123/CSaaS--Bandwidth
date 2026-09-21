@@ -33,7 +33,7 @@ describe("AiProvidersTab", () => {
     renderWithProviders(<AiProvidersTab />, client);
 
     const csaaS = await screen.findByRole("radio", {
-      name: "Use CSaaS keys (billed per use)",
+      name: "Use Ringlite keys (billed per use)",
     });
     expect(csaaS).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: "Use my own keys" })).toHaveAttribute(
@@ -83,9 +83,9 @@ describe("AiProvidersTab", () => {
 
     renderWithProviders(<AiProvidersTab />, client);
 
-    await screen.findByText("Using CSaaS keys");
+    await screen.findByText("Using Ringlite keys");
     await userEvent.click(
-      screen.getByRole("radio", { name: "Use CSaaS keys (billed per use)" }),
+      screen.getByRole("radio", { name: "Use Ringlite keys (billed per use)" }),
     );
 
     expect(
@@ -103,7 +103,7 @@ describe("AiProvidersTab", () => {
 
     renderWithProviders(<AiProvidersTab />, client);
 
-    expect(await screen.findByText("Using CSaaS keys")).toBeInTheDocument();
+    expect(await screen.findByText("Using Ringlite keys")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "What is still needed" })).toBeNull();
   });
 

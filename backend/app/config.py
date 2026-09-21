@@ -56,7 +56,7 @@ class Settings(BaseSettings):
 
     # ---------------- core ----------------
     app_env: str = "development"
-    app_name: str = "csaas"
+    app_name: str = "Ringlite"
     log_level: str = "INFO"
     api_port: int = 8080
     public_base_url: str = ""

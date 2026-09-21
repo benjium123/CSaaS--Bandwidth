@@ -1,4 +1,17 @@
-# CSaaS Runbook
+# Ringlite Runbook
+
+<!-- ringlite-migration-note -->
+> **Ringlite migration notice**
+>
+> - Target domain: https://ringlite.io (deployment pending operator).
+> - Primary carrier: Telnyx.
+> - Didit KYC webhook: https://ringlite.io/api/v1/webhooks/didit
+> - Telnyx messaging webhook: https://ringlite.io/api/v1/webhooks/telnyx/messaging
+> - Domain cutover details: [RINGLITE_DOMAIN_CUTOVER.md](RINGLITE_DOMAIN_CUTOVER.md)
+>
+> Old dated tasks below are historical and should be re-verified.
+> Optional carrier adapters are not required for the primary Telnyx path.
+
 
 Operational reference for a deployed instance. Written for the operator at 2am, not for a
 new contributor learning the architecture - see `docs/ARCHITECTURE.md` and
@@ -388,7 +401,7 @@ Order matters. Steps 1 and 2 are SignalWire dashboard work; the rest is on the b
 SIGNALWIRE_PROJECT_ID=9c2ec6d5-b851-4091-8b4b-c7ce0a845f87
 SIGNALWIRE_API_TOKEN=<new token>
 SIGNALWIRE_SPACE_URL=sabine.signalwire.com
-SIGNALWIRE_WEBHOOK_URL=https://csaas.sabinepropertygroup.net/api/v1/webhooks/signalwire/messaging
+SIGNALWIRE_WEBHOOK_URL=https://ringlite.io/api/v1/webhooks/signalwire/messaging
 ```
 Bare host for the space, no scheme, no trailing slash; the SSRF guard rejects anything else. `SIGNALWIRE_ENABLED` can stay unset, the credentials enable it.
 4. `bash deploy/deploy.sh` (ships migrations 0041-0043, the voice adapter, and this phase).
@@ -423,13 +436,13 @@ Each carrier's delivery-status webhook URL lives in its dashboard. All of them m
 - Telnyx: the Messaging Profile's webhook URL.
 - Twilio: the phone number's status callback.
 
-All three go to `https://csaas.sabinepropertygroup.net/api/v1/webhooks/<carrier>/messaging`, with `<carrier>` one of `bandwidth`, `telnyx`, `twilio`. Plivo and SignalWire are different: the code asks for a receipt on every message, so there is nothing to set in those dashboards.
+All three go to `https://ringlite.io/api/v1/webhooks/<carrier>/messaging`, with `<carrier>` one of `bandwidth`, `telnyx`, `twilio`. Plivo and SignalWire are different: the code asks for a receipt on every message, so there is nothing to set in those dashboards.
 
 Prove it with data, not a screenshot:
 
 ```bash
 curl -s -H "X-Platform-Ops-Token: $OPS_TOKEN" \
-  https://csaas.sabinepropertygroup.net/api/v1/platform/messaging/receipts-check
+  https://ringlite.io/api/v1/platform/messaging/receipts-check
 ```
 
 A healthy answer shows a recent `last_receipt_at` for each carrier. If a carrier is missing, or its timestamp is old, that carrier's URL is wrong or its webhook never fired. Send one test text per carrier and re-run the check.
@@ -795,6 +808,6 @@ cp /etc/nginx/sites-enabled/csaas /root/csaas.nginx.bak.$(date +%s)
 ```bash
 nginx -t && systemctl reload nginx
 # then add to /opt/csaas/.env (by hand, as always) and restart the api:
-#   LIVEKIT_PUBLIC_URL=wss://csaas.sabinepropertygroup.net/livekit
-curl -s https://csaas.sabinepropertygroup.net/status
+#   LIVEKIT_PUBLIC_URL=wss://ringlite.io/livekit
+curl -s https://ringlite.io/status
 ```

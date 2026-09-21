@@ -5,7 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { TotpEnrolment } from "./TotpEnrolment";
 
 const SECRET = "JBSWY3DPEHPK3PXP";
-const URI = "otpauth://totp/CSaaS:a@example.com?secret=JBSWY3DPEHPK3PXP&issuer=CSaaS";
+const URI = "otpauth://totp/Ringlite:a@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Ringlite";
 
 /**
  * The `d` of the LAST <path> under `root` - qrcode.react emits the foreground geometry

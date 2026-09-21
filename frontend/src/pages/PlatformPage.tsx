@@ -547,7 +547,7 @@ function WebhooksSection() {
               <Input
                 id="webhook-url"
                 aria-label="Endpoint URL"
-                placeholder="https://example.com/callbacks/csaas"
+                placeholder="https://example.com/callbacks/ringlite"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
               />
