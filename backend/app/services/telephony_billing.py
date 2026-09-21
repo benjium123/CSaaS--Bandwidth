@@ -106,9 +106,7 @@ async def is_prepaid(session: AsyncSession, org_id: uuid.UUID) -> bool:
     return bool(org is not None and org.telephony_prepaid)
 
 
-async def unit_price(
-    session: AsyncSession, org_id: uuid.UUID, provider: str, metric: str
-) -> int:
+async def unit_price(session: AsyncSession, org_id: uuid.UUID, provider: str, metric: str) -> int:
     """Customer price in micros for one unit of `metric` on `provider`.
 
     An explicit per-org ``provider_rates.price_micros`` override always wins. Otherwise a
@@ -528,9 +526,7 @@ async def enforce_active_calls(
             per_minute = await unit_price(session, org_id, call.carrier, "voice_min_out")
             if per_minute <= 0:
                 continue
-            elapsed_seconds = max(
-                int((moment - _as_utc(call.answered_at)).total_seconds()), 0
-            )
+            elapsed_seconds = max(int((moment - _as_utc(call.answered_at)).total_seconds()), 0)
             used_micros = voice_price_micros(elapsed_seconds, per_minute)
             headroom_micros = CUTOFF_HEADROOM_MINUTES * per_minute
             held, holds = await _held_for_call(session, org_id, call.id)
@@ -570,9 +566,7 @@ async def enforce_active_calls(
 # ------------------------------------------------------------------------------------
 # Number rental
 # ------------------------------------------------------------------------------------
-async def require_number_credit(
-    session: AsyncSession, org_id: uuid.UUID, carrier: str
-) -> None:
+async def require_number_credit(session: AsyncSession, org_id: uuid.UUID, carrier: str) -> None:
     """Refuse a number order the balance cannot cover (first month + setup)."""
     if not await is_prepaid(session, org_id):
         return
@@ -601,6 +595,8 @@ async def charge_new_number(
     session: AsyncSession, org_id: uuid.UUID, number: OrgNumber, *, today: date | None = None
 ) -> None:
     """At order: charge setup (once) and the first month. Does not commit."""
+    if (number.provisioning or {}).get("billing") == "stripe_subscription":
+        return
     org = await _org(session, org_id)
     if org is None or not org.telephony_prepaid:
         return
@@ -678,7 +674,10 @@ async def renew_number_rentals(session: AsyncSession, *, today: date | None = No
         try:
             set_org_context(session, org_id)
             number = await session.get(OrgNumber, number_id)
-            if number is None:
+            if (
+                number is None
+                or (number.provisioning or {}).get("billing") == "stripe_subscription"
+            ):
                 continue
             org_row = await _org(session, org_id)
             if org_row is None or org_row.telephony_prepaid_since is None:
@@ -743,7 +742,5 @@ async def telephony_tick(
     return {
         "calls_billed": await bill_finished_calls(session, now=now),
         "calls_cut_off_no_credit": await enforce_active_calls(session, hangup=hangup, now=now),
-        "number_rentals_charged": await renew_number_rentals(
-            session, today=(now or _now()).date()
-        ),
+        "number_rentals_charged": await renew_number_rentals(session, today=(now or _now()).date()),
     }

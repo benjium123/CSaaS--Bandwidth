@@ -185,6 +185,7 @@ async def register_and_login(
         json={"email": email, "password": password, "full_name": email.split("@")[0]},
     )
     assert r.status_code == 201, r.text
+    await confirm_registered_email(client, email)
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
@@ -404,3 +405,20 @@ async def create_tag(client: httpx.AsyncClient, token: str, org_id, name: str) -
     r = await client.post("/api/v1/tags", json={"name": name}, headers=auth_headers(token, org_id))
     assert r.status_code == 201, r.text
     return r.json()
+
+
+async def confirm_registered_email(client, email):
+    import re
+
+    from app.services import mailer
+
+    message = next(
+        m
+        for m in reversed(mailer.outbox)
+        if email in m["To"] and m["Subject"] == "Confirm your Ringlite email"
+    )
+    token = re.search(
+        r"token=([A-Za-z0-9_-]+)", message.get_body(preferencelist=("plain",)).get_content()
+    ).group(1)
+    response = await client.post("/api/v1/auth/confirm-email", json={"token": token})
+    assert response.status_code == 200, response.text

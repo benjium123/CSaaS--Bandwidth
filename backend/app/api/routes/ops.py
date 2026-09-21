@@ -41,8 +41,34 @@ Admin = Annotated[OperatorContext, Depends(require_operator("admin"))]
 QUEUE_STATUSES = ("submitted", "in_review", "needs_info", "reverification_due", "suspended")
 
 
+@router.get("/number-purchases")
+async def number_purchase_queue(op: Reviewer) -> list[dict]:
+    from app.models import NumberPurchase
+    from app.services import number_purchases
+
+    # JUSTIFIED: named operators reconcile provisioning across customer workspaces.
+    rows = (
+        await op.session.execute(
+            sa.select(NumberPurchase)
+            .order_by(NumberPurchase.created_at.desc())
+            .limit(100)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalars()
+    return [
+        {
+            **number_purchases.public(row),
+            "org_id": str(row.org_id),
+            "subscription_id": row.subscription_id,
+            "subscription_status": row.subscription_status,
+        }
+        for row in rows
+    ]
+
+
 class NoteIn(BaseModel):
     note: str = Field(default="", max_length=2000)
+    manual_override: bool = False
 
 
 class MessageIn(BaseModel):
@@ -226,6 +252,7 @@ async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
                 "document_type": p.document_type,
                 "document_country": p.document_country,
                 "identity_provider": getattr(p, "identity_provider", None),
+                "provider_session_id": p.provider_session_id,
                 "verified_at": _iso(p.verified_at),
                 "last_error": p.last_error,
                 "residential_address": p.residential_address,
@@ -274,6 +301,83 @@ async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
         "suspension_reason": profile.suspension_reason,
         "next_reverification_at": _iso(profile.next_reverification_at),
     }
+
+
+@router.get("/applications/{org_id}/persons/{person_id}/evidence")
+async def identity_evidence(
+    org_id: uuid.UUID, person_id: uuid.UUID, request: Request, response: Response, op: Reviewer
+) -> dict:
+    await kyc_svc.load_for_operator(op.session, org_id)
+    persons = await kyc_checks.persons_for(op.session, org_id)
+    person = next((p for p in persons if p.id == person_id), None)
+    if person is None or person.identity_provider != "didit" or not person.provider_session_id:
+        raise NotFoundError("No Didit session is available for this person")
+    from app.services import audit, didit_client
+
+    evidence = await didit_client.retrieve_session(
+        request.app.state.settings, person.provider_session_id
+    )
+    audit.record(
+        op.session,
+        org_id,
+        action="kyc.identity_evidence_viewed",
+        target_type="kyc_person",
+        target_id=str(person.id),
+        actor_user_id=op.user.id,
+    )
+    await op.session.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return evidence
+
+
+@router.get("/applications/{org_id}/persons/{person_id}/evidence-media")
+async def identity_evidence_media(
+    org_id: uuid.UUID,
+    person_id: uuid.UUID,
+    request: Request,
+    op: Reviewer,
+    path: str = Query(max_length=500),
+) -> Response:
+    from urllib.parse import urlparse
+
+    import httpx
+
+    evidence = await identity_evidence(org_id, person_id, request, Response(), op)
+    value = evidence
+    try:
+        for part in path.split("."):
+            value = value[int(part)] if isinstance(value, list) else value[part]
+    except (KeyError, IndexError, ValueError, TypeError):
+        raise NotFoundError("Evidence not found") from None
+    if not isinstance(value, str):
+        raise NotFoundError("Evidence not found")
+    url = urlparse(value)
+    host = url.hostname or ""
+    # Only Didit's own evidence storage; never forward our API key to media hosts.
+    allowed = host.endswith(".didit.me") or (
+        host.startswith("service-didit-") and host.endswith(".amazonaws.com")
+    )
+    if url.scheme != "https" or not allowed or url.port not in (None, 443):
+        raise ValidationFailedError("This evidence must be opened through its source link")
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        async with client.stream("GET", value) as remote:
+            if remote.status_code != 200:
+                raise NotFoundError("Evidence link expired. Reload the verification results.")
+            content_type = remote.headers.get("content-type", "application/octet-stream")
+            if not content_type.startswith(
+                ("image/jpeg", "image/png", "image/webp", "video/mp4", "application/pdf")
+            ):
+                raise ValidationFailedError("Unsupported evidence format")
+            data = bytearray()
+            async for chunk in remote.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > 30 * 1024 * 1024:
+                    raise ValidationFailedError("Open this large file through its source link")
+    return Response(
+        bytes(data),
+        media_type=content_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/applications/{org_id}/documents/{document_id}")
@@ -397,7 +501,14 @@ async def approve(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Revi
         raise PermissionDeniedError(
             "An individual account can only be approved by an admin operator"
         )
-    await kyc_svc.approve(op.session, request.app.state.settings, profile, op.user.id, payload.note)
+    await kyc_svc.approve(
+        op.session,
+        request.app.state.settings,
+        profile,
+        op.user.id,
+        payload.note,
+        manual_override=payload.manual_override,
+    )
     out = await _done(op, org_id)
     await _email_decision(request, op, org_id, "approved")
     return out

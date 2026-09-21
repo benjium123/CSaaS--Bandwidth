@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import re
 import smtplib
 import ssl
 from email.message import EmailMessage
@@ -27,9 +28,16 @@ outbox: list[EmailMessage] = []
 
 
 def _html(body: str) -> str:
+    def paragraph(value: str) -> str:
+        escaped = html.escape(value).replace(chr(10), "<br>")
+        return re.sub(
+            r"https://[^\s<]+",
+            lambda m: f'<a href="{m.group(0)}" style="color:#2563eb">{m.group(0)}</a>',
+            escaped,
+        )
+
     paragraphs = "".join(
-        f'<p style="margin:0 0 12px">{html.escape(p).replace(chr(10), "<br>")}</p>'
-        for p in body.split("\n\n")
+        f'<p style="margin:0 0 12px">{paragraph(p)}</p>' for p in body.split("\n\n")
     )
     return (
         '<!doctype html><html><body style="font-family:system-ui,-apple-system,Segoe UI,'
@@ -79,6 +87,32 @@ async def send(settings: Settings, to: list[str], subject: str, body: str) -> bo
     if settings.app_env == "test":
         outbox.append(msg)
         return True
+    if settings.resend_api_key.get_secret_value():
+        import httpx
+
+        sender = settings.resend_from or settings.smtp_from
+        if not sender:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                result = await client.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {settings.resend_api_key.get_secret_value()}"
+                    },
+                    json={
+                        "from": sender,
+                        "to": recipients,
+                        "subject": subject,
+                        "text": body,
+                        "html": _html(body),
+                    },
+                )
+                result.raise_for_status()
+            return True
+        except httpx.HTTPError:
+            log.warning("email_resend_failed", recipients=len(recipients))
+            return False
     if not settings.smtp_host.strip():
         log.info("email_skipped_no_smtp", subject=subject, recipients=len(recipients))
         return False

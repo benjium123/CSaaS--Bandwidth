@@ -1,5 +1,6 @@
 import * as React from "react";
-import { DecisionPackCard, type DecisionPack } from "@/components/ops/DecisionPackCard";
+import "./opsReview.css";
+import { IdentityEvidence } from "@/components/ops/IdentityEvidence";
 import { MonitoringTab } from "@/components/ops/MonitoringTab";
 import { AccountsTab } from "@/components/ops/AccountsTab";
 import { BillingTab } from "@/components/ops/BillingTab";
@@ -78,6 +79,7 @@ type Application = {
     document_country: string | null;
     /** Optional: individual persons may carry a provider hint. */
     identity_provider?: string | null;
+    provider_session_id?: string | null;
   }[];
   documents: {
     id: string;
@@ -146,7 +148,7 @@ function KeyValues({ data }: { data: Record<string, unknown> | null }) {
       {Object.entries(data).map(([k, v]) => (
         <React.Fragment key={k}>
           <dt className="text-[hsl(var(--cx-muted))]">{k.replace(/_/g, " ")}</dt>
-          <dd className="break-words text-[hsl(var(--cx-text))]">{v == null || v === "" ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v)}</dd>
+          <dd className="whitespace-pre-wrap break-words text-[hsl(var(--cx-text))]">{v == null || v === "" ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v)}</dd>
         </React.Fragment>
       ))}
     </dl>
@@ -189,9 +191,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
   // Admin-only blocker: individual accounts require a platform admin to approve. The
   // handler is already guarded, but the AI Approve button must be disabled too, so we
   // surface the reason as an extra blocker alongside the server's approval_blockers.
-  const blockers = individual && !isAdmin
-    ? [...app.approval_blockers, "Only a platform admin can approve an individual account."]
-    : app.approval_blockers;
+
 
   return (
     <div className="space-y-4">
@@ -212,6 +212,59 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
           </div>
         }
       >
+        <Card className="applicant-answers space-y-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-blue-600">Application</p>
+          <h2 className="text-xl font-semibold">Applicant's submitted answers</h2>
+          <KeyValues data={individual ? {
+            "Legal name": app.business.legal_name, "Country": app.business.country,
+            "Phone number": app.business.business_phone, "Email": app.business.business_email,
+            "Industry": app.use_case?.vertical,
+            "What will you use calling / texting for?": app.use_case?.description,
+            "Customer countries": (app.use_case?.destination_countries as string[] | undefined)?.join(", "),
+          } : (app.use_case?.applicant_details as Record<string, unknown> ?? app.business)} />
+          {!individual && <><h3 className="border-t pt-4 font-semibold">Company details</h3><KeyValues data={app.business} /><KeyValues data={Object.fromEntries(Object.entries(app.use_case ?? {}).filter(([key]) => key !== "applicant_details"))} /></>}
+        </Card>
+        <Card className="space-y-4">
+          <h2 className="text-xl font-semibold">Identity documents &amp; verification</h2>
+          <p className="text-sm text-slate-500">Inspect the original ID, photos and results from Didit.</p>
+          {app.persons.map(person => <IdentityEvidence key={person.id} orgId={orgId} person={person} />)}
+        </Card>
+        <Card className="space-y-3">
+          <h2 className="text-xl font-semibold">Your decision</h2><p className="text-sm text-slate-500">Automated checks are advisory for super admins. You can approve after manual review. Your decision and review warnings are recorded.</p>
+          {app.approval_blockers.length > 0 && (
+            <ul className="list-disc pl-5 text-sm text-[hsl(var(--cx-flag))]">
+              {app.approval_blockers.map((b) => <li key={b}>{b}</li>)}
+            </ul>
+          )}
+          <Textarea
+            aria-label="Reviewer note"
+            rows={2}
+            placeholder={individual ? "Note, reason, or message to the applicant" : "Note, reason, or message to the business"}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            {app.status === "submitted" && <Button type="button" variant="outline" onClick={() => run("review")}>Start review</Button>}
+            <Button
+              type="button"
+              disabled={(!isAdmin && app.approval_blockers.length > 0) || action.isPending || !canApprove}
+              onClick={() => {
+                if (!canApprove) return;
+                run("approve", { note, manual_override: isAdmin });
+              }}
+            >
+              Approve
+            </Button>
+            <Button type="button" variant="outline" disabled={!note.trim()} onClick={() => run("request-info", { message: note })}>Ask for more info</Button>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={ban} onChange={(e) => setBan(e.target.checked)} />
+              also ban identifiers
+            </label>
+            <Button type="button" variant="destructive" disabled={action.isPending} onClick={() => run("reject", { reason: note.trim() || "Application declined after manual review", ban })}>Reject</Button>
+          </div>
+          {action.isError && <p role="alert">{mutationErrorMessage(action.error)}</p>}
+        </Card>
+        <details className="rounded-2xl border border-blue-100 bg-white p-5"><summary className="cursor-pointer font-semibold">Supporting records and automated checks</summary><div className="mt-5 space-y-4">
         {individual && (
           <Card className="space-y-1.5">
             <p className="text-sm font-medium">Individual account</p>
@@ -238,30 +291,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
           </Card>
         )}
 
-        <DecisionPackCard
-          pack={(decision?.detail as unknown as DecisionPack) ?? null}
-          result={decision?.result ?? null}
-          blockers={blockers}
-          pending={action.isPending}
-          onApprove={async (approveNote, limits) => {
-            // Guard: individual accounts require a platform admin to approve.
-            if (individual && !isAdmin) return;
-            const chosen = {
-              ...(limits.daily_calls != null ? { daily_calls: limits.daily_calls } : {}),
-              ...(limits.daily_texts != null ? { daily_texts: limits.daily_texts } : {}),
-              ...(limits.max_numbers != null ? { max_numbers: limits.max_numbers } : {}),
-            };
-            if (Object.keys(chosen).length > 0) {
-              await action.mutateAsync({
-                path: `${base}/limits`,
-                json: { deposit_required_cents: app.deposit_required_cents, limits: { ...(app.limits ?? {}), ...chosen } },
-              });
-            }
-            run("approve", { note: approveNote });
-          }}
-          onAskInfo={(message) => run("request-info", { message })}
-          onReject={(reason, banIdentifiers) => run("reject", { reason, ban: banIdentifiers })}
-        />
+        <details className="rounded-xl border p-5"><summary className="cursor-pointer font-semibold">Automated review (advisory)</summary><div className="mt-4"><KeyValues data={decision?.detail ?? null} /></div></details>
 
         {ai && !decision && (
           <Card>
@@ -354,39 +384,8 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
           ))}
         </Card>
 
-        <Card className="space-y-3">
-          <p className="text-sm font-medium">Decide</p>
-          {app.approval_blockers.length > 0 && (
-            <ul className="list-disc pl-5 text-sm text-[hsl(var(--cx-flag))]">
-              {app.approval_blockers.map((b) => <li key={b}>{b}</li>)}
-            </ul>
-          )}
-          <Textarea
-            aria-label="Reviewer note"
-            rows={2}
-            placeholder={individual ? "Note, reason, or message to the applicant" : "Note, reason, or message to the business"}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-          <div className="flex flex-wrap gap-2">
-            {app.status === "submitted" && <Button type="button" variant="outline" onClick={() => run("review")}>Start review</Button>}
-            <Button
-              type="button"
-              disabled={app.approval_blockers.length > 0 || action.isPending || !canApprove}
-              onClick={() => {
-                if (!canApprove) return;
-                run("approve", { note });
-              }}
-            >
-              Approve
-            </Button>
-            <Button type="button" variant="outline" disabled={!note.trim()} onClick={() => run("request-info", { message: note })}>Ask for more info</Button>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={ban} onChange={(e) => setBan(e.target.checked)} />
-              also ban identifiers
-            </label>
-            <Button type="button" variant="destructive" disabled={!note.trim()} onClick={() => run("reject", { reason: note, ban })}>Reject</Button>
-          </div>
+        </div></details>
+        <details className="rounded-2xl border p-5"><summary className="cursor-pointer font-semibold">Advanced review and account controls</summary><Card className="mt-4 space-y-3">
           <div className="flex flex-wrap gap-2">
             <Input aria-label="Registry link" placeholder="Registry page you checked (link)" value={registryLink} onChange={(e) => setRegistryLink(e.target.value)} />
             <Button type="button" variant="outline" disabled={!registryLink.trim()} onClick={() => run("registry", { result: "pass", link: registryLink, note })}>Registry: confirmed</Button>
@@ -426,7 +425,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
             )}
           </div>
           {action.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(action.error)}</p>}
-        </Card>
+        </Card></details>
       </Section>
     </div>
   );
@@ -691,13 +690,13 @@ export function OpsPage() {
   }
 
   return (
-    <div className="mx-auto h-full max-w-5xl space-y-4 overflow-y-auto p-6 sm:p-8">
+    <div className="ops-console mx-auto h-full max-w-6xl space-y-6 overflow-y-auto p-6 sm:p-8">
       {/* Dense by nature - this is the review console, not a marketing page. The air
           goes into the page header and the row padding; the dense lists stay tight. */}
-      <div className="min-w-0">
-        <SectionLabel>Operator console</SectionLabel>
+      <div className="ops-hero min-w-0">
+        <SectionLabel>Ringlite administration</SectionLabel>
         <h1 className="mt-1 text-[24px] font-semibold tracking-[-0.02em] text-[hsl(var(--cx-text))]">
-          Trust &amp; safety
+          Application review &amp; operations
         </h1>
       </div>
       {openOrg ? (

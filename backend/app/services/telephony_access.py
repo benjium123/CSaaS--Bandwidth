@@ -71,9 +71,7 @@ def _settings_of(session: AsyncSession) -> Settings:
 async def _org(session: AsyncSession, org_id: uuid.UUID) -> Org | None:
     # Org is deliberately NOT TenantScoped - it is the tenant itself - so it is fetched by
     # primary key without an org-context query filter.
-    return (
-        await session.execute(sa.select(Org).where(Org.id == org_id))
-    ).scalar_one_or_none()
+    return (await session.execute(sa.select(Org).where(Org.id == org_id))).scalar_one_or_none()
 
 
 async def _profile(session: AsyncSession, org_id: uuid.UUID) -> KycProfile | None:
@@ -183,7 +181,10 @@ async def refusal(
     # subscription is never queried, so an org that has never heard of a plan is refused
     # nothing it was allowed yesterday. Verification keeps precedence above - an
     # unverified business is told to verify, not to go and pick a plan it cannot use.
-    if settings.require_subscription_for_telephony:
+    billing_org = await _org(session, org_id)
+    if settings.require_subscription_for_telephony or (
+        billing_org and billing_org.number_subscription_required and kind != "number"
+    ):
         from app.services import subscriptions as subscriptions_svc
 
         if not await subscriptions_svc.has_entitled_subscription(session, org_id):

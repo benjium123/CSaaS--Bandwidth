@@ -1,4 +1,3 @@
-
 """Customer billing surface: prepaid credit balance, ledger, usage, top-ups, rates, and
 saved payment methods.
 
@@ -14,7 +13,7 @@ from typing import Annotated
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth.deps import (
     OrgContext,
@@ -35,6 +34,91 @@ from app.services import plans as plans_svc
 from app.services import spend as spend_svc
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
+
+
+class NumberCheckoutIn(BaseModel):
+    numbers: list[str] = Field(min_length=1, max_length=20)
+
+
+@router.get("/number-purchases/current")
+async def current_number_purchase(
+    ctx: Annotated[OrgContext, Depends(require_owner)],
+) -> dict | None:
+    from app.models import NumberPurchase
+    from app.services import number_purchases
+
+    row = (
+        await ctx.session.execute(
+            sa.select(NumberPurchase)
+            .where(
+                NumberPurchase.org_id == ctx.org.id,
+                NumberPurchase.state.in_(
+                    ("checkout", "paid", "provisioning", "activating", "needs_attention")
+                ),
+            )
+            .order_by(NumberPurchase.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return number_purchases.public(row) if row else None
+
+
+@router.post("/number-purchases/{purchase_id}/cancel")
+async def cancel_number_checkout(
+    purchase_id: uuid.UUID, request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    from app.models import NumberPurchase
+
+    row = (
+        await ctx.session.execute(
+            sa.select(NumberPurchase)
+            .where(
+                NumberPurchase.id == purchase_id,
+                NumberPurchase.org_id == ctx.org.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError("Purchase not found")
+    if row.state != "checkout" or not row.checkout_id:
+        raise ValidationFailedError("This purchase cannot be cancelled here")
+    stripe = stripe_client._stripe(request.app.state.settings)
+    remote = await stripe_client._run_sync(stripe.checkout.Session.retrieve, row.checkout_id)
+    if remote.get("status") == "complete":
+        raise ValidationFailedError(
+            "Payment has already completed. Continue setting up your numbers."
+        )
+    if remote.get("status") != "expired":
+        await stripe_client._run_sync(stripe.checkout.Session.expire, row.checkout_id)
+    row.state = "expired"
+    await ctx.session.commit()
+    return {"cancelled": True}
+
+
+@router.post("/number-checkout")
+async def number_checkout(
+    payload: NumberCheckoutIn, request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    from app.services import number_purchases
+
+    purchase = await number_purchases.create(
+        ctx.session, request.app.state.settings, ctx.org.id, payload.numbers
+    )
+    return number_purchases.public(purchase)
+
+
+@router.post("/number-purchases/{purchase_id}/complete")
+async def complete_number_purchase(
+    purchase_id: uuid.UUID, request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    from app.models import NumberPurchase
+    from app.services import number_purchases
+
+    purchase = await ctx.session.get(NumberPurchase, purchase_id)
+    if purchase is None or purchase.org_id != ctx.org.id:
+        raise NotFoundError("Purchase not found")
+    return number_purchases.public(await number_purchases.fulfill(ctx.session, request, purchase))
 
 
 def _actor(ctx: OrgContext) -> tuple[uuid.UUID | None, uuid.UUID | None]:
@@ -162,9 +246,7 @@ async def get_ledger(
 ) -> dict:
     limit = min(limit, 200)
 
-    stmt = sa.select(CreditLedgerEntry).where(
-        CreditLedgerEntry.org_id == ctx.org.id
-    )
+    stmt = sa.select(CreditLedgerEntry).where(CreditLedgerEntry.org_id == ctx.org.id)
 
     if cursor:
         created_str, _, id_str = cursor.partition("|")
@@ -261,9 +343,7 @@ async def create_topup(
 ) -> dict:
     amount = payload.amount_micros
     exact_amounts = {25_000_000, 50_000_000, 100_000_000}
-    if amount not in exact_amounts and not (
-        5_000_000 <= amount <= 5_000_000_000
-    ):
+    if amount not in exact_amounts and not (5_000_000 <= amount <= 5_000_000_000):
         raise ValidationFailedError(
             "Amount must be $25, $50, $100, or a custom amount between $5 and $5,000."
         )
@@ -517,12 +597,16 @@ async def list_payment_methods(
     ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> list[dict]:
     rows = (
-        await ctx.session.execute(
-            sa.select(PaymentMethod)
-            .where(PaymentMethod.org_id == ctx.org.id)
-            .order_by(PaymentMethod.is_default.desc(), PaymentMethod.created_at.asc())
+        (
+            await ctx.session.execute(
+                sa.select(PaymentMethod)
+                .where(PaymentMethod.org_id == ctx.org.id)
+                .order_by(PaymentMethod.is_default.desc(), PaymentMethod.created_at.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return [
         {
@@ -553,15 +637,17 @@ async def add_payment_method(
     # ignored; identity comes from this org's own rows, or from a customer ensured
     # against the org object itself.
     existing_rows = (
-        await ctx.session.execute(
-            sa.select(PaymentMethod)
-            .where(PaymentMethod.org_id == ctx.org.id)
-            .order_by(PaymentMethod.created_at.desc(), PaymentMethod.id.desc())
+        (
+            await ctx.session.execute(
+                sa.select(PaymentMethod)
+                .where(PaymentMethod.org_id == ctx.org.id)
+                .order_by(PaymentMethod.created_at.desc(), PaymentMethod.id.desc())
+            )
         )
-    ).scalars().all()
-    existing_customer_id = (
-        existing_rows[0].stripe_customer_id if existing_rows else None
+        .scalars()
+        .all()
     )
+    existing_customer_id = existing_rows[0].stripe_customer_id if existing_rows else None
     customer_id = await stripe_client.ensure_customer(
         settings,
         org=ctx.org,
@@ -648,9 +734,7 @@ async def remove_payment_method(
 
     auto = ctx.org.credit_auto_recharge
     if auto and str(payment_method_id) == str(auto.get("payment_method_id")):
-        raise ValidationFailedError(
-            "Turn off auto-recharge before removing this card."
-        )
+        raise ValidationFailedError("Turn off auto-recharge before removing this card.")
 
     settings = request.app.state.settings
     brand = pm.brand

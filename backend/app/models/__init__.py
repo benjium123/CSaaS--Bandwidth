@@ -449,4 +449,6 @@ __all__ = [
     "WebhookDeadLetter",
     "ADMIN_INVITE_ISSUED_VIA",
     "AdminInvite",
+    "NumberPurchase",
 ]
+from app.models.number_purchase import NumberPurchase

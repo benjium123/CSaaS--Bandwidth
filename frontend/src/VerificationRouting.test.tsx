@@ -27,7 +27,7 @@ describe("Verification routing", () => {
     expect(screen.getByRole("status")).toHaveTextContent("/verification");
     state.step = "numbers";
     result.rerender(view());
-    expect(await screen.findByText("/settings/numbers")).toBeInTheDocument();
+    expect(await screen.findByText("/choose-numbers")).toBeInTheDocument();
     result.unmount();
     state.step = "ready";
     render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/settings/team"]}><LifecycleGate><div>Team setup</div></LifecycleGate><Location /></MemoryRouter></QueryClientProvider>);

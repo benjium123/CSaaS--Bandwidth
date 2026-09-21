@@ -25,6 +25,9 @@ class Org(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     slug: Mapped[str] = mapped_column(sa.String(63), nullable=False, unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    number_subscription_required: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
     # Account classification: 'business' (a company workspace, the default and pre-existing
     # behaviour) or 'individual' (a single-person account created by register). Immutable at
     # the API level — nothing reclassifies an existing org. No ORM mutation hook on purpose:

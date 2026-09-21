@@ -1,0 +1,9 @@
+.ops-console { background: linear-gradient(150deg, #eff6ff 0%, #f8fafc 35%, #fff 100%); }
+.ops-hero { padding: 28px; border-radius: 20px; background: linear-gradient(110deg, #173e88, #3475db); box-shadow: 0 12px 30px #234fa119; }
+.ops-hero h1, .ops-hero p { color: white; }
+.ops-console dl { line-height: 1.8; }
+.ops-console .applicant-answers { border-color: #bfdbfe; box-shadow: 0 6px 20px #234fa108; padding: 24px; }
+
+.ops-hero > div { color: #dbeafe; }
+.ops-console .applicant-answers dl { font-size: 15px; }
+.ops-console .bg-primary { background: #2563eb; color: white; }

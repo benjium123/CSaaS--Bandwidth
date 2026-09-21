@@ -923,17 +923,21 @@ async def approve(
     profile: KycProfile,
     operator_id: uuid.UUID,
     note: str,
+    *,
+    manual_override: bool = False,
 ) -> None:
+    if manual_override:
+        await individual_kyc.require_admin(session, operator_id)
     if await _is_individual(session, profile.org_id):
         await individual_kyc.require_admin(session, operator_id)
         missing = await individual_kyc.missing_for_submission(session, profile)
-        if missing:
+        if missing and not manual_override:
             raise ValidationFailedError(
                 "Finish these parts first: " + ", ".join(missing), code="kyc_incomplete"
             )
     await rescreen(session, settings, profile)
     blockers = await approval_blockers(session, profile)
-    if blockers:
+    if blockers and not manual_override:
         await session.commit()  # keep the fresh screening results for the operator
         raise ConflictError(
             "Cannot approve yet: " + "; ".join(blockers), code="kyc_approval_blocked"
@@ -946,7 +950,15 @@ async def approve(
     if profile.use_case_pending:
         profile.use_case = profile.use_case_pending
         profile.use_case_pending = None
-    _audit_operator(session, profile, "kyc.approved", operator_id, note=note[:500])
+    _audit_operator(
+        session,
+        profile,
+        "kyc.approved",
+        operator_id,
+        note=note[:500],
+        manual_override=manual_override,
+        review_warnings=blockers,
+    )
 
 
 async def reject(

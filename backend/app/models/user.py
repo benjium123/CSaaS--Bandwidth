@@ -25,6 +25,15 @@ class User(Base, TimestampMixin):
     hashed_password: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    email_verification_required: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    email_verified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    email_verification_hash: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
+    email_verification_expires_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True)
+    )
+    email_verification_sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
     # --- P2 2FA/TOTP ------------------------------------------------------------
     # Fernet-encrypted with CREDENTIAL_ENCRYPTION_KEY - the first real consumer of that
@@ -57,6 +66,7 @@ class User(Base, TimestampMixin):
     @property
     def has_second_factor(self) -> bool:
         return bool(self.totp_enabled or self.has_passkey)
+
     # P31: {mention, assignment, new_inbound, missed_call, sla_breach, digest: bool}; NULL =
     # every toggle on (models/push.py::DEFAULT_NOTIFICATION_PREFS).
     notification_prefs: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)

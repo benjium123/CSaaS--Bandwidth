@@ -414,6 +414,7 @@ export function BillingTab(): JSX.Element {
         </form>
       </SurfaceCard>
 
+      <NumberPurchases />
       <SectionLabel>Pick a workspace</SectionLabel>
       <AccountsTab
         onPickOrg={(account) =>
@@ -422,4 +423,14 @@ export function BillingTab(): JSX.Element {
       />
     </div>
   );
+}
+
+function NumberPurchases() {
+  const { api } = useAuth();
+  const query = useQuery({ queryKey: ["ops", "number-purchases"], queryFn: () => api.request<{ id: string; org_id: string; state: string; detail?: string; subscription_id?: string; monthly_total_cents: number }[]>("/api/v1/ops/number-purchases") });
+  return <SurfaceCard className="space-y-4"><h2 className="text-lg font-semibold">Phone number purchases</h2>
+    {query.isError && <p role="alert">{mutationErrorMessage(query.error)}</p>}
+    {query.data?.length === 0 && <p className="text-sm text-slate-500">No number checkouts yet.</p>}
+    {query.data?.map(p => <div key={p.id} className="rounded-xl border p-4"><div className="flex justify-between"><strong>{p.state.replace(/_/g, " ")}</strong><span>${p.monthly_total_cents / 100}/month</span></div><p className="my-2 text-sm">{p.detail}</p><p className="text-xs text-slate-500">Workspace: {p.org_id}<br />Purchase: {p.id}</p>{p.subscription_id && <a className="mt-2 inline-block text-sm text-blue-700 underline" href={`https://dashboard.stripe.com/subscriptions/${encodeURIComponent(p.subscription_id)}`} target="_blank" rel="noreferrer">View subscription in Stripe</a>}</div>)}
+  </SurfaceCard>;
 }

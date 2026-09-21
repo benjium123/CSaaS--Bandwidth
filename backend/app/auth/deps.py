@@ -144,6 +144,10 @@ async def _finish_user(
         raise UnauthenticatedError("Invalid or expired token")
     if not user.is_active:
         raise UnauthenticatedError("Invalid or expired token")
+    if user.email_verification_required and not request.url.path.startswith("/api/v1/auth/"):
+        raise PermissionDeniedError(
+            "Confirm your email address to continue", code="email_verification_required"
+        )
 
     # P41: mandatory second factor for PRIVILEGED accounts only (owner/admin in any org);
     # ordinary staff may enrol one but are not blocked without it. Same narrow exempt list

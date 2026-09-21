@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     #: would charge USD-derived numbers in another currency. Refused at boot unless someone
     #: deliberately accepts that with the flag below.
     stripe_price_currency: str = "usd"
+    stripe_number_price_id: str = "price_1UIESILz6FHVmZlMqHZPBBiw"
     #: Only set this once amounts are actually denominated in stripe_price_currency.
     allow_non_usd_pricing: bool = False
     # P24: where a customer lands after completing a top-up. Empty derives from
@@ -112,9 +113,7 @@ class Settings(BaseSettings):
     #: fall back to the default on the next restart.
     require_2fa_privileged_users: bool = Field(
         default=True,
-        validation_alias=AliasChoices(
-            "REQUIRE_2FA_PRIVILEGED_USERS", "REQUIRE_2FA_ALL_USERS"
-        ),
+        validation_alias=AliasChoices("REQUIRE_2FA_PRIVILEGED_USERS", "REQUIRE_2FA_ALL_USERS"),
     )
     #: Telephony (texting, calling, number orders) is refused for an org whose business
     #: verification is not approved. Tests turn it off; see services/telephony_access.py.
@@ -456,15 +455,17 @@ class Settings(BaseSettings):
     monitor_agent_name: str = "call-monitor"
 
     # ---------------- media / storage ----------------
-    media_store_backend: str = "local"   # local | memory | s3 (s3 raises until P5)
+    media_store_backend: str = "local"  # local | memory | s3 (s3 raises until P5)
     media_local_root: str = "var/media"
-    media_retention_days: int = 0        # 0 = never expire
+    media_retention_days: int = 0  # 0 = never expire
     sweeper_enabled: bool = True
     sweeper_interval_seconds: int = 60
 
     # ---------------- ops ----------------
     sentry_dsn: SecretStr = SecretStr("")
     smtp_host: str = ""
+    resend_api_key: SecretStr = SecretStr("")
+    resend_from: str = ""
     smtp_username: str = ""
     smtp_password: SecretStr = SecretStr("")
     smtp_port: int = 587
@@ -540,9 +541,7 @@ class Settings(BaseSettings):
                 problems.append("CREDENTIALS_MASTER_KEY is required when APP_ENV=production")
             else:
                 if len(self.credentials_master_key.get_secret_value().encode()) < 32:
-                    problems.append(
-                        "CREDENTIALS_MASTER_KEY is too weak - use at least 32 bytes"
-                    )
+                    problems.append("CREDENTIALS_MASTER_KEY is too weak - use at least 32 bytes")
 
             if "*" in self.cors_origin_list:
                 problems.append("CORS cannot use '*' with credentials in production")
@@ -585,8 +584,7 @@ class Settings(BaseSettings):
                     "carrier that never touches the PSTN"
                 )
             if self.carrier_live("bandwidth") and (
-                _empty(self.bandwidth_webhook_username)
-                or _empty(self.bandwidth_webhook_password)
+                _empty(self.bandwidth_webhook_username) or _empty(self.bandwidth_webhook_password)
             ):
                 problems.append(
                     "BANDWIDTH_WEBHOOK_USERNAME / BANDWIDTH_WEBHOOK_PASSWORD are required "
@@ -613,9 +611,7 @@ class Settings(BaseSettings):
                 )
 
         if problems:
-            raise ConfigurationError(
-                "Configuration is invalid:\n  - " + "\n  - ".join(problems)
-            )
+            raise ConfigurationError("Configuration is invalid:\n  - " + "\n  - ".join(problems))
         return self
 
     # ------------------------------------------------------------------
@@ -669,9 +665,7 @@ class Settings(BaseSettings):
             missing = [k for k, v in required.items() if _empty(v)]  # type: ignore[arg-type]
 
             if flag is False:
-                out.append(
-                    ProviderStatus(name, False, reason=f"{name.upper()}_ENABLED is false")
-                )
+                out.append(ProviderStatus(name, False, reason=f"{name.upper()}_ENABLED is false"))
             elif missing and flag is True:
                 out.append(
                     ProviderStatus(
@@ -737,15 +731,28 @@ class Settings(BaseSettings):
                 "S3_SECRET_ACCESS_KEY": self.s3_secret_access_key,
             },
         )
-        keyed("stripe", {"STRIPE_SECRET_KEY": self.stripe_secret_key,
-                         "STRIPE_WEBHOOK_SECRET": self.stripe_webhook_secret})
-        keyed("didit", {"DIDIT_API_KEY": self.didit_api_key,
-                        "DIDIT_WORKFLOW_ID": self.didit_workflow_id},
-              note=" (only needed when KYC_IDENTITY_PROVIDER=didit)")
-        keyed("companies_house", {"COMPANIES_HOUSE_API_KEY": self.companies_house_api_key},
-              note=" (UK registry checks fall back to manual)")
-        keyed("geolite2", {"GEOLITE2_DIR": self.geolite2_dir},
-              note=" (login country/datacenter checks are skipped)")
+        keyed(
+            "stripe",
+            {
+                "STRIPE_SECRET_KEY": self.stripe_secret_key,
+                "STRIPE_WEBHOOK_SECRET": self.stripe_webhook_secret,
+            },
+        )
+        keyed(
+            "didit",
+            {"DIDIT_API_KEY": self.didit_api_key, "DIDIT_WORKFLOW_ID": self.didit_workflow_id},
+            note=" (only needed when KYC_IDENTITY_PROVIDER=didit)",
+        )
+        keyed(
+            "companies_house",
+            {"COMPANIES_HOUSE_API_KEY": self.companies_house_api_key},
+            note=" (UK registry checks fall back to manual)",
+        )
+        keyed(
+            "geolite2",
+            {"GEOLITE2_DIR": self.geolite2_dir},
+            note=" (login country/datacenter checks are skipped)",
+        )
         keyed("redis", {"REDIS_URL": self.redis_url})
         keyed("smtp", {"SMTP_HOST": self.smtp_host})
         keyed("sentry", {"SENTRY_DSN": self.sentry_dsn})
@@ -758,8 +765,7 @@ class Settings(BaseSettings):
                 "federal_dnc",
                 False,
                 reason=(
-                    "no registry subscription - numbers are NOT scrubbed against the "
-                    "federal DNC"
+                    "no registry subscription - numbers are NOT scrubbed against the federal DNC"
                 ),
             )
         )

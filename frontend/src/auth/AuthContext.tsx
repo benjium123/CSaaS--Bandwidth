@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, createClient, type ApiClient } from "@/api/client";
 
 export type Membership = {
+  number_subscription_required?: boolean;
   org_id: string;
   org_name: string;
   org_slug: string;
@@ -88,6 +89,8 @@ export function isOwner(me: Me | null, orgId: string | null): boolean {
 }
 
 export type Me = {
+  email_verification_required?: boolean;
+  email_confirmation_sent?: boolean;
   /** Effective permissions for the current org membership - the REAL source, sent
    * top-level on /auth/me (Membership.permissions is not sent). An expanded list of
    * explicit strings, no "*" wildcard; optional only because /auth/me is typed loosely

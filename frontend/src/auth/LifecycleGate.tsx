@@ -58,8 +58,8 @@ const SETUP_ROUTE_RULES: Readonly<Record<string, SetupRouteRules>> = {
     allowedRoutes: ["/verification", "/onboarding", "/settings/verification", "/plans"],
   },
   numbers: {
-    landingRoute: "/settings/numbers",
-    allowedRoutes: ["/settings/numbers", "/plans"],
+    landingRoute: "/choose-numbers",
+    allowedRoutes: ["/choose-numbers", "/plans"],
   },
 };
 

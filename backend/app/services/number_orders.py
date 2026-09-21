@@ -10,9 +10,8 @@ must never break the pass; it is logged and the row remains pending for a later 
 
 from __future__ import annotations
 
-import structlog
-
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
@@ -225,20 +224,27 @@ async def poll_pending_number_orders(
                 if status == "active":
                     number.status = "active"
                     number.is_active = True
+                    purchase_id = (number.provisioning or {}).get("number_purchase_id")
+                    if purchase_id:
+                        import uuid
+
+                        from app.models import NumberPurchase
+                        from app.models.subscriptions import is_entitled
+
+                        purchase = await session.get(NumberPurchase, uuid.UUID(purchase_id))
+                        number.is_active = bool(
+                            purchase and is_entitled(purchase.subscription_status)
+                        )
                     number.order_detail = None
                 elif status == "failed":
                     number.status = "failed"
                     number.is_active = False
-                    number.order_detail = (
-                        str(detail) if detail else "Carrier order failed"
-                    )[:512]
+                    number.order_detail = (str(detail) if detail else "Carrier order failed")[:512]
                 else:
                     # Still pending (or unknown). Keep the row pending and retain the raw
                     # carrier status for the operator until a later sweep resolves it.
                     raw = str(status or "pending")
-                    number.order_detail = (
-                        str(detail) if detail else raw
-                    )[:512]
+                    number.order_detail = (str(detail) if detail else raw)[:512]
 
                 try:
                     await session.commit()

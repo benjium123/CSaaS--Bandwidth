@@ -126,6 +126,7 @@ async def _db_account_carrier_verifying(
     )
     return result[0] if result is not None else None
 
+
 #: The only automatic inbound-call behaviour this phase has: no configured IVR/routing
 #: exists yet, so an inbound call gets told so and hung up. P6 replaces this ONE constant
 #: with real per-org behaviour - nothing else in the voice webhook path needs to change.
@@ -261,9 +262,7 @@ async def carrier_messaging(
     session.info["settings"] = getattr(request.app.state, "settings", None)
     outcomes = []
     for event in events:
-        outcomes.append(
-            await svc.ingest_event(session, carrier_name, event, body_text, carrier)
-        )
+        outcomes.append(await svc.ingest_event(session, carrier_name, event, body_text, carrier))
 
     if svc.Outcome.RETRY in outcomes:
         response.status_code = 500
@@ -418,7 +417,9 @@ async def _handle_voice_webhook(
             # unauthenticated voice event would be ours.
             return JSONResponse(
                 status_code=401,
-                content={"error": {"code": "unauthenticated", "message": "Invalid webhook signature"}},
+                content={
+                    "error": {"code": "unauthenticated", "message": "Invalid webhook signature"}
+                },
             )
         carrier, db_account = result
 
@@ -658,9 +659,7 @@ async def livekit_webhook(
     try:
         from app.services import monitor_calls
 
-        await monitor_calls.on_livekit_event(
-            session, request.app.state.livekit, settings, event
-        )
+        await monitor_calls.on_livekit_event(session, request.app.state.livekit, settings, event)
     except Exception:  # noqa: BLE001 - monitoring must never fail the webhook ack
         log.exception("call_monitor_hook_failed", event_type=event.get("event"))
 
@@ -730,9 +729,7 @@ async def stripe_webhook(
     stripe_signature: Annotated[str | None, Header(alias="Stripe-Signature")] = None,
 ):
     if not stripe_signature:
-        raise UnauthenticatedError(
-            "We could not verify that this came from our payment provider."
-        )
+        raise UnauthenticatedError("We could not verify that this came from our payment provider.")
 
     payload = await request.body()
     event, secret_source = stripe_client.verify_webhook_any(
@@ -751,9 +748,7 @@ async def stripe_webhook(
     # (an Identity secret vouching for a refund or a payment) is never legitimate.
     if secret_source == "identity" and not event_type.startswith("identity."):
         log.warning("stripe_webhook_secret_mismatch", event_type=event_type)
-        raise UnauthenticatedError(
-            "We could not verify that this came from our payment provider."
-        )
+        raise UnauthenticatedError("We could not verify that this came from our payment provider.")
     if event_id:
         from datetime import datetime, timezone
 
@@ -781,6 +776,11 @@ async def stripe_webhook(
 
         await kyc_svc.handle_identity_event(session, request.app.state.settings, event)
         await session.commit()
+        return Response(status_code=204)
+
+    from app.services import number_purchases
+
+    if await number_purchases.handle_event(session, request, event):
         return Response(status_code=204)
 
     if event_type in subscriptions_svc.HANDLED_EVENT_TYPES:

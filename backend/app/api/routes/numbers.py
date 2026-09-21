@@ -145,6 +145,10 @@ async def add_number(
     """Minimal seed endpoint. P4 owns real search/order/port; here numbers are entered by
     hand so P1 can send from something."""
     # P41: attaching a number is a telephony capability like ordering one.
+    if ctx.org.number_subscription_required:
+        raise PermissionDeniedError(
+            "Choose your numbers through secure checkout", code="number_checkout_required"
+        )
     await telephony_access.require_telephony_allowed(ctx.session, ctx.org.id, "number")
     normalized = to_e164(payload.e164)
     registry = getattr(request.app.state, "carriers", None)
@@ -295,10 +299,10 @@ async def list_numbers(
         flows_by_id = {
             f.id: f
             for f in (
-                await ctx.session.execute(
-                    sa.select(CallFlow).where(CallFlow.id.in_(flow_ids))
-                )
-            ).scalars().all()
+                await ctx.session.execute(sa.select(CallFlow).where(CallFlow.id.in_(flow_ids)))
+            )
+            .scalars()
+            .all()
         }
 
     # ... and every assistant name those flows point at, also in ONE query.
@@ -393,9 +397,7 @@ async def _out(
         # Same reasoning as account_label: single-row callers may look this up here;
         # list_numbers() batches it with _inbox_names() and always passes the value.
         inbox_name = (
-            await session.execute(
-                sa.select(Inbox.name).where(Inbox.number_id == n.id)
-            )
+            await session.execute(sa.select(Inbox.name).where(Inbox.number_id == n.id))
         ).scalar_one_or_none()
     if flow is _FLOW_UNSET:
         flow = await session.get(CallFlow, n.call_flow_id) if n.call_flow_id is not None else None
@@ -407,11 +409,7 @@ async def _out(
         entry = flow.definition.get("entry")
         nodes = flow.definition.get("nodes")
         entry_node = nodes.get(entry) if isinstance(nodes, dict) else None
-        if (
-            profile_ids
-            and isinstance(entry_node, dict)
-            and entry_node.get("type") == "assistant"
-        ):
+        if profile_ids and isinstance(entry_node, dict) and entry_node.get("type") == "assistant":
             try:
                 assistant_profile_id = uuid.UUID(profile_ids[0])
             except (ValueError, TypeError):
@@ -623,6 +621,10 @@ async def order(
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
 ) -> NumberOut:
+    if ctx.org.number_subscription_required:
+        raise PermissionDeniedError(
+            "Choose your numbers through secure checkout", code="number_checkout_required"
+        )
     carrier_obj = _carrier_or_primary(request, payload.carrier)
 
     # A Telnyx number's 10DLC association is made AT TELNYX (see
@@ -634,9 +636,8 @@ async def order(
     # order. The operator orders the number first, then associates its approved campaign
     # through PATCH /{number_id}/campaign once the number is active.
     if (
-        (carrier_obj.name or "").strip().lower() == telnyx_number_association.PROVIDER
-        and payload.campaign_id is not None
-    ):
+        carrier_obj.name or ""
+    ).strip().lower() == telnyx_number_association.PROVIDER and payload.campaign_id is not None:
         raise ValidationFailedError(
             "Order the Telnyx number first, then associate it with its approved 10DLC "
             "campaign using PATCH /api/v1/numbers/{number_id}/campaign once the number "
@@ -705,6 +706,9 @@ async def release(
     if number is None:
         raise NotFoundError("Number not found")
     if number.status == "released":
+        from app.services.number_purchases import sync_released_number
+
+        await sync_released_number(ctx.session, request.app.state.settings, number)
         return await _out(ctx.session, number)
 
     registry = getattr(request.app.state, "carriers", None)
@@ -717,6 +721,9 @@ async def release(
     number.released_at = datetime.now(timezone.utc)
     _audit_number(ctx, "number.released", number)
     await ctx.session.commit()
+    from app.services.number_purchases import sync_released_number
+
+    await sync_released_number(ctx.session, request.app.state.settings, number)
 
     # P42: pull the number off the trunk it was dialable on. A failure here must never
     # turn a successful release into an error response - the row is already released,

@@ -162,7 +162,8 @@ export function NumbersPage() {
   // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
   // every wrapper in the console on the same commit rather than only its own.
   const { theme } = useSurfaceTheme();
-  const { api } = useAuth();
+  const { api, me, orgId } = useAuth();
+  const paidCheckout = me?.memberships?.find(m => m.org_id === orgId)?.number_subscription_required === true;
   const qc = useQueryClient();
   const { data: numbers, isLoading, isError, error: numbersError, refetch: refetchNumbers } =
     useNumbers(api);
@@ -228,7 +229,7 @@ export function NumbersPage() {
         description="Search, order, release, and assign org numbers."
       >
         <div className="space-y-4">
-          <form className={cn(PANEL, "flex gap-3 p-3.5")} onSubmit={add}>
+          {paidCheckout ? <div className="rounded-2xl border border-blue-200 bg-blue-50 p-6"><h2 className="text-lg font-semibold text-blue-900">Grow your team, one number at a time</h2><p className="my-3 text-blue-800">$15 per phone number per month.</p><Link to="/choose-numbers" className="inline-block rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white">Choose phone numbers</Link></div> : <form className={cn(PANEL, "flex gap-3 p-3.5")} onSubmit={add}>
             <Input
               aria-label="Phone number"
               placeholder="+12145550100"
@@ -239,7 +240,7 @@ export function NumbersPage() {
             <Button type="submit" className="rounded-full px-5">
               Add
             </Button>
-          </form>
+          </form>}
           {error && (
             <p role="alert" className="text-sm text-destructive">
               {error}
@@ -338,7 +339,7 @@ export function NumbersPage() {
         </div>
       </Section>
 
-      <OrderNumberSection api={api} campaigns={campaigns ?? []} onOrdered={() => setError(null)} />
+      {!paidCheckout && <OrderNumberSection api={api} campaigns={campaigns ?? []} onOrdered={() => setError(null)} />}
     </div>
   );
 }

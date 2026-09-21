@@ -46,6 +46,65 @@ from app.services import operators as operators_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
+
+class ConfirmEmailIn(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
+
+
+@router.post("/confirm-email")
+async def confirm_email(
+    payload: ConfirmEmailIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    from datetime import timezone
+
+    from app.services import email_verification
+
+    await enforce_rate_limit(request, "email-confirm")
+    user = (
+        await session.execute(
+            sa.select(User)
+            .where(User.email_verification_hash == email_verification.digest(payload.token))
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if (
+        user is None
+        or not user.email_verification_expires_at
+        or user.email_verification_expires_at.replace(tzinfo=timezone.utc)
+        <= datetime.now(timezone.utc)
+    ):
+        raise ValidationFailedError(
+            "This confirmation link is invalid or expired. Request a new email."
+        )
+    user.email_verified_at = datetime.now(timezone.utc)
+    user.email_verification_required = False
+    user.email_verification_hash = None
+    user.email_verification_expires_at = None
+    await session.commit()
+    return {"confirmed": True}
+
+
+@router.post("/resend-confirmation")
+async def resend_confirmation(
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    from app.errors import FeatureUnavailableError
+    from app.services import email_verification
+
+    await enforce_rate_limit(request, f"email-resend:{user.id}")
+    if not user.email_verification_required:
+        return {"confirmed": True}
+    if not await email_verification.send_confirmation(session, request.app.state.settings, user):
+        raise FeatureUnavailableError(
+            "We could not send your confirmation email. Please try again shortly."
+        )
+    return {"sent": True}
+
+
 #: Closed set of workspace kinds: a company workspace, or one person's own workspace.
 AccountType = Literal["business", "individual"]
 
@@ -92,6 +151,7 @@ class MembershipOut(BaseModel):
     #: ORG, never from the signup payload: an invitee sees the kind of workspace they
     #: joined, whatever they might have asked for when registering.
     account_type: AccountType = "business"
+    number_subscription_required: bool = False
     #: P43: "not_applicable" | "required" | "verified" - whether this person must pass their
     #: own ID + selfie check before using admin and billing powers IN THIS WORKSPACE. Per
     #: membership rather than per account on purpose: the answer depends on the workspace's
@@ -105,6 +165,8 @@ class MeOut(BaseModel):
     email: str
     full_name: str
     totp_enabled: bool = False
+    email_verification_required: bool = False
+    email_confirmation_sent: bool = False
     has_passkey: bool = False
     is_platform_operator: bool = False
     #: P43: "reviewer" or "admin" for platform operators, so the console only offers what
@@ -156,9 +218,7 @@ def _signup_org_name(payload: RegisterIn) -> str:
     return name or domain or "My Workspace"
 
 
-async def _log_and_fail(
-    session: AsyncSession, error: Exception, **event: object
-) -> None:
+async def _log_and_fail(session: AsyncSession, error: Exception, **event: object) -> None:
     """Record a failed sign-in, COMMIT it, then raise ``error``.
 
     The event is committed even though the request fails - a failed sign-in is precisely
@@ -206,9 +266,7 @@ async def _sso_enforced_for(
         if settings is not None and settings.sso_require_verified_domain:
             from app.services import sso_provisioning
 
-            if sso_domain.lower() not in await sso_provisioning.verified_domains(
-                session, org.id
-            ):
+            if sso_domain.lower() not in await sso_provisioning.verified_domains(session, org.id):
                 continue
         return True
 
@@ -251,9 +309,7 @@ async def register(
     # expired" into "you silently got your own empty workspace".
     invite = None
     if payload.invite_token:
-        invite = await invites_svc.find_redeemable(
-            session, payload.invite_token, payload.email
-        )
+        invite = await invites_svc.find_redeemable(session, payload.invite_token, payload.email)
     elif not bootstrap:
         raise ValidationFailedError(
             "This instance is invite-only. Ask an administrator for an invitation."
@@ -265,11 +321,7 @@ async def register(
     # have to sit on a work address. Both are checked after the invite is resolved and
     # before the account exists, so an invitee is never blocked by - and never records - the
     # type, the name or the address a signup asked for: the invitation decides the workspace.
-    if (
-        invite is None
-        and payload.account_type == "individual"
-        and not payload.full_name.strip()
-    ):
+    if invite is None and payload.account_type == "individual" and not payload.full_name.strip():
         raise ValidationFailedError("An individual account requires your full name.")
 
     # REQUIRE_BUSINESS_EMAIL keeps consumer mailboxes out of business workspaces: a free
@@ -277,20 +329,13 @@ async def register(
     # added to, so the rule is deliberately narrow - it never touches an individual signup,
     # whose workspace is one person, and never an invited membership, which joins a workspace
     # that already exists and whose domain the inviter already chose.
-    if (
-        invite is None
-        and payload.account_type == "business"
-        and settings.require_business_email
-    ):
+    if invite is None and payload.account_type == "business" and settings.require_business_email:
         email_domain = ban_list.domain_of(str(payload.email))
         extra_consumer_domains = {
-            d.strip().lower()
-            for d in settings.extra_consumer_email_domains.split(",")
-            if d.strip()
+            d.strip().lower() for d in settings.extra_consumer_email_domains.split(",") if d.strip()
         }
         if email_domain is not None and (
-            email_domain in ban_list.FREE_EMAIL_DOMAINS
-            or email_domain in extra_consumer_domains
+            email_domain in ban_list.FREE_EMAIL_DOMAINS or email_domain in extra_consumer_domains
         ):
             raise ValidationFailedError(
                 "A business account needs a work email address. Use your company domain, "
@@ -301,6 +346,7 @@ async def register(
     user = await users_repo.create_user(
         session, email=payload.email, password=payload.password, full_name=payload.full_name
     )
+    user.email_verification_required = True
     if invite is not None:
         await session.flush()
         await invites_svc.redeem(session, invite, user.id)
@@ -321,15 +367,21 @@ async def register(
         # workspace verifies a person, not a company) and they read the ORG row, not the
         # payload, so a stale default here would create the wrong profile.
         org.account_type = payload.account_type
+        org.number_subscription_required = True
         await session.flush()
         await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
         set_org_context(session, org.id)
         await kyc_svc.get_or_create_profile(session, org.id)
     await session.commit()
+    from app.services import email_verification
+
+    await email_verification.send_confirmation(session, settings, user)
     if invite is not None:
         return MeOut(
             id=user.id,
             email=user.email,
+            email_verification_required=user.email_verification_required,
+            email_confirmation_sent=user.email_verification_sent_at is not None,
             full_name=user.full_name,
             totp_enabled=user.totp_enabled,
             permissions=[],
@@ -342,6 +394,8 @@ async def register(
     return MeOut(
         id=user.id,
         email=user.email,
+        email_verification_required=user.email_verification_required,
+        email_confirmation_sent=user.email_verification_sent_at is not None,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
         permissions=sorted(PERMISSIONS),
@@ -352,6 +406,7 @@ async def register(
                 org_slug=org.slug,
                 role_name="owner",
                 account_type=cast(AccountType, org.account_type),
+                number_subscription_required=org.number_subscription_required,
             )
         ],
     )
@@ -414,6 +469,8 @@ async def _login(
             session,
             UnauthenticatedError("Incorrect email or password"),
             email=user.email,
+            email_verification_required=user.email_verification_required,
+            email_confirmation_sent=user.email_verification_sent_at is not None,
             outcome="locked",
             user_id=user.id,
             request=request,
@@ -422,10 +479,10 @@ async def _login(
     if await _sso_enforced_for(session, user, user.email, request.app.state.settings):
         await _log_and_fail(
             session,
-            PermissionDeniedError(
-                "Your organization requires single sign-on", code="sso_required"
-            ),
+            PermissionDeniedError("Your organization requires single sign-on", code="sso_required"),
             email=user.email,
+            email_verification_required=user.email_verification_required,
+            email_confirmation_sent=user.email_verification_sent_at is not None,
             outcome="locked",
             user_id=user.id,
             request=request,
@@ -446,6 +503,8 @@ async def _login(
                     code="admin_access_required",
                 ),
                 email=user.email,
+                email_verification_required=user.email_verification_required,
+                email_confirmation_sent=user.email_verification_sent_at is not None,
                 outcome="locked",
                 user_id=user.id,
                 request=request,
@@ -465,9 +524,7 @@ async def _login(
             await session.commit()
         return TokenOut(
             requires_2fa=True,
-            pending_token=create_pending_2fa_token(
-                user.id, settings.jwt_secret.get_secret_value()
-            ),
+            pending_token=create_pending_2fa_token(user.id, settings.jwt_secret.get_secret_value()),
             methods=methods,
         )
 
@@ -553,6 +610,7 @@ async def me(
                 # The WORKSPACE's kind, not the viewer's signup preference: a business
                 # invitee stays "business" here whatever they registered as.
                 account_type=cast(AccountType, org.account_type),
+                number_subscription_required=org.number_subscription_required,
                 identity_verification=await identity_verification_state(
                     session,
                     request.app.state.settings,
@@ -565,6 +623,8 @@ async def me(
     return MeOut(
         id=user.id,
         email=user.email,
+        email_verification_required=user.email_verification_required,
+        email_confirmation_sent=user.email_verification_sent_at is not None,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
         has_passkey=user.has_passkey,

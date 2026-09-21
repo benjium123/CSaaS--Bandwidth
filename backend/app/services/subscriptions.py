@@ -29,20 +29,24 @@ from app.models import (
 
 log = structlog.get_logger("subscriptions")
 
-HANDLED_EVENT_TYPES: frozenset[str] = frozenset({
-    "checkout.session.completed",
-    "customer.subscription.created",
-    "customer.subscription.updated",
-    "customer.subscription.deleted",
-    "invoice.payment_failed",
-})
+HANDLED_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "checkout.session.completed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+        "invoice.payment_failed",
+    }
+)
 
 #: Stripe statuses from which we never move a subscription back to past_due.
-TERMINAL_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset({
-    "canceled",
-    "incomplete_expired",
-    "unpaid",
-})
+TERMINAL_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset(
+    {
+        "canceled",
+        "incomplete_expired",
+        "unpaid",
+    }
+)
 
 
 def _event_object(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -229,9 +233,7 @@ async def _maybe_update_org_plan_linkage(
         org.plan_started_at = datetime.now(timezone.utc)
 
 
-async def _reconcile_org_plan_linkage(
-    session: AsyncSession, org_id: uuid.UUID
-) -> None:
+async def _reconcile_org_plan_linkage(session: AsyncSession, org_id: uuid.UUID) -> None:
     """Re-derive ``orgs.plan_code`` when a subscription stops entitling the org.
 
     Called when a subscription reaches a terminal non-entitled status (canceled,
@@ -267,9 +269,7 @@ async def _reconcile_org_plan_linkage(
     org.plan_code = None
 
 
-async def current_subscription(
-    session: AsyncSession, org_id: uuid.UUID
-) -> Subscription | None:
+async def current_subscription(session: AsyncSession, org_id: uuid.UUID) -> Subscription | None:
     """Return the org's current subscription, preferring an entitled row."""
     set_org_context(session, org_id)
 
@@ -278,20 +278,27 @@ async def current_subscription(
         (Subscription.status.in_(ENTITLED_SUBSCRIPTION_STATUSES), 0),
         else_=1,
     )
-    stmt = (
-        select(Subscription)
-        .order_by(entitled_first, Subscription.created_at.desc())
-        .limit(1)
-    )
+    stmt = select(Subscription).order_by(entitled_first, Subscription.created_at.desc()).limit(1)
     result = await session.execute(stmt)
     return result.scalars().first()
 
 
-async def has_entitled_subscription(
-    session: AsyncSession, org_id: uuid.UUID
-) -> bool:
+async def has_entitled_subscription(session: AsyncSession, org_id: uuid.UUID) -> bool:
     """Return True exactly when the org has at least one entitled subscription."""
     set_org_context(session, org_id)
+    from app.models import NumberPurchase
+
+    if (
+        await session.execute(
+            select(NumberPurchase.id)
+            .where(
+                NumberPurchase.org_id == org_id,
+                NumberPurchase.subscription_status.in_(ENTITLED_SUBSCRIPTION_STATUSES),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none() is not None:
+        return True
 
     stmt = (
         select(Subscription.id)
@@ -389,9 +396,9 @@ async def _handle_checkout_session_completed(
         session.add(subscription)
     else:
         existing.plan_code = plan_code
-        existing.stripe_customer_id = _coerce_str(
-            checkout_session.get("customer")
-        ) or existing.stripe_customer_id
+        existing.stripe_customer_id = (
+            _coerce_str(checkout_session.get("customer")) or existing.stripe_customer_id
+        )
         existing.status = status
 
     await _maybe_update_org_plan_linkage(session, org_id, plan_code, status)
@@ -453,9 +460,7 @@ async def _handle_subscription_upsert(
         default=existing.cancel_at_period_end if existing else False,
     )
 
-    current_period_end = _datetime_from_unix(
-        subscription_object.get("current_period_end")
-    )
+    current_period_end = _datetime_from_unix(subscription_object.get("current_period_end"))
     if current_period_end is None and existing is not None:
         # A missing/invalid timestamp should not erase what Stripe already sent us.
         current_period_end = existing.current_period_end
@@ -512,9 +517,7 @@ async def _handle_subscription_deleted(
     await _reconcile_org_plan_linkage(session, existing.org_id)
 
 
-async def _handle_invoice_payment_failed(
-    session: AsyncSession, invoice: dict[str, Any]
-) -> None:
+async def _handle_invoice_payment_failed(session: AsyncSession, invoice: dict[str, Any]) -> None:
     """Move a non-terminal subscription to past_due.
 
     This never creates a row, because the subscription should already exist from

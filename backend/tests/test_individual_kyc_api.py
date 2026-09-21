@@ -37,9 +37,10 @@ async def _register_individual(client, email: str, full_name: str = "Ada Solo") 
         },
     )
     assert r.status_code == 201, r.text
-    r = await client.post(
-        "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
-    )
+    from tests.conftest import confirm_registered_email
+
+    await confirm_registered_email(client, email)
+    r = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
@@ -113,9 +114,7 @@ async def _verify_owner(
 
     monkeypatch.setattr(identity_provider.DiditIdentityProvider, "start", fake_start)
 
-    r = await client.post(
-        f"/api/v1/kyc/persons/{person_id}/verify", json={}, headers=h
-    )
+    r = await client.post(f"/api/v1/kyc/persons/{person_id}/verify", json={}, headers=h)
     assert r.status_code == 200, r.text
 
     payload = {
@@ -157,7 +156,10 @@ async def _accept_agreement(client, h: dict) -> None:
 
 
 async def test_individual_kyc_end_to_end(
-    kyc_app, session, kyc_settings, monkeypatch  # noqa: F811 - pytest fixture injection
+    kyc_app,
+    session,
+    kyc_settings,
+    monkeypatch,  # noqa: F811 - pytest fixture injection
 ):
     from app.services import telephony_access
 
@@ -174,9 +176,7 @@ async def test_individual_kyc_end_to_end(
 
     await _fill_personal_profile(client, h)
     person_id = await _add_owner(client, h)
-    await _verify_owner(
-        client, session, kyc_settings, monkeypatch, h, org_id, person_id
-    )
+    await _verify_owner(client, session, kyc_settings, monkeypatch, h, org_id, person_id)
     await _accept_agreement(client, h)
 
     r = await client.post("/api/v1/kyc/submit", headers=h)
@@ -188,15 +188,11 @@ async def test_individual_kyc_end_to_end(
     # After submit but before admin approval, the real telephony gate refuses calling
     # (no operator decision recorded yet) and always refuses texting for individuals.
     assert (
-        await telephony_access.refusal(
-            session, kyc_settings, uuid.UUID(org_id), "call"
-        )
+        await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "call")
         == "account_not_verified"
     )
     assert (
-        await telephony_access.refusal(
-            session, kyc_settings, uuid.UUID(org_id), "sms"
-        )
+        await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "sms")
         == "individual_messaging_disabled"
     )
 
@@ -205,12 +201,9 @@ async def test_individual_kyc_end_to_end(
     oh = auth_headers(ops)
     queue = (await client.get("/api/v1/ops/queue", headers=oh)).json()
     assert any(
-        a["org_id"] == org_id and a["account_type"] == "individual"
-        for a in queue["applications"]
+        a["org_id"] == org_id and a["account_type"] == "individual" for a in queue["applications"]
     )
-    detail = (
-        await client.get(f"/api/v1/ops/applications/{org_id}", headers=oh)
-    ).json()
+    detail = (await client.get(f"/api/v1/ops/applications/{org_id}", headers=oh)).json()
     assert detail["account_type"] == "individual"
 
     # Reviewer cannot approve an individual account.
@@ -235,16 +228,9 @@ async def test_individual_kyc_end_to_end(
     # re-check the gate. Texting stays disabled for individuals.
     set_org_context(session, uuid.UUID(org_id))
     session.expire_all()
+    assert await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "call") is None
     assert (
-        await telephony_access.refusal(
-            session, kyc_settings, uuid.UUID(org_id), "call"
-        )
-        is None
-    )
-    assert (
-        await telephony_access.refusal(
-            session, kyc_settings, uuid.UUID(org_id), "sms"
-        )
+        await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "sms")
         == "individual_messaging_disabled"
     )
 
@@ -256,7 +242,8 @@ async def test_individual_kyc_end_to_end(
 
 
 async def test_individual_rejects_nonself_and_second_person(
-    kyc_app, session  # noqa: F811 - pytest fixture injection
+    kyc_app,
+    session,  # noqa: F811 - pytest fixture injection
 ):
     client, *_ = kyc_app
     token = await _register_individual(client, "solo@example.com")
@@ -280,7 +267,8 @@ async def test_individual_rejects_nonself_and_second_person(
 
 
 async def test_individual_rejects_company_fields_and_texts(
-    kyc_app, session  # noqa: F811 - pytest fixture injection
+    kyc_app,
+    session,  # noqa: F811 - pytest fixture injection
 ):
     client, *_ = kyc_app
     token = await _register_individual(client, "fields@example.com")

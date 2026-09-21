@@ -190,6 +190,32 @@ async def create_session(
 # ------------------------------------------------------------------------------------
 # Webhook verification
 # ------------------------------------------------------------------------------------
+async def retrieve_session(settings, session_id: str, *, client=None) -> dict:
+    """Read fresh evidence; never persist signed document URLs or log identity data."""
+    from urllib.parse import quote
+
+    key = _secret_value(getattr(settings, "didit_api_key", None))
+    if not key:
+        raise FeatureUnavailableError(_NOT_SET_UP)
+    base = settings.didit_base_url.rstrip("/")
+    endpoint = f"{base}/v3/session/{quote(session_id, safe='')}/decision/"
+    try:
+        if client is None:
+            async with httpx.AsyncClient(timeout=25) as owned:
+                response = await owned.get(endpoint, headers={"x-api-key": key})
+        else:
+            response = await client.get(endpoint, headers={"x-api-key": key})
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("Invalid response")
+        return data
+    except (httpx.HTTPError, ValueError) as exc:
+        raise FeatureUnavailableError(
+            "Identity evidence could not be loaded. Please try again."
+        ) from exc
+
+
 def _normalise_json_numbers(value: Any) -> Any:
     """Recursively normalise whole-valued floats to ints for canonical signing.
 

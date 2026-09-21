@@ -1,3 +1,5 @@
+import { ChooseNumbersPage } from "@/pages/ChooseNumbersPage";
+import { ConfirmEmailPage } from "@/pages/ConfirmEmailPage";
 import * as React from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
@@ -32,7 +34,6 @@ import { RecoverAccountPage } from "@/pages/RecoverAccountPage";
 import { SignUpPage } from "@/pages/SignUpPage";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 import { VerificationPage } from "@/pages/VerificationPage";
-import { ChoosePlanPage } from "@/pages/ChoosePlanPage";
 import { PasskeyGraceBanner } from "@/components/security/PasskeyGraceBanner";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { cn } from "@/lib/utils";
@@ -179,6 +180,7 @@ export function App() {
   // A setup link must remain reachable when this browser is signed into a customer account.
   if (location.pathname === "/reset-password") return <ResetPasswordPage />;
 
+  if (location.pathname === "/confirm-email") return <ConfirmEmailPage />;
   if (!me) {
     return (
       <Routes>
@@ -200,6 +202,7 @@ export function App() {
   }
 
   // P41: an account without an authenticator app or passkey can do nothing else yet.
+  if (me.email_verification_required) return <ConfirmEmailPage />;
   if (me.second_factor_required) return <SecureAccountPage />;
 
   if (!orgId) {
@@ -290,8 +293,10 @@ export function App() {
         <VerificationPage />
       ) : location.pathname === "/onboarding" ? (
         <div className="ringlite-onboarding"><OnboardingPage /></div>
+      ) : location.pathname === "/choose-numbers" ? (
+        <ChooseNumbersPage />
       ) : location.pathname === "/plans" ? (
-        <ChoosePlanPage />
+        <Navigate to="/choose-numbers" replace />
       ) : (
         consoleSurface
       )}
