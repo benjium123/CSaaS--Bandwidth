@@ -58,6 +58,20 @@ def _thread(org_id: uuid.UUID, our_e164: str, contact_e164: str) -> MessageThrea
     )
 
 
+def _org(org_id: uuid.UUID, name: str, slug: str) -> Org:
+    """An Org row with the prepaid telephony gate switched OFF.
+
+    Production now defaults ``Org.telephony_prepaid=True`` (migration 0055), but the tests
+    below create their tenant row directly - so the default lands alongside a zero credit
+    balance, and ``telephony_billing.require_sms_credit`` (send_message's early gate) or
+    ``telephony_billing.can_send_sms`` (the dispatch-time re-check) then refuses every send
+    before the carrier is ever reached. That fails the test for a reason it is not about.
+    None of these tests exercise prepaid billing (the same correction commit c45bc0 applied
+    to the plan-supplied registration-gate fixture), so the gate is switched off explicitly.
+    """
+    return Org(id=org_id, name=name, slug=slug, telephony_prepaid=False)
+
+
 class PlivoParseCarrier(FakeCarrier):
     def parse_webhook(self, raw_body):
         return plivo_webhooks.parse(raw_body)
@@ -82,7 +96,7 @@ async def test_twilio_received_is_inbound_not_dlr():
 # ----------------------------------------------------------------------------------
 async def test_outbound_mms_media_persisted_and_used_on_release(monkeypatch, session):
     org_id = uuid.uuid4()
-    session.add(Org(id=org_id, name="Area2 MMS Org", slug="area2-mms-org"))
+    session.add(_org(org_id, "Area2 MMS Org", "area2-mms-org"))
     await session.flush()
     fake = FakeCarrier(name="bandwidth")
     hold_until = datetime(2026, 6, 15, 17, 0)
@@ -131,7 +145,7 @@ async def test_outbound_mms_media_persisted_and_used_on_release(monkeypatch, ses
 # ----------------------------------------------------------------------------------
 async def test_release_held_messages_uses_message_carrier(monkeypatch, session):
     org_id = uuid.uuid4()
-    session.add(Org(id=org_id, name="Area2 Release Org", slug="area2-release-org"))
+    session.add(_org(org_id, "Area2 Release Org", "area2-release-org"))
     await session.flush()
     bandwidth = FakeCarrier(name="bandwidth")
     plivo = FakeCarrier(name="plivo")
@@ -186,7 +200,7 @@ async def test_d4_release_held_messages_resolves_the_orgs_db_backed_carrier(
     from app.providers import registry_org
 
     org_id = uuid.uuid4()
-    session.add(Org(id=org_id, name="Area2 D4 Org", slug="area2-d4-org"))
+    session.add(_org(org_id, "Area2 D4 Org", "area2-d4-org"))
     await session.flush()
 
     env_bandwidth = FakeCarrier(name="bandwidth")
@@ -259,14 +273,16 @@ async def test_patch_settings_rejects_inverted_window(client):
 # ----------------------------------------------------------------------------------
 async def test_failover_repoints_thread_to_winning_number(session):
     org_id = uuid.uuid4()
-    session.add(Org(id=org_id, name="Area2 Failover Org", slug="area2-failover-org"))
+    session.add(_org(org_id, "Area2 Failover Org", "area2-failover-org"))
     await session.flush()
     primary_from = OUR
     secondary_from = OUR_B
     error = SimpleNamespace(retryable=True, category="auth", carrier_code="1", detail="bad token")
     sc_primary = FakeCarrier(name="bandwidth", scripted=[SendResult("rejected", None, error)])
     sc_secondary = FakeCarrier(name="twilio")
-    registry = CarrierRegistry({"bandwidth": sc_primary, "twilio": sc_secondary}, primary="bandwidth")
+    registry = CarrierRegistry(
+        {"bandwidth": sc_primary, "twilio": sc_secondary}, primary="bandwidth"
+    )
 
     class Route:
         def __init__(self, from_e164, carrier_name, reason):
@@ -377,7 +393,7 @@ async def test_check_outbound_spy_seam_still_works_with_plain_three_args(session
     check_outbound must keep working when bulk/exemption are both at their defaults -
     the new `bulk` kwarg must only be added to the call when it is actually truthy."""
     org_id = uuid.uuid4()
-    session.add(Org(id=org_id, name="Area2 Seam Org", slug="area2-seam-org"))
+    session.add(_org(org_id, "Area2 Seam Org", "area2-seam-org"))
     await session.flush()
     set_org_context(session, org_id)
     session.add(
@@ -495,7 +511,7 @@ async def test_plivo_unknown_status_emits_unknown_event_and_passes_error_code():
 # ----------------------------------------------------------------------------------
 async def test_recover_stale_queued_resends_once_then_fails(session):
     org_id = uuid.uuid4()
-    session.add(Org(id=org_id, name="Area2 Stale Org", slug="area2-stale-org"))
+    session.add(_org(org_id, "Area2 Stale Org", "area2-stale-org"))
     await session.flush()
     fake = FakeCarrier(name="bandwidth")
     registry = CarrierRegistry({"bandwidth": fake}, primary="bandwidth")
