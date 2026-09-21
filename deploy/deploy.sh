@@ -8,6 +8,12 @@
 #   - is idempotent; re-running is safe
 #
 # Usage: ./deploy/deploy.sh [user@host]
+#
+# Every remote script below is sent with a QUOTED heredoc delimiter (<<'REMOTE') so the
+# LOCAL shell - Git Bash included - never expands `$(...)`, backticks or `${...}` inside
+# the remote script before it is transmitted. Values the remote script needs
+# (REMOTE_DIR, PORT, ...) are passed as positional arguments after `bash -s --` and
+# re-assigned from "$1"/"$2" at the top of each remote script.
 set -euo pipefail
 
 TARGET="${1:-root@144.126.152.175}"
@@ -25,8 +31,10 @@ die() { printf '\n\033[31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 
 say "Pre-flight checks on ${TARGET}"
 
-ssh "$TARGET" bash -s <<REMOTE || die "pre-flight failed - nothing was changed"
+ssh "$TARGET" bash -s -- "$REMOTE_DIR" "$PORT" <<'REMOTE' || die "pre-flight failed - nothing was changed"
 set -euo pipefail
+REMOTE_DIR="$1"
+PORT="$2"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is not installed."
@@ -43,9 +51,9 @@ mkdir -p "${REMOTE_DIR}"
 
 # Port must be free, or already held by our own container.
 if ss -ltn 2>/dev/null | grep -q ":${PORT} "; then
-  owner=\$(docker ps --filter "publish=${PORT}" --format '{{.Names}}' | head -1 || true)
-  if [ -z "\$owner" ] || ! echo "\$owner" | grep -q '^csaas'; then
-    echo "Port ${PORT} is in use by something that is not ours (\${owner:-unknown})."
+  owner=$(docker ps --filter "publish=${PORT}" --format '{{.Names}}' | head -1 || true)
+  if [ -z "$owner" ] || ! echo "$owner" | grep -q '^csaas'; then
+    echo "Port ${PORT} is in use by something that is not ours (${owner:-unknown})."
     exit 1
   fi
 fi
@@ -60,10 +68,10 @@ fi
 
 # 8.22: a world/group-readable .env on a box shared with other tenants leaks every
 # carrier/LLM/DB credential in it. Refuse rather than silently proceeding.
-env_mode="\$(stat -c '%a' "${REMOTE_DIR}/.env" 2>/dev/null || echo unknown)"
-if [ "\$env_mode" != "600" ]; then
+env_mode="$(stat -c '%a' "${REMOTE_DIR}/.env" 2>/dev/null || echo unknown)"
+if [ "$env_mode" != "600" ]; then
   echo ""
-  echo "REFUSING: ${REMOTE_DIR}/.env has mode \${env_mode} (expected 600)."
+  echo "REFUSING: ${REMOTE_DIR}/.env has mode ${env_mode} (expected 600)."
   echo "Fix it: chmod 600 ${REMOTE_DIR}/.env"
   exit 1
 fi
@@ -75,9 +83,9 @@ fi
 # stack needs LIVEKIT_API_SECRET via LIVEKIT_KEYS), by which point db is already up and
 # possibly already migrated.
 for var in CSAAS_DB_PASSWORD LIVEKIT_API_SECRET; do
-  if ! grep -Eq "^\${var}=.+" "${REMOTE_DIR}/.env"; then
+  if ! grep -Eq "^${var}=.+" "${REMOTE_DIR}/.env"; then
     echo ""
-    echo "MISSING/EMPTY: \${var} in ${REMOTE_DIR}/.env"
+    echo "MISSING/EMPTY: ${var} in ${REMOTE_DIR}/.env"
     echo "Set it, then re-run. (Checked now so a missing var cannot fail AFTER migrations ran.)"
     exit 1
   fi
@@ -139,20 +147,83 @@ ssh "$TARGET" "rm -rf ${STAGING_DIR}"
 # an unset/empty value renders `password: ""`, which livekit treats as no auth, matching
 # main-stack redis's own passwordless-by-default behavior.
 say "Rendering livekit/sip config from .tpl (CSAAS_REDIS_PASSWORD from ${REMOTE_DIR}/.env)"
-ssh "$TARGET" bash -s <<REMOTE || die "rendering livekit/sip config failed"
+ssh "$TARGET" bash -s -- "$REMOTE_DIR" <<'REMOTE' || die "rendering livekit/sip config failed"
 set -euo pipefail
+REMOTE_DIR="$1"
+
+LIVEKIT_DIR="${REMOTE_DIR}/deploy/livekit"
+
 if ! command -v envsubst >/dev/null 2>&1; then
   echo "envsubst is not installed (gettext-base). Install it manually, then re-run."
   exit 1
 fi
+
 # Pull just this one value out of .env rather than sourcing the whole file (.env is
 # operator-edited free text, not something this script should execute). `|| true`
 # because CSAAS_REDIS_PASSWORD is optional (unset -> grep finds nothing -> exit 1, which
-# `set -e -o pipefail` would otherwise treat as this whole step failing).
-CSAAS_REDIS_PASSWORD="\$( (grep -E '^CSAAS_REDIS_PASSWORD=' "${REMOTE_DIR}/.env" || true) | tail -n1 | cut -d= -f2- | sed -e 's/[[:space:]]*#.*\$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*\$//')"
-export CSAAS_REDIS_PASSWORD
-envsubst '\${CSAAS_REDIS_PASSWORD}' < "${REMOTE_DIR}/deploy/livekit/livekit.yaml.tpl" > "${REMOTE_DIR}/deploy/livekit/livekit.yaml"
-envsubst '\${CSAAS_REDIS_PASSWORD}' < "${REMOTE_DIR}/deploy/livekit/sip.yaml.tpl" > "${REMOTE_DIR}/deploy/livekit/sip.yaml"
+# `set -e -o pipefail` would otherwise treat as this whole step failing). The value is
+# never echoed by this script.
+CSAAS_REDIS_PASSWORD="$( (grep -E '^CSAAS_REDIS_PASSWORD=' "${REMOTE_DIR}/.env" || true) | tail -n1 | cut -d= -f2- | sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+# An ACTIVE (uncommented) `password:` key carrying no meaningful value: blank, an empty
+# quoted string, or only a trailing comment.
+blank_password_re="^[[:space:]]*password:[[:space:]]*(\"\"|'')?[[:space:]]*(#.*)?\$"
+
+assert_password_rendered() {
+  # $1 = rendered file to inspect, $2 = name used in error messages. Prints file names
+  # only - never the value.
+  if grep -Eq "${blank_password_re}" "$1"; then
+    echo ""
+    echo "REFUSING: deploy/livekit/$2 has a blank active 'password:' field after rendering."
+    echo "CSAAS_REDIS_PASSWORD is set in ${REMOTE_DIR}/.env but did not reach that template."
+    echo "Nothing was replaced; fix the template/var name and re-run."
+    return 1
+  fi
+  return 0
+}
+
+# Render to temp files in the target directory, then rename into place: a half-written
+# livekit.yaml/sip.yaml would leave the media plane unable to parse its config on the
+# next restart. Same filesystem, so mv is an atomic rename. Temps are removed on any
+# exit path until they have been renamed.
+tmp_livekit="$(mktemp "${LIVEKIT_DIR}/.livekit.yaml.tmp.XXXXXX")"
+tmp_sip="$(mktemp "${LIVEKIT_DIR}/.sip.yaml.tmp.XXXXXX")"
+trap 'rm -f "${tmp_livekit}" "${tmp_sip}"' EXIT
+
+# CSAAS_REDIS_PASSWORD is supplied as a per-command assignment to envsubst only - never
+# `export`ed - so it cannot leak into any other child process or the box's environment.
+CSAAS_REDIS_PASSWORD="${CSAAS_REDIS_PASSWORD}" envsubst '${CSAAS_REDIS_PASSWORD}' < "${LIVEKIT_DIR}/livekit.yaml.tpl" > "${tmp_livekit}"
+CSAAS_REDIS_PASSWORD="${CSAAS_REDIS_PASSWORD}" envsubst '${CSAAS_REDIS_PASSWORD}' < "${LIVEKIT_DIR}/sip.yaml.tpl" > "${tmp_sip}"
+
+# When a password IS configured, every active `password:` field in the rendered YAML
+# must be nonblank - a blank one means the placeholder never got substituted (renamed
+# var, commented-out line, template drift) and the media plane would silently come up
+# without redis auth. When CSAAS_REDIS_PASSWORD is intentionally empty this check is
+# skipped and `password: ""` (no auth) is rendered as before.
+if [ -n "${CSAAS_REDIS_PASSWORD}" ]; then
+  assert_password_rendered "${tmp_livekit}" "livekit.yaml" || exit 1
+  assert_password_rendered "${tmp_sip}" "sip.yaml" || exit 1
+fi
+
+# mktemp creates 0600; `>` redirection (what this used to use) created the file under
+# the caller's umask. Keep whatever mode the destination already had, defaulting to
+# 0644 so the media plane container can still read it through the bind mount.
+if [ -e "${LIVEKIT_DIR}/livekit.yaml" ]; then
+  chmod "$(stat -c '%a' "${LIVEKIT_DIR}/livekit.yaml")" "${tmp_livekit}"
+else
+  chmod 0644 "${tmp_livekit}"
+fi
+if [ -e "${LIVEKIT_DIR}/sip.yaml" ]; then
+  chmod "$(stat -c '%a' "${LIVEKIT_DIR}/sip.yaml")" "${tmp_sip}"
+else
+  chmod 0644 "${tmp_sip}"
+fi
+
+mv -f "${tmp_livekit}" "${LIVEKIT_DIR}/livekit.yaml"
+mv -f "${tmp_sip}" "${LIVEKIT_DIR}/sip.yaml"
+trap - EXIT
+
+echo "rendered deploy/livekit/livekit.yaml and deploy/livekit/sip.yaml"
 REMOTE
 
 # frontend/dist is a build artifact, gitignored (not in the archive above) and NOT
@@ -170,18 +241,18 @@ say "Starting the database (compose project: csaas)"
 ssh "$TARGET" "cd ${REMOTE_DIR} && docker compose --env-file .env -f ${COMPOSE_MAIN} up -d db"
 
 say "Waiting for db to report healthy"
-ssh "$TARGET" bash -s <<REMOTE || die "db did not become healthy"
+ssh "$TARGET" bash -s <<'REMOTE' || die "db did not become healthy"
 set -euo pipefail
 status=""
-for i in \$(seq 1 30); do
-  status="\$(docker inspect -f '{{.State.Health.Status}}' csaas-db-1 2>/dev/null || echo '')"
-  if [ "\$status" = "healthy" ]; then
+for i in $(seq 1 30); do
+  status="$(docker inspect -f '{{.State.Health.Status}}' csaas-db-1 2>/dev/null || echo '')"
+  if [ "$status" = "healthy" ]; then
     echo "db is healthy"
     exit 0
   fi
   sleep 2
 done
-echo "db did not become healthy within ~60s (last status: \${status:-unknown})"
+echo "db did not become healthy within ~60s (last status: ${status:-unknown})"
 exit 1
 REMOTE
 
@@ -204,10 +275,12 @@ ssh "$TARGET" "cd ${REMOTE_DIR} && docker compose --env-file .env -f ${COMPOSE_M
 # 8.19: the api container can take a few seconds to bind after `up -d` returns - retry
 # instead of failing on the first miss.
 say "Health check"
-ssh "$TARGET" bash -s <<REMOTE || die "healthz did not come up green after ~30s"
+ssh "$TARGET" bash -s -- "$PORT" <<'REMOTE' || die "healthz did not come up green after ~30s"
 set -euo pipefail
-for i in \$(seq 1 15); do
-  if curl -fsS http://127.0.0.1:${PORT}/healthz >/dev/null 2>&1; then
+PORT="$1"
+
+for i in $(seq 1 15); do
+  if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then
     echo "healthz OK"
     exit 0
   fi
