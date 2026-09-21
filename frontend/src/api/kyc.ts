@@ -114,6 +114,21 @@ export type KycProfile = {
 
 export const KYC_KEY = ["kyc", "profile"];
 
+/**
+ * Webhook-return UX: after the Didit hosted redirect the webhook may land after our first
+ * GET, so a person can sit in pending/processing until the user refreshes. Poll every 5s
+ * while any person is still in flight; stop as soon as none are. We never infer approval
+ * from a person status - the profile status is whatever the server says.
+ */
+export const KYC_POLL_INTERVAL_MS = 5_000;
+
+const IN_FLIGHT_PERSON_STATUSES: ReadonlyArray<KycPerson["status"]> = ["pending", "processing"];
+
+function hasInFlightPerson(profile: KycProfile | undefined): boolean {
+  if (!profile || !Array.isArray(profile.persons)) return false;
+  return profile.persons.some((p) => IN_FLIGHT_PERSON_STATUSES.includes(p.status));
+}
+
 export const COUNTRY_OPTIONS = [
   { value: "US", label: "United States" },
   { value: "CA", label: "Canada" },
@@ -197,6 +212,10 @@ export function useKycProfile(api: ApiClient, enabled = true) {
     queryFn: () => api.request<KycProfile>("/api/v1/kyc/profile"),
     enabled,
     staleTime: 30_000,
+    // TanStack Query v5: refetchInterval may be a function of the query. Returning false
+    // stops the timer. We only poll while a person is still in flight, and never in the
+    // background (refetchIntervalInBackground stays false by default).
+    refetchInterval: (query) => (hasInFlightPerson(query.state.data) ? KYC_POLL_INTERVAL_MS : false),
   });
 }
 
