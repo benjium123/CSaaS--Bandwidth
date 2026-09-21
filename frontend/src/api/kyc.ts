@@ -185,6 +185,13 @@ export const MISSING_LABELS: Record<string, string> = {
   residential_address: "Each owner's current home address",
   proof_of_address: "A recent proof of address for each owner",
   agreement: "Accept the agreement",
+  "applicant.legal_name": "Your legal name",
+  "applicant.country": "Your country",
+  "applicant.phone": "Your phone number",
+  "applicant.industry": "Your industry",
+  "applicant.purpose": "Your calling or texting purpose",
+  "applicant.customer_country": "Your customers' country",
+  "applicant.agreement": "Accept the personal verification agreement",
 };
 
 /** Individual accounts reuse business labels only where the field still applies. */
