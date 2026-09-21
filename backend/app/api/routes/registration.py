@@ -564,6 +564,7 @@ async def file_brand_telnyx(
     called by ``file_brand_with_telnyx`` using the org's configured Telnyx credentials;
     no secret is read or echoed here.
     """
+    _require_messaging_enabled(ctx)
     brand = await ctx.session.get(Brand, brand_id)
     if brand is None:
         raise NotFoundError("Brand not found")
@@ -701,6 +702,7 @@ async def file_campaign_telnyx(
     called by ``file_campaign_with_telnyx`` using the org's configured Telnyx credentials;
     no secret is read or echoed here.
     """
+    _require_messaging_enabled(ctx)
     campaign = await ctx.session.get(Campaign, campaign_id)
     if campaign is None:
         raise NotFoundError("Campaign not found")
@@ -1060,6 +1062,7 @@ async def file_tfv_telnyx(
     external reconciliation - a documented runbook or a Telnyx support investigation -
     before an operator deliberately repairs local state.
     """
+    _require_messaging_enabled(ctx)
     tfv = await ctx.session.get(TollFreeVerification, tfv_id)
     if tfv is None:
         raise NotFoundError("Toll-free verification not found")

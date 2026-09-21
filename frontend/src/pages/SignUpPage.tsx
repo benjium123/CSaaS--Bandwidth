@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import {
   AuthAlert,
@@ -43,6 +43,7 @@ type AccountType = "business" | "individual";
 
 export function SignUpPage() {
   const { api, login } = useAuth();
+  const navigate = useNavigate();
   const [accountType, setAccountType] = React.useState<AccountType>("business");
   const [email, setEmail] = React.useState("");
   const [fullName, setFullName] = React.useState("");
@@ -73,9 +74,14 @@ export function SignUpPage() {
         },
       });
       // Straight in: the account exists, so signing them in here saves a second form and
-      // lands them on the second-factor screen, which is the true next step.
+      // lands them in onboarding. A second factor is handled by the global 2FA gate, which
+      // owns the screen, so needs_2fa deliberately navigates nowhere.
       const res = await login(email, password);
-      if (res.kind === "error") setError(res.message);
+      if (res.kind === "error") {
+        setError(res.message);
+      } else if (res.kind === "ok") {
+        navigate("/onboarding", { replace: true });
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
+import { LifecycleGate } from "@/auth/LifecycleGate";
 import { ConversationsPage } from "@/pages/ConversationsPage";
 import { ContactsPage } from "@/pages/ContactsPage";
 import { CampaignsPage } from "@/pages/CampaignsPage";
@@ -221,8 +222,7 @@ export function App() {
   // furniture as /signup and the second-factor wall, so the three read as one journey.
   // Deliberately NOT an interstitial - an open application does not stop the rest of the
   // workspace working, and the screen itself says so.
-  if (location.pathname === "/onboarding") return <OnboardingPage />;
-
+  //
   // `/plans` joins it, and this was a bug I could only see in a browser. ChoosePlanPage is
   // built on AuthSurface, so routing it INSIDE the Shell rendered an auth surface within the
   // console: a light page inside the dark chrome, with the marketing aside's wordmark
@@ -232,9 +232,11 @@ export function App() {
   // page was always an Exchange surface and was being asked to live in console furniture.
   // It belongs beside /onboarding - the screen before it in the journey, and the screen that
   // links here.
-  if (location.pathname === "/plans") return <ChoosePlanPage />;
-
-  return (
+  //
+  // All three of these surfaces are the children of ONE LifecycleGate. The gate owns the
+  // question "may this workspace be here at all"; the ternary below owns "which surface is
+  // this", and neither changes what a path means.
+  const consoleSurface = (
     <Shell>
       <Routes>
         <Route path="/inbox" element={<InboxRoute />} />
@@ -275,5 +277,17 @@ export function App() {
         <Route path="*" element={<Navigate to="/inbox" replace />} />
       </Routes>
     </Shell>
+  );
+
+  return (
+    <LifecycleGate>
+      {location.pathname === "/onboarding" ? (
+        <OnboardingPage />
+      ) : location.pathname === "/plans" ? (
+        <ChoosePlanPage />
+      ) : (
+        consoleSurface
+      )}
+    </LifecycleGate>
   );
 }

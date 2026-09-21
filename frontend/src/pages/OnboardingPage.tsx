@@ -2,6 +2,7 @@ import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { missingLabel, useKycProfile, type KycPerson, type KycProfile } from "@/api/kyc";
+import { isOnboardingStep, useGate } from "@/api/capabilities";
 import {
   firstIncomplete,
   ownerCount,
@@ -101,13 +102,7 @@ export function OnboardingPage() {
     case "needs_info":
       return <Wizard profile={profile} accountType={accountType} onOpen={toVerification} />;
     case "approved":
-      return (
-        <Approved
-          profile={profile}
-          onContinue={() => navigate("/inbox")}
-          onChoosePlan={() => navigate("/plans")}
-        />
-      );
+      return <Approved profile={profile} onChoosePlan={() => navigate("/plans")} />;
     case "rejected":
       return <Rejected profile={profile} accountType={accountType} />;
     case "suspended":
@@ -359,17 +354,26 @@ function Waiting({ profile, accountType }: { profile: KycProfile; accountType: A
 
 function Approved({
   profile,
-  onContinue,
   onChoosePlan,
 }: {
   profile: KycProfile;
-  onContinue: () => void;
   onChoosePlan: () => void;
 }) {
+  const navigate = useNavigate();
+  const gate = useGate();
   const isIndividual = (profile.account_type ?? "business") === "individual";
   const limits = profile.limits;
   const deposit = profile.deposit_required_cents;
   const hasLimits = limits != null && Object.keys(limits).length > 0;
+
+  // The next act is the SERVER's progression, read from `gate.org.onboarding_step` and
+  // nothing else. Fail CLOSED: only a known, loaded step offers an enabled button, and
+  // only `ready` reaches the inbox - anything else disables it.
+  const step = gate.org?.onboarding_step;
+  const stepKnown = !gate.isLoading && gate.org != null && isOnboardingStep(step);
+  const toNumbers = stepKnown && step === "numbers";
+  const toInbox = stepKnown && step === "ready";
+  const failClosed = !toNumbers && !toInbox;
 
   return (
     <AuthSurface>
@@ -420,16 +424,26 @@ function Approved({
             </AuthNotice>
           )}
 
-          {/* The next act, and the reason it is the PRIMARY button here: approval is not
-              the end of the journey, it is the point at which buying becomes possible. The
-              inbox stays reachable as the quiet option so this is an invitation, not a
-              tollgate - the workspace already works, only calling and texting wait on a
-              plan. */}
-          <AuthButton type="button" block onClick={onChoosePlan}>
+          {/* The next act comes from the server's progression, not a messaging-registration
+              flag: 10DLC gates SMS, not calling or the inbox. Fail CLOSED - only `ready`
+              reaches the inbox, anything else disables the button. */}
+          {toNumbers && (
+            <AuthButton type="button" block onClick={() => navigate("/settings/numbers")}>
+              Choose a number
+            </AuthButton>
+          )}
+          {toInbox && (
+            <AuthButton type="button" block onClick={() => navigate("/inbox")}>
+              Go to your inbox
+            </AuthButton>
+          )}
+          {failClosed && (
+            <AuthButton type="button" block disabled>
+              {gate.isLoading ? "Loading your next step…" : "Next step unavailable"}
+            </AuthButton>
+          )}
+          <AuthButton type="button" tone="quiet" block onClick={onChoosePlan}>
             Choose a plan
-          </AuthButton>
-          <AuthButton type="button" tone="quiet" block onClick={onContinue}>
-            Go to your inbox
           </AuthButton>
         </div>
       </AuthPlate>

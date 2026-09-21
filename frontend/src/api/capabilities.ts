@@ -13,6 +13,31 @@ export type RegistrationState = "none" | "pending" | "approved";
 
 export type AccountType = "business" | "individual";
 
+/**
+ * Backend-reported onboarding progression. `ready` is the terminal state; anything
+ * unrecognised is treated as not-ready (see `isOnboardingStep`).
+ */
+export type OnboardingStep =
+  | "verification"
+  | "awaiting_review"
+  | "remediation"
+  | "numbers"
+  | "ready";
+
+/**
+ * Guards untrusted wire values: a missing or unknown step must fail CLOSED (not ready),
+ * so never cast `onboarding_step` to the union without checking it first.
+ */
+export function isOnboardingStep(value: unknown): value is OnboardingStep {
+  return (
+    value === "verification" ||
+    value === "awaiting_review" ||
+    value === "remediation" ||
+    value === "numbers" ||
+    value === "ready"
+  );
+}
+
 export type OrgCapabilities = {
   has_provider: boolean;
   has_number: boolean;
@@ -20,6 +45,12 @@ export type OrgCapabilities = {
   registration_state: RegistrationState | string;
   /** Optional: older backends omit it; treat missing as "business". */
   account_type?: AccountType;
+  /** Free-form KYC status reported by the backend ("unknown" when it omits one). */
+  kyc_status: string;
+  /** Current onboarding step; validate wire values with `isOnboardingStep`. */
+  onboarding_step: OnboardingStep;
+  calling_ready: boolean;
+  messaging_ready: boolean;
 };
 
 export type Capabilities = {
