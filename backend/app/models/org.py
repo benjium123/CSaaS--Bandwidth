@@ -32,6 +32,11 @@ class Org(Base, TimestampMixin):
     account_type: Mapped[str] = mapped_column(
         sa.String(16), nullable=False, default="business", server_default="business"
     )
+    # P59: open registration lets anyone create an individual workspace, so new orgs are
+    # gated behind identity verification; migration 0059 grandfathers existing orgs to false.
+    kyc_required: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=True, server_default=sa.true()
+    )
     #: P42: stricter-than-platform session timeouts for this workspace (NULL = platform).
     session_idle_minutes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     session_max_hours: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)

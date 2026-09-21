@@ -76,42 +76,39 @@ def test_invite_only_production_is_unaffected():
     assert settings.allow_open_registration is False
 
 
-def test_open_registration_boots_when_every_control_is_present():
+def test_open_registration_boots_when_shared_rate_limits_are_present():
     """The half that proves the guard is satisfiable.
 
     A guard that refuses every configuration is indistinguishable, from inside a test suite that
-    only ever asserts refusals, from a guard that works. This is the pair to the three tests
-    below, and it is the one that fails if someone converts the requirement back into a refusal.
+    only ever asserts refusals, from a guard that works. This is the pair to the test below, and
+    it is the one that fails if someone converts the Redis requirement back into a refusal.
+
+    Redis is the only control the guard still requires. Business-email checks and KYC are
+    operator decisions about who may buy, not conditions on whether the public front door may be
+    open at all, so both are switched OFF here to prove neither is secretly required.
     """
     settings = _boot(
         allow_open_registration=True,
-        require_business_email=True,
-        kyc_enforced=True,
+        require_business_email=False,
+        kyc_enforced=False,
         redis_url="redis://localhost:6379/0",
     )
     assert settings.allow_open_registration is True
-    assert settings.require_business_email is True
+    assert settings.require_business_email is False
+    assert settings.kyc_enforced is False
 
 
-def test_open_registration_without_the_business_email_check_is_refused():
-    """With no invite, the domain check is the only filter on who may create an account. It
-    being switched off is a state reachable by flipping two flags on different days, and
-    neither flag's own comment would tell you the combination is the dangerous one."""
-    with pytest.raises(ConfigurationError) as excinfo:
-        _boot(allow_open_registration=True, require_business_email=False)
-    message = str(excinfo.value)
-    assert "ALLOW_OPEN_REGISTRATION is on" in message
-    assert "REQUIRE_BUSINESS_EMAIL must be true" in message
+def test_open_registration_no_longer_requires_business_email_or_kyc():
+    """Both settings were once guard conditions; they are not anymore.
 
+    Kept as explicit negative assertions so that re-adding either requirement fails a test whose
+    name states the rule, rather than only being caught by the satisfiability test above.
+    """
+    without_business_email = _boot(allow_open_registration=True, require_business_email=False)
+    assert without_business_email.require_business_email is False
 
-def test_open_registration_with_verification_disabled_is_refused():
-    """Open registration plus KYC off is worse than either alone: anyone signs up and nothing
-    gates telephony behind verification. The operator's rule that nothing may be purchased
-    before approval is the control that actually holds, and KYC_ENFORCED is what enforces it -
-    so the guard names it rather than assuming it."""
-    with pytest.raises(ConfigurationError) as excinfo:
-        _boot(allow_open_registration=True, kyc_enforced=False)
-    assert "KYC_ENFORCED must be true" in str(excinfo.value)
+    without_kyc = _boot(allow_open_registration=True, kyc_enforced=False)
+    assert without_kyc.kyc_enforced is False
 
 
 def test_open_registration_without_shared_rate_limits_is_refused():
@@ -126,14 +123,15 @@ def test_open_registration_without_shared_rate_limits_is_refused():
     with pytest.raises(ConfigurationError) as excinfo:
         _boot(allow_open_registration=True, redis_url="")
     message = str(excinfo.value)
-    assert "REDIS_URL must be set" in message
+    assert "REDIS_URL" in message
     assert "multiplies" in message, "the message must say WHY, not just name the setting"
 
 
-def test_the_refusal_lists_every_missing_control_at_once():
-    """An operator turning on public signup on a fresh deployment is missing several things.
-    Reporting them one per boot attempt turns one configuration task into four deploys, and
-    the last three would each look like a new problem."""
+def test_the_refusal_names_only_the_remaining_required_control():
+    """Redis is the only control the guard still requires on the public front door. The message
+    must name it and must NOT send an operator to fix REQUIRE_BUSINESS_EMAIL or KYC_ENFORCED,
+    which no longer gate the boot - a stale instruction is a configuration task that cannot be
+    completed, so the operator loops."""
     with pytest.raises(ConfigurationError) as excinfo:
         _boot(
             allow_open_registration=True,
@@ -142,9 +140,9 @@ def test_the_refusal_lists_every_missing_control_at_once():
             redis_url="",
         )
     message = str(excinfo.value)
-    assert "REQUIRE_BUSINESS_EMAIL" in message
-    assert "KYC_ENFORCED" in message
-    assert "REDIS_URL must be set" in message
+    assert "REDIS_URL" in message
+    assert "REQUIRE_BUSINESS_EMAIL" not in message
+    assert "KYC_ENFORCED" not in message
 
 
 def test_development_is_not_gated_at_all():
