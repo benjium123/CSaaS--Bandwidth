@@ -14,6 +14,7 @@ COPY backend/pyproject.toml /app/pyproject.toml
 COPY backend/requirements.lock* /app/
 COPY backend/app /app/app
 COPY backend/migrations /app/migrations
+COPY backend/scripts /app/scripts
 COPY backend/alembic.ini /app/alembic.ini
 
 # Prefer the lock file (8.23) for a reproducible build; fall back to pyproject.toml's

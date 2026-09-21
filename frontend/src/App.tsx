@@ -47,6 +47,7 @@ import { cn } from "@/lib/utils";
 // in it is scoped to `is-light`, so loading it unconditionally costs the dark theme nothing.
 import "@/components/conversations/consoleTheme.css";
 import "@/components/conversations/consoleTheme.light.css";
+import AdminEntry from "@/pages/AdminEntry";
 
 /**
  * Legacy routes kept as redirects so saved links still land somewhere useful:
@@ -164,6 +165,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
 export function App() {
   const { me, orgId, ready } = useAuth();
   const location = useLocation();
+  // Admin entry: intercept /admin and /admin/* only (never /administrator).
+  if (
+    location.pathname === "/admin" ||
+    location.pathname.startsWith("/admin/")
+  ) {
+    return <AdminEntry />;
+  }
 
   if (!ready) return <Spinner label="Starting" />;
 

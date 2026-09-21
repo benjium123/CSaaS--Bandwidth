@@ -357,13 +357,22 @@ async def register(
     )
 
 
-@router.post("/login", response_model=TokenOut)
-async def login(
+async def _login(
     payload: LoginIn,
     request: Request,
     response: Response,
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: AsyncSession,
+    *,
+    require_admin: bool = False,
 ) -> TokenOut:
+    """Shared password sign-in body.
+
+    ``/login`` delegates here with ``require_admin=False``; the dedicated admin sign-in
+    endpoint (``admin_auth.py``) imports this helper and calls it with ``require_admin=True``.
+    The admin gate runs after the existing password/active/lockout/SSO checks and before any
+    pending MFA token or session is minted, and reuses the same ``login:<email>`` rate-limit
+    bucket so the second endpoint cannot bypass the login rate limit.
+    """
     settings: Settings = request.app.state.settings
     await enforce_rate_limit(request, f"login:{payload.email.strip().lower()}")
     user = await users_repo.get_by_email(session, payload.email)
@@ -423,6 +432,26 @@ async def login(
             detail="sso_required",
         )
 
+    # Admin gate: only the dedicated admin sign-in endpoint sets require_admin=True. Runs
+    # after every credential check above and before any pending MFA token or session is
+    # minted, so a non-admin never receives a token of any kind. The audit event uses the
+    # existing "locked" outcome (same as the SSO deny) and does NOT touch the lockout counter.
+    if require_admin:
+        operator = await operators_svc.get_active(session, user.id)
+        if operator is None or operator.role != "admin":
+            await _log_and_fail(
+                session,
+                PermissionDeniedError(
+                    "Platform operator admin access required",
+                    code="admin_access_required",
+                ),
+                email=user.email,
+                outcome="locked",
+                user_id=user.id,
+                request=request,
+                detail="admin_access_required",
+            )
+
     rehash = needs_rehash(user.hashed_password)
     if rehash:
         user.hashed_password = hash_password(payload.password)
@@ -452,6 +481,16 @@ async def login(
         access_token=token,
         requires_2fa_enrollment=await second_factor.must_enrol(session, settings, user),
     )
+
+
+@router.post("/login", response_model=TokenOut)
+async def login(
+    payload: LoginIn,
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> TokenOut:
+    return await _login(payload, request, response, session)
 
 
 @router.get("/me", response_model=MeOut)
@@ -493,6 +532,12 @@ async def me(
         else:
             permissions = sorted(set(role.permissions or []))
     operator = await operators_svc.get_active(session, user.id)
+    # P41: an active platform operator is obliged to hold a second factor regardless of the
+    # org-role policy (see services/second_factor.requires_second_factor). The role-derived
+    # answer above stays authoritative for non-operators; for a factorless active operator
+    # we force the flag on so the console sends them to enrolment.
+    if operator is not None and not user.has_second_factor:
+        second_factor_required = True
     # Per workspace, because the answer IS per workspace: the same person can be verified in
     # one and not asked in another. Two cheap queries per membership, and only when the role
     # actually holds a gated permission and KYC is enforced - see the resolver.

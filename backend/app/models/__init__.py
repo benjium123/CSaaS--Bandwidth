@@ -1,3 +1,4 @@
+from app.models.admin_invite import ADMIN_INVITE_ISSUED_VIA, AdminInvite
 from app.models.agent import AgentProfile, AgentSmsTurn, CallTranscriptSegment
 from app.models.ai_providers import (
     AI_KEY_MODES,
@@ -446,4 +447,6 @@ __all__ = [
     "FAILURE_CLASSES",
     "User",
     "WebhookDeadLetter",
+    "ADMIN_INVITE_ISSUED_VIA",
+    "AdminInvite",
 ]
