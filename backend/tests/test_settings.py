@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 import structlog
+from pydantic import ValidationError
 
 from app.config import Settings
 from app.errors import ConfigurationError
@@ -147,3 +148,34 @@ def test_every_supported_carrier_is_listed_even_when_dark():
     never learns they could switch on."""
     names = {p.name for p in Settings(**_base()).provider_statuses()}
     assert {"bandwidth", "telnyx", "twilio", "plivo", "signalwire"} <= names
+
+
+# ==================================================================================
+# Telnyx registration-approval freshness (TELNYX_APPROVAL_MAX_AGE_SECONDS)
+# ==================================================================================
+def test_telnyx_approval_max_age_defaults_to_seven_days():
+    s = Settings(**_base())
+    assert s.telnyx_approval_max_age_seconds == 604800
+
+
+@pytest.mark.parametrize("value", [300, 2592000])
+def test_telnyx_approval_max_age_accepts_inclusive_bounds(value):
+    s = Settings(**_base(telnyx_approval_max_age_seconds=value))
+    assert s.telnyx_approval_max_age_seconds == value
+
+
+@pytest.mark.parametrize("value", [299, 2592001])
+def test_telnyx_approval_max_age_rejects_out_of_range(value):
+    with pytest.raises(ConfigurationError) as exc:
+        Settings(**_base(telnyx_approval_max_age_seconds=value))
+    assert "TELNYX_APPROVAL_MAX_AGE_SECONDS" in str(exc.value)
+
+
+def test_telnyx_approval_max_age_rejects_boolean():
+    # bool is an int subclass and there is deliberately no 0/disable value: a truthy flag
+    # must never be read as the value 1. Depending on pydantic's int coercion this is
+    # rejected either by the aggregate validator (ConfigurationError) or at field parse
+    # time (ValidationError); both must name the variable.
+    with pytest.raises((ConfigurationError, ValidationError)) as exc:
+        Settings(**_base(telnyx_approval_max_age_seconds=True))
+    assert "TELNYX_APPROVAL_MAX_AGE_SECONDS" in str(exc.value).upper()
