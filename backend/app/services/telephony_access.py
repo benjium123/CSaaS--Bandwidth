@@ -118,7 +118,13 @@ async def refusal(
     # always was, nested under the flag it was already guarded by, so the subscription
     # check can run after it rather than being skipped by its early return. Individual
     # orgs additionally always reach it for calling and numbers.
-    kyc_required = settings.kyc_enforced or (is_individual and kind in ("call", "number"))
+    # Org.kyc_required lets an operator require verification on a single workspace;
+    # getattr keeps that safe when the org row is absent (None) or predates the column.
+    kyc_required = (
+        settings.kyc_enforced
+        or bool(getattr(org, "kyc_required", False))
+        or (is_individual and kind in ("call", "number"))
+    )
     if kyc_required:
         profile = await _profile(session, org_id)
         if profile is None:

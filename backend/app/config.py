@@ -372,11 +372,12 @@ class Settings(BaseSettings):
     #: loosens it, and none that lets a deployment claim a registration it does not hold.
     require_number_registration: bool = False
 
-    #: TEST/DEV ONLY. Registration is invite-only in production and the validator below
-    #: REFUSES this flag when APP_ENV=production, so it cannot be the reason a live
-    #: instance is open. It exists because the test suite legitimately creates many users,
-    #: and the alternative - a conftest that inserts users behind the API - would stop
-    #: exercising the real registration path in every one of those tests.
+    #: Public self-serve signup. Off (the default) registration is invite-only. In
+    #: production the validator below permits it only with REDIS_URL set, so the shared
+    #: per-IP registration ceilings are real rather than per-process. It exists as a flag
+    #: because the test suite legitimately creates many users, and the alternative - a
+    #: conftest that inserts users behind the API - would stop exercising the real
+    #: registration path in every one of those tests.
     allow_open_registration: bool = False
     #: P43: public signup takes work addresses only. On by default so that turning
     #: ALLOW_OPEN_REGISTRATION on never quietly opens the door to consumer mailboxes too -
@@ -549,53 +550,23 @@ class Settings(BaseSettings):
                 problems.append("DATABASE_URL still uses the default development credentials")
             # OPEN REGISTRATION: a requirement, not a refusal.
             #
-            # This used to refuse the boot outright. That was right while the product was
-            # invite-only, and deleting it now that public self-serve signup is the business
-            # model would be wrong in a specific way: the refusal was not hygiene, it was the
-            # thing that made the flag safe to leave in the codebase. Delete it and the only
-            # surviving record of the decision is an env var somebody flipped once, on a day
-            # nobody remembers, with no statement anywhere of what that flip took away.
+            # An invite token did three jobs beyond letting someone in: it proved a trusted
+            # colleague chose this person, it proved the address was reachable, and it capped
+            # account creation at the rate humans issue invitations. Public signup drops all
+            # three, so the boot names the one control it can still check.
             #
-            # An invite token was doing three jobs beyond letting someone in. It proved
-            # somebody already trusted at this company chose to invite this person. It proved
-            # the address was reachable, because the token arrived there. And it capped account
-            # creation at the rate humans issue invitations, which made the request rate limit a
-            # formality. Public signup removes all three at once, so the conditions below are
-            # what has to be true before the boot is allowed to proceed without them.
-            #
-            # WHAT THIS CANNOT PROMISE. It checks that controls are CONFIGURED, not that they
-            # are effective - a boot check has no other reach. `require_business_email` in
-            # particular only applies to registrations with no invite and only past first-run,
-            # so "the setting is on" is a weaker claim than "every registration is filtered",
-            # and the message below says only the weaker thing on purpose. A domain list also
-            # answers "clean" for every domain it has not heard of, so it filters volume and
-            # establishes nothing about who signed up. The control that actually holds is the
-            # operator's rule that nothing can be purchased before KYC approval - which is why
-            # KYC_ENFORCED is on this list rather than being assumed.
-            if self.allow_open_registration:
-                missing_controls = []
-                if not self.require_business_email:
-                    missing_controls.append(
-                        "REQUIRE_BUSINESS_EMAIL must be true - with open registration it is "
-                        "the only filter on who may create an account"
-                    )
-                if not self.kyc_enforced:
-                    missing_controls.append(
-                        "KYC_ENFORCED must be true - open registration with verification off "
-                        "means anyone who signs up can reach telephony with nothing checked"
-                    )
-                if not self.redis_url.strip():
-                    missing_controls.append(
-                        "REDIS_URL must be set - without it every rate limit falls back to a "
-                        "per-process counter, so the registration ceiling silently multiplies "
-                        "by the worker count and nothing reports that it happened"
-                    )
-                if missing_controls:
-                    problems.append(
-                        "ALLOW_OPEN_REGISTRATION is on, which removes invite-only signup. "
-                        "It is permitted in production only alongside the controls an invite "
-                        "was providing: " + "; ".join(missing_controls)
-                    )
+            # KYC_ENFORCED and REQUIRE_BUSINESS_EMAIL are deliberately NOT requirements here.
+            # KYC is per org now - a new org is created with kyc_required=true, and that is
+            # what gates it - and REQUIRE_BUSINESS_EMAIL filters only invite-less
+            # registrations past first-run, so demanding it here would state a guarantee it
+            # does not make.
+            if self.allow_open_registration and not self.redis_url.strip():
+                problems.append(
+                    "ALLOW_OPEN_REGISTRATION is on, which removes invite-only signup, but "
+                    "REDIS_URL is not set - every rate limit falls back to a per-process "
+                    "counter, so the registration ceiling silently multiplies by the worker "
+                    "count and nothing reports that it happened."
+                )
             if not self.redis_url.strip():
                 problems.append(
                     "REDIS_URL is required in production - rate limits and session revocation "

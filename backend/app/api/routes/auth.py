@@ -30,11 +30,18 @@ from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import audit as audit_svc
+from app.services import (
+    ban_list,
+    lockout,
+    login_flow,
+    passkey_policy,
+    password_policy,
+    second_factor,
+)
 from app.services import defaults as defaults_svc
 from app.services import identity as identity_svc
 from app.services import invites as invites_svc
 from app.services import kyc as kyc_svc
-from app.services import lockout, login_flow, passkey_policy, password_policy, second_factor
 from app.services import operators as operators_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -252,17 +259,43 @@ async def register(
             "This instance is invite-only. Ask an administrator for an invitation."
         )
 
-    # account_type and full_name only shape a SELF-SERVE signup, and only "individual"
-    # imposes anything: its workspace is the person's own, so it is named after them and a
-    # blank name would leave it unnamed. Checked after the invite is resolved and before
-    # the account exists, so an invitee is never blocked by - and never records - the
-    # type or the name a signup asked for: the invitation decides the workspace.
+    # account_type and full_name only shape a SELF-SERVE signup, and each kind imposes at
+    # most one thing of its own: "individual" is the person's own workspace, so it is named
+    # after them and a blank name would leave it unnamed; a "business" one may additionally
+    # have to sit on a work address. Both are checked after the invite is resolved and
+    # before the account exists, so an invitee is never blocked by - and never records - the
+    # type, the name or the address a signup asked for: the invitation decides the workspace.
     if (
         invite is None
         and payload.account_type == "individual"
         and not payload.full_name.strip()
     ):
         raise ValidationFailedError("An individual account requires your full name.")
+
+    # REQUIRE_BUSINESS_EMAIL keeps consumer mailboxes out of business workspaces: a free
+    # address says nothing about the company behind it, and an org is a thing colleagues get
+    # added to, so the rule is deliberately narrow - it never touches an individual signup,
+    # whose workspace is one person, and never an invited membership, which joins a workspace
+    # that already exists and whose domain the inviter already chose.
+    if (
+        invite is None
+        and payload.account_type == "business"
+        and settings.require_business_email
+    ):
+        email_domain = ban_list.domain_of(str(payload.email))
+        extra_consumer_domains = {
+            d.strip().lower()
+            for d in settings.extra_consumer_email_domains.split(",")
+            if d.strip()
+        }
+        if email_domain is not None and (
+            email_domain in ban_list.FREE_EMAIL_DOMAINS
+            or email_domain in extra_consumer_domains
+        ):
+            raise ValidationFailedError(
+                "A business account needs a work email address. Use your company domain, "
+                "or sign up as an individual."
+            )
 
     await password_policy.check(settings, payload.password, email=payload.email)
     user = await users_repo.create_user(

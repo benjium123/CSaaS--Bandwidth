@@ -35,8 +35,13 @@ async def _new_org(
     email: str,
     *,
     account_type: str | None = None,
+    kyc_required: bool | None = None,
 ) -> tuple[uuid.UUID, uuid.UUID, str]:
-    """Register + create an org through the real API; returns (org_id, user_id, token)."""
+    """Register + create an org through the real API; returns (org_id, user_id, token).
+
+    Newly created orgs default to ``kyc_required=True``; pass ``kyc_required=False``
+    to model a grandfathered workspace that predates the KYC opt-in.
+    """
     r = await client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": PASSWORD, "full_name": "Tester"},
@@ -51,9 +56,12 @@ async def _new_org(
     )
     assert r.status_code == 201, r.text
     org_id = uuid.UUID(r.json()["id"])
-    if account_type is not None:
+    if account_type is not None or kyc_required is not None:
         org = (await session.execute(sa.select(Org).where(Org.id == org_id))).scalar_one()
-        org.account_type = account_type
+        if account_type is not None:
+            org.account_type = account_type
+        if kyc_required is not None:
+            org.kyc_required = kyc_required
         await session.commit()
     return org_id, user_id, token
 
@@ -121,7 +129,14 @@ async def test_individual_texting_gate_raises_its_own_permission_denied_code(
 
 
 async def test_business_texting_unchanged_when_kyc_is_not_enforced(client, session, settings):
-    org_id, _, _ = await _new_org(session, client, "biz-sms@example.com", account_type="business")
+    # Grandfathered workspace: kyc_required=False predates the KYC opt-in default.
+    org_id, _, _ = await _new_org(
+        session,
+        client,
+        "biz-sms@example.com",
+        account_type="business",
+        kyc_required=False,
+    )
     assert await telephony_access.refusal(session, settings, org_id, "sms") is None
     await telephony_access.require_telephony_allowed(session, org_id, "sms", settings=settings)
     assert (
@@ -130,6 +145,40 @@ async def test_business_texting_unchanged_when_kyc_is_not_enforced(client, sessi
         )
         == "account_not_verified"
     )
+
+
+async def test_business_with_kyc_required_blocked_until_approved(client, session, settings):
+    """New workspaces opt in via ``kyc_required=True``: pending KYC blocks telephony."""
+    org_id, user_id, _ = await _new_org(
+        session, client, "biz-kyc-required@example.com", account_type="business"
+    )
+    org = (await session.execute(sa.select(Org).where(Org.id == org_id))).scalar_one()
+    assert org.kyc_required is True  # creation default, even with kyc_enforced off
+
+    await _set_profile(
+        session,
+        org_id,
+        status="submitted",
+        decided_by=user_id,
+        decided_at=datetime.now(timezone.utc),
+    )
+    assert await telephony_access.refusal(session, settings, org_id, "sms") == (
+        "account_not_verified"
+    )
+    with pytest.raises(AccountNotVerifiedError):
+        await telephony_access.require_telephony_allowed(
+            session, org_id, "sms", settings=settings
+        )
+
+    await _set_profile(
+        session,
+        org_id,
+        status="approved",
+        decided_by=user_id,
+        decided_at=datetime.now(timezone.utc),
+    )
+    assert await telephony_access.refusal(session, settings, org_id, "sms") is None
+    await telephony_access.require_telephony_allowed(session, org_id, "sms", settings=settings)
 
 
 # --------------------------------------------------------------------------------------
