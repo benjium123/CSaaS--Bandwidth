@@ -1,5 +1,13 @@
 # DONE — Phases 15–19 (2026-09-01 → 2026-09-03)
 
+<!-- ringlite-migration-note -->
+> **Historical document.** Original brands, domains, carrier choices and
+> deployment facts are retained verbatim below. The current product is
+> **Ringlite**, target domain https://ringlite.io, primary carrier **Telnyx**,
+> with deployment pending operator verification. See
+> [RINGLITE_DOMAIN_CUTOVER.md](RINGLITE_DOMAIN_CUTOVER.md) for the domain cutover plan.
+
+
 The approved follow-on plan (`docs/PLAN_P15_P19.md`) is complete and deployed to
 https://csaas.sabinepropertygroup.net. Migrations through `0020`.
 

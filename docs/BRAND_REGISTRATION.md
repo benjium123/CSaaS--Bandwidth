@@ -1,5 +1,13 @@
 # Track R — Brand & Campaign Registration (10DLC + Toll-Free)
 
+<!-- ringlite-migration-note -->
+> **Historical document.** Original brands, domains, carrier choices and
+> deployment facts are retained verbatim below. The current product is
+> **Ringlite**, target domain https://ringlite.io, primary carrier **Telnyx**,
+> with deployment pending operator verification. See
+> [RINGLITE_DOMAIN_CUTOVER.md](RINGLITE_DOMAIN_CUTOVER.md) for the domain cutover plan.
+
+
 > **This is a standing parallel track, not a phase.** It starts on day 1 and runs alongside
 > P0–P4. It is sequenced this way because **registration is a wall-clock wait, not a work
 > item** — days to weeks of third-party vetting that no amount of engineering speeds up.

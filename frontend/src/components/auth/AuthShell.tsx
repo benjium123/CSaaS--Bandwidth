@@ -126,7 +126,7 @@ export function AuthAside() {
     <aside className="relative flex shrink-0 flex-col justify-between gap-10 border-b border-border/60 px-5 py-8 sm:px-8 lg:w-[42%] lg:max-w-xl lg:border-b-0 lg:border-r lg:py-16 lg:pl-14">
       <div>
         <div className="ex-rise flex items-baseline gap-3" style={delay(0)}>
-          <span className="ex-nameplate text-2xl text-[hsl(var(--ex-bone))]">CSaaS</span>
+          <span className="ex-nameplate text-2xl text-[hsl(var(--ex-bone))]">Ringlite</span>
           <span className="ex-label">Console</span>
         </div>
         <p

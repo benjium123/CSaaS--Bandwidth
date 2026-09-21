@@ -81,7 +81,7 @@ function Readiness({
   if (mode === "platform") {
     return (
       <div className="space-y-2">
-        <Pill tone="info">Using CSaaS keys</Pill>
+        <Pill tone="info">Using Ringlite keys</Pill>
         <p className="text-[13px] text-[hsl(var(--cx-subtle))]">You pay for what your assistants use.</p>
       </div>
     );
@@ -570,7 +570,7 @@ export function AiProvidersTab() {
               variant={currentMode === "platform" ? "default" : "outline"}
               onClick={() => handleModeClick("platform")}
             >
-              Use CSaaS keys (billed per use)
+              Use Ringlite keys (billed per use)
             </Button>
             <Button
               type="button"

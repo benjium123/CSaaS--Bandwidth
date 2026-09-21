@@ -201,10 +201,10 @@ export function AdminMfaPage() {
               aria-hidden="true"
               className="flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-900 text-sm font-semibold text-white dark:bg-white dark:text-neutral-900"
             >
-              O
+              R
             </span>
             <div className="leading-tight">
-              <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">OrvoIP</p>
+              <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Ringlite</p>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">Administrator security</p>
             </div>
           </div>

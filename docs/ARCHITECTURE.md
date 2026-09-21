@@ -1,5 +1,13 @@
 # Architecture & Settled Decisions
 
+<!-- ringlite-migration-note -->
+> **Historical document.** Original brands, domains, carrier choices and
+> deployment facts are retained verbatim below. The current product is
+> **Ringlite**, target domain https://ringlite.io, primary carrier **Telnyx**,
+> with deployment pending operator verification. See
+> [RINGLITE_DOMAIN_CUTOVER.md](RINGLITE_DOMAIN_CUTOVER.md) for the domain cutover plan.
+
+
 > These are **decisions**, not options. Each has a reason and a named condition under which
 > it may be revisited. Do not relitigate without hitting the stated condition.
 > Evidence lives in `docs/research/`.

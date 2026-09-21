@@ -1,5 +1,13 @@
 # OPEN ISSUES — running ledger for the P11–P14 push
 
+<!-- ringlite-migration-note -->
+> **Historical document.** Original brands, domains, carrier choices and
+> deployment facts are retained verbatim below. The current product is
+> **Ringlite**, target domain https://ringlite.io, primary carrier **Telnyx**,
+> with deployment pending operator verification. See
+> [RINGLITE_DOMAIN_CUTOVER.md](RINGLITE_DOMAIN_CUTOVER.md) for the domain cutover plan.
+
+
 > Created 2026-08-29. Every issue found while executing P11–P14 that is NOT solved
 > in-phase gets a row here, to be resolved in a dedicated cleanup pass at the end.
 > When one is fixed, mark it ✅ with the commit. Do not silently drop rows.

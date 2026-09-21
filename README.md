@@ -1,41 +1,77 @@
-# CSaaS — Communications Software as a Solution
+# Ringlite
 
-Self-hosted, multi-tenant communications platform: SMS, MMS, voice, WebRTC softphone,
-contacts, unified inbox, campaigns, auto-dialer, and AI agents on **both SMS and voice**.
-
-**Carrier:** Bandwidth (primary) · Telnyx (failover)
 **Repo:** https://github.com/benjium123/CSaaS--Bandwidth
 
----
+Ringlite is a multi-tenant communications platform serving both business and
+individual accounts.
+
+## Accounts and access
+
+- **Business accounts** and **individual accounts** are both supported.
+- Individual accounts require **Didit** identity verification followed by
+  **mandatory admin approval** before activation.
+- Individual accounts are **calling only**: no SMS and no MMS.
+
+## Carriers and services
+
+- **Telnyx** is the primary carrier.
+- Didit provides identity verification (KYC).
+
+## Target domain
+
+The target public domain is <https://ringlite.io>. This change does **not**
+deploy anything; the domain cutover is pending operator action. See
+[docs/RINGLITE_DOMAIN_CUTOVER.md](docs/RINGLITE_DOMAIN_CUTOVER.md) for the
+cutover plan and [docs/RUNBOOK.md](docs/RUNBOOK.md) for operations.
+
+## Identifiers
+
+Existing repository, package, container, database and environment identifiers
+are retained. Internal compatibility identifiers are preserved while the
+public product name changes to Ringlite. Follow `.env.example` for the current
+environment variable names and expected values.
 
 ## Start here
 
 | Read | For |
 |---|---|
-| **`docs/PROGRESS.md`** | **Always first.** Current phase, blockers, decision log, what not to re-propose. |
+| **`docs/PROGRESS.md`** | Historical phase chronology and decision log; verify current state. |
 | `docs/ARCHITECTURE.md` | The settled decisions and why. Do not relitigate without hitting the stated condition. |
 | `docs/PHASES.md` | The 15 phases and their gates. |
 | `docs/WORKSTREAMS.md` | Who owns which files, and the cross-cutting invariants. |
 | `docs/SPEC.md` | Full feature scope mapped to phases, including what's explicitly out of v1. |
 | `docs/DELEGATION.md` | Which model tier does what on this codebase. |
 | `docs/research/` | The evidence behind the decisions. Read only the relevant one. |
+| [docs/RINGLITE_DOMAIN_CUTOVER.md](docs/RINGLITE_DOMAIN_CUTOVER.md) | Domain cutover plan (pending operator). |
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | Operations runbook. |
 
 ## Setup
 
-```bash
+Copy the example environment file and fill in local values:
+
+```sh
 cp .env.example .env
-# paste your keys into .env — it is gitignored
 ```
 
-`.env` is organised by phase: `[P0]` keys are needed to boot, `[P1]` for voice, `[P2]` for
-AI, `[--]` optional. **Leave anything you don't have blank** — the app boots with degraded
-features and logs exactly which provider is disabled and why.
+`.env` is gitignored; never commit secrets. `.env.example` is the authoritative
+list of environment variables. The keys required for the primary Telnyx path
+are:
 
-The keys you need first, in order:
-1. `BANDWIDTH_ACCOUNT_ID`, `BANDWIDTH_API_USERNAME`, `BANDWIDTH_API_PASSWORD`
-2. `BANDWIDTH_MESSAGING_APPLICATION_ID` + `BANDWIDTH_DEFAULT_NUMBER`
-3. `JWT_SECRET`, `SESSION_SECRET`, `CREDENTIAL_ENCRYPTION_KEY` (generation commands are in the file)
-4. `PUBLIC_BASE_URL` — a tunnel in dev, your domain in prod. **Carriers POST webhooks here.**
+- `TELNYX_API_KEY`
+- `TELNYX_MESSAGING_PROFILE_ID`
+- `TELNYX_VOICE_CONNECTION_ID`
+- `TELNYX_PUBLIC_KEY` for webhook signature verification
+
+Core application keys:
+
+- `JWT_SECRET`
+- `SESSION_SECRET`
+- `CREDENTIAL_ENCRYPTION_KEY`
+- `CREDENTIALS_MASTER_KEY`
+
+For the Ringlite target deployment, `PUBLIC_BASE_URL` and `PUBLIC_WEB_URL`
+should point at <https://ringlite.io>. Local development keeps its existing
+local URLs.
 
 ## Run it locally
 
@@ -64,26 +100,3 @@ reports as enabled when its `.env` line is blank, check your shell environment.
 **Postgres is the merge gate, not SQLite.** CI runs the whole suite against a real
 `postgres:16` container plus `alembic upgrade head` / `downgrade base` / `upgrade head`.
 SQLite is only a fast local proxy.
-
-## The one-paragraph architecture
-
-FastAPI + Postgres + Redis + S3, React/Vite console. All carrier traffic goes through a
-**Carrier Abstraction Layer** modelled as *event in → async command out* (the Telnyx shape),
-with the Bandwidth adapter serializing commands down into BXML documents. **AI voice agents**
-consume audio over Bandwidth's bidirectional `<StartStream>` WebSocket and run a **cascaded**
-Pipecat pipeline (Deepgram → LLM → ElevenLabs) — not speech-to-speech, because we need a
-transcript at every hop. **Human agents** get a real WebRTC path, never TCP-carried audio.
-Every send passes a central compliance gate.
-
-## Two things that will bite you if you skip them
-
-1. **Webhooks are at-least-once and unordered on both carriers.** Bandwidth retries any
-   non-2xx for 24 hours, in parallel with in-flight retries. Every handler is idempotent and
-   state-based, or your call state will corrupt on the first transfer.
-2. **`rt = 1.0` does not prove low latency.** It hides standing queue depth. Never accept it
-   as evidence that the audio path is healthy.
-
-## Status
-
-Planning complete. **P0 not started.** Blocker: confirm the Bandwidth account path to
-production (`R1` in `docs/PROGRESS.md`).

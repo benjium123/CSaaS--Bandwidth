@@ -139,7 +139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispose_engine()
 
     app = FastAPI(
-        title="CSaaS API",
+        title="Ringlite API",
         version=VERSION,
         lifespan=lifespan,
         docs_url=None if settings.is_production else "/docs",

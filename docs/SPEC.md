@@ -1,5 +1,13 @@
 # SPEC — CSaaS (Communications Software as a Solution)
 
+<!-- ringlite-migration-note -->
+> **Historical document.** Original brands, domains, carrier choices and
+> deployment facts are retained verbatim below. The current product is
+> **Ringlite**, target domain https://ringlite.io, primary carrier **Telnyx**,
+> with deployment pending operator verification. See
+> [RINGLITE_DOMAIN_CUTOVER.md](RINGLITE_DOMAIN_CUTOVER.md) for the domain cutover plan.
+
+
 A self-hosted, multi-tenant communications platform: SMS, MMS, voice, WebRTC softphone,
 contacts, unified inbox, campaigns, auto-dialer, and AI agents on **both** SMS and voice.
 Carrier: **Bandwidth primary, Telnyx failover.**

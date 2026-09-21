@@ -63,7 +63,7 @@ describe("SettingsSecurityPage", () => {
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
       "/api/v1/auth/2fa/enroll": {
         secret: "SECRET123",
-        provisioning_uri: "otpauth://totp/CSaaS:a@example.com?secret=SECRET123",
+        provisioning_uri: "otpauth://totp/Ringlite:a@example.com?secret=SECRET123",
       },
     });
     renderWithProviders(<SettingsSecurityPage />, client);
@@ -74,14 +74,14 @@ describe("SettingsSecurityPage", () => {
     );
 
     const link = await screen.findByRole("link", {
-      name: "otpauth://totp/CSaaS:a@example.com?secret=SECRET123",
+      name: "otpauth://totp/Ringlite:a@example.com?secret=SECRET123",
     });
     expect(link).toHaveAttribute(
       "href",
-      "otpauth://totp/CSaaS:a@example.com?secret=SECRET123",
+      "otpauth://totp/Ringlite:a@example.com?secret=SECRET123",
     );
     expect(screen.getByLabelText("Provisioning URI")).toHaveValue(
-      "otpauth://totp/CSaaS:a@example.com?secret=SECRET123",
+      "otpauth://totp/Ringlite:a@example.com?secret=SECRET123",
     );
   });
 
@@ -95,7 +95,7 @@ describe("SettingsSecurityPage", () => {
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
       "/api/v1/auth/2fa/enroll": {
         secret: "SECRET123",
-        provisioning_uri: "otpauth://totp/CSaaS:a@example.com?secret=SECRET123",
+        provisioning_uri: "otpauth://totp/Ringlite:a@example.com?secret=SECRET123",
       },
     });
     renderWithProviders(<SettingsSecurityPage />, client);
@@ -109,7 +109,7 @@ describe("SettingsSecurityPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Copy" }));
 
     expect(writeText).toHaveBeenCalledWith(
-      "otpauth://totp/CSaaS:a@example.com?secret=SECRET123",
+      "otpauth://totp/Ringlite:a@example.com?secret=SECRET123",
     );
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
@@ -333,7 +333,7 @@ describe("SettingsSecurityPage", () => {
       "/api/v1/orgs/current/settings": ORG_SETTINGS,
       "/api/v1/auth/2fa/enroll": {
         secret: "SECRET123",
-        provisioning_uri: "otpauth://totp/CSaaS:a@example.com?secret=SECRET123",
+        provisioning_uri: "otpauth://totp/Ringlite:a@example.com?secret=SECRET123",
       },
     });
     renderWithProviders(<SettingsSecurityPage />, client);
