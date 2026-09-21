@@ -84,8 +84,8 @@ performs **no local approval** — status stays `submitted` and approval still f
 no ref), the transport `list_requests` performs exactly **one GET** using the official phone /
 business / date filters; the reconciler adopts a result **only when exactly one** request
 matches (exact match). It **never retries the POST and never approves locally**; zero,
-multiple, or mismatched results leave the marker in place and still require the runbook /
-support workflow (§3.2, §4.2).
+multiple, or mismatched results leave the marker in place and now have a written operator
+process: `docs/runbooks/TELNYX_TFV_RECONCILIATION.md` (§3.2, §4.2).
 
 **Number association — `services/telnyx_number_association.py::associate_number_with_telnyx`**
 (reached from `numbers.py::assign_campaign` for Telnyx numbers). Locks number then campaign;
@@ -109,6 +109,13 @@ carriers keep allow-on-unknown unless `REQUIRE_NUMBER_REGISTRATION`.
 **Transports / payload.** `TelnyxRegistrationClient`, `TelnyxTollfreeVerificationClient`, the
 pure `build_tollfree_verification_payload`; single attempt, no auto-retry, no secrets logged.
 
+**Operator runbook.** `docs/runbooks/TELNYX_TFV_RECONCILIATION.md` documents the guarded
+reconcile route, the zero/multiple/mismatched/timeout cases, the malformed-marker and
+resolved-record cases, evidence handling, escalation, a controlled marker-repair procedure,
+an incident/audit template, rollback steps, prohibitions, and a verification checklist. The
+runbook is written; assigning the named operational owner and the audit-trail storage remains
+an owner decision (§3.2, §6).
+
 ## 3. Remaining work (code / product / external)
 
 1. **Code — stale approval cannot be demoted; design unresolved.** Persisted local approval
@@ -118,9 +125,15 @@ pure `build_tollfree_verification_payload`; single attempt, no auto-retry, no se
    evidence consulted by the send gate**, while leaving the terminal registration status
    itself intact. A Telnyx query on every send is explicitly *not* the approach. Open code
    work.
-2. **Product/ops (P0) — reconciliation runbook.** Zero/multiple/mismatched timeout
-   reconciliation needs a written operator runbook and support workflow; hand-editing
-   `carrier_refs`/markers as evidence must never be done casually.
+2. **Product/ops — reconciliation runbook written; owner/audit-trail assignment open.** The
+   operator runbook is now written: `docs/runbooks/TELNYX_TFV_RECONCILIATION.md`. It covers
+   zero/multiple/mismatched timeout reconciliation, carrier timeout/error, listed/normal use
+   of the guarded `POST /tollfree/{tfv_id}/reconcile-telnyx` path, a malformed or inconsistent
+   durable marker, request-id/marker mismatches, and a controlled marker-repair procedure. The
+   residual blocker is an owner decision: assigning the **named operational owner**, the
+   **audit-trail storage** location, and the Telnyx support workflow (§4.2, §6). Hand-editing
+   `carrier_refs`/markers as evidence must never be done casually, and the runbook states that
+   prohibition explicitly.
 3. **External — credentials and live verification.** Production Telnyx credentials, active
    provider account(s), and live sandbox/authorized verification are external prerequisites.
    No secrets belong in the repo or docs.
@@ -135,9 +148,12 @@ pure `build_tollfree_verification_payload`; single attempt, no auto-retry, no se
    the send path never re-checks the carrier, so a registration Telnyx later fails or suspends
    keeps sending locally, and terminal `approved` cannot be corrected; the bounded-freshness /
    revocation design is unresolved (§3.1).
-2. **No reconciliation runbook / support workflow (product/ops).** Zero/multiple/mismatched
-   results from `reconcile_tollfree_filing_with_telnyx` retain the marker and are unresolvable
-   without a documented, safe operator process (§3.2).
+2. **Reconciliation runbook written; owner/support workflow open (product/ops).** The runbook
+   now documents a safe operator process (`docs/runbooks/TELNYX_TFV_RECONCILIATION.md`), so
+   zero/multiple/mismatched results from `reconcile_tollfree_filing_with_telnyx` — which
+   retain the marker — have a written path. The residual blocker is the owner decision on the
+   named operational owner, the audit-trail storage, and the Telnyx support workflow (§3.2,
+   §6, §8).
 3. **No real credentials / no live verification (external).** Production Telnyx credentials
    and an active provider account are external prerequisites, and no test exercises the real
    API (§3.3, §6, §8).
@@ -156,8 +172,9 @@ pure `build_tollfree_verification_payload`; single attempt, no auto-retry, no se
   terms (no amounts asserted here).
 - Production Telnyx credentials / active provider account(s), provisioned and rotated outside
   the repo (never in docs or logs); filing and the guards cannot work without them.
-- Whether carrier-confirmed approval suffices and who is accountable; a named process to
-  reconcile timeout markers and re-check already-`approved` registrations (§4.1, §4.2).
+- Whether carrier-confirmed approval suffices and who is accountable; a named **owner** (and
+  **audit-trail** storage) for the written reconciliation runbook and the Telnyx support
+  workflow, plus a named process to re-check already-`approved` registrations (§4.1, §4.2).
 - Per-environment `REQUIRE_NUMBER_REGISTRATION` default; KYC scope; prepaid/settlement policy;
   BYON decision; pricing pass-through.
 - Deploy window and rollback owner; a migration only if `carrier_refs` is proven insufficient.
@@ -167,9 +184,12 @@ pure `build_tollfree_verification_payload`; single attempt, no auto-retry, no se
 - **Stale carrier evidence is trusted.** The guards run once and the send gate reads only
   persisted rows, so after a carrier downgrade a number keeps sending on a now-false
   `approved` — and terminal `approved` cannot be demoted.
-- **Reconciliation dead-ends pressure operators to forge evidence.** Zero/multiple/mismatched
-  results leave the marker and force a manual step; without a runbook the temptation is to
-  hand-edit `carrier_refs`, out-of-band evidence the guard then trusts.
+- **Reconciliation dead-ends can still pressure operators to forge evidence.** The runbook now
+  documents the safe reconcile path and the repair guardrails
+  (`docs/runbooks/TELNYX_TFV_RECONCILIATION.md`), but zero/multiple/mismatched results still
+  leave the marker and force a controlled manual step; the residual temptation is to hand-edit
+  `carrier_refs` — out-of-band evidence the guard then trusts — which the runbook prohibits.
+  The two-person / backup / audit guardrails need an assigned owner to be effective.
 - **Unknown-registration allowance for non-Telnyx carriers:** allow-on-unknown is the default;
   the only tightening is an env flag, so the control is opt-in there.
 - **Mock-only confidence.** A shape change in `registration_status`/`verificationStatus` can
@@ -188,6 +208,6 @@ approval now returning 409; number association (`..._success.py` + `..._failures
 pending, timeout, wrong-phone and repeat markers; payload tests for field and enum
 validation; TFV filing and reconciliation route tests.
 
-**Still missing:** live-carrier verification (production credentials, §6), the reconciliation
-operator runbook (P0, §4.2), and confirmation of a Telnyx order-path route regression test
-(P1).
+**Still missing:** live-carrier verification (production credentials, §6), an assigned owner
+and audit-trail storage for the written reconciliation runbook (P0, §4.2), and confirmation of
+a Telnyx order-path route regression test (P1).

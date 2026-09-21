@@ -129,6 +129,9 @@ Key TFV module paths referenced above:
   transport/payload (F13, `0719e59`).
 - `backend/app/api/routes/registration.py` — operator-gated filing and reconciliation
   routes (F4, F5, F11, F12, F15).
+- `docs/runbooks/TELNYX_TFV_RECONCILIATION.md` — operator runbook for TFV filing
+  reconciliation and controlled marker repair (P0-O1, documentation deliverable; the named
+  owner and audit-trail assignment remain an `OWNER DECISION`).
 
 **Explicitly retired claims.** This ledger **no longer** claims that any of the following
 are unbuilt: carrier clients; filing writers; carrier-confirmed approval; number
@@ -195,12 +198,23 @@ been made. `BLOCKED`.
 **P0-O1 (operational). Reconciliation runbook.** The timeout/late-approval reconciliation
 service and route (F14/F15) can legitimately return **zero**, **multiple**, or **mismatched**
 carrier records, and durable attempt markers (F2) can be left inconsistent after a crash or
-partial outage. `NOT BUILT`.
+partial outage. The **written runbook is now DELIVERED**;
+**the assigned owner and audit trail remain `OWNER DECISION` (`NOT BUILT`).**
 
-- Required: a written runbook for each case — zero records, multiple records, mismatch, and
-  marker repair — with a **named owner** and an **audit trail** (what was changed, by whom,
-  why, and the carrier evidence relied on).
-- `Verify:` the runbook file exists and names an owner;
+- Delivered: `docs/runbooks/TELNYX_TFV_RECONCILIATION.md` — a case-by-case operator runbook
+  for zero records, multiple records, a mismatched record, carrier timeout/error, a malformed
+  marker, a marker without a request id, a request id without a marker, and already-resolved
+  records. It states the "never blindly retry the POST" safety rule, the guarded
+  `POST /tollfree/{tfv_id}/reconcile-telnyx` path, a controlled marker-repair procedure
+  (two-person approval, backup/snapshot, exact carrier evidence, audit-log fields, rollback,
+  post-repair verification), an evidence-handling rule, an escalation path, an incident/audit
+  template, prohibitions, a verification checklist, and repository symbol/route references.
+- Still required (`OWNER DECISION`): assign the **named owner** for that runbook, the
+  **audit-trail** storage location (what was changed, by whom, why, and the carrier evidence
+  relied on), and the Telnyx support workflow. Until then P0-O1 is not fully closed.
+- `Verify:` the runbook file exists (`docs/runbooks/TELNYX_TFV_RECONCILIATION.md`) and names
+  its role owners (Platform Operator / Incident Commander); the accountable owner assignment
+  is still open;
   `grep -rn "marker" docs backend/app/services`.
 
 ### P0 / P1 — owner decisions (each blocks its area; see section 7)
@@ -292,7 +306,9 @@ yet built or not yet regression-verified; they are explicitly **not** passing.
 - **Non-Telnyx unknown-registration** policy (a carrier record with no local entity, and the
   reverse).
 - **Deploy** window, rollback plan, and a rollback owner.
-- A **named owner** and an **audit trail** for the reconciliation runbook (P0-O1).
+- A **named owner** (role assignment) and an **audit-trail** storage location for the
+  reconciliation runbook (P0-O1) — the runbook document itself is delivered; the accountable
+  owner and audit trail are still open.
 
 ## 8. Non-goals for the implementer
 
@@ -307,7 +323,8 @@ yet built or not yet regression-verified; they are explicitly **not** passing.
    required?
 2. Is a single live verification (P0-E1) sufficient evidence to authorize production
    filing, or is a staged pilot required?
-3. Who owns the reconciliation runbook, and where is the audit trail stored (P0-O1)?
+3. Who owns the reconciliation runbook, and where is the audit trail stored (P0-O1)? The
+   runbook document is delivered; this owner/audit-trail question remains open.
 4. Does the order path have a dedicated guard regression test today (P1-V1), or must one be
    added?
 5. Which code paths rely on `SELECT … FOR UPDATE`, and has each been exercised against
