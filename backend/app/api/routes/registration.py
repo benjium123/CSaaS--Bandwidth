@@ -23,6 +23,22 @@ A decision that does not actually move the record (already in that status, a sta
 ``submitted`` after ``approved``, or a terminal state) is not reported as applied: the
 transaction is rolled back and a conflict is raised instead of a misleading 200.
 
+Approval evidence (``carrier_refs["telnyx_approval"]``) is written by exactly TWO paths,
+both bound to the exact Telnyx identifier currently on file:
+
+* the fail-closed ``/status`` decision that FIRST moves a record to ``approved`` records
+  ``approved`` evidence with source ``status_decision``, atomically in the same
+  transaction;
+* the READ-ONLY ``/refresh-telnyx`` routes (``/brands/{id}/refresh-telnyx``,
+  ``/campaigns/{id}/refresh-telnyx``, ``/tollfree/{id}/refresh-telnyx``) re-poll the
+  carrier once and record ``refresh`` evidence, giving approval evidence a bounded
+  freshness and a revocation path that never files and never spends.
+
+``/status`` is NOT a refresh path. It records a registrar decision (for an approval it
+makes one confirming GET at that moment) but it does not otherwise re-poll the carrier and
+it never revokes evidence. Refreshing the evidence - and revoking it when the carrier no
+longer approves - is the job of the explicit ``/refresh-telnyx`` routes.
+
 A toll-free ``/file-telnyx`` call is different again: the service durably writes a
 "pending attempt" marker to ``carrier_refs`` BEFORE the carrier POST, so a second click or
 a retry after an ambiguous create timeout is refused rather than filing twice. That timeout
@@ -40,6 +56,7 @@ repairs local state.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
 import httpx
@@ -49,6 +66,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.deps import OrgContext, require_permission, require_platform_operator
+from app.compliance import telnyx_approval
 from app.errors import (
     ConflictError,
     NotFoundError,
@@ -83,6 +101,9 @@ router = APIRouter(prefix="/api/v1/registration", tags=["registration"])
 # releases numbers to send. Everything here fails closed: a missing reference, a missing
 # key, a carrier error, a mismatched identifier or any unconfirmed status refuses the
 # approval rather than trusting the caller.
+#
+# The same lookups back the read-only ``/refresh-telnyx`` routes, which re-poll the carrier
+# once to refresh (or revoke) the stored approval evidence without ever filing or spending.
 
 #: carrier_refs key under which a Telnyx identifier (brandId / campaignId / verification
 #: id) is recorded. Matches ``telnyx_brand_filing``.
@@ -206,14 +227,19 @@ async def _confirmed_registration_get(
     return payload
 
 
-async def _require_brand_approved(
+async def _fetch_brand_carrier_payload(
     session: Any, settings: Any, request: Request, brand: Brand
-) -> None:
-    """Refuse an ``approved`` brand decision unless Telnyx confirms it for this brand."""
+) -> Any:
+    """GET this brand's Telnyx record, refusing anything but the exact id on file.
+
+    A missing reference, a carrier/transport error or a mismatched identifier is a
+    conflict, so no caller can act on a record Telnyx did not confirm. No payload or
+    identifier is ever logged.
+    """
     carrier_id = _carrier_ref(brand)
     if carrier_id is None:
         raise ConflictError(
-            "Cannot record an approved brand decision: no Telnyx brand reference is on "
+            "Cannot look up this brand with Telnyx: no Telnyx brand reference is on "
             "file. File the brand with Telnyx first."
         )
     payload = await _confirmed_registration_get(
@@ -221,9 +247,81 @@ async def _require_brand_approved(
     )
     if not _carrier_id_matches(payload, carrier_id, "brandId", "id"):
         raise ConflictError(
-            "Telnyx returned a different brand than the one on file; refusing to record "
-            "an approved decision against a mismatched record."
+            "Telnyx returned a different brand than the one on file; refusing to use a "
+            "mismatched record."
         )
+    return payload
+
+
+async def _fetch_campaign_carrier_payload(
+    session: Any, settings: Any, request: Request, campaign: Campaign
+) -> Any:
+    """GET this campaign's Telnyx record, refusing anything but the exact id on file.
+
+    A missing reference, a carrier/transport error or a mismatched identifier is a
+    conflict, so no caller can act on a record Telnyx did not confirm. No payload or
+    identifier is ever logged.
+    """
+    carrier_id = _carrier_ref(campaign)
+    if carrier_id is None:
+        raise ConflictError(
+            "Cannot look up this campaign with Telnyx: no Telnyx campaign reference is "
+            "on file. File the campaign with Telnyx first."
+        )
+    payload = await _confirmed_registration_get(
+        session, settings, request, carrier_id, "get_campaign"
+    )
+    if not _carrier_id_matches(payload, carrier_id, "campaignId", "id"):
+        raise ConflictError(
+            "Telnyx returned a different campaign than the one on file; refusing to use "
+            "a mismatched record."
+        )
+    return payload
+
+
+async def _fetch_tfv_carrier_payload(
+    session: Any, settings: Any, request: Request, tfv: TollFreeVerification
+) -> Any:
+    """GET this verification from Telnyx, refusing anything but the exact id on file.
+
+    A missing reference, a carrier/transport error or a mismatched identifier is a
+    conflict, so no caller can act on a request Telnyx did not confirm. No payload or
+    identifier is ever logged.
+    """
+    carrier_id = _carrier_ref(tfv)
+    if carrier_id is None:
+        raise ConflictError(
+            "Cannot look up this toll-free verification with Telnyx: no Telnyx "
+            "verification reference is on file."
+        )
+    resolved = await _resolve_telnyx_settings(session, settings)
+    api_key = _telnyx_api_key(resolved)
+    client = TelnyxTollfreeVerificationClient(
+        api_key=api_key, client=_injected_http_client(request)
+    )
+    try:
+        payload = await client.get(carrier_id)
+    except Exception as exc:  # noqa: BLE001 - any failure fails closed
+        raise ConflictError(
+            "Could not look up the toll-free verification with Telnyx; the request "
+            "was refused"
+        ) from exc
+    finally:
+        # No-op when the caller injected the client (we do not own it).
+        await client.aclose()
+    if not _carrier_id_matches(payload, carrier_id, "id"):
+        raise ConflictError(
+            "Telnyx returned a different verification than the one on file; refusing to "
+            "use a mismatched record."
+        )
+    return payload
+
+
+async def _require_brand_approved(
+    session: Any, settings: Any, request: Request, brand: Brand
+) -> None:
+    """Refuse an ``approved`` brand decision unless Telnyx confirms it for this brand."""
+    payload = await _fetch_brand_carrier_payload(session, settings, request, brand)
     if map_brand_status(payload) != APPROVED:
         raise ConflictError(
             "Telnyx does not currently report this brand as approved; refusing to record "
@@ -235,20 +333,7 @@ async def _require_campaign_approved(
     session: Any, settings: Any, request: Request, campaign: Campaign
 ) -> None:
     """Refuse an ``approved`` campaign decision unless Telnyx confirms it for this one."""
-    carrier_id = _carrier_ref(campaign)
-    if carrier_id is None:
-        raise ConflictError(
-            "Cannot record an approved campaign decision: no Telnyx campaign reference "
-            "is on file. File the campaign with Telnyx first."
-        )
-    payload = await _confirmed_registration_get(
-        session, settings, request, carrier_id, "get_campaign"
-    )
-    if not _carrier_id_matches(payload, carrier_id, "campaignId", "id"):
-        raise ConflictError(
-            "Telnyx returned a different campaign than the one on file; refusing to "
-            "record an approved decision against a mismatched record."
-        )
+    payload = await _fetch_campaign_carrier_payload(session, settings, request, campaign)
     if map_campaign_status(payload) != APPROVED:
         raise ConflictError(
             "Telnyx does not currently report this campaign as approved; refusing to "
@@ -272,37 +357,58 @@ async def _require_tfv_approved(
     session: Any, settings: Any, request: Request, tfv: TollFreeVerification
 ) -> None:
     """Refuse an ``approved`` toll-free decision unless Telnyx confirms it for this one."""
-    carrier_id = _carrier_ref(tfv)
-    if carrier_id is None:
-        raise ConflictError(
-            "Cannot record an approved toll-free decision: no Telnyx verification "
-            "reference is on file."
-        )
-    resolved = await _resolve_telnyx_settings(session, settings)
-    api_key = _telnyx_api_key(resolved)
-    client = TelnyxTollfreeVerificationClient(
-        api_key=api_key, client=_injected_http_client(request)
-    )
-    try:
-        payload = await client.get(carrier_id)
-    except Exception as exc:  # noqa: BLE001 - any failure fails closed
-        raise ConflictError(
-            "Could not confirm the toll-free verification with Telnyx; the approval was "
-            "refused"
-        ) from exc
-    finally:
-        # No-op when the caller injected the client (we do not own it).
-        await client.aclose()
-    if not _carrier_id_matches(payload, carrier_id, "id"):
-        raise ConflictError(
-            "Telnyx returned a different verification than the one on file; refusing to "
-            "record an approved decision against a mismatched record."
-        )
+    payload = await _fetch_tfv_carrier_payload(session, settings, request, tfv)
     if not _tfv_is_approved(payload):
         raise ConflictError(
             "Telnyx does not currently report this toll-free verification as verified; "
             "refusing to record an approved decision the carrier has not confirmed."
         )
+
+
+def _persist_telnyx_approval(record: Any, *, state: str, source: str) -> None:
+    """Persist bounded Telnyx approval evidence onto ``record`` in the open transaction.
+
+    The evidence is bound to the exact current ``carrier_refs["telnyx"]`` and stamped
+    with a timezone-aware current UTC timestamp. The whole-dict reassignment goes through
+    ``telnyx_approval.apply_evidence`` so a SQLAlchemy ``PortableJSON`` column detects the
+    change. Raises ``ConflictError`` (leaving the caller to roll the transaction back) when
+    there is no reference to bind to, so unbound evidence is never written.
+    """
+    carrier_id = _carrier_ref(record)
+    if carrier_id is None:
+        raise ConflictError(
+            "No Telnyx reference is on file; refusing to record approval evidence."
+        )
+    evidence = telnyx_approval.build_evidence(
+        state=state,
+        carrier_id=carrier_id,
+        checked_at=datetime.now(timezone.utc),
+        source=source,
+    )
+    telnyx_approval.apply_evidence(record, evidence)
+
+
+def _apply_refresh_evidence(record: Any, *, carrier_approved: bool) -> None:
+    """Record refresh evidence for ``record``, or leave it untouched.
+
+    An approved carrier response always records approved evidence. A non-approved or
+    unknown response records revoked evidence ONLY when the record is LOCALLY approved -
+    there is nothing to revoke otherwise - and no path ever changes the local status.
+    """
+    if carrier_approved:
+        _persist_telnyx_approval(
+            record,
+            state=telnyx_approval.STATE_APPROVED,
+            source=telnyx_approval.SOURCE_REFRESH,
+        )
+        return
+    if getattr(record, "status", None) != APPROVED:
+        return
+    _persist_telnyx_approval(
+        record,
+        state=telnyx_approval.STATE_REVOKED,
+        source=telnyx_approval.SOURCE_REFRESH,
+    )
 
 
 # ----------------------------------------------------------------------------------
@@ -611,6 +717,11 @@ async def set_campaign_status(
     status refuses the approval; non-approved decisions keep the existing monotonic
     behaviour. A decision that changes nothing (already current, stale, or terminal) is not
     reported as applied: the transaction is rolled back and a conflict is raised.
+
+    This route is NOT a refresh path. It records a decision and, for an approval, makes one
+    confirming GET at that moment, but it does not otherwise re-poll the carrier and never
+    revokes evidence. Refresh - or revoke - the stored approval evidence with the explicit,
+    READ-ONLY ``POST /campaigns/{campaign_id}/refresh-telnyx`` route.
     """
     campaign = await ctx.session.get(Campaign, campaign_id)
     if campaign is None:
@@ -620,6 +731,52 @@ async def set_campaign_status(
             ctx.session, request.app.state.settings, request, campaign
         )
     await _apply_status_or_conflict(ctx.session, campaign, payload)
+    if _is_approval(payload.status):
+        # Only AFTER the transition succeeded: ``_apply_status_or_conflict`` may roll the
+        # transaction back, and evidence must never survive (or race) that rollback.
+        _persist_telnyx_approval(
+            campaign,
+            state=telnyx_approval.STATE_APPROVED,
+            source=telnyx_approval.SOURCE_STATUS_DECISION,
+        )
+    await ctx.session.commit()
+    return await _campaign_out(ctx.session, campaign)
+
+
+@router.post("/campaigns/{campaign_id}/refresh-telnyx", response_model=CampaignOut)
+async def refresh_campaign_telnyx(
+    campaign_id: uuid.UUID,
+    request: Request,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> CampaignOut:
+    """Re-poll Telnyx once and refresh (or revoke) this campaign's approval evidence.
+
+    This is the bounded-freshness and revocation path for approval evidence; ``/status``
+    is NOT a refresh path. It performs exactly ONE read-only carrier GET, never files,
+    never spends, never calls ``advance_status`` and never changes the local (including
+    terminal) status. It is restricted to a platform operator (super admin) that also holds
+    ``compliance:manage``.
+
+    A missing Telnyx reference, a carrier/transport error, or a response that is not the
+    exact campaign on file is a conflict and mutates no evidence. When Telnyx confirms the
+    exact campaign as approved, ``approved`` evidence is recorded with source ``refresh``
+    and the current UTC timestamp. When the exact campaign is non-approved/unknown and the
+    record is LOCALLY approved, ``revoked`` evidence is recorded with source ``refresh``
+    and the local status is left unchanged; a record that is not locally approved is
+    returned unchanged and no approval evidence is created. No payload, secret, identifier
+    or PII is logged; the carrier is only ever called using the org's configured Telnyx
+    credentials.
+    """
+    campaign = await ctx.session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise NotFoundError("Campaign not found")
+    payload = await _fetch_campaign_carrier_payload(
+        ctx.session, request.app.state.settings, request, campaign
+    )
+    _apply_refresh_evidence(
+        campaign, carrier_approved=map_campaign_status(payload) == APPROVED
+    )
     await ctx.session.commit()
     return await _campaign_out(ctx.session, campaign)
 
@@ -641,6 +798,11 @@ async def set_brand_status(
     monotonic behaviour. A decision that changes nothing (already current, stale, or
     terminal) is not reported as applied: the transaction is rolled back and a conflict is
     raised.
+
+    This route is NOT a refresh path. It records a decision and, for an approval, makes one
+    confirming GET at that moment, but it does not otherwise re-poll the carrier and never
+    revokes evidence. Refresh - or revoke - the stored approval evidence with the explicit,
+    READ-ONLY ``POST /brands/{brand_id}/refresh-telnyx`` route.
     """
     brand = await ctx.session.get(Brand, brand_id)
     if brand is None:
@@ -650,6 +812,49 @@ async def set_brand_status(
             ctx.session, request.app.state.settings, request, brand
         )
     await _apply_status_or_conflict(ctx.session, brand, payload)
+    if _is_approval(payload.status):
+        # Only AFTER the transition succeeded: ``_apply_status_or_conflict`` may roll the
+        # transaction back, and evidence must never survive (or race) that rollback.
+        _persist_telnyx_approval(
+            brand,
+            state=telnyx_approval.STATE_APPROVED,
+            source=telnyx_approval.SOURCE_STATUS_DECISION,
+        )
+    await ctx.session.commit()
+    return _brand_out(brand)
+
+
+@router.post("/brands/{brand_id}/refresh-telnyx", response_model=BrandOut)
+async def refresh_brand_telnyx(
+    brand_id: uuid.UUID,
+    request: Request,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> BrandOut:
+    """Re-poll Telnyx once and refresh (or revoke) this brand's approval evidence.
+
+    This is the bounded-freshness and revocation path for approval evidence; ``/status``
+    is NOT a refresh path. It performs exactly ONE read-only carrier GET, never files,
+    never spends, never calls ``advance_status`` and never changes the local (including
+    terminal) status. It is restricted to a platform operator (super admin) that also holds
+    ``compliance:manage``.
+
+    A missing Telnyx reference, a carrier/transport error, or a response that is not the
+    exact brand on file is a conflict and mutates no evidence. When Telnyx confirms the
+    exact brand as approved, ``approved`` evidence is recorded with source ``refresh`` and
+    the current UTC timestamp. When the exact brand is non-approved/unknown and the record
+    is LOCALLY approved, ``revoked`` evidence is recorded with source ``refresh`` and the
+    local status is left unchanged; a record that is not locally approved is returned
+    unchanged and no approval evidence is created. No payload, secret, identifier or PII is
+    logged; the carrier is only ever called using the org's configured Telnyx credentials.
+    """
+    brand = await ctx.session.get(Brand, brand_id)
+    if brand is None:
+        raise NotFoundError("Brand not found")
+    payload = await _fetch_brand_carrier_payload(
+        ctx.session, request.app.state.settings, request, brand
+    )
+    _apply_refresh_evidence(brand, carrier_approved=map_brand_status(payload) == APPROVED)
     await ctx.session.commit()
     return _brand_out(brand)
 
@@ -901,14 +1106,15 @@ async def set_tfv_status(
     nothing (already current, stale, or terminal) is not reported as applied: the
     transaction is rolled back and a conflict is raised.
 
-    This route records a registrar decision only. It does NOT reconcile a pending Telnyx
-    filing attempt: an ambiguous create timeout may leave no request id to look up, so the
-    pending marker written by ``/file-telnyx`` is not repaired here. Use the explicit,
-    READ-ONLY ``POST /tollfree/{tfv_id}/reconcile-telnyx`` route - the first safe
-    reconciliation path, which adopts a request id only on a single exact-match carrier
-    result - for that; zero, multiple or mismatched results still require an explicit
-    external reconciliation (a documented runbook or a Telnyx support investigation), not a
-    status change here.
+    This route records a registrar decision only and is NOT a refresh path. It does NOT
+    reconcile a pending Telnyx filing attempt: an ambiguous create timeout may leave no
+    request id to look up, so the pending marker written by ``/file-telnyx`` is not
+    repaired here. Use the explicit, READ-ONLY ``POST /tollfree/{tfv_id}/reconcile-telnyx``
+    route - the first safe reconciliation path, which adopts a request id only on a single
+    exact-match carrier result - for that; zero, multiple or mismatched results still
+    require an explicit external reconciliation (a documented runbook or a Telnyx support
+    investigation), not a status change here. To refresh or revoke the stored approval
+    evidence, use the explicit, READ-ONLY ``POST /tollfree/{tfv_id}/refresh-telnyx`` route.
     """
     tfv = await ctx.session.get(TollFreeVerification, tfv_id)
     if tfv is None:
@@ -918,5 +1124,49 @@ async def set_tfv_status(
             ctx.session, request.app.state.settings, request, tfv
         )
     await _apply_status_or_conflict(ctx.session, tfv, payload)
+    if _is_approval(payload.status):
+        # Only AFTER the transition succeeded: ``_apply_status_or_conflict`` may roll the
+        # transaction back, and evidence must never survive (or race) that rollback.
+        _persist_telnyx_approval(
+            tfv,
+            state=telnyx_approval.STATE_APPROVED,
+            source=telnyx_approval.SOURCE_STATUS_DECISION,
+        )
+    await ctx.session.commit()
+    return _tfv_out(tfv)
+
+
+@router.post("/tollfree/{tfv_id}/refresh-telnyx", response_model=TfvOut)
+async def refresh_tfv_telnyx(
+    tfv_id: uuid.UUID,
+    request: Request,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> TfvOut:
+    """Re-poll Telnyx once and refresh (or revoke) this verification's approval evidence.
+
+    This is the bounded-freshness and revocation path for approval evidence; ``/status``
+    is NOT a refresh path. It performs exactly ONE read-only carrier GET, never files,
+    never spends, never calls ``advance_status`` and never changes the local (including
+    terminal) status. It is restricted to a platform operator (super admin) that also holds
+    ``compliance:manage``.
+
+    A missing Telnyx reference, a carrier/transport error, or a response that is not the
+    exact verification on file is a conflict and mutates no evidence. When Telnyx reports
+    the exact verification's documented ``verificationStatus`` as ``Verified``, ``approved``
+    evidence is recorded with source ``refresh`` and the current UTC timestamp. When the
+    exact verification is non-approved/unknown and the record is LOCALLY approved,
+    ``revoked`` evidence is recorded with source ``refresh`` and the local status is left
+    unchanged; a record that is not locally approved is returned unchanged and no approval
+    evidence is created. No payload, secret, identifier or PII is logged; the carrier is
+    only ever called using the org's configured Telnyx credentials.
+    """
+    tfv = await ctx.session.get(TollFreeVerification, tfv_id)
+    if tfv is None:
+        raise NotFoundError("Toll-free verification not found")
+    payload = await _fetch_tfv_carrier_payload(
+        ctx.session, request.app.state.settings, request, tfv
+    )
+    _apply_refresh_evidence(tfv, carrier_approved=_tfv_is_approved(payload))
     await ctx.session.commit()
     return _tfv_out(tfv)

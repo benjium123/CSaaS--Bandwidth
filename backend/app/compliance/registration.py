@@ -24,6 +24,8 @@ it is a number we failed to finish. For `carrier == "telnyx"`:
                   number's `provisioning['telnyx_campaign_assignment']` marker is
                   `assigned` and matches that campaign/carrier id;
                 * toll-free: the verification carries a `carrier_refs['telnyx']` id.
+                Either way the approval evidence Telnyx returned must still be fresh and
+                matching that carrier id.
 
 `REQUIRE_NUMBER_REGISTRATION=true` turns `unknown` into a refusal for every carrier, for
 deployments that do manage every registration here. Note the direction: that flag can only
@@ -36,12 +38,15 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Literal
 
 import sqlalchemy as sa
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.compliance.telnyx_approval import evaluate_evidence
+from app.config import get_active_settings
 from app.models import OrgNumber
 from app.models.numbers import Campaign, TollFreeVerification
 
@@ -53,6 +58,13 @@ Verdict = Literal["approved", "pending", "rejected", "unknown"]
 #: campaign/TFV registrations are created by *us*, so an unknown registration is a gap we
 #: must not send through - not a number registered directly at the carrier.
 TELNYX_CARRIER = "telnyx"
+
+#: Operator-facing text for every non-approved Telnyx-approval outcome. Deliberately
+#: generic: the evaluator's own reason separates missing from stale from revoked, which is
+#: carrier-internal detail, and the operator action is the same whichever it was.
+_TELNYX_EVIDENCE_REFUSAL = (
+    "Telnyx approval evidence on file is missing, stale or no longer approved"
+)
 
 
 @dataclass(frozen=True)
@@ -125,8 +137,52 @@ def _telnyx_local_assignment_ok(
     return True, ""
 
 
+def _resolve_freshness_window(
+    max_age_seconds: int | None, now: datetime | None
+) -> tuple[int | None, datetime | None]:
+    """Fill in whichever of the two freshness inputs the caller omitted (``None``).
+
+    Only called where Telnyx evidence is about to be judged, so a send that involves no
+    Telnyx number never reads the settings or the clock. A value the caller did supply -
+    valid or not - is passed through untouched, so the evaluator fails closed on it.
+    """
+    if max_age_seconds is None:
+        max_age_seconds = get_active_settings().telnyx_approval_max_age_seconds
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return max_age_seconds, now
+
+
+def _telnyx_evidence_state(
+    registration: Campaign | TollFreeVerification,
+    *,
+    now: datetime | None,
+    max_age_seconds: int | None,
+) -> RegistrationState:
+    """Require fresh, matching, approved Telnyx approval evidence for a registration.
+
+    Runs only after the status and carrier-reference checks have already passed, and reads
+    nothing but the row already loaded - no carrier call, no query. Missing, malformed,
+    stale, future-dated and revoked evidence all fail closed the same way: ``pending``.
+    """
+    approved, _reason = evaluate_evidence(
+        getattr(registration, "carrier_refs", None),
+        carrier_id=_telnyx_carrier_ref(registration),
+        now=now,
+        max_age_seconds=max_age_seconds,
+    )
+    if approved:
+        return RegistrationState("approved")
+    return RegistrationState("pending", _TELNYX_EVIDENCE_REFUSAL)
+
+
 def _tollfree_registration_state(
-    number: OrgNumber, tfv: TollFreeVerification | None, *, telnyx: bool
+    number: OrgNumber,
+    tfv: TollFreeVerification | None,
+    *,
+    telnyx: bool,
+    now: datetime | None,
+    max_age_seconds: int | None,
 ) -> RegistrationState:
     if tfv is None:
         return RegistrationState(
@@ -144,11 +200,18 @@ def _tollfree_registration_state(
             "pending",
             "toll-free verification is approved locally but not registered with Telnyx",
         )
+    if telnyx:
+        return _telnyx_evidence_state(tfv, now=now, max_age_seconds=max_age_seconds)
     return RegistrationState("approved")
 
 
 def _local_registration_state(
-    number: OrgNumber, campaign: Campaign | None, *, telnyx: bool
+    number: OrgNumber,
+    campaign: Campaign | None,
+    *,
+    telnyx: bool,
+    now: datetime | None,
+    max_age_seconds: int | None,
 ) -> RegistrationState:
     if number.campaign_id is None:
         return RegistrationState(
@@ -171,6 +234,9 @@ def _local_registration_state(
         ok, detail = _telnyx_local_assignment_ok(number, campaign)
         if not ok:
             return RegistrationState("pending", detail)
+        return _telnyx_evidence_state(
+            campaign, now=now, max_age_seconds=max_age_seconds
+        )
     return RegistrationState("approved")
 
 
@@ -179,20 +245,32 @@ def _registration_state_for(
     *,
     campaign: Campaign | None,
     tfv: TollFreeVerification | None,
+    now: datetime | None,
+    max_age_seconds: int | None,
 ) -> RegistrationState:
     """Decide from already-loaded rows.
 
     Shared by the single-number and batch entry points so the two can never drift; the
-    batch path feeds it rows it already fetched, so the Telnyx checks add no queries.
+    batch path feeds it rows it already fetched, so the Telnyx checks add no queries. The
+    freshness inputs are resolved by the caller, once per operation, before this is called
+    for a Telnyx number.
     """
     telnyx = _is_telnyx(number)
     if number.number_type == "tollfree":
-        return _tollfree_registration_state(number, tfv, telnyx=telnyx)
-    return _local_registration_state(number, campaign, telnyx=telnyx)
+        return _tollfree_registration_state(
+            number, tfv, telnyx=telnyx, now=now, max_age_seconds=max_age_seconds
+        )
+    return _local_registration_state(
+        number, campaign, telnyx=telnyx, now=now, max_age_seconds=max_age_seconds
+    )
 
 
 async def registration_state(
-    session: AsyncSession, number: OrgNumber
+    session: AsyncSession,
+    number: OrgNumber,
+    *,
+    max_age_seconds: int | None = None,
+    now: datetime | None = None,
 ) -> RegistrationState:
     """What we actually know about this number's right to send.
 
@@ -200,6 +278,12 @@ async def registration_state(
     wrong one is how a toll-free number ends up "approved" because somebody's long-code
     campaign was.
     """
+    # Only a Telnyx number can reach the evidence check, so only a Telnyx number pays for
+    # reading the settings and the clock. When the caller already supplied both, they are
+    # used as-is (``None`` here means "omitted", not "invalid").
+    if _is_telnyx(number) and (max_age_seconds is None or now is None):
+        max_age_seconds, now = _resolve_freshness_window(max_age_seconds, now)
+
     if number.number_type == "tollfree":
         tfv = (
             await session.execute(
@@ -208,12 +292,24 @@ async def registration_state(
                 )
             )
         ).scalar_one_or_none()
-        return _registration_state_for(number, campaign=None, tfv=tfv)
+        return _registration_state_for(
+            number,
+            campaign=None,
+            tfv=tfv,
+            now=now,
+            max_age_seconds=max_age_seconds,
+        )
 
     campaign = None
     if number.campaign_id is not None:
         campaign = await session.get(Campaign, number.campaign_id)
-    return _registration_state_for(number, campaign=campaign, tfv=None)
+    return _registration_state_for(
+        number,
+        campaign=campaign,
+        tfv=None,
+        now=now,
+        max_age_seconds=max_age_seconds,
+    )
 
 
 async def check_number_may_send(
@@ -222,12 +318,22 @@ async def check_number_may_send(
     number: OrgNumber,
     *,
     require_registration: bool = False,
+    max_age_seconds: int | None = None,
+    now: datetime | None = None,
 ) -> tuple[bool, str]:
     """(allowed, reason). Reason is operator-facing and says what to DO."""
     if not number.is_active or number.status != "active":
         return False, f"{number.e164} is {number.status} and cannot send"
 
-    state = await registration_state(session, number)
+    # Resolve here - never before the status check above - and hand the result to
+    # ``registration_state`` so a Telnyx number is judged against one settings read and
+    # one clock read, not two. A non-Telnyx number stays ``None``.
+    if _is_telnyx(number) and (max_age_seconds is None or now is None):
+        max_age_seconds, now = _resolve_freshness_window(max_age_seconds, now)
+
+    state = await registration_state(
+        session, number, max_age_seconds=max_age_seconds, now=now
+    )
     if state.verdict == "approved":
         return True, ""
 
@@ -264,6 +370,8 @@ async def partition_by_eligibility(
     numbers: list[OrgNumber],
     *,
     require_registration: bool = False,
+    max_age_seconds: int | None = None,
+    now: datetime | None = None,
 ) -> tuple[list[OrgNumber], dict[str, str]]:
     """Split a pool into (may send, {e164: why not}).
 
@@ -298,6 +406,13 @@ async def partition_by_eligibility(
 
     allowed: list[OrgNumber] = []
     refused: dict[str, str] = {}
+    # The batch's freshness inputs: resolved at most once, on the first Telnyx number that
+    # reaches registration evaluation, then reused for every later number. A pool with no
+    # Telnyx number never reads the settings or the clock, and every number is judged
+    # against the same instant and the same configured window.
+    window_max_age: int | None = max_age_seconds
+    window_now: datetime | None = now
+
     for number in numbers:
         if not number.is_active or number.status != "active":
             refused[number.e164] = f"{number.e164} is {number.status} and cannot send"
@@ -314,7 +429,18 @@ async def partition_by_eligibility(
             status = campaign.status if campaign else None
             regime = "10DLC campaign"
 
-        state = _registration_state_for(number, campaign=campaign, tfv=tfv)
+        if _is_telnyx(number) and (window_max_age is None or window_now is None):
+            window_max_age, window_now = _resolve_freshness_window(
+                max_age_seconds, now
+            )
+
+        state = _registration_state_for(
+            number,
+            campaign=campaign,
+            tfv=tfv,
+            now=window_now,
+            max_age_seconds=window_max_age,
+        )
 
         if state.verdict == "approved":
             allowed.append(number)
