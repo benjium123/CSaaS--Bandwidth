@@ -7,6 +7,7 @@ import { COUNTRIES } from "@/lib/countries";
 import { Button, Input, Select, Textarea, Spinner, mutationErrorMessage } from "@/components/ui/primitives";
 import { PERSONAL_AGREEMENT_POINTS, VerifyBusinessPage } from "./VerifyBusinessPage";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+import "@/components/kyc/verificationTheme.css";
 
 type Details = { legal_name: string; country: string; phone: string; industry: string; purpose: string; customer_country: string; agreement_version?: string };
 
@@ -107,12 +108,12 @@ export function VerificationPage() {
   const query = useKycProfile(api);
   const profile = query.data;
   const copy = profile && statusCopy(profile.status, profile.account_type);
-  return <main className={`console-surface ${surfaceThemeClass(theme)} min-h-screen bg-background px-4 py-8 text-foreground`}>
+  return <main className={`ringlite-verification console-surface ${surfaceThemeClass(theme)} min-h-screen bg-background px-4 py-8 text-foreground`}>
     <div className="mx-auto max-w-3xl space-y-6">
       <header><p className="text-sm font-semibold">Ringlite</p><h1 className="mt-2 text-3xl font-semibold">Account verification</h1></header>
       {query.isPending ? <Spinner label="Loading verification" /> : query.isError || !profile ? <p role="alert">{mutationErrorMessage(query.error)}</p> : <>
         {profile.account_type === "individual" && <p>Individual accounts support calling only. SMS and MMS are unavailable.</p>}
-        {copy && <section role="status" className="rounded-2xl border p-5"><h2 className="font-semibold">{copy.title}</h2><p>{copy.body}</p>{profile.info_request && <p>{profile.info_request}</p>}{profile.decision_reason && <p>{profile.decision_reason}</p>}</section>}
+        {copy && <section role="status" className="verification-status rounded-2xl border p-5"><p className="verification-status-label">{["submitted", "in_review"].includes(profile.status) ? "APPLICATION RECEIVED" : "YOUR APPLICATION"}</p><h2 className="font-semibold">{copy.title}</h2><p>{copy.body}</p>{profile.info_request && <p>{profile.info_request}</p>}{profile.decision_reason && <p>{profile.decision_reason}</p>}</section>}
         {!["submitted", "in_review"].includes(profile.status) && <PersonalForm key={orgId} profile={profile} />}
         {profile.account_type !== "individual" && <VerifyBusinessPage />}
       </>}

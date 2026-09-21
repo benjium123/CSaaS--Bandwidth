@@ -176,6 +176,8 @@ export function App() {
   }
 
   if (!ready) return <Spinner label="Starting" />;
+  // A setup link must remain reachable when this browser is signed into a customer account.
+  if (location.pathname === "/reset-password") return <ResetPasswordPage />;
 
   if (!me) {
     return (
@@ -287,7 +289,7 @@ export function App() {
       ) : location.pathname.replace(/\/+$/, "") === "/verification" ? (
         <VerificationPage />
       ) : location.pathname === "/onboarding" ? (
-        <OnboardingPage />
+        <div className="ringlite-onboarding"><OnboardingPage /></div>
       ) : location.pathname === "/plans" ? (
         <ChoosePlanPage />
       ) : (

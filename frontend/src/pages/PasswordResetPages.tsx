@@ -92,9 +92,10 @@ export function ForgotPasswordPage() {
  * described by shape; the server's refusal is rendered verbatim and is the only authority.
  */
 export function ResetPasswordPage() {
-  const { api } = useAuth();
+  const { api, logout } = useAuth();
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";
+  const adminSetup = params.get("admin") === "1";
   const [password, setPassword] = React.useState("");
   const [confirm, setConfirm] = React.useState("");
   const [done, setDone] = React.useState(false);
@@ -114,6 +115,7 @@ export function ResetPasswordPage() {
         method: "POST",
         json: { token, new_password: password },
       });
+      if (adminSetup) logout();
       setDone(true);
     } catch (err) {
       setError((err as Error).message);
@@ -128,22 +130,23 @@ export function ResetPasswordPage() {
         as="form"
         onSubmit={onSubmit}
         eyebrow="Recovery · Password"
-        title="Choose a new password"
+        title={adminSetup ? "Set your administrator password" : "Choose a new password"}
         lede={
           done || !token
             ? undefined
             : "A long passphrase - three or four unrelated words - beats a short clever one."
         }
         footer={
-          <Link to="/login" className="ex-link">
+          <Link to={adminSetup ? "/admin/login" : "/login"} className="ex-link">
             Back to sign in
           </Link>
         }
       >
         {done ? (
           <AuthNotice>
-            Your password was changed and every device was signed out. Sign in with the new
-            password and your passkey or authenticator app.
+            {adminSetup
+              ? "Your administrator password is set. Return to administrator sign in. You will be guided through security setup if you have not enrolled a passkey or authenticator app."
+              : "Your password was changed and every device was signed out. Sign in with the new password and your passkey or authenticator app."}
           </AuthNotice>
         ) : !token ? (
           <AuthAlert>This reset link is incomplete.</AuthAlert>

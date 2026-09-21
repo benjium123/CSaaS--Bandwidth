@@ -180,6 +180,7 @@ export function useOrderNumber(api: ApiClient) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: NUMBERS_QUERY_KEY });
       qc.invalidateQueries({ queryKey: ["numbers-available"] });
+      qc.invalidateQueries({ queryKey: ["me", "capabilities"] });
     },
   });
 }

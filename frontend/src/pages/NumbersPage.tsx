@@ -652,6 +652,9 @@ function OrderNumberSection({
             <Link to="/settings/inboxes" className="underline">
               Grant this inbox to a department or employee →
             </Link>
+            <Link to="/settings/team" className="ml-4 font-semibold text-primary underline">
+              Add team members →
+            </Link>
           </span>
         </Card>
       )}

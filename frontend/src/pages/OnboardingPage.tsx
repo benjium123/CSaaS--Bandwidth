@@ -204,7 +204,7 @@ function Wizard({
           </h1>
           <p className="ob-lede">
             {isIndividual
-              ? "Calling unlocks once a super-admin approves this. Texting is not available for individual accounts. Everything else in your workspace works now, so you can set it up while you wait."
+              ? "Calling unlocks after your application is approved. Decisions typically arrive within one hour. Texting is not available for individual accounts."
               : "Calling and texting unlock once this is approved. Everything else in your workspace works now, so you can set it up while you wait."}
           </p>
         </header>
@@ -301,7 +301,7 @@ function Wizard({
             <>
               <p className="ob-submit-copy">
                 {isIndividual
-                  ? "Everything's here. Once you submit, a super-admin reviews it - you can't edit while it's with them."
+                  ? "Everything's here. Submit your application for review. Decisions typically arrive within one hour."
                   : "Everything's here. Once you submit, a reviewer looks at it - you can't edit while it's with them."}
               </p>
               <AuthButton type="button" block onClick={() => onOpen("submit")}>
@@ -328,21 +328,20 @@ function Waiting({ profile, accountType }: { profile: KycProfile; accountType: A
     <AuthSurface>
       <AuthPlate
         eyebrow={isIndividual ? "Identity verification" : "Business verification"}
-        title={isIndividual ? "Awaiting super-admin approval" : "With a reviewer"}
+        title="Your application has been received"
         lede={
           isIndividual
-            ? "A super-admin reviews every application. We'll email you when there's a decision."
-            : "A person reads every application. We'll email you when there's a decision."
+            ? "We typically approve or decline applications within one hour. Your status will update here."
+            : "We typically approve or decline applications within one hour. Your status will update here."
         }
       >
         <div className="space-y-4">
           <Lamp state="wait">Submitted{when(profile.submitted_at)}</Lamp>
-          {/* Deliberately no estimate and no progress bar: there is no SLA in the system,
-              and a bar that fills would be a claim about time we cannot make. */}
+          {/* Typical review time is guidance, not a guaranteed deadline. */}
           <AuthNotice>
             {isIndividual
-              ? "Nothing to do here. Calling stays unavailable until a super-admin approves this - completing the ID check is not approval, and texting is not available for individual accounts."
-              : "Nothing to do here. Meanwhile you can invite your team, connect a provider and set the workspace up - calling and texting are the only things waiting on this."}
+              ? "Once approved, you will go straight to choosing your phone number. Individual accounts support calling only."
+              : "Once approved, you will go straight to choosing your phone number. You can then set up your team."}
           </AuthNotice>
         </div>
       </AuthPlate>
@@ -419,7 +418,7 @@ function Approved({
           {profile.use_case_pending && (
             <AuthNotice>
               {isIndividual
-                ? "Your updated description of how you'll use calling is with a super-admin. What's approved today keeps working until they've looked at it."
+                ? "Your updated calling purpose has been received. Your current approved use remains available during review."
                 : "Your updated description of how you'll use calling and texting is with a reviewer. What's approved today keeps working until they've looked at it."}
             </AuthNotice>
           )}

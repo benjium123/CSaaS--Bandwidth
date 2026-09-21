@@ -183,16 +183,17 @@ describe("IndividualOnboarding — the ID check is pending until a verified appl
   });
 });
 
-describe("IndividualOnboarding — a verified person still waits on a super-admin", () => {
-  it("says awaiting super-admin approval after submission, even with a verified person", async () => {
+describe("IndividualOnboarding — application receipt", () => {
+  it("shows receipt and typical review time after identity verification", async () => {
     render(
       profile("submitted", {
         submitted_at: "2026-09-10T00:00:00+00:00",
         persons: [person({ status: "verified", verified_at: "2026-09-01T00:00:00+00:00" })],
       }),
     );
-    expect(await screen.findByText("Awaiting super-admin approval")).toBeTruthy();
-    expect(screen.getByText(/completing the ID check is not approval/)).toBeTruthy();
+    expect(await screen.findByText("Your application has been received")).toBeTruthy();
+    expect(screen.getByText(/within one hour/)).toBeTruthy();
+    expect(screen.queryByText(/super-admin/i)).toBeNull();
     // No SMS/MMS promise anywhere on the waiting screen.
     expect(screen.queryByText(/texting unlock/i)).toBeNull();
   });
@@ -216,7 +217,7 @@ describe("IndividualOnboarding — approved is calling-only", () => {
         },
       }),
     );
-    expect(await screen.findByText(/with a super-admin/)).toBeTruthy();
+    expect(await screen.findByText(/updated calling purpose has been received/)).toBeTruthy();
     expect(screen.queryByText(/calling and texting is with a reviewer/i)).toBeNull();
   });
 });

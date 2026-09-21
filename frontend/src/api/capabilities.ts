@@ -66,6 +66,7 @@ export function useCapabilities(api: ApiClient) {
     queryFn: () => api.request<Capabilities>("/api/v1/me/capabilities"),
     retry: false,
     staleTime: 30_000,
+    refetchInterval: (query) => ["awaiting_review", "numbers", "remediation"].includes(query.state.data?.org.onboarding_step ?? "") ? 5_000 : false,
   });
 }
 

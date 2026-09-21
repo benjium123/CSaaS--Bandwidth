@@ -147,7 +147,7 @@ export function SignUpPage() {
 
           {isIndividual && (
             <AuthNotice>
-              Verify your identity with Didit, then wait for super-admin approval to start
+              Verify your identity with Didit, then submit your application to start
               calling. Individual accounts do not support SMS or MMS.
             </AuthNotice>
           )}
@@ -224,7 +224,7 @@ export function SignUpPage() {
 
           <p className="text-center text-[0.6875rem] leading-relaxed text-muted-foreground">
             {isIndividual
-              ? "Next you'll add a second factor, then verify your identity. Calling unlocks once a super-admin approves."
+              ? "Next you'll add a second factor, then verify your identity. Decisions typically arrive within one hour."
               : "Next you'll add a second factor, then verify your business. Calling and texting unlock once that's approved."}
           </p>
         </div>

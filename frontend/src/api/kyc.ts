@@ -222,7 +222,7 @@ export function useKycProfile(api: ApiClient, enabled = true) {
     // TanStack Query v5: refetchInterval may be a function of the query. Returning false
     // stops the timer. We only poll while a person is still in flight, and never in the
     // background (refetchIntervalInBackground stays false by default).
-    refetchInterval: (query) => (hasInFlightPerson(query.state.data) ? KYC_POLL_INTERVAL_MS : false),
+    refetchInterval: (query) => (hasInFlightPerson(query.state.data) || ["submitted", "in_review"].includes(query.state.data?.status ?? "") ? KYC_POLL_INTERVAL_MS : false),
   });
 }
 
@@ -255,13 +255,13 @@ function individualStatusCopy(status: KycStatus): { title: string; body: string 
     case "draft":
       return {
         title: "Verify your identity to start calling",
-        body: "Complete identity verification. Calling unlocks after super-admin approval. SMS and MMS are unavailable.",
+        body: "Complete your identity verification to apply for calling access. SMS and MMS are unavailable on individual accounts.",
       };
     case "submitted":
     case "in_review":
       return {
-        title: "Your identity is awaiting super-admin approval",
-        body: "Awaiting super-admin approval. Calling is unavailable until approved. We'll email you. SMS and MMS are unavailable.",
+        title: "Your application has been received",
+        body: "We typically approve or decline applications within one hour. Your status will update here. Once approved, you can choose your phone number.",
       };
     case "needs_info":
       return {
@@ -298,13 +298,13 @@ export function statusCopy(
     case "draft":
       return {
         title: "Verify your business to start calling and texting",
-        body: "Tell us about your business, upload a registration document and confirm your ID. Most reviews finish within one business day.",
+        body: "Tell us about your business, upload a registration document and confirm your ID. Decisions typically arrive within one hour.",
       };
     case "submitted":
     case "in_review":
       return {
-        title: "Your business is being reviewed",
-        body: "Calling and texting unlock as soon as a reviewer approves it. We'll email you.",
+        title: "Your application has been received",
+        body: "We typically approve or decline applications within one hour. Your status will update here. Once approved, you can choose your phone number.",
       };
     case "needs_info":
       return {

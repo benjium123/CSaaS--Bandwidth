@@ -141,11 +141,26 @@ afterEach(() => {
 });
 
 describe("useKycProfile webhook-return polling", () => {
+  it("keeps checking a received application until the decision arrives", async () => {
+    const responses = [profile("submitted", [person("verified")]), profile("in_review", [person("verified")]), profile("approved", [person("verified")])];
+    let index = 0;
+    const client = makeStubClient({ "/api/v1/kyc/profile": () => responses[Math.min(index++, 2)] });
+    const { getByTestId, queryClient, unmount } = renderProbe(client);
+    await flush();
+    expect(getByTestId("profile-status")).toHaveTextContent("submitted");
+    await tick();
+    expect(getByTestId("profile-status")).toHaveTextContent("in_review");
+    await tick();
+    expect(getByTestId("profile-status")).toHaveTextContent("approved");
+    await tick(KYC_POLL_INTERVAL_MS * 3);
+    expect(client.calls).toHaveLength(3);
+    unmount(); queryClient.clear();
+  });
   it("polls while a person is pending/processing and stops once verified", async () => {
     const responses: KycProfile[] = [
-      profile("submitted", [person("pending")]),
-      profile("submitted", [person("processing")]),
-      profile("submitted", [person("verified")]),
+      profile("draft", [person("pending")]),
+      profile("draft", [person("processing")]),
+      profile("draft", [person("verified")]),
     ];
     let i = 0;
     const client = makeStubClient({
@@ -155,7 +170,7 @@ describe("useKycProfile webhook-return polling", () => {
     const { getByTestId, queryClient, unmount } = renderProbe(client);
 
     await flush();
-    expect(getByTestId("profile-status").textContent).toBe("submitted");
+    expect(getByTestId("profile-status").textContent).toBe("draft");
     expect(getByTestId("person-status").textContent).toBe("pending");
     expect(client.calls.length).toBe(1);
 
@@ -169,8 +184,8 @@ describe("useKycProfile webhook-return polling", () => {
     expect(getByTestId("person-status").textContent).toBe("verified");
     expect(client.calls.length).toBe(3);
 
-    // Verified person does NOT imply an approved profile - status stays submitted.
-    expect(getByTestId("profile-status").textContent).toBe("submitted");
+    // Verified person does NOT imply an approved profile - status stays draft.
+    expect(getByTestId("profile-status").textContent).toBe("draft");
 
     // No further polling once no person is in flight.
     await tick(KYC_POLL_INTERVAL_MS * 3);
@@ -184,7 +199,7 @@ describe("useKycProfile webhook-return polling", () => {
     "does not poll when the first load has a terminal person (%s)",
     async (terminal) => {
       const client = makeStubClient({
-        "/api/v1/kyc/profile": profile("submitted", [person(terminal)]),
+        "/api/v1/kyc/profile": profile("draft", [person(terminal)]),
       });
 
       const { getByTestId, queryClient, unmount } = renderProbe(client);
@@ -203,7 +218,7 @@ describe("useKycProfile webhook-return polling", () => {
 
   it("makes no requests when disabled", async () => {
     const client = makeStubClient({
-      "/api/v1/kyc/profile": profile("submitted", [person("pending")]),
+      "/api/v1/kyc/profile": profile("draft", [person("pending")]),
     });
 
     const { getByTestId, queryClient, unmount } = renderProbe(client, false);
