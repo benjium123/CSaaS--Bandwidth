@@ -87,6 +87,32 @@ async def send(settings: Settings, to: list[str], subject: str, body: str) -> bo
     if settings.app_env == "test":
         outbox.append(msg)
         return True
+    if settings.telnyx_email_from:
+        import httpx
+
+        key = settings.telnyx_api_key.get_secret_value()
+        if not key:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                result = await client.post(
+                    "https://api.telnyx.com/v2/email_messages",
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={
+                        "from": settings.telnyx_email_from,
+                        "from_name": "Ringlite",
+                        "to": recipients,
+                        "subject": subject,
+                        "text_body": body,
+                        "html_body": _html(body),
+                        "tracking_settings": {"open_tracking": False, "click_tracking": False},
+                    },
+                )
+                result.raise_for_status()
+            return True
+        except httpx.HTTPError:
+            log.warning("email_telnyx_failed", recipients=len(recipients))
+            return False
     if settings.resend_api_key.get_secret_value():
         import httpx
 

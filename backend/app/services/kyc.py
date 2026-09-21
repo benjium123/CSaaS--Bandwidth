@@ -705,6 +705,11 @@ async def missing_for_submission(session: AsyncSession, profile: KycProfile) -> 
     persons = await kyc_checks.persons_for(session, profile.org_id)
     applicant = use_case.get("applicant_details")
     if applicant:
+        if (
+            applicant.get("application_version") == 3
+            and not str(applicant.get("business_description") or "").strip()
+        ):
+            missing.append("applicant.business_description")
         for field in ("legal_name", "country", "phone", "industry", "purpose", "customer_country"):
             if not str(applicant.get(field) or "").strip():
                 missing.append(f"applicant.{field}")
@@ -942,6 +947,8 @@ async def approve(
         raise ConflictError(
             "Cannot approve yet: " + "; ".join(blockers), code="kyc_approval_blocked"
         )
+    if manual_override and profile.status == "needs_info":
+        transition(profile, "in_review")
     transition(profile, "approved")
     profile.decided_at = _now()
     profile.decided_by = operator_id

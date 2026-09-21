@@ -923,6 +923,7 @@ function AdminConsole() {
             {me?.email ? (
               <span className="hidden text-sm text-neutral-600 sm:inline dark:text-neutral-400">{me.email}</span>
             ) : null}
+          <Link to="/admin" className="text-sm font-semibold text-blue-700">Console</Link>
                   <Link to="/admin/security" className="text-sm underline">
         Security
       </Link>

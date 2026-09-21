@@ -23,3 +23,6 @@ Verified payment triggers Telnyx provisioning from either the signed webhook or 
 An ambiguous carrier failure is never retried blindly. The paid cart remains visible under **Administration → Billing → Phone number purchases**, and a security alert identifies the purchase. Reconcile the Telnyx order before retrying externally or issuing a refund; subscription links open Stripe for billing adjustments. A crash during the durable provisioning claim leaves the cart in `provisioning`, also visible in that list. Do not start a replacement paid checkout for that cart.
 
 Production email delivery and live checkout require the above credentials. A price ID alone does not authorize Stripe API calls. The app never pretends payment succeeded or provisions numbers from a browser-supplied success flag.
+
+## Telnyx confirmation emails
+Set `TELNYX_EMAIL_FROM` to a sender on a Telnyx-verified domain. This selects Telnyx for transactional emails using the existing `TELNYX_API_KEY` and `/v2/email_messages`. Shared domain sending is restricted to the Telnyx account owner and cannot serve customer confirmations. Verify `mail.ringlite.io` and use `no-reply@mail.ringlite.io` in production. Confirmation links follow `PUBLIC_WEB_URL`. Provider failure remains visible and users can resend. API acceptance does not prove inbox delivery.

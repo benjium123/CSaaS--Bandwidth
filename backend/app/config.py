@@ -466,6 +466,7 @@ class Settings(BaseSettings):
     smtp_host: str = ""
     resend_api_key: SecretStr = SecretStr("")
     resend_from: str = ""
+    telnyx_email_from: str = ""
     smtp_username: str = ""
     smtp_password: SecretStr = SecretStr("")
     smtp_port: int = 587

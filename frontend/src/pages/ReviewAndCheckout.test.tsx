@@ -18,12 +18,16 @@ describe("Review and paid number setup", () => {
     });
     renderWithProviders(<OpsPage />, client);
     await userEvent.click(await screen.findByRole("button", { name: /Ada/ }));
+    expect(screen.getByRole("navigation", { name: "Administration navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/?section=billing");
     const approve = await screen.findByRole("button", { name: "Approve" });
     expect(approve).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     expect(screen.getAllByText(/I call my clients/)[0]).toHaveTextContent("In my own words.");
     await userEvent.click(approve);
     await waitFor(() => expect(client.calls.some(c => c.path.endsWith("/approve") && (c.init.json as { manual_override?: boolean })?.manual_override === true)).toBe(true));
+    await userEvent.click(screen.getByRole("link", { name: "Review queue" }));
+    expect(await screen.findByRole("button", { name: /Ada/ })).toBeInTheDocument();
   });
 
   it("shows $45 monthly for three selected phone numbers", async () => {

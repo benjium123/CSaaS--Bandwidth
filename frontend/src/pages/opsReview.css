@@ -7,3 +7,16 @@
 .ops-hero > div { color: #dbeafe; }
 .ops-console .applicant-answers dl { font-size: 15px; }
 .ops-console .bg-primary { background: #2563eb; color: white; }
+
+.ops-navigation { display:flex; flex-wrap:wrap; gap:6px; padding:10px; background:white; border:1px solid #dbe7f5; border-radius:16px; position:sticky; top:0; z-index:20; box-shadow:0 4px 16px #173e8810; }
+.ops-navigation a { padding:10px 14px; border-radius:10px; color:#475569; font-size:14px; font-weight:600; text-decoration:none; transition:background .15s; }
+.ops-navigation a:hover { background:#eff6ff; color:#1d4ed8; }
+.ops-navigation a[aria-current=page] { background:#2563eb; color:white; box-shadow:0 3px 8px #2563eb25; }
+.ops-navigation a:focus-visible { outline:3px solid #93c5fd; outline-offset:2px; }
+.ops-console table { width:100%; border-collapse:collapse; }
+.ops-console th { background:#eff6ff; color:#334155; font-weight:600; }
+.ops-console th, .ops-console td { padding:14px 12px; text-align:left; border-bottom:1px solid #e2e8f0; }
+.ops-console tbody tr:hover { background:#f8fbff; }
+.ops-console input, .ops-console select, .ops-console textarea { border-radius:10px; }
+.ops-console h2 { color:#173e88; }
+@media(max-width:640px) { .ops-navigation { gap:4px; padding:6px; } .ops-navigation a { padding:9px 10px; font-size:12px; } .ops-hero { padding:20px; } }

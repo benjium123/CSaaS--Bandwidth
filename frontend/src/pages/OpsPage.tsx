@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import "./opsReview.css";
 import { IdentityEvidence } from "@/components/ops/IdentityEvidence";
 import { MonitoringTab } from "@/components/ops/MonitoringTab";
@@ -15,8 +16,6 @@ import {
   Section,
   Select,
   Spinner,
-  Tabs,
-  TabPanel,
   Textarea,
   mutationErrorMessage,
 } from "@/components/ui/primitives";
@@ -219,6 +218,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
             "Legal name": app.business.legal_name, "Country": app.business.country,
             "Phone number": app.business.business_phone, "Email": app.business.business_email,
             "Industry": app.use_case?.vertical,
+            "Describe your business": app.use_case?.business_description,
             "What will you use calling / texting for?": app.use_case?.description,
             "Customer countries": (app.use_case?.destination_countries as string[] | undefined)?.join(", "),
           } : (app.use_case?.applicant_details as Record<string, unknown> ?? app.business)} />
@@ -661,8 +661,10 @@ const TABS = [
 
 export function OpsPage() {
   const { me } = useAuth();
-  const [tab, setTab] = React.useState("queue");
-  const [openOrg, setOpenOrg] = React.useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const tab = TABS.some(t => t.id === params.get("section")) ? params.get("section")! : "queue";
+  const openOrg = params.get("application");
+  const setOpenOrg = (application: string | null) => setParams(application ? { section: "queue", application } : { section: "queue" });
 
   // `!me?.is_platform_operator` is true while /auth/me is still in flight, so this told a
   // genuine operator that the console was not for them - a negative claim rendered from a
@@ -699,12 +701,14 @@ export function OpsPage() {
           Application review &amp; operations
         </h1>
       </div>
+      <nav className="ops-navigation" aria-label="Administration navigation">
+        {TABS.map(item => <Link key={item.id} to={`?section=${item.id}`} aria-current={tab === item.id ? "page" : undefined}>{item.label}</Link>)}
+      </nav>
       {openOrg ? (
         <ApplicationView orgId={openOrg} onBack={() => setOpenOrg(null)} />
       ) : (
         <>
-          <Tabs id="ops" tabs={TABS} value={tab} onChange={setTab} ariaLabel="Operator console" />
-          <TabPanel tabsId="ops" id={tab}>
+          <section key={tab} aria-label={TABS.find(item => item.id === tab)?.label}>
             {tab === "queue" && <QueueTab onOpen={setOpenOrg} />}
             {tab === "alerts" && <AlertsTab />}
             {tab === "bans" && <BanListTab />}
@@ -712,7 +716,7 @@ export function OpsPage() {
             {tab === "billing" && <BillingTab />}
             {tab === "accounts" && <AccountsTab />}
             {tab === "users" && <UsersTab />}
-          </TabPanel>
+          </section>
         </>
       )}
     </div>

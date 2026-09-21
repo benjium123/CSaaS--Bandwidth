@@ -141,7 +141,9 @@ async def missing_for_submission(session: AsyncSession, profile: KycProfile) -> 
         missing.append("business_phone")
 
     use_case = profile.use_case or {}
-    simplified = use_case.get("application_version") == 2
+    simplified = use_case.get("application_version") in (2, 3)
+    if use_case.get("application_version") == 3 and _blank(use_case.get("business_description")):
+        missing.append("use_case.business_description")
     if _blank(use_case.get("description")):
         missing.append("use_case.description")
     if _blank(use_case.get("vertical")):

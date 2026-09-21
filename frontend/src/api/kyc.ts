@@ -40,6 +40,7 @@ export type KycBusiness = {
 };
 
 export type KycUseCase = {
+  business_description?: string;
   description: string;
   vertical: string;
   who_you_contact: string;

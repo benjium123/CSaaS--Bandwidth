@@ -109,6 +109,7 @@ class ApplicationIn(BaseModel):
     country: str = Field(min_length=2, max_length=2)
     phone: str = Field(min_length=5, max_length=32)
     industry: str = Field(default="", max_length=64)
+    business_description: str = Field(default="", max_length=4000)
     purpose: str = Field(default="", max_length=4000)
     customer_country: str = Field(default="", max_length=2)
     accept_personal_agreement: bool = False
@@ -162,12 +163,14 @@ async def save_application(
         profile.business_phone = details["phone"]
         profile.business_email = user.email
         profile.use_case = {
-            "application_version": 2,
+            "application_version": 3,
+            "business_description": payload.business_description.strip(),
             "vertical": payload.industry.strip(),
             "description": payload.purpose.strip(),
             "destination_countries": [customer_country] if customer_country else [],
         }
     else:
+        details["application_version"] = 3
         details["user_id"] = str(user.id)
         if payload.accept_personal_agreement:
             details["agreement_version"] = kyc_svc.AGREEMENT_VERSION

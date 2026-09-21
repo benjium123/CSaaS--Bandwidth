@@ -75,3 +75,40 @@ async def test_resend_delivery_reports_provider_failure(monkeypatch, response_co
         is expected
     )
     assert str(calls[0].url) == "https://api.resend.com/emails"
+
+
+@pytest.mark.parametrize("response_code, expected", [(202, True), (422, False), (503, False)])
+async def test_telnyx_confirmation_delivery(monkeypatch, response_code, expected):
+    import json
+
+    import httpx
+
+    from tests.conftest import make_settings
+
+    original = httpx.AsyncClient
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(response_code, json={"data": {"id": "test", "status": "queued"}})
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    settings = make_settings(
+        app_env="development", telnyx_api_key="test-key", telnyx_email_from="ringlite@example.com"
+    )
+    assert (
+        await mailer.send(
+            settings, ["ada@example.com"], "Confirm", "https://example.com/confirm-email?token=test"
+        )
+        is expected
+    )
+    assert str(calls[0].url) == "https://api.telnyx.com/v2/email_messages"
+    payload = json.loads(calls[0].content)
+    assert payload["from"] == "ringlite@example.com"
+    assert payload["to"] == ["ada@example.com"]
+    assert "confirm-email?token=test" in payload["text_body"]
+    assert "<a href=" in payload["html_body"]

@@ -9,7 +9,7 @@ import { PERSONAL_AGREEMENT_POINTS, VerifyBusinessPage } from "./VerifyBusinessP
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import "@/components/kyc/verificationTheme.css";
 
-type Details = { legal_name: string; country: string; phone: string; industry: string; purpose: string; customer_country: string; agreement_version?: string };
+type Details = { legal_name: string; country: string; phone: string; industry: string; business_description?: string; purpose: string; customer_country: string; agreement_version?: string };
 
 function PersonalForm({ profile }: { profile: KycProfile }) {
   const { api, me, orgId } = useAuth();
@@ -21,6 +21,7 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
     country: personal ? profile.business.country ?? "" : "",
     phone: personal ? profile.business.business_phone ?? "" : "",
     industry: personal ? profile.use_case?.vertical ?? "" : "",
+    business_description: personal ? profile.use_case?.business_description ?? "" : "",
     purpose: personal ? profile.use_case?.description ?? "" : "",
     customer_country: personal ? profile.use_case?.destination_countries?.[0] ?? "" : "",
   });
@@ -68,7 +69,7 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
     finally { setBusy(false); }
   };
   const selectCountries = COUNTRIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>);
-  const complete = !!(form.legal_name.trim() && form.country && number.trim() && form.industry.trim() && form.purpose.trim() && form.customer_country);
+  const complete = !!(form.legal_name.trim() && form.country && number.trim() && form.industry.trim() && form.business_description?.trim() && form.purpose.trim() && form.customer_country);
   return <form className="space-y-6" onSubmit={e => { e.preventDefault(); void run(personal ? "submit" : "save"); }}>
     <fieldset disabled={!canEdit || busy} className="space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
       <legend className="px-2 text-lg font-semibold">1. Your details</legend>
@@ -88,6 +89,7 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
     <fieldset id="use_case" disabled={!canEdit || busy} className="scroll-mt-6 space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
       <legend className="px-2 text-lg font-semibold">3. How you’ll use Ringlite</legend>
       <label className="block space-y-2"><span>Industry</span><Input aria-label="Industry" value={form.industry} onChange={e => update("industry", e.target.value)} required maxLength={64} /></label>
+      <label className="block space-y-2"><span>Describe your business. What do you do?</span><Textarea aria-label="Describe your business" value={form.business_description ?? ""} onChange={e => update("business_description", e.target.value)} required maxLength={4000} rows={4} placeholder="Tell us about your work, products or services." /></label>
       <label className="block space-y-2"><span>{personal ? "What will you use calling for?" : "What will you use calling/texting for?"}</span><Textarea aria-label="Calling or texting purpose" value={form.purpose} onChange={e => update("purpose", e.target.value)} required maxLength={4000} rows={4} /></label>
       <label className="block space-y-2"><span>Country in which your customers are</span><Select aria-label="Customer country" value={form.customer_country} onChange={e => update("customer_country", e.target.value)} required><option value="">Select country</option>{selectCountries}</Select></label>
     </fieldset>
