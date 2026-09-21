@@ -11,13 +11,21 @@ Two kinds of "submit" exist here and they are NOT the same thing:
 * the ``/file-telnyx`` routes make a BILLABLE, non-refundable carrier submission, so they
   require a platform operator (super admin) on top of ``compliance:manage`` and an explicit
   ``confirm_non_refundable=true`` acknowledgement.
+
+The three operator ``/status`` routes record a registrar decision. An ``approved``
+decision is FAIL-CLOSED: it is only accepted when the local record already carries the
+matching Telnyx reference AND a fresh Telnyx GET both confirms the carrier reports it
+approved and returns the same identifier. A decision on its own must never make an unfiled
+campaign or toll-free verification sendable. Any missing reference, missing key, carrier
+error or unconfirmed/unknown status refuses the approval.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
+import httpx
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -31,10 +39,240 @@ from app.errors import (
 )
 from app.models import OrgNumber
 from app.models.numbers import Brand, Campaign, TollFreeVerification
+from app.providers.telnyx.registration import TelnyxRegistrationClient
+from app.providers.telnyx.registration_status import (
+    APPROVED,
+    map_brand_status,
+    map_campaign_status,
+)
+from app.providers.telnyx.tollfree_verification import TelnyxTollfreeVerificationClient
+from app.services import provider_accounts, telnyx_brand_filing, telnyx_campaign_filing
 from app.services import registration as reg
-from app.services import telnyx_brand_filing, telnyx_campaign_filing
 
 router = APIRouter(prefix="/api/v1/registration", tags=["registration"])
+
+
+# ----------------------------------------------------------------------------------
+# Carrier-confirmed approvals
+# ----------------------------------------------------------------------------------
+# An operator ``/status`` decision of ``approved`` is only a registrar's *claim*. Before we
+# persist it we require the carrier to actually say so AND to return the record we think we
+# are approving, because an ``approved`` campaign or toll-free verification is what
+# releases numbers to send. Everything here fails closed: a missing reference, a missing
+# key, a carrier error, a mismatched identifier or any unconfirmed status refuses the
+# approval rather than trusting the caller.
+
+#: carrier_refs key under which a Telnyx identifier (brandId / campaignId / verification
+#: id) is recorded. Matches ``telnyx_brand_filing``.
+_TELNYX_REF_KEY = "telnyx"
+
+#: ``app.state`` attribute a test may set to an ``httpx.AsyncClient`` (typically backed by
+#: an ``httpx.MockTransport``). When set, these guards reuse it and never open a live
+#: socket; when unset the Telnyx client owns and closes its own transport.
+_HTTP_CLIENT_STATE_ATTR = "telnyx_http_client"
+
+#: The only ``verificationStatus`` the Telnyx toll-free API documents as approved. Any
+#: other value is treated as "not approved" and refuses the decision.
+_TFV_APPROVED_STATUS = "verified"
+
+
+def _secret(value: Any) -> str:
+    """Read a SecretStr (or plain) value without ever str()-ing a masked one."""
+    getter = getattr(value, "get_secret_value", None)
+    if callable(getter):
+        return getter()
+    return "" if value is None else str(value)
+
+
+def _is_approval(status: str) -> bool:
+    """True when the caller is trying to enter an ``approved`` decision.
+
+    Case/whitespace-insensitive so a variant spelling cannot slip past the guard.
+    """
+    return status.strip().lower() == APPROVED
+
+
+def _injected_http_client(request: Request) -> httpx.AsyncClient | None:
+    """A transport a test may inject via ``app.state`` so no live carrier call is made."""
+    return getattr(request.app.state, _HTTP_CLIENT_STATE_ATTR, None)
+
+
+def _carrier_ref(record: Any, key: str = _TELNYX_REF_KEY) -> str | None:
+    """The stored Telnyx identifier for a local record, or ``None`` when there is none."""
+    refs = getattr(record, "carrier_refs", None)
+    if not isinstance(refs, dict):
+        return None
+    value = refs.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _payload_carrier_id(payload: Any, *keys: str) -> str | None:
+    """The first populated identifier field of a carrier GET payload, as a string."""
+    if not isinstance(payload, dict):
+        return None
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return None
+
+
+def _carrier_id_matches(payload: Any, expected: str, *keys: str) -> bool:
+    """True only when the carrier's returned identifier equals the stored reference, so a
+    wrong record (or a mock for a different id) cannot confirm this one."""
+    found = _payload_carrier_id(payload, *keys)
+    return found is not None and found == expected
+
+
+async def _resolve_telnyx_settings(session: Any, settings: Any) -> Any:
+    """The org's ACTIVE Telnyx account laid over the base settings when there is one,
+    else the base settings (a platform-operator run against a globally configured key)."""
+    account = await provider_accounts.active_account_for(session, "telnyx")
+    if account is None:
+        return settings
+    return provider_accounts.settings_like_for(settings, account)
+
+
+def _telnyx_api_key(resolved: Any) -> str:
+    """A usable Telnyx key, or refuse - we cannot confirm anything without one."""
+    key = _secret(getattr(resolved, "telnyx_api_key", None)).strip()
+    if not key:
+        raise ValidationFailedError(
+            "No Telnyx API key is available; add and verify an active Telnyx account "
+            "before recording a carrier-approved decision"
+        )
+    return key
+
+
+async def _confirmed_registration_get(
+    session: Any,
+    settings: Any,
+    request: Request,
+    carrier_id: str,
+    method_name: str,
+) -> Any:
+    """GET ``carrier_id`` from Telnyx, letting any failure reject the approval.
+
+    Uses the org's active Telnyx account the same way the filing services do. A carrier
+    error is never swallowed into a success: it is re-raised as a conflict so the approval
+    is refused.
+    """
+    resolved = await _resolve_telnyx_settings(session, settings)
+    api_key = _telnyx_api_key(resolved)
+    registration = TelnyxRegistrationClient(
+        api_key=api_key, client=_injected_http_client(request)
+    )
+    try:
+        payload = await getattr(registration, method_name)(carrier_id)
+    except Exception as exc:  # noqa: BLE001 - any transport/HTTP failure fails closed
+        raise ConflictError(
+            "Could not confirm the carrier decision with Telnyx; the approval was refused"
+        ) from exc
+    finally:
+        # No-op when the caller injected the client (we do not own it).
+        await registration.aclose()
+    return payload
+
+
+async def _require_brand_approved(
+    session: Any, settings: Any, request: Request, brand: Brand
+) -> None:
+    """Refuse an ``approved`` brand decision unless Telnyx confirms it for this brand."""
+    carrier_id = _carrier_ref(brand)
+    if carrier_id is None:
+        raise ConflictError(
+            "Cannot record an approved brand decision: no Telnyx brand reference is on "
+            "file. File the brand with Telnyx first."
+        )
+    payload = await _confirmed_registration_get(
+        session, settings, request, carrier_id, "get_brand"
+    )
+    if not _carrier_id_matches(payload, carrier_id, "brandId", "id"):
+        raise ConflictError(
+            "Telnyx returned a different brand than the one on file; refusing to record "
+            "an approved decision against a mismatched record."
+        )
+    if map_brand_status(payload) != APPROVED:
+        raise ConflictError(
+            "Telnyx does not currently report this brand as approved; refusing to record "
+            "an approved decision the carrier has not confirmed."
+        )
+
+
+async def _require_campaign_approved(
+    session: Any, settings: Any, request: Request, campaign: Campaign
+) -> None:
+    """Refuse an ``approved`` campaign decision unless Telnyx confirms it for this one."""
+    carrier_id = _carrier_ref(campaign)
+    if carrier_id is None:
+        raise ConflictError(
+            "Cannot record an approved campaign decision: no Telnyx campaign reference "
+            "is on file. File the campaign with Telnyx first."
+        )
+    payload = await _confirmed_registration_get(
+        session, settings, request, carrier_id, "get_campaign"
+    )
+    if not _carrier_id_matches(payload, carrier_id, "campaignId", "id"):
+        raise ConflictError(
+            "Telnyx returned a different campaign than the one on file; refusing to "
+            "record an approved decision against a mismatched record."
+        )
+    if map_campaign_status(payload) != APPROVED:
+        raise ConflictError(
+            "Telnyx does not currently report this campaign as approved; refusing to "
+            "record an approved decision the carrier has not confirmed."
+        )
+
+
+def _tfv_is_approved(payload: Any) -> bool:
+    """True only for a well-formed payload whose ``verificationStatus`` is ``Verified``.
+
+    ``verificationStatus`` is the field the Telnyx toll-free API documents; there is no
+    ``status`` field on this payload, so nothing else is consulted.
+    """
+    if not isinstance(payload, dict):
+        return False
+    status = payload.get("verificationStatus")
+    return isinstance(status, str) and status.strip().lower() == _TFV_APPROVED_STATUS
+
+
+async def _require_tfv_approved(
+    session: Any, settings: Any, request: Request, tfv: TollFreeVerification
+) -> None:
+    """Refuse an ``approved`` toll-free decision unless Telnyx confirms it for this one."""
+    carrier_id = _carrier_ref(tfv)
+    if carrier_id is None:
+        raise ConflictError(
+            "Cannot record an approved toll-free decision: no Telnyx verification "
+            "reference is on file."
+        )
+    resolved = await _resolve_telnyx_settings(session, settings)
+    api_key = _telnyx_api_key(resolved)
+    client = TelnyxTollfreeVerificationClient(
+        api_key=api_key, client=_injected_http_client(request)
+    )
+    try:
+        payload = await client.get(carrier_id)
+    except Exception as exc:  # noqa: BLE001 - any failure fails closed
+        raise ConflictError(
+            "Could not confirm the toll-free verification with Telnyx; the approval was "
+            "refused"
+        ) from exc
+    finally:
+        # No-op when the caller injected the client (we do not own it).
+        await client.aclose()
+    if not _carrier_id_matches(payload, carrier_id, "id"):
+        raise ConflictError(
+            "Telnyx returned a different verification than the one on file; refusing to "
+            "record an approved decision against a mismatched record."
+        )
+    if not _tfv_is_approved(payload):
+        raise ConflictError(
+            "Telnyx does not currently report this toll-free verification as verified; "
+            "refusing to record an approved decision the carrier has not confirmed."
+        )
 
 
 # ----------------------------------------------------------------------------------
@@ -309,6 +547,7 @@ class StatusIn(BaseModel):
 async def set_campaign_status(
     campaign_id: uuid.UUID,
     payload: StatusIn,
+    request: Request,
     _ops: Annotated[None, Depends(require_platform_operator)],
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> CampaignOut:
@@ -317,10 +556,21 @@ async def set_campaign_status(
     Monotonic: a stale `submitted` arriving after `approved` is ignored, not applied.
     Carriers retry unordered, and demoting an approved campaign would stop every number on
     it from sending until somebody noticed.
+
+    An ``approved`` decision is fail-closed: it is only accepted when the campaign already
+    carries a Telnyx campaign reference, a fresh Telnyx GET returns that same campaign and
+    maps to approved. A decision alone must never make an unfiled campaign sendable. Any
+    missing reference, missing key, carrier error, mismatched identifier or unconfirmed
+    status refuses the approval; non-approved decisions keep the existing monotonic
+    behaviour.
     """
     campaign = await ctx.session.get(Campaign, campaign_id)
     if campaign is None:
         raise NotFoundError("Campaign not found")
+    if _is_approval(payload.status):
+        await _require_campaign_approved(
+            ctx.session, request.app.state.settings, request, campaign
+        )
     reg.advance_status(campaign, payload.status, error=payload.error)
     await ctx.session.commit()
     return await _campaign_out(ctx.session, campaign)
@@ -330,12 +580,25 @@ async def set_campaign_status(
 async def set_brand_status(
     brand_id: uuid.UUID,
     payload: StatusIn,
+    request: Request,
     _ops: Annotated[None, Depends(require_platform_operator)],
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> BrandOut:
+    """Record a registrar decision for a brand.
+
+    An ``approved`` decision is fail-closed: it is only accepted when the brand already
+    carries a Telnyx brand reference, a fresh Telnyx GET returns that same brand and maps
+    to approved. Any missing reference, missing key, carrier error, mismatched identifier
+    or unknown status refuses the approval; non-approved decisions keep the existing
+    monotonic behaviour.
+    """
     brand = await ctx.session.get(Brand, brand_id)
     if brand is None:
         raise NotFoundError("Brand not found")
+    if _is_approval(payload.status):
+        await _require_brand_approved(
+            ctx.session, request.app.state.settings, request, brand
+        )
     reg.advance_status(brand, payload.status, error=payload.error)
     await ctx.session.commit()
     return _brand_out(brand)
@@ -420,12 +683,26 @@ async def submit_tfv(
 async def set_tfv_status(
     tfv_id: uuid.UUID,
     payload: StatusIn,
+    request: Request,
     _ops: Annotated[None, Depends(require_platform_operator)],
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> TfvOut:
+    """Record a registrar decision for a toll-free verification.
+
+    An ``approved`` decision is fail-closed: it is only accepted when the verification
+    already carries a Telnyx reference, a fresh Telnyx GET returns that same request and
+    reports the documented ``verificationStatus`` of ``Verified``. An unfiled verification
+    must never become sendable on a decision alone. Any missing reference, missing key,
+    carrier error, mismatched identifier or unknown status refuses the approval;
+    non-approved decisions keep the existing monotonic behaviour.
+    """
     tfv = await ctx.session.get(TollFreeVerification, tfv_id)
     if tfv is None:
         raise NotFoundError("Toll-free verification not found")
+    if _is_approval(payload.status):
+        await _require_tfv_approved(
+            ctx.session, request.app.state.settings, request, tfv
+        )
     reg.advance_status(tfv, payload.status, error=payload.error)
     await ctx.session.commit()
     return _tfv_out(tfv)

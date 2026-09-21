@@ -13,8 +13,9 @@ import pytest
 import sqlalchemy as sa
 
 from app.db.base import ALLOW_UNSCOPED_KEY
+from app.db.session import get_sessionmaker
 from app.models import OrgNumber
-from app.models.numbers import Campaign
+from app.models.numbers import Brand, Campaign, TollFreeVerification
 from app.services import registration as reg
 from tests.conftest import TEST_PLATFORM_OPS_TOKEN, auth_headers, make_org_with_number
 
@@ -32,7 +33,11 @@ async def _org(client, email="n1@example.com"):
 
 
 async def _approved_campaign(client, h, name="Camp A") -> dict:
-    """Brand -> approved; campaign -> approved. The happy path, in full."""
+    """Brand and campaign created via the API, approved directly in the DB.
+
+    Sets state only for the unrelated generic Bandwidth gate tests; the carrier
+    guard has dedicated tests elsewhere.
+    """
     brand = await client.post(
         "/api/v1/registration/brands",
         json={
@@ -48,12 +53,6 @@ async def _approved_campaign(client, h, name="Camp A") -> dict:
     )
     assert brand.status_code == 201, brand.text
     bid = brand.json()["id"]
-    await client.post(f"/api/v1/registration/brands/{bid}/submit", headers=h)
-    await client.post(
-        f"/api/v1/registration/brands/{bid}/status",
-        json={"status": "approved"},
-        headers={**h, **OPS_HEADERS},
-    )
 
     camp = await client.post(
         "/api/v1/registration/campaigns",
@@ -70,14 +69,21 @@ async def _approved_campaign(client, h, name="Camp A") -> dict:
     )
     assert camp.status_code == 201, camp.text
     cid = camp.json()["id"]
-    await client.post(f"/api/v1/registration/campaigns/{cid}/submit", headers=h)
-    approved = await client.post(
-        f"/api/v1/registration/campaigns/{cid}/status",
-        json={"status": "approved"},
-        headers={**h, **OPS_HEADERS},
-    )
-    assert approved.json()["status"] == "approved"
-    return approved.json()
+
+    async with get_sessionmaker()() as session:
+        try:
+            session.info["org_id"] = uuid.UUID(h["X-Org-Id"])
+            brand_row = await session.get(Brand, uuid.UUID(bid))
+            camp_row = await session.get(Campaign, uuid.UUID(cid))
+            assert brand_row is not None
+            assert camp_row is not None
+            brand_row.status = "approved"
+            camp_row.status = "approved"
+            await session.commit()
+        finally:
+            session.info.pop("org_id", None)
+
+    return {**camp.json(), "status": "approved"}
 
 
 # ==================================================================================
@@ -262,11 +268,16 @@ async def test_tollfree_gates_on_verification_not_on_a_campaign(app_with_carrier
     assert sending.status_code == 422, "a submitted-but-unapproved TFV must block"
     assert fake.sent == []
 
-    await client.post(
-        f"/api/v1/registration/tollfree/{tfv_id}/status",
-        json={"status": "approved"},
-        headers={**h, **OPS_HEADERS},
-    )
+    async with get_sessionmaker()() as session:
+        try:
+            session.info["org_id"] = uuid.UUID(h["X-Org-Id"])
+            tfv_row = await session.get(TollFreeVerification, uuid.UUID(tfv_id))
+            assert tfv_row is not None
+            tfv_row.status = "approved"
+            await session.commit()
+        finally:
+            session.info.pop("org_id", None)
+
     ok = await client.post(
         "/api/v1/messages", json={"to": CONTACT, "from": TOLLFREE, "body": "hi"}, headers=h
     )
