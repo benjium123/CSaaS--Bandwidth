@@ -3,7 +3,8 @@
 A FUTURE, explicit platform-operator action - nothing here runs on its own, and no network
 call happens unless an operator (or a test injecting a mock transport) calls it. It maps a
 local ``TollFreeVerification`` to a Telnyx toll-free verification request, submits it
-exactly once, and records the carrier's request id.
+exactly once, and records the carrier's request id. Reconciling an ambiguous, timed-out
+attempt is a second, equally explicit and READ-ONLY operation on this module.
 
 TFV is the toll-free regime: no brand, no campaign, no TCR (see ``models/numbers.py``),
 and it is deliberately NOT merged with the 10DLC brand/campaign machines. The rules below
@@ -33,9 +34,24 @@ make the single POST safe:
   The marker distinguishes "attempted, outcome unknown" from "never filed"; while it is
   present, automatic retries are refused. An ambiguous create timeout may leave no Telnyx
   request id to look up at all, so resolving the case requires an explicit external
-  reconciliation - a documented runbook or a Telnyx support investigation - before an
-  operator deliberately repairs state. Nothing in this service clears the marker as part
-  of a retry.
+  reconciliation - the exact-match list path below, a documented runbook, or a Telnyx
+  support investigation - before an operator deliberately repairs state. Nothing in this
+  service clears the marker as part of a retry.
+* **Explicit, list-only reconciliation for an ambiguous attempt.**
+  ``reconcile_tollfree_filing_with_telnyx`` resolves that "attempted, outcome unknown"
+  state. It reloads the verification and its number, requires the pending
+  ``telnyx_tfv_filing`` marker (with both an attempt id and a timezone-aware
+  ``attempted_at``) and no recorded ``telnyx`` request id, and then makes ONE read-only
+  call to the carrier's verification LIST with the exact filing filters - page 1, page
+  size 100, this number's E.164, this business name, ``date_start`` = the attempt instant.
+  It adopts a carrier request id ONLY when that page is unambiguous: exactly one record,
+  carrying an id, a matching business name and this exact number. Zero, multiple,
+  paginated/inconsistent, malformed or mismatched results are refused. On adoption it
+  records the request id under ``carrier_refs["telnyx"]``, removes the pending marker and
+  advances the local status to ``submitted`` (monotonic). It never POSTs, never invokes
+  ``create``, never retries the original submission, and never sets ``approved`` or
+  ``rejected``. A plain lookup of a carrier request does NOT reconcile anything; only this
+  explicit exact-match list path does.
 * **Never approve locally.** This service only ever advances the local status to
   ``submitted``; it never sets ``approved`` or ``rejected``. Approval is decided by the
   carrier and reflected only through the normal carrier-confirmed approval path.
@@ -131,6 +147,143 @@ def _require_fileable_status(verification: TollFreeVerification) -> None:
             f"Toll-free verification status {status!r} is not fileable; expected one of "
             f"{sorted(_FILEABLE_STATUSES)}"
         )
+
+
+def _require_reconcilable_status(verification: TollFreeVerification) -> None:
+    """Refuse reconciliation of a DECIDED record before any carrier read.
+
+    Reconciliation only repairs the ambiguous state a timed-out filing leaves behind. An
+    ``approved`` or ``rejected`` verification already has a decided outcome and must not
+    be touched by a read-driven repair.
+    """
+    status = verification.status or "draft"
+    if status in TERMINAL_REGISTRATION:
+        raise ConflictError(
+            f"Toll-free verification is already {status}; reconciliation is refused "
+            "because the carrier outcome is already decided"
+        )
+
+
+def _reconcilable_attempt(verification: TollFreeVerification) -> tuple[str, str]:
+    """Return ``(attempt_id, attempted_at)`` for an ambiguous pending attempt, or refuse.
+
+    Reconciliation applies to exactly the state a timed-out filing leaves behind: a
+    non-empty pending ``telnyx_tfv_filing`` marker carrying both an attempt id and the
+    instant the attempt was made, and no recorded ``telnyx`` request id. Anything else - a
+    missing or replaced marker, a non-pending marker, a missing attempt id or timestamp,
+    or an already-recorded request id - is refused so a clean or decided record is never
+    rewritten. Nothing here mutates the marker.
+    """
+    if _carrier_request_id(verification) is not None:
+        raise ConflictError(
+            "A Telnyx request id is already recorded for this verification; reconciliation "
+            "is refused because the filing is not ambiguous"
+        )
+    marker = _attempt_marker(verification)
+    if marker is None:
+        raise ConflictError(
+            "No Telnyx toll-free filing attempt marker is present; there is nothing to "
+            "reconcile"
+        )
+    if marker.get("status") != "pending":
+        raise ConflictError(
+            "The Telnyx toll-free filing attempt marker is not pending; reconciliation is "
+            "refused"
+        )
+    attempt_id = marker.get("attempt_id")
+    attempted_at = marker.get("attempted_at")
+    if (
+        not isinstance(attempt_id, str)
+        or not attempt_id.strip()
+        or not isinstance(attempted_at, str)
+        or not attempted_at.strip()
+    ):
+        raise ConflictError(
+            "The Telnyx toll-free filing attempt marker is incomplete; reconciliation is "
+            "refused"
+        )
+    return attempt_id.strip(), attempted_at.strip()
+
+
+def _parse_attempted_at(value: str) -> datetime:
+    """Validate that the marker's ``attempted_at`` is a timezone-aware ISO datetime.
+
+    Runs BEFORE any carrier call (the value becomes a list filter). On failure the marker
+    is left exactly as it was - this operation never clears or rewrites it.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationFailedError(
+            "The Telnyx toll-free filing attempt marker has a non-ISO attempted_at "
+            "timestamp; reconciliation is refused"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValidationFailedError(
+            "The Telnyx toll-free filing attempt marker attempted_at is not timezone-aware; "
+            "reconciliation is refused"
+        )
+    return parsed
+
+
+def _match_reconciled_request(
+    result: Mapping[str, Any],
+    verification: TollFreeVerification,
+    number: OrgNumber,
+) -> str:
+    """Return the carrier request id only when the page is UNAMBIGUOUS, else refuse.
+
+    Exactly one record, on exactly one page, whose business name and phone number match
+    this verification, may be adopted. A zero, multiple, paginated/inconsistent, malformed
+    or mismatched result is refused rather than guessed at.
+    """
+    records = result.get("records")
+    total_records = result.get("total_records")
+    if total_records != 1 or not isinstance(records, list) or len(records) != 1:
+        raise ConflictError(
+            "Telnyx did not return exactly one matching toll-free verification request; "
+            "refusing to reconcile an ambiguous result"
+        )
+    record = records[0]
+    if not isinstance(record, Mapping):
+        raise ConflictError(
+            "Telnyx returned a malformed toll-free verification request; refusing to "
+            "reconcile"
+        )
+    request_id = record.get("id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise ConflictError(
+            "Telnyx returned a toll-free verification request without an identifier; "
+            "refusing to reconcile"
+        )
+    business_name = record.get("businessName")
+    if (
+        not isinstance(business_name, str)
+        or business_name.strip() != (verification.business_name or "").strip()
+    ):
+        raise ConflictError(
+            "Telnyx returned a toll-free verification request for a different business; "
+            "refusing to reconcile"
+        )
+    phone_numbers = record.get("phoneNumbers")
+    if not isinstance(phone_numbers, list) or len(phone_numbers) != 1:
+        raise ConflictError(
+            "Telnyx returned a toll-free verification request without exactly one phone "
+            "number; refusing to reconcile"
+        )
+    entry = phone_numbers[0]
+    if not isinstance(entry, Mapping):
+        raise ConflictError(
+            "Telnyx returned a malformed toll-free verification phone number; refusing to "
+            "reconcile"
+        )
+    phone = entry.get("phoneNumber")
+    if not isinstance(phone, str) or phone.strip() != number.e164:
+        raise ConflictError(
+            "Telnyx returned a toll-free verification request for a different number; "
+            "refusing to reconcile"
+        )
+    return request_id.strip()
 
 
 def _require_usable_number(
@@ -331,6 +484,98 @@ async def file_tollfree_verification_with_telnyx(
     await session.commit()
 
     log.info("telnyx_tollfree_filed", tfv_id=tfv_id, attempt_id=attempt_id)
+    return verification
+
+
+async def reconcile_tollfree_filing_with_telnyx(
+    session: AsyncSession,
+    settings: Settings,
+    verification: TollFreeVerification,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> TollFreeVerification:
+    """Reconcile an ambiguous, timed-out Telnyx toll-free filing by exact-match lookup.
+
+    See the module docstring: this is a READ-ONLY repair for the "attempted, outcome
+    unknown" state left by a timed-out ``create``. It reuses the same locking, number,
+    credential and status helpers as filing, but performs exactly one authenticated list
+    call and adopts a carrier request id only on an unambiguous single-record match.
+
+    ``verification`` must be an undecided record carrying the pending ``telnyx_tfv_filing``
+    marker - with both an attempt id and a timezone-aware ``attempted_at`` - and no
+    recorded ``telnyx`` request id. ``client`` is an injected httpx client (e.g. a
+    ``MockTransport`` in tests); the caller owns an injected client and only an internally
+    created one is closed. The pending marker is left untouched on every validation,
+    carrier, no-match or ambiguous failure.
+    """
+    verification = await _lock_verification(session, verification)
+    tfv_id = str(verification.id)
+
+    # Only undecided records may be reconciled; a decided record is refused before any
+    # carrier read.
+    _require_reconcilable_status(verification)
+
+    # Lock and re-validate the number exactly like filing: same org, an actual toll-free
+    # number, a Telnyx number, still active.
+    number = await _lock_number(session, verification)
+    _require_usable_number(verification, number)
+
+    # Only an ambiguous pending attempt is reconcilable: the pending marker must exist,
+    # carry a non-empty attempt id and attempted_at, and no request id may already be
+    # recorded. None of this mutates the marker.
+    attempt_id, attempted_at = _reconcilable_attempt(verification)
+
+    # Validate the marker's timestamp BEFORE any carrier call (it becomes the list's
+    # ``date_start``). A bad marker is refused and left exactly as it was.
+    _parse_attempted_at(attempted_at)
+
+    resolved = await _resolve_telnyx_settings(session, settings)
+    api_key = _secret(getattr(resolved, "telnyx_api_key", None)).strip()
+    if not api_key:
+        raise ValidationFailedError(
+            "No Telnyx API key is available; add and verify an active Telnyx account (or "
+            "configure one) before reconciling a toll-free verification"
+        )
+
+    # One read-only list call with the exact filing filters. Never POST, never create, and
+    # nothing about the filters, number or business name is logged.
+    registration = TelnyxTollfreeVerificationClient(api_key=api_key, client=client)
+    try:
+        result = await registration.list_requests(
+            page=1,
+            page_size=100,
+            phone_number=number.e164,
+            business_name=verification.business_name,
+            date_start=attempted_at,
+        )
+    except Exception as exc:
+        # Leave the pending marker untouched: the case stays ambiguous and retries stay
+        # refused. Never log the filters, number, business name or carrier body.
+        log.warning(
+            "telnyx_tollfree_reconcile_failed",
+            tfv_id=tfv_id,
+            attempt_id=attempt_id,
+            error=type(exc).__name__,
+        )
+        raise
+    finally:
+        # No-op when the caller injected the client (we do not own it).
+        await registration.aclose()
+
+    # Adopt a request id only on the one unambiguous match; anything else raises and the
+    # marker is left in place.
+    request_id = _match_reconciled_request(result, verification, number)
+
+    refs = _carrier_refs(verification)
+    refs[_REQUEST_ID_KEY] = request_id
+    refs.pop(_ATTEMPT_KEY, None)
+    verification.carrier_refs = refs
+    # Monotonic, exactly like filing: the ref is recorded and the local status advances to
+    # submitted. We never set approved/rejected and never retry the original POST.
+    advance_status(verification, "submitted")
+    await session.commit()
+
+    log.info("telnyx_tollfree_reconciled", tfv_id=tfv_id, attempt_id=attempt_id)
     return verification
 
 
