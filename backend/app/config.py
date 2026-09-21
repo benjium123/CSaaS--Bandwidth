@@ -281,6 +281,19 @@ class Settings(BaseSettings):
     telnyx_messaging_profile_id: str = ""
     telnyx_voice_connection_id: str = ""
     telnyx_default_number: str = ""
+    #: How long carrier-confirmed Telnyx brand/campaign/TFV registration approval evidence
+    #: stays fresh enough to permit sending. The send gate itself does NOT re-query Telnyx -
+    #: it compares this bound against the approval confirmation the carrier already returned,
+    #: so this value decides whether that evidence still counts, not when it is refetched.
+    #: Bounded on BOTH sides on purpose: too small and valid approvals expire under the
+    #: configured limit, blocking sends the carrier would still honour; too large and a
+    #: revoked or lapsed approval keeps authorising sends long after it stopped being true.
+    #: There is NO 0/disable value - freshness is always enforced, and the validator below
+    #: refuses 0 as out of range.
+    telnyx_approval_max_age_seconds: int = Field(
+        default=604800,  # 7 days
+        validation_alias=AliasChoices("TELNYX_APPROVAL_MAX_AGE_SECONDS"),
+    )
 
     # ---- P37 managed telephony (one Telnyx managed sub-account per org) ---------------
     #: Dark by default: every /api/v1/telephony route answers 503 while this is false, so
@@ -485,6 +498,24 @@ class Settings(BaseSettings):
             )
         if _empty(self.session_secret):
             problems.append("SESSION_SECRET is required (generate: openssl rand -hex 32)")
+
+        # Telnyx registration-approval freshness (brand/campaign/TFV evidence the send gate
+        # reads). Bounded on BOTH sides on purpose: a too-small value expires send
+        # eligibility the carrier would still honour; a too-large value trusts stale
+        # carrier approval long after it lapsed. The bool guard is explicit because bool is
+        # an int subclass, so a truthy flag would otherwise be read as the value 1.
+        telnyx_approval_age = self.telnyx_approval_max_age_seconds
+        if isinstance(telnyx_approval_age, bool) or not isinstance(telnyx_approval_age, int):
+            problems.append(
+                "TELNYX_APPROVAL_MAX_AGE_SECONDS must be a whole number of seconds "
+                "(an integer); there is no 0/disable value."
+            )
+        elif not 300 <= telnyx_approval_age <= 2592000:
+            problems.append(
+                f"TELNYX_APPROVAL_MAX_AGE_SECONDS is {telnyx_approval_age!r} but must be "
+                "between 300 and 2592000 seconds (5 minutes to 30 days) inclusive; there "
+                "is no 0/disable value."
+            )
 
         if self.is_production:
             if _empty(self.credential_encryption_key):

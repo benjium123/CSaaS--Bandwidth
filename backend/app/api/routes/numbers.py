@@ -31,7 +31,7 @@ from app.services import audit as audit_svc
 from app.services import flows as flows_svc
 from app.services import provider_accounts as provider_accounts_svc
 from app.services import reputation as reputation_svc
-from app.services import telephony_access, telephony_billing
+from app.services import telephony_access, telephony_billing, telnyx_number_association
 from app.voice_plane import trunk_sync
 
 router = APIRouter(prefix="/api/v1/numbers", tags=["numbers"])
@@ -624,6 +624,25 @@ async def order(
     ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
 ) -> NumberOut:
     carrier_obj = _carrier_or_primary(request, payload.carrier)
+
+    # A Telnyx number's 10DLC association is made AT TELNYX (see
+    # services/telnyx_number_association), not recorded locally, so an order-time
+    # campaign_id could not be honoured: it would be persisted as a local-only
+    # association the carrier never agreed to, and only discovered after the number had
+    # already been bought. Refuse here - after carrier resolution, but BEFORE the credit
+    # gate and before provider.order_number - so no number is purchased for a doomed
+    # order. The operator orders the number first, then associates its approved campaign
+    # through PATCH /{number_id}/campaign once the number is active.
+    if (
+        (carrier_obj.name or "").strip().lower() == telnyx_number_association.PROVIDER
+        and payload.campaign_id is not None
+    ):
+        raise ValidationFailedError(
+            "Order the Telnyx number first, then associate it with its approved 10DLC "
+            "campaign using PATCH /api/v1/numbers/{number_id}/campaign once the number "
+            "is active; Telnyx campaign associations cannot be recorded at order time."
+        )
+
     provider = numbers_api.as_provider(carrier_obj)
     normalized = to_e164(payload.e164)
 
@@ -718,10 +737,22 @@ class AssignIn(BaseModel):
     campaign_id: uuid.UUID | None = None
 
 
+def _is_telnyx_number(number: OrgNumber) -> bool:
+    """Whether a campaign assignment for this number lives AT THE CARRIER.
+
+    Only a Telnyx-hosted number is associated with a 10DLC campaign through the carrier
+    transport (``services/telnyx_number_association``); every other carrier's campaign
+    assignment is stored locally only. This mirrors that service's own carrier check - the
+    service remains authoritative and re-checks the number under a row lock.
+    """
+    return (number.carrier or "").strip().lower() == telnyx_number_association.PROVIDER
+
+
 @router.patch("/{number_id}/campaign", response_model=NumberOut)
 async def assign_campaign(
     number_id: uuid.UUID,
     payload: AssignIn,
+    request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
 ) -> NumberOut:
     number = await ctx.session.get(OrgNumber, number_id)
@@ -732,10 +763,45 @@ async def assign_campaign(
             f"{number.e164} is toll-free; it is gated by toll-free verification, not by a "
             f"10DLC campaign. Assigning one would not change its ability to send."
         )
-    if payload.campaign_id is not None:
-        campaign = await ctx.session.get(Campaign, payload.campaign_id)
-        if campaign is None:
-            raise NotFoundError("Campaign not found")
+
+    if payload.campaign_id is None:
+        # Clearing a campaign is only a local edit for a number whose association is
+        # itself only local. A Telnyx number's 10DLC association exists AT TELNYX and
+        # there is no unassign transport to remove it there, so blanking campaign_id
+        # here would leave the carrier still routing the number while our records say it
+        # is free - exactly the local/carrier drift this endpoint must never create.
+        # Fail closed instead of writing a null that the carrier does not agree with.
+        if _is_telnyx_number(number) and number.campaign_id is not None:
+            raise ConflictError(
+                f"{number.e164} is associated with a Telnyx 10DLC campaign and Telnyx "
+                f"offers no API to remove that association; clearing it here would leave "
+                f"the carrier and our records disagreeing. Reconcile the association with "
+                f"Telnyx before trying to clear it."
+            )
+        number.campaign_id = None
+        await ctx.session.commit()
+        return await _out(ctx.session, number)
+
+    campaign = await ctx.session.get(Campaign, payload.campaign_id)
+    if campaign is None:
+        raise NotFoundError("Campaign not found")
+
+    if _is_telnyx_number(number):
+        # Telnyx numbers are associated AT THE CARRIER. The service re-reads the number
+        # and campaign under row locks, confirms the campaign is approved both locally
+        # AND at Telnyx, commits a durable attempt marker BEFORE the POST, and sets
+        # campaign_id only after a confirmed response - so this route never records a
+        # Telnyx campaign association locally before the carrier has accepted it.
+        number = await telnyx_number_association.associate_number_with_telnyx(
+            ctx.session,
+            request.app.state.settings,
+            number,
+            campaign,
+        )
+        return await _out(ctx.session, number)
+
+    # Non-Telnyx carriers keep the pre-existing local-only association: there is no
+    # carrier-side campaign transport for them to call.
     number.campaign_id = payload.campaign_id
     await ctx.session.commit()
     return await _out(ctx.session, number)
