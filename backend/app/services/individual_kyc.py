@@ -141,22 +141,23 @@ async def missing_for_submission(session: AsyncSession, profile: KycProfile) -> 
         missing.append("business_phone")
 
     use_case = profile.use_case or {}
+    simplified = use_case.get("application_version") == 2
     if _blank(use_case.get("description")):
         missing.append("use_case.description")
     if _blank(use_case.get("vertical")):
         missing.append("use_case.vertical")
-    if _blank(use_case.get("who_you_contact")):
+    if not simplified and _blank(use_case.get("who_you_contact")):
         missing.append("use_case.who_you_contact")
-    if _blank(use_case.get("list_source")):
+    if not simplified and _blank(use_case.get("list_source")):
         missing.append("use_case.list_source")
     if _blank(use_case.get("destination_countries")):
         missing.append("use_case.destination_countries")
 
     calls = use_case.get("monthly_calls")
-    if not (_is_integer_number(calls) and calls >= 0):
+    if not simplified and not (_is_integer_number(calls) and calls >= 0):
         missing.append("use_case.monthly_calls")
 
-    texts = use_case.get("monthly_texts")
+    texts = use_case.get("monthly_texts", 0 if simplified else None)
     if not _is_integer_number(texts) or texts != 0:
         missing.append("use_case.monthly_texts")
 

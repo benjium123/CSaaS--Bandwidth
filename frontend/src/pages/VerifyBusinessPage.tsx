@@ -56,7 +56,7 @@ const AGREEMENT_POINTS = [
 // Personal accounts sign a personal agreement: calling only, and none of the business
 // obligations (company ownership, operating for another business). The anti-abuse and
 // unsolicited-robocall protections are kept verbatim - they are not business-specific.
-const PERSONAL_AGREEMENT_POINTS = [
+export const PERSONAL_AGREEMENT_POINTS = [
   "Everything in this application is true. Giving false information is fraud and ends the account.",
   "We only call people who expect to hear from us, and we follow do-not-call and consent laws.",
   "Calls may be recorded and automatically reviewed to detect scams and abuse. We are responsible for telling the people we contact when the law requires it.",

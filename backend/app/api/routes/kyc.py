@@ -104,6 +104,94 @@ class PersonIn(BaseModel):
     residential_address: AddressIn | None = None
 
 
+class ApplicationIn(BaseModel):
+    legal_name: str = Field(min_length=2, max_length=255)
+    country: str = Field(min_length=2, max_length=2)
+    phone: str = Field(min_length=5, max_length=32)
+    industry: str = Field(default="", max_length=64)
+    purpose: str = Field(default="", max_length=4000)
+    customer_country: str = Field(default="", max_length=2)
+    accept_personal_agreement: bool = False
+
+
+@router.put("/application")
+async def save_application(
+    payload: ApplicationIn,
+    ctx: Annotated[OrgContext, Depends(require_owner)],
+) -> dict:
+    """Save personal verification without replacing a company's own application."""
+    import phonenumbers
+
+    if ctx.membership is None:
+        raise PermissionDeniedError("Sign in as the account owner to verify")
+    country = payload.country.upper()
+    customer_country = payload.customer_country.upper()
+    countries = phonenumbers.SUPPORTED_REGIONS | {"AQ", "BV", "HM", "GS", "TF", "UM", "PN"}
+    if country not in countries or (customer_country and customer_country not in countries):
+        raise ValidationFailedError("Select a valid country")
+    if not payload.legal_name.strip():
+        raise ValidationFailedError("Enter your legal name")
+    try:
+        phone = phonenumbers.parse(payload.phone, None)
+        if not payload.phone.startswith("+") or not phonenumbers.is_possible_number(phone):
+            raise ValueError()
+    except (phonenumbers.NumberParseException, ValueError):
+        raise ValidationFailedError("Enter a phone number with its country prefix") from None
+    # Serialize owner creation when two tabs save a new application together.
+    await ctx.session.execute(
+        sa.select(type(ctx.org)).where(type(ctx.org).id == ctx.org.id).with_for_update()
+    )
+    profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
+    kyc_svc._require_editable(profile)
+    user = await ctx.session.get(User, ctx.membership.user_id)
+    details = {
+        **payload.model_dump(),
+        "legal_name": payload.legal_name.strip(),
+        "country": country,
+        "customer_country": customer_country,
+        "phone": phonenumbers.format_number(phone, phonenumbers.PhoneNumberFormat.E164),
+    }
+    personal = ctx.org.account_type == "individual"
+    if personal:
+        profile.legal_name = details["legal_name"]
+        if profile.country != country:
+            from app.services import phone_region
+
+            phone_region.forget(ctx.org.id)
+        profile.country = country
+        profile.business_phone = details["phone"]
+        profile.business_email = user.email
+        profile.use_case = {
+            "application_version": 2,
+            "vertical": payload.industry.strip(),
+            "description": payload.purpose.strip(),
+            "destination_countries": [customer_country] if customer_country else [],
+        }
+    else:
+        details["user_id"] = str(user.id)
+        if payload.accept_personal_agreement:
+            details["agreement_version"] = kyc_svc.AGREEMENT_VERSION
+            details["agreement_accepted_at"] = kyc_svc._now().isoformat()
+            details["agreement_accepted_by"] = str(user.id)
+        profile.use_case = {**(profile.use_case or {}), "applicant_details": details}
+    people = await kyc_checks.persons_for(ctx.session, ctx.org.id)
+    owner = next((p for p in people if p.user_id == user.id and p.role == "owner"), None)
+    if owner is None:
+        await kyc_svc.add_person(
+            ctx.session,
+            profile,
+            role="owner",
+            full_name=details["legal_name"],
+            email=user.email,
+            ownership_percent=None,
+            user_id=user.id,
+        )
+    elif owner.status in ("not_started", "canceled", "requires_input"):
+        owner.full_name = details["legal_name"]
+    await ctx.session.commit()
+    return await _profile_out(ctx.session, profile, _viewer(ctx), owner=True)
+
+
 class AgreementIn(BaseModel):
     version: str
     accept: bool
@@ -176,9 +264,7 @@ def _document_out(d: KycDocument) -> dict:
         "uploaded_at": d.created_at.isoformat() if d.created_at else None,
         "person_id": str(d.person_id) if d.person_id else None,
         # P43: the applicant sees whether the automatic review accepted it, and why not.
-        "review_status": (
-            "reviewing" if d.review_result in (None, "error") else d.review_result
-        ),
+        "review_status": ("reviewing" if d.review_result in (None, "error") else d.review_result),
         "review_message": kyc_doc_reader.customer_message(d),
     }
 
@@ -206,9 +292,7 @@ async def _profile_out(
     return {
         "status": profile.status,
         "account_type": (
-            "individual"
-            if await kyc_svc._is_individual(session, profile.org_id)
-            else "business"
+            "individual" if await kyc_svc._is_individual(session, profile.org_id) else "business"
         ),
         # P43: the countries a business can verify from (KYC_COUNTRIES).
         "supported_countries": get_active_settings().kyc_country_list,
@@ -302,9 +386,7 @@ async def put_business(
         for key in company_only:
             value = data.get(key)
             if value not in (None, ""):
-                raise ValidationFailedError(
-                    "That field is for business accounts only"
-                )
+                raise ValidationFailedError("That field is for business accounts only")
     for key in ("registered_address", "operating_address"):
         if isinstance(data.get(key), dict):
             data[key]["country"] = data[key]["country"].upper()
@@ -330,9 +412,7 @@ async def put_use_case(
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     if await kyc_svc._is_individual(ctx.session, ctx.org.id):
         if payload.monthly_texts != 0:
-            raise ValidationFailedError(
-                "Texting is not available on individual accounts"
-            )
+            raise ValidationFailedError("Texting is not available on individual accounts")
     if profile.status in ("approved", "reverification_due"):
         if ctx.membership is None:
             raise PermissionDeniedError("API keys cannot change the declared use case")
@@ -356,9 +436,7 @@ async def add_person(
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     if await kyc_svc._is_individual(ctx.session, ctx.org.id):
         if payload.role != "owner" or not payload.is_me:
-            raise ValidationFailedError(
-                "An individual account has exactly one owner: you"
-            )
+            raise ValidationFailedError("An individual account has exactly one owner: you")
     user_id = None
     if payload.is_me:
         if ctx.membership is None:
@@ -412,9 +490,7 @@ async def delete_person(
     if await kyc_svc._is_individual(ctx.session, ctx.org.id) and getattr(
         person, "identity_hash", None
     ):
-        raise ValidationFailedError(
-            "The verified owner of an individual account cannot be removed"
-        )
+        raise ValidationFailedError("The verified owner of an individual account cannot be removed")
     if person.status == "verified" or profile.status not in ("draft", "needs_info"):
         raise ValidationFailedError("A verified person, or one on a submitted application, stays")
     await ctx.session.delete(person)
@@ -437,7 +513,7 @@ async def start_person_verification(
         ctx.session,
         settings,
         person,
-        return_url=_return_url(settings, payload.return_url, "/settings/verification"),
+        return_url=_return_url(settings, payload.return_url, "/verification"),
         actor_user_id=ctx.actor_user_id,
     )
     await ctx.session.commit()
@@ -596,9 +672,7 @@ async def verify_me(
         )
     ).scalar_one_or_none()
     if individual and ctx.role.name != "owner":
-        raise PermissionDeniedError(
-            "Only the account owner can verify an individual account"
-        )
+        raise PermissionDeniedError("Only the account owner can verify an individual account")
     if person is None:
         user = await ctx.session.get(User, ctx.membership.user_id)
         role = (
@@ -620,7 +694,7 @@ async def verify_me(
         ctx.session,
         settings,
         person,
-        return_url=_return_url(settings, payload.return_url, "/settings/verification"),
+        return_url=_return_url(settings, payload.return_url, "/verification"),
         actor_user_id=ctx.actor_user_id,
     )
     await ctx.session.commit()

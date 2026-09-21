@@ -239,6 +239,9 @@ def update_use_case(settings: Settings, profile: KycProfile, data: dict) -> str:
     """Returns "applied" or "pending_review" (a change to an approved business waits for an
     operator and keeps the approved use case in force meanwhile)."""
     cleaned = dict(data)
+    # Company use-case edits must preserve the separately saved applicant form.
+    if (profile.use_case or {}).get("applicant_details"):
+        cleaned["applicant_details"] = profile.use_case["applicant_details"]
     cleaned["destination_countries"] = sorted(
         {str(c).upper() for c in (cleaned.get("destination_countries") or []) if str(c).strip()}
     )
@@ -363,7 +366,8 @@ async def start_person_verification(
     # including the not_your_identity refusal - happens before any provider is touched, so
     # the rule holds identically whichever provider is active. Individual accounts are
     # always verified with Didit, regardless of the configured default.
-    if individual:
+    profile = await get_profile(session, person.org_id)
+    if individual or (profile and (profile.use_case or {}).get("applicant_details")):
         provider = identity_provider.DiditIdentityProvider()
     else:
         provider = identity_provider.get_provider(settings)
@@ -658,15 +662,12 @@ async def handle_didit_event(session: AsyncSession, settings: Settings, payload:
             outcome.get("dob"),
         )
         is None
-        and not (
-            person.status == "verified"
-            and person.identity_hash is not None
-        )
+        and not (person.status == "verified" and person.identity_hash is not None)
     ):
         # Initial missing identity details park for retry; a repeat
         # verification with a prior hash keeps processing.
         person.status = "processing" if person.identity_hash is not None else "requires_input"
-        person.last_error = 'identity_unconfirmed: identity details are incomplete'
+        person.last_error = "identity_unconfirmed: identity details are incomplete"
         audit_svc.record(
             session,
             org_id,
@@ -702,6 +703,29 @@ async def missing_for_submission(session: AsyncSession, profile: KycProfile) -> 
         f"use_case.{f}" for f in REQUIRED_USE_CASE_FIELDS if use_case.get(f) in (None, "", [])
     ]
     persons = await kyc_checks.persons_for(session, profile.org_id)
+    applicant = use_case.get("applicant_details")
+    if applicant:
+        for field in ("legal_name", "country", "phone", "industry", "purpose", "customer_country"):
+            if not str(applicant.get(field) or "").strip():
+                missing.append(f"applicant.{field}")
+        if applicant.get("agreement_version") != AGREEMENT_VERSION:
+            missing.append("applicant.agreement")
+        own = next(
+            (
+                p
+                for p in persons
+                if str(p.user_id) == applicant.get("user_id") and p.role == "owner"
+            ),
+            None,
+        )
+        if (
+            own is None
+            or own.status != "verified"
+            or own.identity_provider != "didit"
+            or not own.identity_hash
+            or not kyc_checks.names_match(applicant.get("legal_name", ""), own.verified_name or "")
+        ):
+            missing.append("id_verification")
     if not any(p.role == "owner" for p in persons):
         missing.append("owner")
     unstarted = [
@@ -787,15 +811,11 @@ async def submit(
 
 async def refresh_risk(session: AsyncSession, settings: Settings, profile: KycProfile) -> None:
     account_type = (
-        ACCOUNT_TYPE_INDIVIDUAL
-        if await _is_individual(session, profile.org_id)
-        else "business"
+        ACCOUNT_TYPE_INDIVIDUAL if await _is_individual(session, profile.org_id) else "business"
     )
     persons = await kyc_checks.persons_for(session, profile.org_id)
     checks = await kyc_checks.latest_checks(session, profile.org_id)
-    tier, reasons = kyc_risk.evaluate(
-        settings, profile, persons, checks, account_type=account_type
-    )
+    tier, reasons = kyc_risk.evaluate(settings, profile, persons, checks, account_type=account_type)
     profile.risk_tier = tier
     profile.risk_reasons = reasons
 

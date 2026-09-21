@@ -46,16 +46,16 @@ type SetupRouteRules = {
  */
 const SETUP_ROUTE_RULES: Readonly<Record<string, SetupRouteRules>> = {
   verification: {
-    landingRoute: "/onboarding",
-    allowedRoutes: ["/onboarding", "/settings/verification", "/plans"],
+    landingRoute: "/verification",
+    allowedRoutes: ["/verification", "/onboarding", "/settings/verification", "/plans"],
   },
   awaiting_review: {
     landingRoute: "/onboarding",
-    allowedRoutes: ["/onboarding", "/plans"],
+    allowedRoutes: ["/verification", "/onboarding", "/settings/verification", "/plans"],
   },
   remediation: {
-    landingRoute: "/onboarding",
-    allowedRoutes: ["/onboarding", "/settings/verification", "/plans"],
+    landingRoute: "/verification",
+    allowedRoutes: ["/verification", "/onboarding", "/settings/verification", "/plans"],
   },
   numbers: {
     landingRoute: "/settings/numbers",
@@ -161,6 +161,9 @@ export function LifecycleGate({ children }: { children: React.ReactNode }) {
 
   // 3. Children only on the routes this step owns; otherwise its landing route. `replace`
   // keeps the blocked URL out of history, so Back cannot re-enter it.
+  if ((step === "verification" || step === "remediation") && location.pathname === "/onboarding") {
+    return <Navigate to="/verification" replace />;
+  }
   if (isRouteAllowed(location.pathname, rules.allowedRoutes)) return <>{children}</>;
   return <Navigate to={rules.landingRoute} replace />;
 }

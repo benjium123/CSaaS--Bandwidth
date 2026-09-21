@@ -31,6 +31,7 @@ import { ForgotPasswordPage, ResetPasswordPage } from "@/pages/PasswordResetPage
 import { RecoverAccountPage } from "@/pages/RecoverAccountPage";
 import { SignUpPage } from "@/pages/SignUpPage";
 import { OnboardingPage } from "@/pages/OnboardingPage";
+import { VerificationPage } from "@/pages/VerificationPage";
 import { ChoosePlanPage } from "@/pages/ChoosePlanPage";
 import { PasskeyGraceBanner } from "@/components/security/PasskeyGraceBanner";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
@@ -281,7 +282,11 @@ export function App() {
 
   return (
     <LifecycleGate>
-      {location.pathname === "/onboarding" ? (
+      {location.pathname.replace(/\/+$/, "") === "/settings/verification" ? (
+        <Navigate to={`/verification${location.hash}`} replace />
+      ) : location.pathname.replace(/\/+$/, "") === "/verification" ? (
+        <VerificationPage />
+      ) : location.pathname === "/onboarding" ? (
         <OnboardingPage />
       ) : location.pathname === "/plans" ? (
         <ChoosePlanPage />
