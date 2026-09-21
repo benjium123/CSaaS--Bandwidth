@@ -72,6 +72,9 @@ class AutoRechargeIn(BaseModel):
 
 class PaymentMethodIn(BaseModel):
     stripe_payment_method_id: str
+    # Accepted for wire compatibility with older clients and then IGNORED: customer
+    # identity is derived from this org's stored payment-method rows (or freshly ensured
+    # from the org), never from the request body.
     customer_id: str | None = None
 
 
@@ -543,7 +546,12 @@ async def add_payment_method(
     await check_org_selfie_step_up(request, ctx, action="payment_method_change")
 
     # The org has no stripe_customer_id column (Fable owns the schema), so the
-    # customer id is carried on payment_method rows and re-used from there.
+    # customer id is carried on payment_method rows and re-used from there. The
+    # caller-supplied ``payload.customer_id`` is deliberately NOT trusted: honouring
+    # it let any ``org:billing`` member point the attach at an arbitrary (foreign)
+    # customer. The field stays in the request schema for wire compatibility but is
+    # ignored; identity comes from this org's own rows, or from a customer ensured
+    # against the org object itself.
     existing_rows = (
         await ctx.session.execute(
             sa.select(PaymentMethod)
@@ -551,7 +559,7 @@ async def add_payment_method(
             .order_by(PaymentMethod.created_at.desc(), PaymentMethod.id.desc())
         )
     ).scalars().all()
-    existing_customer_id = payload.customer_id or (
+    existing_customer_id = (
         existing_rows[0].stripe_customer_id if existing_rows else None
     )
     customer_id = await stripe_client.ensure_customer(

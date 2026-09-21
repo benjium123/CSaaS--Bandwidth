@@ -72,6 +72,17 @@ async def _read_sub(session, stripe_subscription_id):
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def _read_org(session, org_id) -> Org:
+    session.expire_all()
+    return (
+        await session.execute(
+            sa.select(Org)
+            .where(Org.id == org_id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one()
+
+
 async def _give_subscription(session, org_id, status, plan_code="starter"):
     await plans_svc.seed_sample_plans(session)
     await session.commit()
@@ -707,6 +718,154 @@ async def test_past_due_still_has_access(client, session):
     await _give_subscription(session, org_id, "past_due")
 
     assert await telephony_access.refusal(session, settings, org_id, "sms") is None
+
+
+# ----------------------------------------------------------------------------------
+# Plan allowances stop when entitlement ends (canceled/unpaid/deleted)
+# ----------------------------------------------------------------------------------
+async def test_cancellation_stops_the_plan_allowance_and_keeps_started_at(
+    client, session, monkeypatch
+):
+    """Deleting the subscription that owns the plan must stop granting the plan's
+    allowances, while the historical anniversary anchor stays put."""
+    org_id = await _api_org(
+        client, "reconcile-cancel@example.com", "Reconcile Cancel Org"
+    )
+    await _seed_plans(session)
+
+    checkout = _sub_event(
+        "evt_reconcile_cancel_checkout",
+        "checkout.session.completed",
+        {
+            "mode": "subscription",
+            "status": "complete",
+            "payment_status": "paid",
+            "subscription": "sub_reconcile_cancel",
+            "customer": "cus_reconcile_cancel",
+            "metadata": {"org_id": str(org_id), "plan_code": "starter"},
+        },
+    )
+    await _post_event(client, monkeypatch, checkout)
+
+    org = await _read_org(session, org_id)
+    assert org.plan_code == "starter"
+    started = _as_utc(org.plan_started_at)
+    assert started is not None
+
+    deleted = _sub_event(
+        "evt_reconcile_cancel_deleted",
+        "customer.subscription.deleted",
+        {"id": "sub_reconcile_cancel"},
+    )
+    await _post_event(client, monkeypatch, deleted)
+
+    sub = await _read_sub(session, "sub_reconcile_cancel")
+    assert sub is not None
+    assert sub.status == "canceled"
+
+    org = await _read_org(session, org_id)
+    assert org.plan_code is None
+    assert _as_utc(org.plan_started_at) == started
+
+
+async def test_unpaid_stops_the_plan_allowance(client, session, monkeypatch):
+    """A subscription Stripe moves to `unpaid` (dunning exhausted) must stop granting the
+    plan's allowances even though the row still exists."""
+    org_id = await _api_org(
+        client, "reconcile-unpaid@example.com", "Reconcile Unpaid Org"
+    )
+    await _seed_plans(session)
+
+    checkout = _sub_event(
+        "evt_reconcile_unpaid_checkout",
+        "checkout.session.completed",
+        {
+            "mode": "subscription",
+            "status": "complete",
+            "payment_status": "paid",
+            "subscription": "sub_reconcile_unpaid",
+            "customer": "cus_reconcile_unpaid",
+            "metadata": {"org_id": str(org_id), "plan_code": "starter"},
+        },
+    )
+    await _post_event(client, monkeypatch, checkout)
+
+    org = await _read_org(session, org_id)
+    assert org.plan_code == "starter"
+
+    unpaid = _sub_event(
+        "evt_reconcile_unpaid_updated",
+        "customer.subscription.updated",
+        {
+            "id": "sub_reconcile_unpaid",
+            "customer": "cus_reconcile_unpaid",
+            "status": "unpaid",
+            "current_period_end": 1790003000,
+            "cancel_at_period_end": False,
+            "metadata": {"org_id": str(org_id), "plan_code": "starter"},
+        },
+    )
+    await _post_event(client, monkeypatch, unpaid)
+
+    sub = await _read_sub(session, "sub_reconcile_unpaid")
+    assert sub is not None
+    assert sub.status == "unpaid"
+
+    org = await _read_org(session, org_id)
+    assert org.plan_code is None
+
+
+async def test_a_remaining_entitled_subscription_keeps_the_org_on_its_plan(
+    client, session, monkeypatch
+):
+    """When one subscription ends but another still entitles the org, the org must keep a
+    valid plan - pointed at the surviving subscription, not cleared."""
+    org_id = await _api_org(
+        client, "reconcile-remaining@example.com", "Reconcile Remaining Org"
+    )
+    await _seed_plans(session)
+
+    first = _sub_event(
+        "evt_reconcile_remaining_first",
+        "checkout.session.completed",
+        {
+            "mode": "subscription",
+            "status": "complete",
+            "payment_status": "paid",
+            "subscription": "sub_reconcile_remaining_a",
+            "customer": "cus_reconcile_remaining",
+            "metadata": {"org_id": str(org_id), "plan_code": "starter"},
+        },
+    )
+    await _post_event(client, monkeypatch, first)
+
+    second = _sub_event(
+        "evt_reconcile_remaining_second",
+        "checkout.session.completed",
+        {
+            "mode": "subscription",
+            "status": "complete",
+            "payment_status": "paid",
+            "subscription": "sub_reconcile_remaining_b",
+            "customer": "cus_reconcile_remaining",
+            "metadata": {"org_id": str(org_id), "plan_code": "standard"},
+        },
+    )
+    await _post_event(client, monkeypatch, second)
+
+    org = await _read_org(session, org_id)
+    assert org.plan_code == "standard"
+
+    deleted = _sub_event(
+        "evt_reconcile_remaining_deleted",
+        "customer.subscription.deleted",
+        {"id": "sub_reconcile_remaining_b"},
+    )
+    await _post_event(client, monkeypatch, deleted)
+
+    org = await _read_org(session, org_id)
+    # The surviving entitled subscription still owns a plan: starter, not cleared.
+    assert org.plan_code == "starter"
 
 
 # ----------------------------------------------------------------------------------
