@@ -22,6 +22,13 @@ error or unconfirmed/unknown status refuses the approval.
 A decision that does not actually move the record (already in that status, a stale
 ``submitted`` after ``approved``, or a terminal state) is not reported as applied: the
 transaction is rolled back and a conflict is raised instead of a misleading 200.
+
+A toll-free ``/file-telnyx`` call is different again: the service durably writes a
+"pending attempt" marker to ``carrier_refs`` BEFORE the carrier POST, so a second click or
+a retry after an ambiguous create timeout is refused rather than filing twice. That timeout
+may leave no Telnyx request id to look up at all, so the ``/status`` route CANNOT reconcile
+it; resolving the case requires an EXPLICIT external reconciliation - a documented runbook
+or a Telnyx support investigation - before an operator deliberately repairs local state.
 """
 
 from __future__ import annotations
@@ -32,7 +39,7 @@ from typing import Annotated, Any, Literal
 import httpx
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.deps import OrgContext, require_permission, require_platform_operator
@@ -50,7 +57,12 @@ from app.providers.telnyx.registration_status import (
     map_campaign_status,
 )
 from app.providers.telnyx.tollfree_verification import TelnyxTollfreeVerificationClient
-from app.services import provider_accounts, telnyx_brand_filing, telnyx_campaign_filing
+from app.services import (
+    provider_accounts,
+    telnyx_brand_filing,
+    telnyx_campaign_filing,
+    telnyx_tollfree_filing,
+)
 from app.services import registration as reg
 
 router = APIRouter(prefix="/api/v1/registration", tags=["registration"])
@@ -655,6 +667,7 @@ class TfvOut(BaseModel):
     number_id: uuid.UUID
     business_name: str
     status: str
+    carrier_refs: dict
     last_error: str | None
 
 
@@ -664,6 +677,7 @@ def _tfv_out(t: TollFreeVerification) -> TfvOut:
         number_id=t.number_id,
         business_name=t.business_name,
         status=t.status,
+        carrier_refs=t.carrier_refs or {},
         last_error=t.last_error,
     )
 
@@ -711,6 +725,115 @@ async def submit_tfv(
     return _tfv_out(tfv)
 
 
+class FileTfvTelnyxIn(BaseModel):
+    """Operator body for a Telnyx toll-free verification (TFV) filing.
+
+    ``confirm_non_refundable`` must be the literal ``true``: a toll-free verification is
+    billed by the carrier and cannot be refunded, so the caller has to say so explicitly
+    rather than opt in by omission. ``sole_proprietor`` is required because a business
+    filing must still carry the registration fields the service and payload builder
+    enforce.
+
+    The Telnyx request fields are declared EXPLICITLY in their documented camelCase form
+    rather than accepted as a free-form dictionary, so an unexpected key cannot be smuggled
+    into the carrier payload. ``extra="forbid"`` makes that a hard contract: a generic
+    ``fields={...}`` wrapper - or any other unknown key - is rejected outright instead of
+    being silently discarded by pydantic's default ignore behaviour. ``useCase`` and
+    ``messageVolume`` are restricted to the carrier's exact documented enumerations, and
+    ``optInWorkflowImageURLs`` must be a non-empty list of non-empty strings (the pure
+    payload builder remains the final URL validator). ``businessRegistrationNumber``/
+    ``businessRegistrationType``/``businessRegistrationCountry`` are optional HERE only
+    because a sole proprietor legitimately has none to give; the service still requires them
+    for a non-sole-proprietor filing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_non_refundable: Literal[True]
+    sole_proprietor: bool
+    businessName: str = Field(min_length=1, max_length=255)
+    corporateWebsite: str = Field(min_length=1, max_length=255)
+    businessAddr1: str = Field(min_length=1, max_length=255)
+    businessCity: str = Field(min_length=1, max_length=255)
+    businessState: str = Field(min_length=1, max_length=255)
+    businessZip: str = Field(min_length=1, max_length=32)
+    businessContactFirstName: str = Field(min_length=1, max_length=255)
+    businessContactLastName: str = Field(min_length=1, max_length=255)
+    businessContactEmail: str = Field(min_length=1, max_length=255)
+    businessContactPhone: str = Field(min_length=1, max_length=64)
+    useCaseSummary: str = Field(min_length=1)
+    productionMessageContent: str = Field(min_length=1)
+    optInWorkflow: str = Field(min_length=1)
+    additionalInformation: str = Field(min_length=1)
+    useCase: Literal[
+        "Mixed",
+        "2FA",
+        "General Marketing",
+        "Appointments",
+        "Conversational / Alerts",
+    ]
+    messageVolume: Literal[
+        "10",
+        "100",
+        "1,000",
+        "10,000",
+        "100,000",
+        "250,000",
+        "500,000",
+        "750,000",
+        "1,000,000",
+        "5,000,000",
+        "10,000,000+",
+    ]
+    optInWorkflowImageURLs: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1)
+    businessRegistrationNumber: str | None = None
+    businessRegistrationType: str | None = None
+    businessRegistrationCountry: str | None = None
+
+
+@router.post("/tollfree/{tfv_id}/file-telnyx", response_model=TfvOut)
+async def file_tfv_telnyx(
+    tfv_id: uuid.UUID,
+    payload: FileTfvTelnyxIn,
+    request: Request,
+    _ops: Annotated[None, Depends(require_platform_operator)],
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> TfvOut:
+    """File this toll-free verification with Telnyx - a BILLABLE, non-refundable call.
+
+    Unlike ``/submit`` (which only moves the LOCAL record and never contacts a carrier),
+    this reaches Telnyx and creates a real toll-free verification request that cannot be
+    refunded. It is restricted to a platform operator (super admin) that also holds
+    ``compliance:manage``, and requires an explicit ``confirm_non_refundable=true``. The
+    carrier is only ever called by ``file_tollfree_verification_with_telnyx`` using the
+    org's configured Telnyx credentials; no secret is read or echoed here. The route never
+    sets ``approved`` or ``rejected`` locally: filing only ever advances the record to
+    ``submitted`` and the carrier decides approval through the separate carrier-confirmed
+    path.
+
+    The service writes a durable "pending attempt" marker to ``carrier_refs`` BEFORE the
+    carrier POST, so a second click or a retry is refused instead of filing twice. An
+    ambiguous create timeout may leave no Telnyx request id to look up at all, so this
+    cannot be reconciled through ``/status``; the case requires an EXPLICIT external
+    reconciliation - a documented runbook or a Telnyx support investigation - before an
+    operator deliberately repairs local state.
+    """
+    tfv = await ctx.session.get(TollFreeVerification, tfv_id)
+    if tfv is None:
+        raise NotFoundError("Toll-free verification not found")
+    settings = request.app.state.settings
+    fields = payload.model_dump(exclude={"confirm_non_refundable", "sole_proprietor"})
+    tfv = await telnyx_tollfree_filing.file_tollfree_verification_with_telnyx(
+        ctx.session,
+        settings,
+        tfv,
+        fields=fields,
+        sole_proprietor=payload.sole_proprietor,
+        client=_injected_http_client(request),
+    )
+    return _tfv_out(tfv)
+
+
 @router.post("/tollfree/{tfv_id}/status", response_model=TfvOut)
 async def set_tfv_status(
     tfv_id: uuid.UUID,
@@ -729,6 +852,11 @@ async def set_tfv_status(
     non-approved decisions keep the existing monotonic behaviour. A decision that changes
     nothing (already current, stale, or terminal) is not reported as applied: the
     transaction is rolled back and a conflict is raised.
+
+    This route records a registrar decision only. It does NOT reconcile a pending Telnyx
+    filing attempt: an ambiguous create timeout may leave no request id to look up, so the
+    pending marker written by ``/file-telnyx`` requires an explicit external reconciliation
+    (a documented runbook or a Telnyx support investigation), not a status change here.
     """
     tfv = await ctx.session.get(TollFreeVerification, tfv_id)
     if tfv is None:
