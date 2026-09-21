@@ -22,7 +22,7 @@ from alembic.operations import Operations
 
 _BACKEND = Path(__file__).resolve().parent.parent
 MIGRATION_0059 = (
-    _BACKEND / "migrations" / "versions" / "0059_open_registration_kyc_required.py"
+    _BACKEND / "migrations" / "versions" / "0059_org_kyc_required.py"
 )
 
 
