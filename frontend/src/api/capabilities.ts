@@ -11,11 +11,15 @@ import { useAuth } from "@/auth/AuthContext";
 
 export type RegistrationState = "none" | "pending" | "approved";
 
+export type AccountType = "business" | "individual";
+
 export type OrgCapabilities = {
   has_provider: boolean;
   has_number: boolean;
   member_count: number;
   registration_state: RegistrationState | string;
+  /** Optional: older backends omit it; treat missing as "business". */
+  account_type?: AccountType;
 };
 
 export type Capabilities = {
@@ -69,11 +73,19 @@ export function useGate(): Gate {
       return { can, org: null, isLoading: false, source: "membership" };
     }
 
+    // Merge the selected membership's account_type into the org when the server omits it,
+    // so downstream presentation (checklist, settings, ops) sees a consistent value.
+    const membership = me?.memberships.find((m) => m.org_id === orgId);
+    const org: OrgCapabilities = {
+      ...data.org,
+      account_type: data.org.account_type ?? membership?.account_type ?? "business",
+    };
+
     return {
       can,
-      org: data.org,
+      org,
       isLoading: false,
       source: "capabilities",
     };
-  }, [capabilitiesQuery.isLoading, capabilitiesQuery.error, data, can]);
+  }, [capabilitiesQuery.isLoading, capabilitiesQuery.error, data, can, me, orgId]);
 }

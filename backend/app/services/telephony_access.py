@@ -16,6 +16,12 @@ it until an operator releases the numbers.
 With KYC_ENFORCED off nothing in the verification block is checked (development and
 pre-P41 tests).
 
+Individual workspaces (Org.account_type == "individual") have one extra rule that runs at
+the very top of refusal(), before the monitor and before verification: they never text
+(kind "sms"/"sms_dispatch" is refused outright), and calling or buying numbers always
+requires an approved KYC profile with a recorded decision (decided_by/decided_at) even
+when KYC_ENFORCED is off. Business workspaces are untouched by any of this.
+
 A SECOND, independent requirement sits beside verification: an entitled Stripe
 subscription (models/subscriptions.is_entitled). It is behind
 REQUIRE_SUBSCRIPTION_FOR_TELEPHONY, which defaults to FALSE - with it off the
@@ -37,7 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_active_settings
 from app.db.base import set_org_context
 from app.errors import AccountNotVerifiedError, AccountSuspendedError, PermissionDeniedError
-from app.models import KYC_TELEPHONY_STATUSES, Call, KycProfile, Message, OrgNumber
+from app.models import KYC_TELEPHONY_STATUSES, Call, KycProfile, Message, Org, OrgNumber
 
 #: "sms_dispatch" = the send-time re-check of an already-created message: status and
 #: deposit only, because the daily counter already includes that message.
@@ -50,12 +56,24 @@ REFUSAL_PUBLIC_TEXT = {
     "daily_limit_reached": "Not sent - today's texting limit for this account was reached.",
     "account_paused": "Not sent - calling and texting are paused while we review this account.",
     "subscription_required": "Not sent - choose a plan to start texting.",
+    "individual_messaging_disabled": "Not sent - texting is not available for individual accounts.",
 }
+
+#: account types an org may declare. Anything else (including NULL) is treated as business.
+_INDIVIDUAL_ACCOUNT_TYPE = "individual"
 
 
 def _settings_of(session: AsyncSession) -> Settings:
     bound = session.info.get("settings")
     return bound if isinstance(bound, Settings) else get_active_settings()
+
+
+async def _org(session: AsyncSession, org_id: uuid.UUID) -> Org | None:
+    # Org is deliberately NOT TenantScoped - it is the tenant itself - so it is fetched by
+    # primary key without an org-context query filter.
+    return (
+        await session.execute(sa.select(Org).where(Org.id == org_id))
+    ).scalar_one_or_none()
 
 
 async def _profile(session: AsyncSession, org_id: uuid.UUID) -> KycProfile | None:
@@ -78,7 +96,17 @@ async def refusal(
     now: datetime | None = None,
 ) -> str | None:
     """None when allowed, else a machine code: account_not_verified, account_suspended,
-    account_paused, daily_limit_reached, number_limit_reached, deposit_required."""
+    account_paused, daily_limit_reached, number_limit_reached, deposit_required,
+    subscription_required, individual_messaging_disabled."""
+    # Individual workspaces are handled first, before the monitor and before verification:
+    # an individual org can never text (kind "sms"/"sms_dispatch"), and for calls and
+    # numbers it must pass KYC below regardless of KYC_ENFORCED (see kyc_required). A
+    # business org (or an org row we could not find) skips this entirely.
+    org = await _org(session, org_id)
+    is_individual = org is not None and org.account_type == _INDIVIDUAL_ACCOUNT_TYPE
+    if is_individual and kind in ("sms", "sms_dispatch"):
+        return "individual_messaging_disabled"
+
     # P43: the traffic monitor's automatic pause / restriction applies whether or not
     # business verification is enforced.
     from app.services import monitor_score
@@ -86,16 +114,22 @@ async def refusal(
     monitored = await monitor_score.refusal(session, settings, org_id, kind)
     if monitored is not None:
         return monitored
-    # Business verification. Unchanged: every line below is what it always was, now
-    # nested under the flag it was already guarded by, so the subscription check can
-    # run after it rather than being skipped by its early return.
-    if settings.kyc_enforced:
+    # Business verification. Unchanged for every business org: the block below is what it
+    # always was, nested under the flag it was already guarded by, so the subscription
+    # check can run after it rather than being skipped by its early return. Individual
+    # orgs additionally always reach it for calling and numbers.
+    kyc_required = settings.kyc_enforced or (is_individual and kind in ("call", "number"))
+    if kyc_required:
         profile = await _profile(session, org_id)
         if profile is None:
             return "account_not_verified"
         if profile.status == "suspended":
             return "account_suspended"
         if profile.status not in KYC_TELEPHONY_STATUSES:
+            return "account_not_verified"
+        if is_individual and (profile.decided_by is None or profile.decided_at is None):
+            # A stored status is not enough for an individual: it must carry the operator
+            # decision that approved it.
             return "account_not_verified"
 
         if profile.deposit_required_cents:
@@ -178,6 +212,13 @@ def _raise_for(code: str) -> None:
         # plan" are different actions and the console must not conflate them.
         raise PermissionDeniedError(
             "Choose a plan to start calling and texting", code="subscription_required"
+        )
+    if code == "individual_messaging_disabled":
+        # Individual workspaces cannot text at all; this is not a verification problem, so
+        # it gets its own code rather than AccountNotVerifiedError.
+        raise PermissionDeniedError(
+            "Texting is not available for individual accounts",
+            code="individual_messaging_disabled",
         )
     if code == "number_limit_reached":
         raise PermissionDeniedError(

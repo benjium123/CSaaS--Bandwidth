@@ -3,10 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { missingLabel, useKycProfile, type KycPerson, type KycProfile } from "@/api/kyc";
 import {
-  ONBOARDING_STEPS,
   firstIncomplete,
   ownerCount,
+  stepsFor,
   stepStateFor,
+  type AccountType,
   type StepId,
 } from "@/components/onboarding/onboardingSteps";
 import {
@@ -56,6 +57,11 @@ export function OnboardingPage() {
   const profileQuery = useKycProfile(api, hasPermission(me, orgId, "org:read"));
   const profile = profileQuery.data;
 
+  // The account type is a property of the profile, not of the viewer. It defaults to
+  // business so a payload that predates the field renders exactly as it did before.
+  const accountType: AccountType = profile?.account_type ?? "business";
+  const isIndividual = accountType === "individual";
+
   const toVerification = React.useCallback(
     (hash?: string) => navigate(hash ? "/settings/verification#" + hash : "/settings/verification"),
     [navigate],
@@ -76,7 +82,10 @@ export function OnboardingPage() {
   if (profileQuery.isError || !profile) {
     return (
       <AuthSurface>
-        <AuthPlate eyebrow="Business verification" title="We couldn't load your application">
+        <AuthPlate
+          eyebrow={isIndividual ? "Identity verification" : "Business verification"}
+          title="We couldn't load your application"
+        >
           <AuthAlert>
             {profileQuery.error instanceof Error
               ? profileQuery.error.message
@@ -90,7 +99,7 @@ export function OnboardingPage() {
   switch (profile.status) {
     case "draft":
     case "needs_info":
-      return <Wizard profile={profile} onOpen={toVerification} />;
+      return <Wizard profile={profile} accountType={accountType} onOpen={toVerification} />;
     case "approved":
       return (
         <Approved
@@ -100,9 +109,9 @@ export function OnboardingPage() {
         />
       );
     case "rejected":
-      return <Rejected profile={profile} />;
+      return <Rejected profile={profile} accountType={accountType} />;
     case "suspended":
-      return <Suspended />;
+      return <Suspended accountType={accountType} />;
     case "reverification_due":
       return (
         <Reverification
@@ -115,24 +124,63 @@ export function OnboardingPage() {
     // whether a reviewer has opened it yet, which is our internal business and not a fact
     // the customer can act on.
     default:
-      return <Waiting profile={profile} />;
+      return <Waiting profile={profile} accountType={accountType} />;
   }
 }
 
 /* ────────────────────────────────────────────────────────── the wizard ── */
 
+/**
+ * The `missing` list the stepper is judged on, augmented for the individual journey.
+ *
+ * The server cannot name `owner` before a person row exists, nor `id_verification` before
+ * that person is the applicant - so on an individual profile an empty `missing` is not
+ * evidence that the applicant step or the ID step is done. We add the key back in those
+ * cases so the stepper's positive-evidence rule holds without touching `stepStateFor`.
+ *
+ * Business profiles are returned unchanged: their per-owner keys are already gated by the
+ * owner-count check inside `stepStateFor`, and adding keys here would double-count.
+ */
+function effectiveMissing(profile: KycProfile, accountType: AccountType): string[] {
+  if (accountType !== "individual") return profile.missing;
+  const missing = profile.missing.slice();
+  const self = profile.persons.find((p) => p.role === "owner" && p.is_you);
+  if (!self) {
+    if (!missing.includes("owner")) missing.push("owner");
+    return missing;
+  }
+  if (self.status !== "verified" && !missing.includes("id_verification")) {
+    missing.push("id_verification");
+  }
+  return missing;
+}
+
+/**
+ * The owner count the stepper is judged on. For an individual the only person that counts
+ * is the applicant themselves - a stray non-self owner must not make the ID step read Done
+ * off somebody else's row. Business counts are unchanged.
+ */
+function effectiveOwners(profile: KycProfile, accountType: AccountType): number {
+  if (accountType !== "individual") return ownerCount(profile.persons);
+  return profile.persons.filter((p) => p.role === "owner" && p.is_you).length;
+}
+
 function Wizard({
   profile,
+  accountType,
   onOpen,
 }: {
   profile: KycProfile;
+  accountType: AccountType;
   onOpen: (hash?: string) => void;
 }) {
-  const missing = profile.missing;
+  const missing = effectiveMissing(profile, accountType);
   // The per-owner `missing` keys do not exist until an owner does, so how many owners there
   // are is part of reading `missing` correctly - not a second opinion about it.
-  const owners = ownerCount(profile.persons);
-  const [open, setOpen] = React.useState<StepId | null>(() => firstIncomplete(missing));
+  const owners = effectiveOwners(profile, accountType);
+  const steps = stepsFor(accountType);
+  const isIndividual = accountType === "individual";
+  const [open, setOpen] = React.useState<StepId | null>(() => firstIncomplete(missing, accountType));
   const ready = missing.length === 0;
 
   return (
@@ -149,25 +197,38 @@ function Wizard({
         )}
 
         <header className="ob-head ex-rise" style={{ ["--d" as string]: "40ms" }}>
-          <div className="ex-label">Business verification</div>
+          <div className="ex-label">
+            {isIndividual ? "Identity verification" : "Business verification"}
+          </div>
           <h1 className="ob-title">
             {profile.status === "needs_info"
               ? "Add what's been asked for"
-              : "Verify your business"}
+              : isIndividual
+                ? "Verify your identity"
+                : "Verify your business"}
           </h1>
           <p className="ob-lede">
-            Calling and texting unlock once this is approved. Everything else in your
-            workspace works now, so you can set it up while you wait.
+            {isIndividual
+              ? "Calling unlocks once a super-admin approves this. Texting is not available for individual accounts. Everything else in your workspace works now, so you can set it up while you wait."
+              : "Calling and texting unlock once this is approved. Everything else in your workspace works now, so you can set it up while you wait."}
           </p>
         </header>
 
         <ol className="ob-steps">
-          {ONBOARDING_STEPS.map((step, i) => {
+          {steps.map((step, i) => {
             const state = stepStateFor(step, missing, owners);
             const done = state.kind === "done";
             const waiting = state.kind === "waiting";
             const outstanding = done ? [] : state.outstanding;
             const isOpen = open === step.id;
+            // The waiting label is a presentation string, so the personal wording is swapped
+            // here rather than in `stepStateFor` - the business API and its tests stay put.
+            const waitingLabel =
+              waiting && isIndividual && state.label === "Add an owner first"
+                ? "Add yourself first"
+                : waiting
+                  ? state.label
+                  : null;
             return (
               <li
                 key={step.id}
@@ -200,7 +261,7 @@ function Wizard({
                       be assessed, so "1 left" would read as nearly finished on a step whose
                       real work has not been looked at yet. */}
                   <span className={cn("ob-step-tag", done && "is-done", waiting && "is-waiting")}>
-                    {done ? "Done" : waiting ? state.label : outstanding.length + " left"}
+                    {done ? "Done" : waitingLabel ?? outstanding.length + " left"}
                   </span>
                 </button>
 
@@ -214,15 +275,16 @@ function Wizard({
                       <>
                         {waiting && (
                           <p className="ob-waiting-note">
-                            We can't check this yet - there's no owner on the application for
-                            it to belong to. Add one under Owners and this opens up.
+                            {isIndividual
+                              ? "We can't check this yet - there's no applicant on the account for it to belong to. Add yourself under You and this opens up."
+                              : "We can't check this yet - there's no owner on the application for it to belong to. Add one under Owners and this opens up."}
                           </p>
                         )}
                         {outstanding.length > 0 && (
                           <>
                             <ul className="ob-todo">
                               {outstanding.map((key) => (
-                                <li key={key}>{missingLabel(key)}</li>
+                                <li key={key}>{missingLabel(key, accountType)}</li>
                               ))}
                             </ul>
                             <AuthButton type="button" onClick={() => onOpen(step.id)}>
@@ -243,8 +305,9 @@ function Wizard({
           {ready ? (
             <>
               <p className="ob-submit-copy">
-                Everything's here. Once you submit, a reviewer looks at it - you can't edit
-                while it's with them.
+                {isIndividual
+                  ? "Everything's here. Once you submit, a super-admin reviews it - you can't edit while it's with them."
+                  : "Everything's here. Once you submit, a reviewer looks at it - you can't edit while it's with them."}
               </p>
               <AuthButton type="button" block onClick={() => onOpen("submit")}>
                 Submit for review
@@ -264,21 +327,27 @@ function Wizard({
 
 /* ─────────────────────────────────────────────────────── the waiting ── */
 
-function Waiting({ profile }: { profile: KycProfile }) {
+function Waiting({ profile, accountType }: { profile: KycProfile; accountType: AccountType }) {
+  const isIndividual = accountType === "individual";
   return (
     <AuthSurface>
       <AuthPlate
-        eyebrow="Business verification"
-        title="With a reviewer"
-        lede="A person reads every application. We'll email you when there's a decision."
+        eyebrow={isIndividual ? "Identity verification" : "Business verification"}
+        title={isIndividual ? "Awaiting super-admin approval" : "With a reviewer"}
+        lede={
+          isIndividual
+            ? "A super-admin reviews every application. We'll email you when there's a decision."
+            : "A person reads every application. We'll email you when there's a decision."
+        }
       >
         <div className="space-y-4">
           <Lamp state="wait">Submitted{when(profile.submitted_at)}</Lamp>
           {/* Deliberately no estimate and no progress bar: there is no SLA in the system,
               and a bar that fills would be a claim about time we cannot make. */}
           <AuthNotice>
-            Nothing to do here. Meanwhile you can invite your team, connect a provider and
-            set the workspace up - calling and texting are the only things waiting on this.
+            {isIndividual
+              ? "Nothing to do here. Calling stays unavailable until a super-admin approves this - completing the ID check is not approval, and texting is not available for individual accounts."
+              : "Nothing to do here. Meanwhile you can invite your team, connect a provider and set the workspace up - calling and texting are the only things waiting on this."}
           </AuthNotice>
         </div>
       </AuthPlate>
@@ -297,6 +366,7 @@ function Approved({
   onContinue: () => void;
   onChoosePlan: () => void;
 }) {
+  const isIndividual = (profile.account_type ?? "business") === "individual";
   const limits = profile.limits;
   const deposit = profile.deposit_required_cents;
   const hasLimits = limits != null && Object.keys(limits).length > 0;
@@ -304,9 +374,13 @@ function Approved({
   return (
     <AuthSurface>
       <AuthPlate
-        eyebrow="Business verification"
+        eyebrow={isIndividual ? "Identity verification" : "Business verification"}
         title="You're verified"
-        lede="Calling and texting are on."
+        lede={
+          isIndividual
+            ? "Calling is on. Texting is not available for individual accounts."
+            : "Calling and texting are on."
+        }
       >
         <div className="space-y-4">
           <Lamp state="live">Approved{when(profile.decided_at)}</Lamp>
@@ -340,8 +414,9 @@ function Approved({
               a save that did not take. */}
           {profile.use_case_pending && (
             <AuthNotice>
-              Your updated description of how you'll use calling and texting is with a
-              reviewer. What's approved today keeps working until they've looked at it.
+              {isIndividual
+                ? "Your updated description of how you'll use calling is with a super-admin. What's approved today keeps working until they've looked at it."
+                : "Your updated description of how you'll use calling and texting is with a reviewer. What's approved today keeps working until they've looked at it."}
             </AuthNotice>
           )}
 
@@ -362,13 +437,18 @@ function Approved({
   );
 }
 
-function Rejected({ profile }: { profile: KycProfile }) {
+function Rejected({ profile, accountType }: { profile: KycProfile; accountType: AccountType }) {
+  const isIndividual = accountType === "individual";
   return (
     <AuthSurface>
       <AuthPlate
-        eyebrow="Business verification"
-        title="We couldn't verify this business"
-        lede="Calling and texting aren't available for this workspace."
+        eyebrow={isIndividual ? "Identity verification" : "Business verification"}
+        title={isIndividual ? "We couldn't verify your identity" : "We couldn't verify this business"}
+        lede={
+          isIndividual
+            ? "Calling isn't available for this account."
+            : "Calling and texting aren't available for this workspace."
+        }
       >
         <div className="space-y-4">
           {/* The reviewer's words, attributed as theirs, not reworded into ours. And NO
@@ -390,18 +470,27 @@ function Rejected({ profile }: { profile: KycProfile }) {
   );
 }
 
-function Suspended() {
+function Suspended({ accountType }: { accountType: AccountType }) {
+  const isIndividual = accountType === "individual";
   return (
     <AuthSurface>
       <AuthPlate
-        eyebrow="Business verification"
+        eyebrow={isIndividual ? "Identity verification" : "Business verification"}
         title="This account is suspended"
-        lede="Calling, texting and number orders are paused."
+        lede={
+          isIndividual
+            ? "Calling and number orders are paused."
+            : "Calling, texting and number orders are paused."
+        }
       >
         {/* No reason is claimed: the profile payload carries none for a member, and the
             suspension reason is owner-gated. Pointing at the mail is both true and the only
             useful thing we can tell a staff member looking at this screen. */}
-        <AuthNotice>We've emailed the account owners with the details.</AuthNotice>
+        <AuthNotice>
+          {isIndividual
+            ? "We've emailed you with the details."
+            : "We've emailed the account owners with the details."}
+        </AuthNotice>
       </AuthPlate>
     </AuthSurface>
   );
@@ -451,6 +540,7 @@ function Reverification({
   const { me, orgId } = useAuth();
   const canEdit = hasPermission(me, orgId, "org:update");
   const stale = staleOwners(profile);
+  const isIndividual = (profile.account_type ?? "business") === "individual";
 
   // Three groups, because the server answers these three cases differently and one button
   // would be wrong for two of them:
@@ -464,8 +554,8 @@ function Reverification({
   return (
     <AuthSurface>
       <AuthPlate
-        eyebrow="Business verification"
-        title="Time to re-check IDs"
+        eyebrow={isIndividual ? "Identity verification" : "Business verification"}
+        title={isIndividual ? "Time to re-check your ID" : "Time to re-check IDs"}
         lede="Your workspace keeps working. This is the yearly check, not a pause."
       >
         <div className="space-y-4">
@@ -501,7 +591,11 @@ function Reverification({
           )}
 
           {stale.length === 0 && (
-            <Lamp state="wait">Every owner has re-checked. We're confirming it now.</Lamp>
+            <Lamp state="wait">
+              {isIndividual
+                ? "Your re-check is in. We're confirming it now."
+                : "Every owner has re-checked. We're confirming it now."}
+            </Lamp>
           )}
 
           <button type="button" className="ex-link" onClick={onContinue}>

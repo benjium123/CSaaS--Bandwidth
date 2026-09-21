@@ -14,11 +14,24 @@ class Org(Base, TimestampMixin):
     """A tenant. Deliberately NOT TenantScoped — it is the tenant."""
 
     __tablename__ = "orgs"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "account_type IN ('business', 'individual')",
+            name="ck_orgs_account_type",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     slug: Mapped[str] = mapped_column(sa.String(63), nullable=False, unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    # Account classification: 'business' (a company workspace, the default and pre-existing
+    # behaviour) or 'individual' (a single-person account created by register). Immutable at
+    # the API level — nothing reclassifies an existing org. No ORM mutation hook on purpose:
+    # the registration flow stamps account_type AFTER the repository creates the row.
+    account_type: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="business", server_default="business"
+    )
     #: P42: stricter-than-platform session timeouts for this workspace (NULL = platform).
     session_idle_minutes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     session_max_hours: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)

@@ -38,8 +38,12 @@ function looksConsumer(email: string): boolean {
   return CONSUMER_DOMAINS.has(email.slice(at + 1).trim().toLowerCase());
 }
 
+/** Matches the server's `account_type`. */
+type AccountType = "business" | "individual";
+
 export function SignUpPage() {
   const { api, login } = useAuth();
+  const [accountType, setAccountType] = React.useState<AccountType>("business");
   const [email, setEmail] = React.useState("");
   const [fullName, setFullName] = React.useState("");
   const [company, setCompany] = React.useState("");
@@ -47,7 +51,9 @@ export function SignUpPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
-  const consumerHint = email.includes("@") && looksConsumer(email);
+  const isIndividual = accountType === "individual";
+  // Silenced for individual accounts: a personal address is the intended input there.
+  const consumerHint = !isIndividual && email.includes("@") && looksConsumer(email);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -56,7 +62,15 @@ export function SignUpPage() {
     try {
       await api.request("/api/v1/auth/register", {
         method: "POST",
-        json: { email, password, full_name: fullName, company_name: company.trim() || null },
+        json: {
+          email,
+          password,
+          full_name: fullName.trim(),
+          // Non-nullable server field. An individual sends "" - including after switching
+          // away from business, which discards any company already typed.
+          company_name: isIndividual ? "" : company.trim(),
+          account_type: accountType,
+        },
       });
       // Straight in: the account exists, so signing them in here saves a second form and
       // lands them on the second-factor screen, which is the true next step.
@@ -75,41 +89,87 @@ export function SignUpPage() {
         as="form"
         onSubmit={onSubmit}
         eyebrow="Step 01 · Your account"
-        title="Start your workspace"
-        lede="Numbers, texts and calls for your business. Set up takes a few minutes; you can send once your business is verified."
+        title={isIndividual ? "Start your account" : "Start your workspace"}
+        lede={
+          isIndividual
+            ? "A personal account for calls. Set-up takes a few minutes; calling unlocks once your identity is verified and approved."
+            : "Numbers, texts and calls for your business. Set up takes a few minutes; you can send once your business is verified."
+        }
         footer={
           <Link to="/login" className="ex-link">
             Already have an account? Sign in
           </Link>
         }
       >
-        <StepRail steps={["Account", "Secure it", "Verify business"]} active={0} />
+        <StepRail
+          steps={
+            isIndividual
+              ? ["Account", "Secure it", "Verify identity"]
+              : ["Account", "Secure it", "Verify business"]
+          }
+          active={0}
+        />
 
         <div className="space-y-4">
+          {/* First decision: an individual account hides Company and accepts a personal
+              address. Business stays the default. */}
+          <fieldset>
+            <legend className="ex-label mb-2 block">Account type</legend>
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="account-type"
+                  value="business"
+                  checked={!isIndividual}
+                  onChange={() => setAccountType("business")}
+                />
+                Company
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="account-type"
+                  value="individual"
+                  checked={isIndividual}
+                  onChange={() => setAccountType("individual")}
+                />
+                Individual
+              </label>
+            </div>
+          </fieldset>
+
+          {isIndividual && (
+            <AuthNotice>
+              Verify your identity with Didit, then wait for super-admin approval to start
+              calling. Individual accounts do not support SMS or MMS.
+            </AuthNotice>
+          )}
+
           <Field
-            label="Work email"
+            label={isIndividual ? "Email" : "Work email"}
             hint={
-              consumerHint
-                ? undefined
-                : "Use your business address — it's how we reach you about your application."
+              !isIndividual && !consumerHint
+                ? "Use your business address — it's how we reach you about your application."
+                : undefined
             }
           >
             <AuthInput
-              aria-label="Work email"
+              aria-label={isIndividual ? "Email" : "Work email"}
               type="email"
               autoComplete="username"
-              placeholder="you@yourcompany.com"
+              placeholder={isIndividual ? "you@example.com" : "you@yourcompany.com"}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
           </Field>
 
           {/* A sentence, not a locked button. The server decides; this only saves someone
-              filling in the rest of the form first. */}
+              filling in the rest of the form first. Business only. */}
           {consumerHint && (
             <AuthNotice>
-              That looks like a personal address. Accounts are for businesses, so please use
-              your work email — the one at your company's own domain.
+              That looks like a personal address. Business accounts require a work email — the
+              one at your company's own domain.
             </AuthNotice>
           )}
 
@@ -122,14 +182,16 @@ export function SignUpPage() {
             />
           </Field>
 
-          <Field label="Company" hint="You can change this later.">
-            <AuthInput
-              aria-label="Company"
-              autoComplete="organization"
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-            />
-          </Field>
+          {!isIndividual && (
+            <Field label="Company" hint="You can change this later.">
+              <AuthInput
+                aria-label="Company"
+                autoComplete="organization"
+                value={company}
+                onChange={(e) => setCompany(e.target.value)}
+              />
+            </Field>
+          )}
 
           <Field
             label="Password"
@@ -149,14 +211,15 @@ export function SignUpPage() {
           <AuthButton
             type="submit"
             block
-            disabled={busy || !email || !password || !fullName}
+            disabled={busy || !email || !password || !fullName.trim()}
           >
             {busy ? "Working..." : "Create account"}
           </AuthButton>
 
           <p className="text-center text-[0.6875rem] leading-relaxed text-muted-foreground">
-            Next you'll add a second factor, then verify your business. Calling and texting
-            unlock once that's approved.
+            {isIndividual
+              ? "Next you'll add a second factor, then verify your identity. Calling unlocks once a super-admin approves."
+              : "Next you'll add a second factor, then verify your business. Calling and texting unlock once that's approved."}
           </p>
         </div>
       </AuthPlate>

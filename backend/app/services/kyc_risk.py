@@ -46,27 +46,30 @@ def evaluate(
     checks: dict[str, KycCheck],
     *,
     today: date | None = None,
+    account_type: str = "business",
 ) -> tuple[str, list[str]]:
     today = today or datetime.now(timezone.utc).date()
     reasons: list[str] = []
     use_case = profile.use_case or {}
+    individual = account_type == "individual"
 
     if profile.incorporation_date is not None:
         age = (today - profile.incorporation_date).days
         if age < YOUNG_COMPANY_DAYS:
             reasons.append(f"Company was formed {age} days ago")
 
-    website = checks.get("website")
-    if website is not None and website.detail:
-        domain_age = website.detail.get("domain_age_days")
-        if isinstance(domain_age, int) and domain_age < 90:
-            reasons.append(f"Website domain is {domain_age} days old")
-    if website is None or website.result in ("warn", "fail"):
-        reasons.append("Website check did not pass")
+    if not individual:
+        website = checks.get("website")
+        if website is not None and website.detail:
+            domain_age = website.detail.get("domain_age_days")
+            if isinstance(domain_age, int) and domain_age < 90:
+                reasons.append(f"Website domain is {domain_age} days old")
+        if website is None or website.result in ("warn", "fail"):
+            reasons.append("Website check did not pass")
 
-    email_domain = ban_list.domain_of(profile.business_email)
-    if email_domain and email_domain in ban_list.FREE_EMAIL_DOMAINS:
-        reasons.append("Business email is a free mailbox")
+        email_domain = ban_list.domain_of(profile.business_email)
+        if email_domain and email_domain in ban_list.FREE_EMAIL_DOMAINS:
+            reasons.append("Business email is a free mailbox")
 
     for kind, label in (
         ("ban_list", "Matches the ban list"),
@@ -74,6 +77,8 @@ def evaluate(
         ("registry", "Registry check did not pass"),
         ("name_match", "Name on an ID does not match"),
     ):
+        if individual and kind == "registry":
+            continue
         check = checks.get(kind)
         if check is None or check.result not in ("warn", "fail"):
             continue
@@ -120,9 +125,10 @@ def evaluate(
     if ai is not None and ai.detail and ai.detail.get("suggested_risk") == "high":
         reasons.append("AI review suggested high risk")
 
-    documents = checks.get("documents")
-    if documents is not None and documents.result in ("warn", "fail"):
-        reasons.append("Documents did not fully match the application")
+    if not individual:
+        documents = checks.get("documents")
+        if documents is not None and documents.result in ("warn", "fail"):
+            reasons.append("Documents did not fully match the application")
 
     # De-duplicate while keeping order.
     seen: set[str] = set()

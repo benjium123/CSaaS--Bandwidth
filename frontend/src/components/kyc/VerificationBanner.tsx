@@ -14,7 +14,9 @@ export function VerificationBanner() {
   const profileQ = useKycProfile(api, hasPermission(me, orgId, "org:read"));
 
   if (!profileQ.data) return null;
-  const copy = statusCopy(profileQ.data.status);
+  const accountType = profileQ.data.account_type ?? "business";
+  const isIndividual = accountType === "individual";
+  const copy = statusCopy(profileQ.data.status, accountType);
   if (!copy) return null;
   const actionable = !["submitted", "in_review", "rejected", "suspended"].includes(
     profileQ.data.status,
@@ -24,7 +26,7 @@ export function VerificationBanner() {
     <BannerSlot priority={BANNER_PRIORITY.verification}>
       <div
         role="status"
-        aria-label="Business verification"
+        aria-label={isIndividual ? "Identity verification" : "Business verification"}
         className="flex items-center gap-[11px] border-b border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-4 py-[9px]"
       >
         <p className="min-w-0 flex-1 truncate text-[13px] text-[hsl(var(--cx-text))]">
@@ -39,7 +41,11 @@ export function VerificationBanner() {
             className="shrink-0"
             onClick={() => navigate("/onboarding")}
           >
-            {profileQ.data.status === "draft" ? "Get verified" : "Open verification"}
+            {profileQ.data.status === "draft"
+              ? isIndividual
+                ? "Verify your identity"
+                : "Get verified"
+              : "Open verification"}
           </Button>
         )}
       </div>

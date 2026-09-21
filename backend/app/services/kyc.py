@@ -45,6 +45,7 @@ from app.services import (
     ban_list,
     didit_client,
     identity_provider,
+    individual_kyc,
     kyc_checks,
     kyc_risk,
     sanctions,
@@ -88,6 +89,17 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 
 
+#: Account type that is verified as a person rather than a business.
+ACCOUNT_TYPE_INDIVIDUAL = individual_kyc.ACCOUNT_TYPE_INDIVIDUAL
+
+
+#: Profile statuses in which a verified person may run the identity check again.
+#: reverification_due/needs_info cover the annual re-check; suspended covers an
+#: individual whose account was suspended and who must re-prove identity before an
+#: operator can unsuspend (approve).
+REVERIFICATION_PROFILE_STATUSES = ("reverification_due", "needs_info", "suspended")
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -107,6 +119,11 @@ def transition(profile: KycProfile, new_status: str) -> None:
             f"{new_status.replace('_', ' ')}"
         )
     profile.status = new_status
+
+
+async def _is_individual(session: AsyncSession, org_id: uuid.UUID) -> bool:
+    """True when the workspace is an individual account (delegates to individual_kyc)."""
+    return await individual_kyc.is_individual(session, org_id)
 
 
 # --------------------------------------------------------------------------------------
@@ -250,6 +267,8 @@ async def add_person(
         raise ValidationFailedError(f"Role must be one of {', '.join(KYC_PERSON_ROLES)}")
     if role in ("owner", "beneficial_owner"):
         _require_editable(profile)
+    if await _is_individual(session, profile.org_id):
+        await individual_kyc.validate_person_creation(session, profile, role, user_id)
     if ownership_percent is not None and not 0 <= ownership_percent <= 100:
         raise ValidationFailedError("Ownership must be between 0 and 100 percent")
     if not full_name.strip():
@@ -296,10 +315,25 @@ async def start_person_verification(
     return_url: str,
     actor_user_id: uuid.UUID | None = None,
 ) -> str:
+    individual = await _is_individual(session, person.org_id)
+    if individual:
+        # An individual's identity IS the account: only the bound user may ever start
+        # (or repeat) the check, and the person must be linked to a user account.
+        if person.user_id is None or actor_user_id != person.user_id:
+            raise PermissionDeniedError(
+                f"Only {person.full_name} can start their own ID check",
+                code="not_your_identity",
+            )
     if person.status == "verified" or person.identity_hash is not None:
         profile = await get_profile(session, person.org_id)
-        # Annual re-verification is the one time a verified person checks again.
-        if profile is None or profile.status not in ("reverification_due", "needs_info"):
+        # Annual re-verification is the one time a verified person checks again. For an
+        # individual whose account is suspended, a fresh identity is required before an
+        # operator can unsuspend (approve), so suspended is allowed too - but only for
+        # individuals; a suspended business still cannot retry here.
+        allowed_statuses = REVERIFICATION_PROFILE_STATUSES
+        if profile is None or profile.status not in allowed_statuses:
+            raise ConflictError("This person is already verified")
+        if profile.status == "suspended" and not individual:
             raise ConflictError("This person is already verified")
         # P43: a verified person who has an account re-verifies themselves - nobody else can
         # start (and complete) the check in their place.
@@ -309,8 +343,12 @@ async def start_person_verification(
             )
     # P44: which provider runs the check is configuration. Everything above this line -
     # including the not_your_identity refusal - happens before any provider is touched, so
-    # the rule holds identically whichever provider is active.
-    provider = identity_provider.get_provider(settings)
+    # the rule holds identically whichever provider is active. Individual accounts are
+    # always verified with Didit, regardless of the configured default.
+    if individual:
+        provider = identity_provider.DiditIdentityProvider()
+    else:
+        provider = identity_provider.get_provider(settings)
     started = await provider.start(
         settings,
         org_id=person.org_id,
@@ -543,6 +581,8 @@ async def handle_didit_event(session: AsyncSession, settings: Settings, payload:
 # Submit
 # --------------------------------------------------------------------------------------
 async def missing_for_submission(session: AsyncSession, profile: KycProfile) -> list[str]:
+    if await _is_individual(session, profile.org_id):
+        return await individual_kyc.missing_for_submission(session, profile)
     missing = [f for f in REQUIRED_BUSINESS_FIELDS if not getattr(profile, f)]
     use_case = profile.use_case or {}
     missing += [
@@ -601,6 +641,12 @@ async def submit(
     flagged_login: bool,
     http_client=None,
 ) -> None:
+    if await _is_individual(session, profile.org_id):
+        issues = await individual_kyc.validate_owner(session, profile, user_id)
+        if issues:
+            raise ValidationFailedError(
+                "Finish these parts first: " + ", ".join(issues), code="kyc_incomplete"
+            )
     missing = await missing_for_submission(session, profile)
     if missing:
         raise ValidationFailedError(
@@ -627,9 +673,16 @@ async def submit(
 
 
 async def refresh_risk(session: AsyncSession, settings: Settings, profile: KycProfile) -> None:
+    account_type = (
+        ACCOUNT_TYPE_INDIVIDUAL
+        if await _is_individual(session, profile.org_id)
+        else "business"
+    )
     persons = await kyc_checks.persons_for(session, profile.org_id)
     checks = await kyc_checks.latest_checks(session, profile.org_id)
-    tier, reasons = kyc_risk.evaluate(settings, profile, persons, checks)
+    tier, reasons = kyc_risk.evaluate(
+        settings, profile, persons, checks, account_type=account_type
+    )
     profile.risk_tier = tier
     profile.risk_reasons = reasons
 
@@ -673,6 +726,17 @@ async def rescreen(session: AsyncSession, settings: Settings, profile: KycProfil
 
 async def approval_blockers(session: AsyncSession, profile: KycProfile) -> list[str]:
     blockers: list[str] = []
+    if await _is_individual(session, profile.org_id):
+        blockers.extend(await individual_kyc.validate_owner(session, profile))
+        checks = await kyc_checks.latest_checks(session, profile.org_id)
+        for kind in ("sanctions", "ban_list"):
+            check = checks.get(kind)
+            if check is None or check.result not in ("pass", "warn"):
+                blockers.append(f"The {kind.replace('_', ' ')} check failed")
+        name_match = checks.get("name_match")
+        if name_match is None or name_match.result != "pass":
+            blockers.append("Owner names on the application don't match their verified IDs")
+        return blockers
     persons = await kyc_checks.persons_for(session, profile.org_id)
     for p in persons:
         if p.role in ("owner", "beneficial_owner") and p.status != "verified":
@@ -727,6 +791,13 @@ async def approve(
     operator_id: uuid.UUID,
     note: str,
 ) -> None:
+    if await _is_individual(session, profile.org_id):
+        await individual_kyc.require_admin(session, operator_id)
+        missing = await individual_kyc.missing_for_submission(session, profile)
+        if missing:
+            raise ValidationFailedError(
+                "Finish these parts first: " + ", ".join(missing), code="kyc_incomplete"
+            )
     await rescreen(session, settings, profile)
     blockers = await approval_blockers(session, profile)
     if blockers:

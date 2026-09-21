@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, countries_phrase
-from app.models import KycCheck, KycDocument, KycProfile
+from app.models import KycCheck, KycDocument, KycProfile, Org
 from app.services import ai_guard, kyc_checks
 
 RECOMMENDATIONS = ("approve", "needs_info", "reject")
@@ -61,6 +61,43 @@ Return JSON with exactly these keys:
   "note_for_decision": "one sentence to record with the approval or rejection"
 }"""
 
+INDIVIDUAL_SYSTEM = """You are the senior compliance analyst for a telecom company that
+sells phone numbers and calling to individuals in {countries}. Scammers try to
+sign up as legitimate-looking people, so you review applications carefully, but you also
+don't want to turn away genuine people over paperwork noise.
+
+You prepare a decision for a human admin, who makes the final call. Weigh:
+- identity: the person verified with ID + selfie, the name on the ID matching the name
+  entered, and any proof of address matching. Proof of address is optional: if one was
+  supplied, check that it matches; if none was supplied, that is never a concern and must
+  not be raised as one
+- screening: sanctions, ban list, flagged sign-ins
+- the declared use case: does what they say they'll do fit a single person? volumes, who
+  they contact and where their contact lists come from (bought lists = red flag)
+- anything that looks inconsistent across the application
+
+There is no company, no registry and no registration documents to check - do not ask for
+them and do not treat their absence as a concern. Voice calling is allowed; only SMS/MMS
+are forbidden for individual accounts, so suggested_limits.daily_texts MUST always be 0
+(never a normal business texting limit).
+
+You only advise. Never change the application's status yourself - a human admin makes the
+final decision.
+
+Return JSON with exactly these keys:
+{
+  "recommendation": "approve" | "needs_info" | "reject",
+  "confidence": integer 0-100,
+  "summary": "3-6 plain-language sentences a busy reviewer can act on",
+  "thoughts": [{"area": "identity"|"company"|"documents"|"use_case"|"screening"|"website",
+                "assessment": "ok"|"concern"|"unclear", "thought": "one or two sentences"}],
+  "concerns": [{"concern": "short", "evidence": "what in the application shows it"}],
+  "questions_for_applicant": ["specific question to ask, if more info is needed"],
+  "suggested_risk": "standard" | "high",
+  "suggested_limits": {"daily_calls": integer, "daily_texts": 0, "max_numbers": integer},
+  "note_for_decision": "one sentence to record with the approval or rejection"
+}"""
+
 
 def _clip(value: object, limit: int) -> object:
     if isinstance(value, str):
@@ -71,6 +108,8 @@ def _clip(value: object, limit: int) -> object:
 async def build_application(session: AsyncSession, settings: Settings, profile: KycProfile) -> dict:
     from app.services import kyc as kyc_svc
 
+    org = await session.get(Org, profile.org_id)
+    account_type = org.account_type if org is not None else "business"
     persons = await kyc_checks.persons_for(session, profile.org_id)
     checks = await kyc_checks.latest_checks(session, profile.org_id)
     documents = (
@@ -86,6 +125,7 @@ async def build_application(session: AsyncSession, settings: Settings, profile: 
     )
     website = checks.get("website")
     return {
+        "account_type": account_type,
         "business": {
             "country": profile.country,
             "legal_name": profile.legal_name,
@@ -241,11 +281,12 @@ async def generate_if_stale(
             created = created.replace(tzinfo=timezone.utc)
         if created is not None and datetime.now(timezone.utc) - created < ERROR_BACKOFF:
             return None
+    system = INDIVIDUAL_SYSTEM if application.get("account_type") == "individual" else SYSTEM
     try:
         judgement = await ai_guard.judge(
             settings,
             task="kyc_decision",
-            system=SYSTEM.replace("{countries}", countries_phrase(settings.kyc_country_list)),
+            system=system.replace("{countries}", countries_phrase(settings.kyc_country_list)),
             user=ai_guard.data_block("application", application)
             + "\n\nPrepare the decision for the reviewer.",
             max_tokens=1500,

@@ -18,6 +18,8 @@
  * so the stepper is only ever mounted in those two statuses.
  */
 
+export type AccountType = "business" | "individual";
+
 export type StepId = "business" | "use_case" | "owners" | "identity" | "documents" | "agreement";
 
 export type OnboardingStep = {
@@ -39,6 +41,18 @@ const BUSINESS_KEYS = new Set([
   "registration_number",
   "registered_address",
   "website",
+  "business_email",
+  "business_phone",
+]);
+
+/**
+ * The personal-details keys an individual profile owns. Same shape as the business set,
+ * minus the entity/registration fields that only exist for a company, and with the
+ * personal contact fields the server emits for an individual.
+ */
+const INDIVIDUAL_KEYS = new Set([
+  "country",
+  "legal_name",
   "business_email",
   "business_phone",
 ]);
@@ -66,7 +80,7 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     id: "identity",
     title: "Prove it's you",
-    blurb: "A photo of an ID and a selfie for each owner, handled by Stripe. We never see or store the images.",
+    blurb: "A photo of an ID and a selfie for each owner, handled by our identity provider. We never see or store the images.",
     owns: (k) => k === "id_verification",
   },
   {
@@ -82,6 +96,58 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
     owns: (k) => k === "agreement",
   },
 ];
+
+/**
+ * The individual journey. Same step IDs, so the page's switch and the stepper's state
+ * machine are unchanged; what differs is which keys each step owns and what it says.
+ *
+ * There is deliberately NO documents step and NO ownership/residence requirement: an
+ * individual is not asked to prove a company exists, and the server does not emit
+ * `documents`, `proof_of_address` or `residential_address` for them. Rendering those steps
+ * would be a form the submit gate never reads.
+ *
+ * The applicant step reuses the `owners` id so the existing owner-count gate in
+ * `stepStateFor` applies unchanged: an individual with no person row is `waiting`, not
+ * `done`, and the ID step cannot be read as complete out of a silence.
+ */
+export const INDIVIDUAL_ONBOARDING_STEPS: OnboardingStep[] = [
+  {
+    id: "business",
+    title: "Your details",
+    blurb: "Your legal name and how we can reach you. These are the details we check against your ID.",
+    owns: (k) => INDIVIDUAL_KEYS.has(k),
+  },
+  {
+    id: "use_case",
+    title: "How you'll use it",
+    blurb:
+      "Worth being specific: this is what we compare your traffic against later, so a vague answer here means more false alarms for you afterwards.",
+    owns: (k) => k.startsWith("use_case."),
+  },
+  {
+    id: "owners",
+    title: "You",
+    blurb: "The applicant on this account. We check your ID against these details.",
+    owns: (k) => k === "owner",
+  },
+  {
+    id: "identity",
+    title: "Prove it's you",
+    blurb: "A photo of your ID and a selfie, handled by Didit. We never see or store the images.",
+    owns: (k) => k === "id_verification",
+  },
+  {
+    id: "agreement",
+    title: "Agreement",
+    blurb: "The rules for calling and how you collect consent.",
+    owns: (k) => k === "agreement",
+  },
+];
+
+/** The step list for an account type. Defaults to business so existing callers are unchanged. */
+export function stepsFor(accountType: AccountType = "business"): OnboardingStep[] {
+  return accountType === "individual" ? INDIVIDUAL_ONBOARDING_STEPS : ONBOARDING_STEPS;
+}
 
 /** Outstanding `missing` keys for one step. NOT on its own a verdict - see `stepStateFor`. */
 export function outstandingFor(step: OnboardingStep, missing: string[]): string[] {
@@ -155,7 +221,7 @@ export function stepStateFor(step: OnboardingStep, missing: string[], owners: nu
  * outstanding — the caller shows "ready to submit" rather than a seventh step, because
  * submitting is an act, not a form.
  */
-export function firstIncomplete(missing: string[]): StepId | null {
-  const step = ONBOARDING_STEPS.find((s) => outstandingFor(s, missing).length > 0);
+export function firstIncomplete(missing: string[], accountType: AccountType = "business"): StepId | null {
+  const step = stepsFor(accountType).find((s) => outstandingFor(s, missing).length > 0);
   return step ? step.id : null;
 }

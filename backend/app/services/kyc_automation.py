@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db.base import set_org_context
-from app.models import KycDocument, KycProfile
+from app.models import KycDocument, KycProfile, Org
 from app.services import kyc_checks, kyc_decision, kyc_doc_reader
 
 log = structlog.get_logger("kyc_automation")
@@ -147,35 +147,38 @@ async def process(
     if reviews_only or profile.status not in REVIEW_STATUSES:
         return counts
 
+    org = await session.get(Org, org_id)
+    individual = org is not None and org.account_type == "individual"
     persons = await kyc_checks.persons_for(session, org_id)
     documents = await _documents(session, org_id)
     checks = await kyc_checks.latest_checks(session, org_id)
-    _keep_if_changed(
-        session,
-        checks.get("documents"),
-        kyc_checks.check_documents(session, profile, persons, documents),
-    )
-    registry = checks.get("registry")
-    if (
-        registry is None
-        or registry.result in ("pending", "error")
-        or ((registry.detail or {}).get("from_documents"))
-    ):
-        owns = http_client is None
-        client = http_client or httpx.AsyncClient(
-            timeout=30.0, headers={"User-Agent": "csaas-kyc/1.0"}
+    if not individual:
+        _keep_if_changed(
+            session,
+            checks.get("documents"),
+            kyc_checks.check_documents(session, profile, persons, documents),
         )
-        try:
-            _keep_if_changed(
-                session,
-                registry,
-                await kyc_checks.check_registry(session, settings, profile, persons, client),
+        registry = checks.get("registry")
+        if (
+            registry is None
+            or registry.result in ("pending", "error")
+            or ((registry.detail or {}).get("from_documents"))
+        ):
+            owns = http_client is None
+            client = http_client or httpx.AsyncClient(
+                timeout=30.0, headers={"User-Agent": "csaas-kyc/1.0"}
             )
-        except Exception:  # noqa: BLE001 - registry trouble must not stop the pack
-            log.exception("kyc_registry_retry_failed", org_id=str(org_id))
-        finally:
-            if owns:
-                await client.aclose()
+            try:
+                _keep_if_changed(
+                    session,
+                    registry,
+                    await kyc_checks.check_registry(session, settings, profile, persons, client),
+                )
+            except Exception:  # noqa: BLE001 - registry trouble must not stop the pack
+                log.exception("kyc_registry_retry_failed", org_id=str(org_id))
+            finally:
+                if owns:
+                    await client.aclose()
     await session.flush()
     await kyc_svc.refresh_risk(session, settings, profile)
     await session.flush()

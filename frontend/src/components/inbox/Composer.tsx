@@ -25,8 +25,13 @@ import { cn } from "@/lib/utils";
  *
  * The reply path deliberately keeps the original `onSend` contract: sending, Enter,
  * Shift+Enter, IME guard, the sticky_sender_unavailable reassign prompt and the segment
- * counter must not change. Note mode is a separate mutation, never a fallback inside
- * the reply path.
+ * counter must not change for business workspaces. Note mode is a separate mutation,
+ * never a fallback inside the reply path.
+ *
+ * Individual (calling-only) workspaces have no SMS/MMS: reply text, send, attachments,
+ * scheduling, link tracking and saved replies are all disabled/hidden, and submit()
+ * refuses to call onSend from any path (Enter, form submit, reassign). Private notes
+ * are untouched.
  */
 
 type Attachment = { name: string; media: MediaAttachment };
@@ -80,7 +85,7 @@ export function Composer({
   threadId?: string | null;
   onNoted?: () => void;
 }) {
-  const { api } = useAuth();
+  const { api, me, orgId } = useAuth();
   const queryClient = useQueryClient();
   const [mode, setMode] = React.useState<"reply" | "note">("reply");
   const [body, setBody] = React.useState("");
@@ -108,6 +113,17 @@ export function Composer({
   const mentionIdsByLabel = React.useRef<Map<string, string>>(new Map());
   const noteTabDisabled = !threadId;
 
+  // An individual workspace is calling-only: no SMS/MMS. Derive it from the selected
+  // membership; account_type is optional, so anything other than "individual" is business.
+  const isIndividual = React.useMemo(
+    () => me?.memberships.find((m) => m.org_id === orgId)?.account_type === "individual",
+    [me, orgId],
+  );
+  // Mode-aware effective disabled for the shared submit button: the read-only `disabled`
+  // guard applies everywhere, but the calling-only restriction only applies to reply mode
+  // so Post note keeps working for individuals.
+  const submitDisabled = disabled || (mode === "reply" && isIndividual);
+
   const segments = React.useMemo(() => estimateSmsSegments(body), [body]);
   const trackableUrlCount = React.useMemo(
     () => (mode === "reply" ? trackableUrls(body).length : 0),
@@ -121,6 +137,12 @@ export function Composer({
   React.useEffect(() => {
     if (mode === "note" && noteTabDisabled) setMode("reply");
   }, [mode, noteTabDisabled]);
+
+  // A calling-only workspace has no reply path, so land on the (still working) private
+  // note composer whenever there is a thread to note on.
+  React.useEffect(() => {
+    if (isIndividual && !noteTabDisabled) setMode("note");
+  }, [isIndividual, noteTabDisabled]);
 
   React.useEffect(() => {
     if (pendingCaret.current !== null && textareaRef.current) {
@@ -143,7 +165,8 @@ export function Composer({
     if (mentionToken) setMentionSuppressed(false);
   }, [mentionToken?.query, mentionToken?.start]);
 
-  const quickPickOpen = mode === "reply" && body.startsWith("/") && !body.includes("\n");
+  const quickPickOpen =
+    mode === "reply" && !isIndividual && body.startsWith("/") && !body.includes("\n");
   const quickPickSearch = quickPickOpen ? body.slice(1) : "";
 
   React.useEffect(() => {
@@ -286,6 +309,9 @@ export function Composer({
   }
 
   async function submit(allowReassign: boolean) {
+    // Single guard for every reply entry point - Send, Enter, and the reassign prompt -
+    // so onSend is never reached from a calling-only workspace.
+    if (mode === "reply" && isIndividual) return;
     if (!body.trim()) return;
 
     if (mode === "reply" && scheduledLocal) {
@@ -463,13 +489,19 @@ export function Composer({
         </p>
       )}
 
+      {isIndividual && (
+        <p className="text-xs text-muted-foreground">
+          This workspace is calling-only, so SMS and MMS are unavailable. Use an internal note to collaborate.
+        </p>
+      )}
+
       {mode === "note" && (
         <p className="text-xs text-muted-foreground">
           Only your team can see this. It is never sent to the contact.
         </p>
       )}
 
-      {mode === "reply" && (
+      {mode === "reply" && !isIndividual && (
         <div className="space-y-2">
           <input
             ref={fileInputRef}
@@ -601,7 +633,7 @@ export function Composer({
                 : "Write a message…"
             }
             value={body}
-            disabled={disabled || busy || noteMutation.isPending}
+            disabled={disabled || busy || noteMutation.isPending || (mode === "reply" && isIndividual)}
             rows={1}
             onChange={handleBodyChange}
             onSelect={syncCaret}
@@ -689,9 +721,10 @@ export function Composer({
                 role="tab"
                 aria-selected={mode === "reply"}
                 aria-label="Reply"
-                title="Reply"
+                title={isIndividual ? "Calling-only workspace — replies are unavailable" : "Reply"}
+                disabled={isIndividual}
                 onClick={() => selectMode("reply")}
-                className="cx-icon-btn grid h-8 w-8 place-items-center"
+                className="cx-icon-btn grid h-8 w-8 place-items-center disabled:pointer-events-none disabled:opacity-40"
               >
                 <MessageSquare className="h-4 w-4" aria-hidden="true" />
               </button>
@@ -719,8 +752,9 @@ export function Composer({
             </div>
 
             {/* Attaching and scheduling apply to a message, never to a note - a note is
-                not sent anywhere and has nothing to attach to. */}
-            {mode === "reply" && (
+                not sent anywhere and has nothing to attach to. A calling-only workspace
+                has no message to attach to either, so they are hidden entirely. */}
+            {mode === "reply" && !isIndividual && (
               <>
                 <button
                   type="button"
@@ -748,8 +782,9 @@ export function Composer({
 
             {/* Reply mode only: a note is never sent anywhere, so a segment count under it
                 would be answering a question nobody asked - and one that costs money in
-                every other place it appears. */}
-            {mode === "reply" && (
+                every other place it appears. Hidden for calling-only workspaces too, since
+                nothing can be sent. */}
+            {mode === "reply" && !isIndividual && (
               <span className="cx-num ml-2 text-[0.625rem] text-muted-foreground">
                 {segments.units} char{segments.units === 1 ? "" : "s"} · {segments.encoding} ·{" "}
                 {segments.segments} segment{segments.segments === 1 ? "" : "s"}
@@ -759,10 +794,16 @@ export function Composer({
             <Button
               type="submit"
               className="cx-send ml-auto gap-2 rounded-full px-4"
-              disabled={disabled || busy || noteMutation.isPending || uploading || !body.trim()}
+              disabled={
+                submitDisabled ||
+                busy ||
+                noteMutation.isPending ||
+                uploading ||
+                !body.trim()
+              }
             >
               {mode === "note" ? "Post note" : scheduledLocal ? "Schedule" : "Send"}
-              {mode === "reply" && !scheduledLocal && (
+              {mode === "reply" && !scheduledLocal && !isIndividual && (
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               )}
             </Button>

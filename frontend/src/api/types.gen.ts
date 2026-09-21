@@ -7578,6 +7578,12 @@ export interface components {
         /** MembershipOut */
         MembershipOut: {
             /**
+             * Account Type
+             * @default business
+             * @enum {string}
+             */
+            account_type: "business" | "individual";
+            /**
              * Identity Verification
              * @default not_applicable
              */
@@ -9797,6 +9803,12 @@ export interface components {
         };
         /** RegisterIn */
         app__api__routes__auth__RegisterIn: {
+            /**
+             * Account Type
+             * @default business
+             * @enum {string}
+             */
+            account_type: "business" | "individual";
             /**
              * Company Name
              * @default

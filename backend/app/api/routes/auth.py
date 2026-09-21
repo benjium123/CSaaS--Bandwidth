@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal, cast
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, Request, Response
@@ -39,6 +39,9 @@ from app.services import operators as operators_svc
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
+#: Closed set of workspace kinds: a company workspace, or one person's own workspace.
+AccountType = Literal["business", "individual"]
+
 
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -47,8 +50,13 @@ class RegisterIn(BaseModel):
     #: Required unless this is the very first account on the instance.
     invite_token: str = ""
     #: Optional. Names the workspace a self-serve signup gets; when it is absent the email
-    #: domain is used instead.
+    #: domain is used instead. Ignored for "individual", whose workspace is the person.
     company_name: str = ""
+    #: What kind of workspace a SELF-SERVE signup wants. "individual" gets a personal
+    #: workspace named after full_name, which is then required. Ignored when an
+    #: invite_token is present: the invitation names the workspace, so the invitee's own
+    #: preference neither applies nor is recorded.
+    account_type: AccountType = "business"
 
 
 class LoginIn(BaseModel):
@@ -73,6 +81,10 @@ class MembershipOut(BaseModel):
     org_name: str
     org_slug: str
     role_name: str
+    #: Whether this workspace is a business org or a single person's own. Read from the
+    #: ORG, never from the signup payload: an invitee sees the kind of workspace they
+    #: joined, whatever they might have asked for when registering.
+    account_type: AccountType = "business"
     #: P43: "not_applicable" | "required" | "verified" - whether this person must pass their
     #: own ID + selfie check before using admin and billing powers IN THIS WORKSPACE. Per
     #: membership rather than per account on purpose: the answer depends on the workspace's
@@ -109,6 +121,14 @@ _MULTI_LABEL_SUFFIXES = {"co", "com", "org", "net", "ac", "gov"}
 
 def _signup_org_name(payload: RegisterIn) -> str:
     """Name for the workspace a self-serve signup gets."""
+    # An individual workspace IS the person, so it is named after them whatever
+    # company_name says. register() rejects an individual signup with a blank name before
+    # this runs; the fall-through keeps the never-empty guarantee for the slugify below.
+    if payload.account_type == "individual":
+        personal = payload.full_name.strip()
+        if personal:
+            return personal
+
     explicit = payload.company_name.strip()
     if explicit:
         return explicit
@@ -232,6 +252,18 @@ async def register(
             "This instance is invite-only. Ask an administrator for an invitation."
         )
 
+    # account_type and full_name only shape a SELF-SERVE signup, and only "individual"
+    # imposes anything: its workspace is the person's own, so it is named after them and a
+    # blank name would leave it unnamed. Checked after the invite is resolved and before
+    # the account exists, so an invitee is never blocked by - and never records - the
+    # type or the name a signup asked for: the invitation decides the workspace.
+    if (
+        invite is None
+        and payload.account_type == "individual"
+        and not payload.full_name.strip()
+    ):
+        raise ValidationFailedError("An individual account requires your full name.")
+
     await password_policy.check(settings, payload.password, email=payload.email)
     user = await users_repo.create_user(
         session, email=payload.email, password=payload.password, full_name=payload.full_name
@@ -251,6 +283,12 @@ async def register(
         org = await orgs_repo.create_org_with_owner(
             session, name=_signup_org_name(payload), owner_id=user.id
         )
+        # Stamp the signup's own kind onto the org and FLUSH before anything reads it:
+        # seed_org_defaults and the KYC profile both branch on account_type (an individual
+        # workspace verifies a person, not a company) and they read the ORG row, not the
+        # payload, so a stale default here would create the wrong profile.
+        org.account_type = payload.account_type
+        await session.flush()
         await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
         set_org_context(session, org.id)
         await kyc_svc.get_or_create_profile(session, org.id)
@@ -280,6 +318,7 @@ async def register(
                 org_name=org.name,
                 org_slug=org.slug,
                 role_name="owner",
+                account_type=cast(AccountType, org.account_type),
             )
         ],
     )
@@ -433,6 +472,9 @@ async def me(
                 org_name=org.name,
                 org_slug=org.slug,
                 role_name=role.name,
+                # The WORKSPACE's kind, not the viewer's signup preference: a business
+                # invitee stays "business" here whatever they registered as.
+                account_type=cast(AccountType, org.account_type),
                 identity_verification=await identity_verification_state(
                     session,
                     request.app.state.settings,

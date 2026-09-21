@@ -159,6 +159,7 @@ def _person_out(p, viewer_id: uuid.UUID | None = None) -> dict:
         "status": p.status,
         "verified_name": p.verified_name,
         "document_country": p.document_country,
+        "identity_provider": getattr(p, "identity_provider", None),
         "verified_at": p.verified_at.isoformat() if p.verified_at else None,
         "last_error": p.last_error,
         "residential_address": p.residential_address,
@@ -204,6 +205,11 @@ async def _profile_out(
     checks = await kyc_checks.latest_checks(session, profile.org_id)
     return {
         "status": profile.status,
+        "account_type": (
+            "individual"
+            if await kyc_svc._is_individual(session, profile.org_id)
+            else "business"
+        ),
         # P43: the countries a business can verify from (KYC_COUNTRIES).
         "supported_countries": get_active_settings().kyc_country_list,
         "business": {
@@ -282,6 +288,23 @@ async def put_business(
 ) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     data = payload.model_dump(exclude_unset=True, mode="python")
+    if await kyc_svc._is_individual(ctx.session, ctx.org.id):
+        company_only = (
+            "dba_name",
+            "entity_type",
+            "registration_number",
+            "tax_id",
+            "incorporation_date",
+            "registered_address",
+            "operating_address",
+            "website",
+        )
+        for key in company_only:
+            value = data.get(key)
+            if value not in (None, ""):
+                raise ValidationFailedError(
+                    "That field is for business accounts only"
+                )
     for key in ("registered_address", "operating_address"):
         if isinstance(data.get(key), dict):
             data[key]["country"] = data[key]["country"].upper()
@@ -305,6 +328,11 @@ async def put_use_case(
     from app.auth.deps import check_step_up
 
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
+    if await kyc_svc._is_individual(ctx.session, ctx.org.id):
+        if payload.monthly_texts != 0:
+            raise ValidationFailedError(
+                "Texting is not available on individual accounts"
+            )
     if profile.status in ("approved", "reverification_due"):
         if ctx.membership is None:
             raise PermissionDeniedError("API keys cannot change the declared use case")
@@ -326,6 +354,11 @@ async def add_person(
     ctx: Annotated[OrgContext, Depends(require_owner)],
 ) -> dict:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
+    if await kyc_svc._is_individual(ctx.session, ctx.org.id):
+        if payload.role != "owner" or not payload.is_me:
+            raise ValidationFailedError(
+                "An individual account has exactly one owner: you"
+            )
     user_id = None
     if payload.is_me:
         if ctx.membership is None:
@@ -376,6 +409,12 @@ async def delete_person(
 ) -> Response:
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     person = await kyc_svc.get_person(ctx.session, ctx.org.id, person_id)
+    if await kyc_svc._is_individual(ctx.session, ctx.org.id) and getattr(
+        person, "identity_hash", None
+    ):
+        raise ValidationFailedError(
+            "The verified owner of an individual account cannot be removed"
+        )
     if person.status == "verified" or profile.status not in ("draft", "needs_info"):
         raise ValidationFailedError("A verified person, or one on a submitted application, stays")
     await ctx.session.delete(person)
@@ -547,6 +586,7 @@ async def verify_me(
     if ctx.membership is None:
         raise ValidationFailedError("API keys cannot be identity-verified")
     settings: Settings = request.app.state.settings
+    individual = await kyc_svc._is_individual(ctx.session, ctx.org.id)
     profile = await kyc_svc.get_or_create_profile(ctx.session, ctx.org.id)
     person = (
         await ctx.session.execute(
@@ -555,6 +595,10 @@ async def verify_me(
             )
         )
     ).scalar_one_or_none()
+    if individual and ctx.role.name != "owner":
+        raise PermissionDeniedError(
+            "Only the account owner can verify an individual account"
+        )
     if person is None:
         user = await ctx.session.get(User, ctx.membership.user_id)
         role = (
@@ -565,7 +609,7 @@ async def verify_me(
         person = await kyc_svc.add_person(
             ctx.session,
             profile,
-            role=role,
+            role="owner" if individual else role,
             full_name=user.full_name or user.email,
             email=user.email,
             ownership_percent=None,
