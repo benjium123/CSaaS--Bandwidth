@@ -1,349 +1,316 @@
-# Telnyx Carrier + 10DLC / TFV — Implementation Gaps & Readiness Map
+# Telnyx Carrier + 10DLC / TFV — Gap & Status Ledger
 
-> **Audit artifact.** This document coordinates implementation work across delegates.
-> It is **not** implementation, **not** a deployment plan, and **not** a substitute for
-> the code it describes. Nothing here is "done" unless it is marked **EXISTS** against a
-> cited symbol in a source file. No credentials, hostnames, account identifiers, or
-> secrets are recorded here, by design.
+> **Audit artifact.** This document tracks implementation status for the Telnyx carrier,
+> 10DLC, and toll-free verification (TFV) work. It is **not** implementation, **not** a
+> deployment plan, and **not** a substitute for the code it describes. An item is only
+> **BUILT** when it is marked so against a cited symbol or commit plus a `Verify:` command
+> that reproduces the claim.
+>
+> **Status: NOT launch-ready.** The remaining P0 items in section 5 block production launch.
+> No credentials, account identifiers, phone numbers, hostnames, or secrets are recorded
+> here, by design.
 
 ## 0. Scope and method
 
-- **Audited sources for this pass:**
-  - `backend/app/services/registration.py`
-  - `backend/app/api/routes/registration.py`
-  - `backend/app/models/numbers.py`
-- Every **EXISTS** claim is traceable to a symbol in one of the three files above.
-- **Everything else in the repository is UNVERIFIED here.** Where a path is listed
-  without the EXISTS tag, treat it as a location to *confirm before editing*, not as a
-  statement that the file or symbol exists.
-- No line numbers are cited; symbols are cited by name so this map does not drift when
-  the source is reformatted.
+- This edition **reconciles** the earlier pre-implementation map against the work that has
+  since landed. Items the earlier map listed as **NOT BUILT** that are now implemented are
+  moved into the **BUILT ledger** (section 3) with evidence, not deleted.
+- **Evidence types:**
+  - a **symbol** confirmed in a source file (path cited where known);
+  - a **commit** SHA attributed by `git show --stat`;
+  - a **`Verify:`** command (grep or test) that reproduces the claim.
+- **Commit attributions for this edition** (from `git show --stat`):
+
+  | Commit | Content |
+  | --- | --- |
+  | `ddbdd89` | Guarded 10DLC brand/campaign filing foundation — clients, payloads, routes, tests. |
+  | `81df130` | Carrier-backed approval guards, number association, send/order gating, TFV payload. |
+  | `43e1ff9` | Ignored / no-op status updates conflict. |
+  | `907b829` | Guarded TFV filing **service** and tests. |
+  | `1d95fbf` | TFV filing **route** and route tests. |
+  | `0719e59` | TFV list / read transport. |
+  | `9b9e261` | TFV reconciliation **service** and tests. |
+  | `ef724d8` | TFV reconciliation **route** and tests. |
+
+- Where a symbol's exact spelling has drifted from the commits, the `Verify:` grep on the
+  row is authoritative; trust the grep and update the row.
+- Symbols are cited by name, not by line number, so this ledger does not drift when the
+  source is reformatted.
+- **Nothing outside the cited evidence is asserted here.** Where a path is listed without a
+  **BUILT** tag, treat it as a location to *confirm before editing*.
 
 ## 1. Reading the tags
 
 | Tag | Meaning |
 | --- | --- |
-| **EXISTS** | Behavior confirmed in one of the audited sources. |
-| **LOCAL-ONLY** | A value is written to our database but nothing drives it to or reads it at a carrier. |
-| **NOT BUILT (audited)** | No code in the audited sources performs this. It may exist elsewhere — *verify*. |
-| **UNRESOLVED** | Cannot be settled from the audited sources; needs a human or a further code read. |
+| **BUILT** | Implemented and backed by a cited symbol/commit, with offline test evidence where testable. |
+| **BUILT (operator-gated)** | Implemented behind `require_platform_operator` and a permission dependency. |
+| **LOCAL-ONLY** | A value is written to our database but nothing drives it to a carrier (legacy path). |
+| **PARTIAL** | Some of the behavior exists; the row states exactly what is still missing. |
+| **NOT BUILT (audited)** | No code found for this; it may exist elsewhere — verify. |
+| **BLOCKED** | Cannot proceed without an external action (credentials, authorization, decision). |
 | **OWNER DECISION** | Requires a human/business decision, budget, or a production action. Block, do not guess. |
 | **GATE** | A safety/ordering requirement; violating it can let a partial carrier submission be treated as approved. |
+| **P0 / P1** | Priority. P0 blocks any production filing; P1 is required but not on the critical path. |
 
-## 2. Confirmed existing behavior (EXISTS)
+## 2. Historical decisions preserved from the pre-implementation map
 
-### 2.1 State machine — `backend/app/services/registration.py`
+These findings and decisions still stand and must not be re-litigated silently.
 
-- `advance_status(entity, new_status, *, error=None) -> bool` — monotonic, rank-gated
-  transition. It:
-  - rejects unknown statuses with `ValidationFailedError`;
-  - treats a `None` status as `"draft"`;
-  - no-ops when `new_status == current` (returns `False`);
-  - **ignores any change away from a terminal status** (`TERMINAL_REGISTRATION`);
-  - **ignores rank regressions** (`REGISTRATION_RANK`);
-  - sets `entity.last_error = (error or None)` **only when advancing to `"rejected"`**,
-    and sets it to `None` on any other successful advance;
-  - logs `registration_status_advanced` / `registration_status_regression_ignored` /
-    `registration_terminal_status_ignored`.
-- `REQUIRED_BRAND_FIELDS = ("name", "email", "street", "city", "state", "postal_code")`
-  and `REQUIRED_CAMPAIGN_FIELDS = ("name", "use_case", "description", "opt_in_process")`.
-- `validate_brand_for_submission(brand)` — required fields; an EIN is required unless
-  `entity_type == "SOLE_PROPRIETOR"`.
-- `validate_campaign_for_submission(campaign)` — required fields; at least one
-  `sample_messages` entry; `opt_out_message` required.
-- `submit_brand(session, brand_id)` — `NotFoundError` if missing, `ConflictError` if the
-  entity is already terminal, validates, then `advance_status(brand, "submitted")`.
-- `submit_campaign(session, campaign_id)` — 404/conflict handling, **requires the parent
-  brand to be `status == "approved"`**, validates, then
-  `advance_status(campaign, "submitted")`.
-- `submit_tollfree(session, tfv_id)` — 404/conflict handling, requires `business_name`,
-  `use_case`, `use_case_summary`, `opt_in_process`, then
-  `advance_status(tfv, "submitted")`.
-- `numbers_on_campaign(session, campaign_id) -> int` — a **local count** of `OrgNumber`
-  rows where `campaign_id` matches.
+- **D-1. `carrier_refs` is the per-carrier reference store; no new column or migration is
+  assumed.** `carrier_refs: Mapped[dict]` (backed by `PortableJSON`, `nullable=False`,
+  `default=dict`) exists on `Brand`, `Campaign`, and `TollFreeVerification` in
+  `backend/app/models/numbers.py`. The Telnyx filing work writes a `"telnyx"` entry into
+  this existing field; a schema change is justified only if a later read proves
+  `carrier_refs` insufficient.
+- **D-2. `TollFreeVerification` stays a separate table from `Campaign`** (module docstring,
+  phase-4-plan DR-4). The TFV work did not merge the tables.
+- **D-3. The registration state machine is monotonic and terminal-sticky.**
+  `advance_status`, `REGISTRATION_RANK`, `TERMINAL_REGISTRATION`, and `REGISTRATION_STATUSES`
+  in `backend/app/services/registration.py` and `backend/app/models/numbers.py` are
+  unchanged in intent: a terminal status cannot be demoted, `"rejected"` is terminal, and
+  rank regressions are ignored.
+- **D-4. Routes own the transaction.** Filing services mutate; the route performs
+  `await ctx.session.commit()`. Every writer must route status changes through
+  `advance_status` and must never assign `entity.status` directly.
+- **D-5. The legacy `submit_*` service functions remain explicit LOCAL-ONLY paths.**
+  `submit_brand`, `submit_campaign`, and `submit_tollfree` in
+  `backend/app/services/registration.py` do **not** call Telnyx. They validate the entity and
+  then `advance_status(<entity>, "submitted")` directly, moving local state to `submitted`
+  with **no carrier HTTP call and no `carrier_refs["telnyx"]` write**. Carrier filing is
+  performed only by the separate `/file-telnyx` routes and the `file_*_with_telnyx` services
+  (section 3).
+  > **Risk that must not be lost:** because the legacy path advances local state to
+  > `submitted` on its own, a local `"submitted"` **does not** imply that a carrier reference
+  > exists. Any reader that treats local `submitted` as carrier-submitted is wrong. The
+  > standing invariant is:
+  > `status ∈ {"approved", "rejected"}` **only if** a trusted writer advanced it there, and a
+  > local `"submitted"` is never treated as carrier truth without a persisted carrier
+  > reference written by the carrier filing path.
+- **D-6. Terminal-aware state-machine assertion retained.** An earlier draft claimed a
+  `rejected` entity could later be cleared. That is impossible because `"rejected"` is in
+  `TERMINAL_REGISTRATION`; tests T4/T5/T5b below encode the terminal-aware behavior.
+- **D-7. Billable operations stay unasserted in amount.** 10DLC brand/campaign filing is a
+  billable carrier action and a rejection can forfeit the fee; **no amount, fee schedule,
+  or refundability is asserted in this document** — confirm from the carrier's current
+  published terms at decision time (section 7).
 
-**None of the `submit_*` functions performs an outbound carrier call.** Each only mutates
-`status` on our own entity and returns it. See section 3.
+## 3. BUILT ledger (previously listed as unbuilt)
 
-### 2.2 Approval writer today — `backend/app/api/routes/registration.py`
+Each row states what is built, the evidence, how to verify it, and where it is covered
+(section 6). Coverage is stated at the aggregate-run level only (see the note under section
+6); no one-to-one test-name mapping is claimed.
 
-- Router `router` with prefix `/api/v1/registration`, tag `registration`.
-- `set_brand_status`, `set_campaign_status`, `set_tfv_status` — explicit, per-entity
-  **platform-operator** endpoints at `/brands/{brand_id}/status`,
-  `/campaigns/{campaign_id}/status`, `/tollfree/{tfv_id}/status`.
-  - Each is gated by `Depends(require_platform_operator)` **and**
-    `Depends(require_permission("compliance:manage"))`.
-  - Each loads the entity, raises `NotFoundError` if absent, calls
-    `reg.advance_status(<entity>, payload.status, error=payload.error)`, then commits.
-  - `set_campaign_status`'s docstring states this is how a registrar decision is
-    recorded, and that the monotonic gate prevents a stale `submitted` from demoting an
-    `approved` campaign.
-- **So the current approval source is operator input through these `/status` routes**
-  (an authenticated platform operator posts a status). It is **not** a webhook, and this
-  document does **not** presume one. A future **verified** source — whether a signed
-  webhook **or** a verified poll — would be an additional legitimate writer, subject to
-  the gates in section 5.
-- `create_brand`, `create_campaign`, `create_tfv` mutate + `commit()`, mapping
-  `IntegrityError` to `ConflictError`. `submit_brand`, `submit_campaign`, `submit_tfv`
-  call the `reg.submit_*` service and then `await ctx.session.commit()` — i.e. **the route
-  owns the transaction**, confirming the service functions are mutation-only.
-- `create_tfv` refuses a non-toll-free number with `ValidationFailedError`, directing the
-  caller to a 10DLC campaign instead.
+| # | Item | Status | Evidence | Verify |
+| - | ---- | ------ | -------- | ------ |
+| F1 | Telnyx brand and campaign filing clients plus payload builders | **BUILT** | commit `ddbdd89` (guarded 10DLC brand/campaign filing foundation: clients, payloads, routes, tests) | `grep -rn "telnyx" backend/app/services backend/app/providers` |
+| F2 | Durable attempt markers around the filing call | **BUILT** | commit `ddbdd89` foundation | `grep -rn "attempt" backend/app/services backend/app/models` |
+| F3 | Exact returned carrier ID/reference persistence — brand and campaign persist the carrier ID/reference the carrier returned; TFV persists a request ID | **BUILT** | commits `ddbdd89` (brand/campaign), `907b829` + `1d95fbf` (TFV) | `grep -rn "carrier_refs" backend/app/services` |
+| F4 | **Separate** carrier filing path: `/file-telnyx` routes and `file_*_with_telnyx` services write `"submitted"` only on carrier acceptance and persist `carrier_refs["telnyx"]` | **BUILT** | commits `ddbdd89` (brand/campaign), `907b829` + `1d95fbf` (TFV) | `grep -rn "file-telnyx\|with_telnyx" backend/app/api/routes/registration.py backend/app/services` |
+| F5 | Operator-gated filing routes (`require_platform_operator` plus `require_permission("compliance:manage")`) | **BUILT (operator-gated)** | brand/campaign routes from `ddbdd89`; TFV route from `1d95fbf` | `grep -n "require_platform_operator\|compliance:manage" backend/app/api/routes/registration.py` |
+| F6 | Carrier-confirmed brand/campaign/TFV approval with **exact id matching** against `carrier_refs["telnyx"]`; a local write cannot self-assert approval | **BUILT** | commit `81df130` (carrier-backed approval guards) — TFV filing commits did not introduce approval guards | `grep -rn "carrier_refs" backend/app/services backend/app/api/routes` |
+| F7 | Ignored / no-op status updates return a **conflict** instead of reporting success | **BUILT** | commit `43e1ff9` | `grep -rn "advance_status" backend/app/api/routes/registration.py` |
+| F8 | Telnyx number-to-campaign carrier association plus a durable association marker on the number | **BUILT** | commit `81df130` (number association) | `grep -rn "campaign_id\|associat" backend/app/services backend/app/models/numbers.py` |
+| F9 | Order-time campaign guard — a number cannot be ordered onto a campaign that is not carrier-approved | **BUILT** | commit `81df130` (order gating) | see P1-V1 — a dedicated route regression test is still to be confirmed |
+| F10 | Fail-closed Telnyx send gate — send is refused when association or approval evidence is missing | **BUILT** | commit `81df130` (send gating) | `grep -rn "can_send\|send_gate" backend/app` |
+| F11 | TFV filing: guarded **service** plus strict operator **route** | **BUILT (operator-gated)** | service `907b829`; route `1d95fbf` | `grep -rn "telnyx_tollfree_filing\|with_telnyx" backend/app/services/telnyx_tollfree_filing.py backend/app/api/routes/registration.py` |
+| F12 | `TfvOut` / `_tfv_out` exposes `carrier_refs` (fixes the earlier `TfvOut` inconsistency) | **BUILT** | commit `1d95fbf` (route wiring) | `grep -n "carrier_refs" backend/app/api/routes/registration.py backend/app/models/numbers.py` |
+| F13 | Official list / read transport for carrier state reads (GET) | **BUILT** | commit `0719e59` (TFV list/read transport) | `grep -rn "list\|\.get(" backend/app/providers/telnyx/tollfree_verification.py` |
+| F14 | Exact-match, **GET-only** timeout reconciliation service | **BUILT** | commit `9b9e261` (TFV reconciliation service + tests) | `grep -rn "reconcil" backend/app/services` |
+| F15 | Timeout reconciliation operator route | **BUILT (operator-gated)** | commit `ef724d8` (TFV reconciliation route + tests) | `grep -rn "reconcil" backend/app/api/routes` |
+| F16 | No automatic POST retries after an ambiguous or timeout outcome; ambiguous records stay blocked | **BUILT** | commits `9b9e261`, `ef724d8` | acceptance criteria T20, T24 in section 6 |
+| F17 | No local approval in filing or reconciliation — reconciliation can only confirm what the carrier reports | **BUILT** | commits `907b829`, `9b9e261`, `ef724d8` | acceptance criteria T19, T21 in section 6 |
+| F18 | Legacy `submit_brand` / `submit_campaign` / `submit_tollfree` remain **LOCAL-ONLY** and do **not** call Telnyx | **BUILT (legacy, LOCAL-ONLY)** | `backend/app/services/registration.py` | `grep -n "submit_brand\|submit_campaign\|submit_tollfree" backend/app/services/registration.py` |
 
-### 2.3 Carrier references already exist — `backend/app/models/numbers.py`
+Key TFV module paths referenced above:
 
-- `REGISTRATION_STATUSES = ("draft", "submitted", "approved", "rejected")`,
-  `REGISTRATION_RANK = {"draft": 0, "submitted": 10, "approved": 20, "rejected": 20}`,
-  `TERMINAL_REGISTRATION = frozenset({"approved", "rejected"})`, and
-  `can_send(status) -> bool` (true only for `"approved"`).
-- **`carrier_refs: Mapped[dict]` (backed by `PortableJSON`, `nullable=False,
-  default=dict`) already exists on `Brand`, `Campaign`, and `TollFreeVerification`.**
-  The `Brand` docstring describes it as the mechanism for "one brand, many
-  registrations", with the example shape
-  `{"bandwidth": "BXXXX", "telnyx": "..."}`.
-- **Therefore a new external-id column and its migration are NOT necessarily required.**
-  `carrier_refs` is the existing place to store a per-carrier id. The open gap is that
-  nothing in the audited sources *writes* a `telnyx` entry into it or *resolves* an
-  inbound reference back to an entity.
-- `TollFreeVerification` is a separate table from `Campaign` and is deliberately not
-  merged (module docstring, phase-4-plan DR-4).
-- `_brand_out`/`BrandOut` and `_campaign_out`/`CampaignOut` surface `carrier_refs` and a
-  computed `missing_for_submission` list. **`TfvOut`/`_tfv_out` does NOT expose
-  `carrier_refs`** (confirmed inconsistency), so a Telnyx ref on a TFV would be invisible
-  through the current API.
+- `backend/app/services/telnyx_tollfree_filing.py` — TFV filing service (F11, `907b829`).
+- `backend/app/providers/telnyx/tollfree_verification.py` — Telnyx TFV provider
+  transport/payload (F13, `0719e59`).
+- `backend/app/api/routes/registration.py` — operator-gated filing and reconciliation
+  routes (F4, F5, F11, F12, F15).
 
-## 3. Central finding: "submitted" is local, and "approved" is asserted, not confirmed
+**Explicitly retired claims.** This ledger **no longer** claims that any of the following
+are unbuilt: carrier clients; filing writers; carrier-confirmed approval; number
+association; TFV reference visibility; timeout reconciliation. It **does** keep the legacy
+`submit_*` paths flagged as `LOCAL-ONLY` (F18, D-5) and does **not** claim they call the
+carrier.
 
-- `submit_brand`, `submit_campaign`, and `submit_tollfree` end in
-  `advance_status(<entity>, "submitted")`. There is **no** carrier HTTP call, **no**
-  `carrier_refs` write, **no** idempotency key, and **no** commit inside the service
-  (the route commits).
-  > A brand, campaign, or TFV marked `submitted` in our database is **not** evidence that
-  > anything reached the carrier.
-- The only writers of `"approved"` / `"rejected"` in the audited sources are the
-  platform-operator `/status` routes, which trust the caller's posted value. There is no
-  code that verifies a carrier decision before recording it, and approval does not require
-  a `telnyx` entry in `carrier_refs`.
-- **Consequence / risk:** an operator (or a future automation bug) can set `"approved"`
-  with no carrier evidence, and the monotonic gate then makes that decision permanent
-  (`approved` is terminal, so it cannot be walked back and a later `rejected` is ignored).
-  Meanwhile any UI or billing surface reading `status` is reading a value we asserted,
-  not a value the carrier confirmed.
+## 4. State machine and approval semantics (kept, now locked by tests)
 
-## 4. Gap checklist
+- `advance_status(entity, new_status, *, error=None) -> bool` —
+  `backend/app/services/registration.py`. Unknown statuses raise `ValidationFailedError`;
+  `None` is treated as `"draft"`; a `new_status == current` no-op returns `False`; changes
+  away from a terminal status are ignored; rank regressions are ignored; `last_error` is set
+  only when advancing to `"rejected"` and cleared on any other successful advance. Logs
+  `registration_status_advanced`, `registration_status_regression_ignored`, and
+  `registration_terminal_status_ignored`.
+- `REQUIRED_BRAND_FIELDS`, `REQUIRED_CAMPAIGN_FIELDS`, `validate_brand_for_submission`,
+  `validate_campaign_for_submission`, `submit_brand`, `submit_campaign`, `submit_tollfree`,
+  and `numbers_on_campaign` remain in `backend/app/services/registration.py`. An EIN is
+  required unless `entity_type == "SOLE_PROPRIETOR"`, and `submit_campaign` requires the
+  parent brand to be `status == "approved"`. `numbers_on_campaign` is a **local count**; the
+  carrier association lives in the number-association path (F8).
+- `REGISTRATION_STATUSES`, `REGISTRATION_RANK`, `TERMINAL_REGISTRATION`, `can_send`, and
+  `carrier_refs` — `backend/app/models/numbers.py`.
+- Operator status routes `set_brand_status`, `set_campaign_status`, and `set_tfv_status`
+  remain in `backend/app/api/routes/registration.py`, each gated by
+  `Depends(require_platform_operator)` **and**
+  `Depends(require_permission("compliance:manage"))`. On invocation each performs a fresh
+  carrier read and then applies the carrier-confirmed decision (F6/F7); there is **no
+  webhook and no poller** claimed here — the operator trigger is what admits the change.
+  Every writer routes through `advance_status`; no writer assigns `entity.status` directly.
 
-Each item has a `Verify:` (how to confirm current reality) and a `Test:` (acceptance test
-or target). Do not treat an item as satisfied until its test exists and passes.
+## 5. Remaining gaps (prioritized)
 
-### A. Carrier submission linkage
+### P0 — blocking
 
-- [ ] **A1. Store the Telnyx reference.** `EXISTS` storage, `NOT BUILT (audited)` writer.
-  - `carrier_refs` already exists on all three models (section 2.3). No new column or
-    migration is required *unless* a later read proves otherwise.
-  - `Verify:` grep the repository for any writer of `carrier_refs` (especially a
-    `"telnyx"` key) — none exists in the audited sources.
-  - `Test:` a successful Telnyx submission records a `carrier_refs["telnyx"]` value that
-    is unique per entity and stable across retries.
-- [ ] **A2. Idempotency.** `NOT BUILT (audited)`.
-  - A retried submission (after a timeout = "unknown state") must not create a second
-    carrier object. Key it by an idempotency key or by reusing an existing
-    `carrier_refs["telnyx"]`.
-  - `Test:` calling a real submit twice results in exactly one carrier create and a
-    stable `carrier_refs["telnyx"]`.
-- [ ] **A3. Distinguish local "submitted" from carrier-submitted.** `GATE`.
-  - `advance_status` is monotonic, so once `"submitted"` is written locally it cannot be
-    lowered. A local write must therefore happen **only after** carrier acceptance, or the
-    entity needs a pre-status that never advances on failure.
-  - `Test:` when the carrier call fails, the entity is **not** left in `"submitted"` and
-    no `carrier_refs["telnyx"]` is written.
-- [ ] **A4. Transaction ownership.** `EXISTS`.
-  - The `/status` and `/submit` routes call `await ctx.session.commit()`; the service
-    functions mutate only. `Verify:` any new caller does the same and maps
-    `ValidationFailedError` / `ConflictError` to 4xx (the existing routes rely on the
-    framework's error handlers — confirm those mappings exist).
-  - `Test:` a failed submit persists a rollback (no partial state).
+**P0-C1 (code / design). Stale local terminal approvals can remain sendable.**
+A brand, campaign, or TFV that reached a terminal local approval can outlive a later
+carrier downgrade or suspension. Nothing in the implemented work re-reads carrier state at
+send time, so an entity may stay sendable after the carrier has withdrawn the approval.
+`NOT BUILT`.
 
-### B. Approval source
+- Constraint: do **not** fix this by polling the carrier on every send (cost, latency, rate
+  limits) and do **not** write a lower status onto the entity, which would violate the
+  `TERMINAL_REGISTRATION` state machine (D-3).
+- Required design: a safe **carrier-state freshness / revocation** mechanism — for example a
+  bounded-TTL freshness record consulted by the send gate, plus an explicit revocation
+  record the gate consults, leaving the terminal status intact and expressing revocation as
+  separate evidence rather than a status change.
+- `Verify:` `grep -rn "freshness\|revocation\|revoked" backend/app`.
+- `Test:` T25 in section 6 — a terminal-approved entity whose carrier approval is later
+  withdrawn stops passing the send gate, and the terminal status itself is unchanged.
 
-- [ ] **B1. Current approval path.** `EXISTS` — the platform-operator `/status` routes
-  (section 2.2). This is manual, trusted input.
-- [ ] **B2. Verified automated source (optional, future).** `NOT BUILT (audited)`.
-  - A future approval source may be a **signed webhook or a verified poll** — do not
-    mandate one mechanism. Whichever is chosen must authenticate the caller before any
-    status change. `OWNER DECISION`: which mechanism, and which signing secret /
-    credential, provisioned where.
-  - `Test:` an unauthenticated or incorrectly-signed automated call is rejected and
-    changes no status.
-- [ ] **B3. Reference → entity mapping.** `NOT BUILT (audited)` for automated input.
-  - An automated source must resolve the entity via `carrier_refs` (A1); a reference that
-    cannot be mapped must not mutate anything.
-  - `Test:` an unknown reference is a logged no-op, not a 500 that retries forever.
-- [ ] **B4. Route every status change through `advance_status`.** `GATE`.
-  - The `/status` routes already do this; any new writer must too, and must never assign
-    `entity.status` directly. This is what stops a retried, out-of-order `submitted` from
-    demoting an `approved` entity.
-  - `Test:` deliver `approved` then a late `submitted`; the final status stays `approved`
-    (`registration_status_regression_ignored`).
-- [ ] **B5. Replay safety.** `GATE`.
-  - The rank gate already no-ops duplicates; assert it explicitly for a new source.
-  - `Test:` delivering `approved` twice leaves status `approved` and the second delivery
-    is a no-op.
+**P0-E1 (external). Real Telnyx credentials, account, and profile setup plus authorized
+live verification.** The test suite is `httpx.MockTransport` only; no live carrier call has
+been made. `BLOCKED`.
 
-### C. State machine (keep; lock it with tests)
+- Requires production credentials, messaging profile(s), and explicit authorization to make
+  live calls (`OWNER DECISION`, section 7). Credentials are provisioned outside the
+  repository; nothing about them is recorded here.
+- `Test:` a single, explicitly authorized live smoke verification against a non-production
+  entity, recorded as a manual audit note.
 
-- [ ] **C1.** `EXISTS` — `advance_status` rank and terminal guards.
-  - `Test:` unknown status raises `ValidationFailedError`.
-  - `Test:` a `None` status is treated as `"draft"`.
-  - `Test:` advancing out of a terminal status to a *different* terminal status is
-    ignored (for example `approved` → `rejected`).
-  - `Test:` advancing to `"rejected"` stores the supplied `error` in `last_error`.
-- [ ] **C2.** `EXISTS` — `submit_*` raise `ConflictError` on terminal entities.
-  - `Test:` submitting an already-`approved` brand raises `ConflictError` and does not
-    mutate status.
-- [ ] **C3.** `EXISTS` — `/status` routes require a platform operator.
-  - `Verify:` `require_platform_operator` in `app/auth/deps.py` (unverified here).
-  - `Test:` a non-operator caller of `/status` is refused and the status is unchanged.
-- [ ] **C4.** `EXISTS (observed)` — `/status` routes call `advance_status` but **discard its
-  boolean return**, then commit unconditionally. An ignored transition therefore still
-  commits (writes nothing new) and returns 200. Confirm this is intended; it means the
-  API reports success for a no-op.
+**P0-O1 (operational). Reconciliation runbook.** The timeout/late-approval reconciliation
+service and route (F14/F15) can legitimately return **zero**, **multiple**, or **mismatched**
+carrier records, and durable attempt markers (F2) can be left inconsistent after a crash or
+partial outage. `NOT BUILT`.
 
-### D. Numbers on a campaign
+- Required: a written runbook for each case — zero records, multiple records, mismatch, and
+  marker repair — with a **named owner** and an **audit trail** (what was changed, by whom,
+  why, and the carrier evidence relied on).
+- `Verify:` the runbook file exists and names an owner;
+  `grep -rn "marker" docs backend/app/services`.
 
-- [ ] **D1.** `EXISTS` (local): `numbers_on_campaign` counts `OrgNumber.campaign_id`.
-  It is a **count only**; there is no attach/detach in the audited sources.
-- [ ] **D2.** `GATE`: numbers must not be attachable to a campaign that is not
-  carrier-approved. `NOT BUILT (audited)` — no such guard is shown. The 10DLC module
-  docstring says numbers without an approved campaign may not send, but the enforcement
-  point is not in the audited files.
-  - `Verify:` the code that assigns `OrgNumber.campaign_id`.
-  - `Test:` assigning a number to a non-approved campaign is refused.
+### P0 / P1 — owner decisions (each blocks its area; see section 7)
 
-### E. Billable operations and spend control
+- **P0-D1.** Spend authorization and current fees for billable brand/campaign filing.
+- **P0-D2.** Prepaid / settlement policy and where it is enforced (before the billable call).
+- **P0-D6.** Deploy window, rollback plan, and rollback owner.
+- **P0-D7.** Non-Telnyx unknown-registration policy: what happens when a registration exists
+  at the carrier with no matching local entity, and the reverse.
+- **P1-D3.** KYC enablement scope.
+- **P1-D4.** BYON (bring-your-own-number) support and the ownership checks that run before
+  any campaign attach.
+- **P1-D5.** Pricing pass-through (if any) for billable registrations.
 
-- [ ] **E1.** 10DLC brand/campaign registration is a **billable** carrier action and a
-  rejection can forfeit the fee. `OWNER DECISION`: budget plus authorization to file
-  production applications. **There is no in-repo source for the fee schedule; confirm
-  amounts and refundability from the carrier's current published terms before asserting
-  them anywhere.**
-- [ ] **E2.** Prepaid / settlement policy. `OWNER DECISION`.
-  - Decide whether balances must be checked before any billable carrier call, and where
-    that check lives. `NOT BUILT (audited)`.
-  - `Test:` (once the policy exists) a submit with insufficient balance is refused
-    **before** the carrier call, not after.
+### P1 — verification
 
-### F. KYC / entity identity
-
-- [ ] **F1.** `EXISTS (local)`: EIN required unless `SOLE_PROPRIETOR`.
-- [ ] **F2.** KYC enablement. `OWNER DECISION` — whether KYC is required for the target
-  entity types and where it is enforced. `NOT BUILT (audited)`.
-
-### G. Bring-your-own-number (BYON)
-
-- [ ] **G1.** `NOT BUILT (audited)`; nothing in the audited files references a carrier
-  number port or external number ownership.
-- [ ] **G2.** `OWNER DECISION` — supported or not; if supported, define ownership checks
-  that run before any campaign attach.
-
-### H. Credentials, profiles, and configuration
-
-- [ ] **H1.** `NOT BUILT (audited)` — no carrier client or config in the audited files.
-- [ ] **H2.** `OWNER DECISION` — production API credentials, messaging profile(s), and the
-  secret used to authenticate any automated approval source, provisioned and rotated
-  outside the repository. **Do not** record any credential or host in this document.
-
-### I. Deploy
-
-- [ ] **I1.** `OWNER DECISION` — deploy window and a rollback plan. A migration is
-  required **only if** a later read shows `carrier_refs` is insufficient (section 2.3);
-  do not assume one. `NOT BUILT (audited)`.
-
-## 5. Required sequence and safety gates
-
-Ship in this order. Each gate is a stop condition: **do not** let a later step treat an
-earlier step's local state as carrier truth.
-
-1. **G0 — Decide the approval source.** The current path is operator `/status` (EXISTS).
-   Decide whether to keep manual-only, add a verified webhook, or add a verified poll
-   (B2). If a human keeps approving, document who and what evidence they check.
-2. **G1 — Populate and read `carrier_refs` (A1).** No schema change assumed; verify
-   `carrier_refs` is enough before any migration is proposed. Ensure `TfvOut` surfaces it
-   (section 2.3) if TFV refs must be visible.
-3. **G2 — Real carrier submit (A2, A3, H1).** Outbound create with idempotency; write
-   `"submitted"` **only** on carrier acceptance; store `carrier_refs["telnyx"]` in the
-   same transaction. A failed call must leave the entity submittable, not `"submitted"`.
-4. **G3 — Verified automated source (B2–B5), if adopted.** Authenticate, map by
-   `carrier_refs`, route through `advance_status`. Unauthenticated or unmappable input
-   means log plus no-op.
-5. **G4 — Lock the state machine (C).** Add the tests in section 6; no direct `status`
-   assignment anywhere outside `advance_status`, including new automation.
-6. **G5 — Gate number attachment (D2)** on a carrier-approved campaign only.
-7. **G6 — Spend controls (E2)** before billable calls.
-8. **G7 — KYC / BYON decisions (F, G)** enforced before submit where required.
-9. **G8 — Deploy (I1)** with a rollback plan (and a migration only if proven necessary).
-
-**Invariant that must hold at every step:**
-
-> `status ∈ {"approved", "rejected"}` **only if** a trusted writer (an authorized
-> platform operator today, per section 2.2, or a future verified source) advanced it
-> there. A local `submit_*` **never** yields `"approved"`, and a local `"submitted"` is
-> never treated as carrier-submitted.
+- **P1-V1 (dedicated order-route guard regression test).** The order-time campaign guard
+  (F9) should have a dedicated route-level regression test. `Verify:` confirm whether such a
+  test exists; if it is still absent, add it. Broader guard coverage exists via the route
+  test suite, but a named test for the order path is the acceptance criterion.
+- **P1-V2 (production PostgreSQL concurrency verification).** The test suite runs on SQLite,
+  which ignores `SELECT … FOR UPDATE`, so lock/claim behavior used by filing, number
+  association, and reconciliation is unverified under real concurrency. `Verify:` run the
+  relevant tests against PostgreSQL and assert single-winner behavior.
 
 ## 6. Acceptance test matrix
 
+These are **acceptance criteria**, not a verified one-to-one map to the existing suite.
+Historical aggregate runs for this pass: **319 Telnyx/registration tests passed**, **224
+tollfree/TFV-selected tests passed**, **52 route/reconciliation tests passed**, **Ruff
+clean**. No individual test name below was matched to a specific assertion in this pass; the
+matrix records the behavior each row must protect.
+
 Names are suggestions; place them beside the existing tests that import
-`app.services.registration` (confirm the test package path — it is not assumed here).
+`app.services.registration`. Coverage column values:
 
-| # | Test | Setup | Assertion |
-| - | ---- | ----- | --------- |
-| T1 | `unknown_status_rejected` | any entity | `advance_status(e, "bogus")` raises `ValidationFailedError` |
-| T2 | `none_status_is_draft` | unflushed entity | advancing to `"submitted"` succeeds from `None` |
-| T3 | `late_submitted_does_not_demote_approved` | status `approved` | advancing to `"submitted"` leaves status `approved`, returns `False` |
-| T4 | `terminal_status_is_sticky` | status `approved` | advancing to `"rejected"` is ignored and `last_error` is unchanged |
-| T5 | `rejected_sets_last_error` | status `submitted` | advancing to `"rejected"` with an error stores that error in `last_error` |
-| T5b | `rejected_is_terminal` | status `rejected` with error | advancing to `"approved"` is ignored; status and `last_error` unchanged |
-| T6 | `campaign_requires_approved_brand` | brand `submitted` | `submit_campaign` raises `ValidationFailedError` |
-| T7 | `submit_terminal_conflicts` | brand `approved` | `submit_brand` raises `ConflictError`, status unchanged |
-| T8 | `status_route_requires_operator` | non-operator caller | `/status` is refused and status is unchanged |
-| T9 | `failed_carrier_call_is_not_submitted` | simulated carrier error | entity is **not** `"submitted"` and no `carrier_refs["telnyx"]` is set |
-| T10 | `resubmit_is_idempotent` | existing `carrier_refs["telnyx"]` | one carrier create, stable ref |
-| T11 | `unverified_source_is_rejected` | bad/missing signature (or missing poll auth) | no status change |
-| T12 | `unknown_reference_noop` | unmatched `carrier_refs` value | no status change, no crash |
-| T13 | `approval_replay_is_noop` | same `approved` transition twice | the second is a no-op |
-| T14 | `number_attach_requires_approved_campaign` | campaign `submitted` | attach is refused |
+- **built behavior** — the code path exists in the BUILT ledger; covered by the aggregate
+  runs above (exact case names not asserted here).
+- **target** — behavior is not built (or not yet regression-tested); the criterion is a
+  target, not a pass.
 
-Tests backed by `EXISTS` code: **T1–T8**. Tests covering behavior **not built** in the
-audited sources: **T9–T14** (targets, not currently passing). The removed earlier draft
-claimed `rejected` could later be cleared; that is impossible because `rejected` is in
-`TERMINAL_REGISTRATION`, so T5/T5b replace it with the correct, terminal-aware assertions.
+| # | Test (suggested) | Setup | Assertion | Coverage |
+| - | ---- | ----- | --------- | -------- |
+| T1 | `unknown_status_rejected` | any entity | `advance_status(e, "bogus")` raises `ValidationFailedError` | built behavior |
+| T2 | `none_status_is_draft` | unflushed entity | advancing to `"submitted"` succeeds from `None` | built behavior |
+| T3 | `late_submitted_does_not_demote_approved` | status `approved` | advancing to `"submitted"` leaves status `approved`, returns `False` | built behavior |
+| T4 | `terminal_status_is_sticky` | status `approved` | advancing to `"rejected"` is ignored and `last_error` is unchanged | built behavior |
+| T5 | `rejected_sets_last_error` | status `submitted` | advancing to `"rejected"` with an error stores that error in `last_error` | built behavior |
+| T5b | `rejected_is_terminal` | status `rejected` with error | advancing to `"approved"` is ignored; status and `last_error` unchanged | built behavior |
+| T6 | `campaign_requires_approved_brand` | brand `submitted` | `submit_campaign` raises `ValidationFailedError` | built behavior |
+| T7 | `submit_terminal_conflicts` | brand `approved` | `submit_brand` raises `ConflictError`, status unchanged | built behavior |
+| T8 | `status_route_requires_operator` | non-operator caller | `/status` is refused and status is unchanged | built behavior |
+| T9 | `failed_carrier_call_is_not_submitted` | simulated carrier error on the `/file-telnyx` path | entity is **not** `"submitted"` and no `carrier_refs["telnyx"]` is set | built behavior (F1–F4) |
+| T10 | `resubmit_is_idempotent` | existing `carrier_refs["telnyx"]` | one carrier create and a stable reference | built behavior (F2–F3) |
+| T11 | `unverified_source_is_rejected` | missing or invalid credentials on the automated writer | no status change | built behavior (F5) |
+| T12 | `unknown_reference_noop` | unmatched `carrier_refs` value | no status change, no crash | built behavior (F6) |
+| T13 | `approval_replay_is_noop` | same `approved` transition twice | the second is a no-op | built behavior |
+| T14 | `number_attach_requires_approved_campaign` | campaign `submitted` | attach is refused | built behavior (F8–F10) |
+| T15 | `approval_requires_exact_carrier_id` | carrier decision with a near-match or other id | status is not advanced and no `carrier_refs["telnyx"]` is overwritten | built behavior (F6) |
+| T16 | `ignored_status_write_is_conflict` | a write `advance_status` would ignore | the route returns a conflict, not success | built behavior (F7) |
+| T17 | `number_association_is_carrier_confirmed` | number associated to a campaign | durable association marker present, set only from carrier-confirmed state | built behavior (F8) |
+| T18 | `send_gate_fails_closed` | number with missing or unconfirmed association | the Telnyx send is refused | built behavior (F10) |
+| T19 | `reconciliation_never_approves_locally` | reconciliation finds no carrier record | entity is unchanged and remains blocked | built behavior (F14–F17) |
+| T20 | `timeout_reconciliation_is_get_only` | timeout on a submission | reconciliation uses GET/list transport only; no POST retry | built behavior (F13, F16) |
+| T21 | `ambiguous_record_stays_blocked` | timeout with a non-matching carrier record | the record stays blocked; no local status advance | built behavior (F14–F16) |
+| T22 | `tfv_out_exposes_carrier_refs` | TFV with a Telnyx reference | `TfvOut` returns `carrier_refs["telnyx"]` | built behavior (F12) |
+| T23 | `tfv_filing_route_is_strict` | operator route with invalid input | refused; nothing written to the carrier or the entity | built behavior (F11) |
+| T24 | `no_auto_post_retry_after_timeout` | timeout on a POST | no second POST is issued automatically | built behavior (F16) |
+| T25 | `terminal_approval_stops_sending_after_revocation` | terminal-approved entity, carrier approval later withdrawn | the send gate refuses; the terminal status is unchanged | **target** (P0-C1) |
+| T26 | `order_route_campaign_guard` | order path with a non-carrier-approved campaign | the order is refused | **target** (P1-V1 — confirm whether a named test already exists) |
+| T27 | `postgres_single_winner_on_claim` | PostgreSQL, concurrent claim/reconcile | exactly one winner; no duplicate carrier write | **target** (P1-V2) |
+
+Tests marked **built behavior** are protected by code paths in the BUILT ledger and the
+aggregate runs above. Tests marked **target** (T25–T27) are criteria for behavior that is not
+yet built or not yet regression-verified; they are explicitly **not** passing.
 
 ## 7. Owner decisions and prerequisites (blockers)
 
 - Authorization to file **billable** 10DLC brand/campaign applications, plus a
-  rejection-cost budget. Confirm the fee schedule from an authoritative carrier source;
-  do not assert amounts here.
-- Production carrier **credentials** and messaging profile(s), provisioned outside the
-  repository.
-- Secret/mechanism for authenticating any future automated approval source (webhook or
-  poll).
+  rejection-cost budget. Confirm the fee schedule and refundability from an authoritative
+  carrier source at decision time; **no amount is asserted here**.
+- Production carrier **credentials**, account and profile setup, and messaging profile(s),
+  provisioned outside the repository, plus explicit authorization for a single live
+  verification (P0-E1).
+- **Prepaid / settlement** policy and the enforcement point (before the billable call).
 - **KYC** enablement scope.
-- **Prepaid** / settlement policy and where it is enforced.
 - **Pricing** pass-through (if any) for billable registrations.
-- **BYON** support decision.
-- **Deploy** window and a rollback owner (migration only if proven necessary).
+- **BYON** support decision and the ownership checks that run before any campaign attach.
+- **Non-Telnyx unknown-registration** policy (a carrier record with no local entity, and the
+  reverse).
+- **Deploy** window, rollback plan, and a rollback owner.
+- A **named owner** and an **audit trail** for the reconciliation runbook (P0-O1).
 
-## 8. Explicit non-goals for the implementer
+## 8. Non-goals for the implementer
 
 - No live carrier calls, deployments, or git operations as part of this document.
-- No credentials, hostnames, account IDs, or secrets recorded here.
-- Do not mark any item **EXISTS** without citing a symbol in a source file.
+- No credentials, hostnames, account identifiers, phone numbers, or secrets recorded here.
+- Do not mark any item **BUILT** without citing a symbol or commit plus a `Verify:` command.
 
-## 9. Open questions to resolve before coding
+## 9. Open questions
 
-1. Is manual operator approval (the `/status` routes) sufficient, or is a verified
-   webhook/poll required, and who is accountable for the evidence behind an approval?
-2. Is `carrier_refs` sufficient to store a Telnyx reference for all three entity types,
-   including on `TollFreeVerification` where it is stored but not exposed by `TfvOut`?
-3. What assigns `OrgNumber.campaign_id`, and is it gated on carrier approval?
-4. Is a failed submission rolled back at the route level? (A4 assumes the existing error
-   handlers map domain errors, but that was not verified here.)
+1. What is the minimum acceptable carrier-state **freshness** window for the send gate
+   (P0-C1), and is a revocation record sufficient, or is a signed carrier notification
+   required?
+2. Is a single live verification (P0-E1) sufficient evidence to authorize production
+   filing, or is a staged pilot required?
+3. Who owns the reconciliation runbook, and where is the audit trail stored (P0-O1)?
+4. Does the order path have a dedicated guard regression test today (P1-V1), or must one be
+   added?
+5. Which code paths rely on `SELECT … FOR UPDATE`, and has each been exercised against
+   PostgreSQL (P1-V2)?
+6. Should the legacy LOCAL-ONLY `submit_*` paths (D-5, F18) be retired, guarded, or left in
+   place with a warning, so a local `submitted` is never mistaken for carrier-submitted?
