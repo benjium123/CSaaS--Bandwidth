@@ -1,7 +1,7 @@
 """Create the admin_invites table.
 
-Revision ID: 0059_admin_invites
-Revises: 0058_merge_0057_heads
+Revision ID: 0060_admin_invites
+Revises: 0059_open_registration_kyc_required
 Create Date: 2026-09-21
 
 Platform-scoped, single-use invitations to become a platform operator. Only the SHA-256
@@ -16,8 +16,8 @@ from alembic import op
 
 from app.db.types import GUID
 
-revision = "0059_admin_invites"
-down_revision = "0058_merge_0057_heads"
+revision = "0060_admin_invites"
+down_revision = "0059_open_registration_kyc_required"
 branch_labels = None
 depends_on = None
 

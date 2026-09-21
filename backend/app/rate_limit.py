@@ -18,7 +18,7 @@ _MAX_KEYS = 50_000
 
 class SlidingWindowLimiter:
     def __init__(self) -> None:
-        self._events: "OrderedDict[str, deque[float]]" = OrderedDict()
+        self._events: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = Lock()
 
     def allow(self, key: str, max_requests: int, window_seconds: int) -> float:

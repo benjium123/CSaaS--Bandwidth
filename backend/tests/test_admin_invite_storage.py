@@ -8,7 +8,7 @@ Postgres, exactly as `test_migrations_build_the_database.py` does, but on a priv
 directory and database name so the two files never share state.
 
 The migration test is deliberately separate and synchronous: it loads
-`migrations/versions/0059_admin_invites.py` by path, runs it against a throwaway SQLite
+`migrations/versions/0060_admin_invites.py` by path, runs it against a throwaway SQLite
 engine, and checks that the table appears, accepts a GUID bind, and disappears on
 downgrade without disturbing pre-existing rows.
 """
@@ -168,11 +168,11 @@ async def test_consume_rejects_an_unknown_token(invite_database) -> None:
 # Migration roundtrip, on SQLite, synchronous.
 # ---------------------------------------------------------------------------------------
 
-MIGRATION_PATH = BACKEND / "migrations" / "versions" / "0059_admin_invites.py"
+MIGRATION_PATH = BACKEND / "migrations" / "versions" / "0060_admin_invites.py"
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("migration_0059_admin_invites", MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location("migration_0060_admin_invites", MIGRATION_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
