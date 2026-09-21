@@ -221,6 +221,15 @@ export async function fetchInboxes(api: ApiClient): Promise<Inbox[]> {
   return api.request<Inbox[]>("/api/v1/inboxes");
 }
 
+/** P44: save this member's dragged order for the Lines rail - the full list top to
+ * bottom, never a delta (same PUT-replaces contract as inbox grants). */
+export async function putInboxOrder(api: ApiClient, inboxIds: string[]): Promise<void> {
+  await api.request<void>("/api/v1/me/inbox-order", {
+    method: "PUT",
+    json: { inbox_ids: inboxIds },
+  });
+}
+
 /** P26 widened this: the same PATCH now carries the two reply/resolve targets. Sending
  * `sla_first_response_minutes: null` does NOT clear it (the backend reads null as "not
  * supplied") - pass `clear_sla_first_response: true` instead. */

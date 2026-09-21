@@ -156,6 +156,10 @@ class OrgMembership(Base, TenantScoped, TimestampMixin):
     role_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), sa.ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False
     )
+    #: This member's last dragged order for the Lines rail - a list of inbox id strings.
+    #: NULL (never customized) falls back to a computed default; an id no longer visible
+    #: to this member (access revoked) is simply skipped when the list is rendered.
+    inbox_order: Mapped[list | None] = mapped_column(PortableJSON(), nullable=True)
 
     def __repr__(self) -> str:
         return f"<OrgMembership user={self.user_id} org={self.org_id}>"

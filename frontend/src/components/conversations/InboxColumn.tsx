@@ -1,8 +1,35 @@
 import * as React from "react";
 import { NavLink } from "react-router-dom";
-import { LogOut, MessageSquare, Phone, Plus, Search, ShieldCheck, Users2 } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
+  GripVertical,
+  LogOut,
+  MessageSquare,
+  Phone,
+  Plus,
+  Search,
+  ShieldCheck,
+  Users2,
+} from "lucide-react";
 import { Badge, Button, Spinner } from "@/components/ui/primitives";
-import type { Inbox } from "@/api/conversations";
+import { putInboxOrder, type Inbox } from "@/api/conversations";
 import type { NewConversationKind } from "@/components/conversations/NewConversationPanel";
 import { useAuth } from "@/auth/AuthContext";
 import { useGate } from "@/api/capabilities";
@@ -76,6 +103,23 @@ export function lineInitials(name: string): string {
   const rest = letters.slice(1);
   const consonant = rest.split("").find((ch) => !"AEIOU".includes(ch));
   return first + (consonant ?? rest[0] ?? first);
+}
+
+/** P44: pure reorder math for one drag, pulled out of the DndContext handler so it is
+ * unit-testable without simulating real pointer/keyboard geometry (dnd-kit's own sensors
+ * are not something jsdom can exercise reliably). Returns null for a no-op drag (dropped
+ * on itself, or either id no longer in the list - e.g. it was removed mid-drag). */
+export function reorderInboxes(
+  inboxes: Inbox[],
+  activeId: string,
+  overId: string,
+): Inbox[] | null {
+  if (activeId === overId) return null;
+  const ids = inboxes.map((inbox) => inbox.id);
+  const oldIndex = ids.indexOf(activeId);
+  const newIndex = ids.indexOf(overId);
+  if (oldIndex === -1 || newIndex === -1) return null;
+  return arrayMove(inboxes, oldIndex, newIndex);
 }
 
 /**
@@ -296,6 +340,7 @@ function LineRow({
   canManageAccess,
   onSelect,
   onManageAccess,
+  dragHandle,
 }: {
   inbox: Inbox;
   selected: boolean;
@@ -304,9 +349,23 @@ function LineRow({
   canManageAccess: boolean;
   onSelect: () => void;
   onManageAccess: () => void;
+  /** P44: drag-to-reorder handle props from useSortable (attributes + listeners), or
+   * undefined for a list too short to reorder (0-1 lines) - no handle renders then. */
+  dragHandle?: React.HTMLAttributes<HTMLButtonElement>;
 }) {
   return (
     <div className="group/line relative flex items-center gap-0.5">
+      {dragHandle ? (
+        <button
+          type="button"
+          aria-label={`Reorder ${inbox.name}`}
+          title="Drag to reorder"
+          className="flex h-8 w-4 shrink-0 cursor-grab touch-none items-center justify-center rounded-[var(--cx-r-xs,10px)] text-muted-foreground opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 active:cursor-grabbing sm:opacity-0 sm:group-hover/line:opacity-100 sm:group-focus-within/line:opacity-100"
+          {...dragHandle}
+        >
+          <GripVertical className="h-4 w-4" aria-hidden="true" />
+        </button>
+      ) : null}
       <Button
         type="button"
         variant="ghost"
@@ -405,6 +464,35 @@ function LineRow({
   );
 }
 
+/** P44: the sortable wrapper around one LineRow - the ONLY thing dnd-kit needs to know
+ * about is this <li> (its ref, transform and transition), so LineRow itself stays
+ * unaware it can be dragged and keeps working byte-for-byte in every non-draggable
+ * caller/test. `reorderable` is false for a list of 0-1 lines - nothing to reorder, so
+ * no handle, no sortable wiring, no behaviour change from before P44. */
+function SortableLineRow(
+  props: React.ComponentProps<typeof LineRow> & { reorderable: boolean },
+) {
+  const { reorderable, inbox, ...rest } = props;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: inbox.id, disabled: !reorderable });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+  };
+
+  return (
+    <li ref={setNodeRef} style={style}>
+      <LineRow
+        inbox={inbox}
+        {...rest}
+        dragHandle={reorderable ? { ...attributes, ...listeners } : undefined}
+      />
+    </li>
+  );
+}
+
 export function InboxColumn({
   inboxes,
   isLoading,
@@ -434,7 +522,7 @@ export function InboxColumn({
   canComposeLoading?: boolean;
   className?: string;
 }): React.JSX.Element {
-  const { me, logout } = useAuth();
+  const { me, api, logout } = useAuth();
   const { theme, toggle } = useSurfaceTheme();
   // ONE gate, shared with Sidebar - see useRailNav. The rail lists only the destinations
   // named in INBOX_RAIL_PATHS; `/inbox` is dropped because this rail IS the inbox, and
@@ -456,6 +544,28 @@ export function InboxColumn({
   // means closing unmounts the drawer and the queries stop, and the next open re-seeds
   // from the server.
   const [accessInbox, setAccessInbox] = React.useState<Inbox | null>(null);
+
+  // P44: drag-to-reorder the Lines rail. Optimistic - the cache is reordered the instant
+  // the drop lands, before the PUT even resolves, the same way a reorder feels in every
+  // other app; a failed save just gets silently corrected by the next natural refetch
+  // (inboxesQuery's own staleTime), which is enough for a preference this low-stakes.
+  const queryClient = useQueryClient();
+  const reorderMutation = useMutation({
+    mutationFn: (ids: string[]) => putInboxOrder(api, ids),
+    onError: () => void queryClient.invalidateQueries({ queryKey: ["inboxes"] }),
+  });
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over) return;
+    const reordered = reorderInboxes(inboxes, String(active.id), String(over.id));
+    if (!reordered) return;
+    queryClient.setQueryData<Inbox[]>(["inboxes"], reordered);
+    reorderMutation.mutate(reordered.map((inbox) => inbox.id));
+  }
 
   return (
     <>
@@ -579,21 +689,32 @@ export function InboxColumn({
                   </Button>
                 </li>
 
-                {inboxes.map((inbox) => (
-                  <li key={inbox.id}>
-                    <LineRow
-                      inbox={inbox}
-                      selected={
-                        selection.kind === "inbox" && selection.inboxId === inbox.id
-                      }
-                      count={unread[inbox.id] ?? 0}
-                      unreadTruncated={unreadTruncated}
-                      canManageAccess={canManageAccess}
-                      onSelect={() => onSelect({ kind: "inbox", inboxId: inbox.id })}
-                      onManageAccess={() => setAccessInbox(inbox)}
-                    />
-                  </li>
-                ))}
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={inboxes.map((inbox) => inbox.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {inboxes.map((inbox) => (
+                      <SortableLineRow
+                        key={inbox.id}
+                        reorderable={inboxes.length > 1}
+                        inbox={inbox}
+                        selected={
+                          selection.kind === "inbox" && selection.inboxId === inbox.id
+                        }
+                        count={unread[inbox.id] ?? 0}
+                        unreadTruncated={unreadTruncated}
+                        canManageAccess={canManageAccess}
+                        onSelect={() => onSelect({ kind: "inbox", inboxId: inbox.id })}
+                        onManageAccess={() => setAccessInbox(inbox)}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
 
                 {/* P28: a send-later message is not a conversation and has no row in the
                     conversation list, so this opens its own panel rather than setting a
