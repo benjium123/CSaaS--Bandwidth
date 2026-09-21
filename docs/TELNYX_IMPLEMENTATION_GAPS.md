@@ -31,6 +31,9 @@
   | `0719e59` | TFV list / read transport. |
   | `9b9e261` | TFV reconciliation **service** and tests. |
   | `ef724d8` | TFV reconciliation **route** and tests. |
+  | `87b63db` | Bounded approval evidence — pure `app.compliance.telnyx_approval`, approval-freshness setting, focused tests. |
+  | `df849d3` | Enforce fresh approval evidence — atomic evidence on a confirmed `/status`, operator+compliance-guarded read-only POST refresh/revoke routes (carrier GET only), send-gate enforcement. |
+  | `c6284e0` | Dedicated Telnyx order-route campaign guard regression test and the TFV reconciliation runbook. |
 
 - Where a symbol's exact spelling has drifted from the commits, the `Verify:` grep on the
   row is authoritative; trust the grep and update the row.
@@ -99,7 +102,7 @@ These findings and decisions still stand and must not be re-litigated silently.
 
 Each row states what is built, the evidence, how to verify it, and where it is covered
 (section 6). Coverage is stated at the aggregate-run level only (see the note under section
-6); no one-to-one test-name mapping is claimed.
+6); no one-to-one test-name mapping is claimed, except where a specific test file is supplied.
 
 | # | Item | Status | Evidence | Verify |
 | - | ---- | ------ | -------- | ------ |
@@ -111,8 +114,8 @@ Each row states what is built, the evidence, how to verify it, and where it is c
 | F6 | Carrier-confirmed brand/campaign/TFV approval with **exact id matching** against `carrier_refs["telnyx"]`; a local write cannot self-assert approval | **BUILT** | commit `81df130` (carrier-backed approval guards) — TFV filing commits did not introduce approval guards | `grep -rn "carrier_refs" backend/app/services backend/app/api/routes` |
 | F7 | Ignored / no-op status updates return a **conflict** instead of reporting success | **BUILT** | commit `43e1ff9` | `grep -rn "advance_status" backend/app/api/routes/registration.py` |
 | F8 | Telnyx number-to-campaign carrier association plus a durable association marker on the number | **BUILT** | commit `81df130` (number association) | `grep -rn "campaign_id\|associat" backend/app/services backend/app/models/numbers.py` |
-| F9 | Order-time campaign guard — a number cannot be ordered onto a campaign that is not carrier-approved | **BUILT** | commit `81df130` (order gating) | see P1-V1 — a dedicated route regression test is still to be confirmed |
-| F10 | Fail-closed Telnyx send gate — send is refused when association or approval evidence is missing | **BUILT** | commit `81df130` (send gating) | `grep -rn "can_send\|send_gate" backend/app` |
+| F9 | Order-time campaign guard — a number cannot be ordered onto a campaign that is not carrier-approved | **BUILT** | commit `81df130` (order gating); dedicated route regression test commit `c6284e0` | `backend/tests/test_telnyx_order_campaign_guard.py` |
+| F10 | Fail-closed Telnyx send gate — send is refused when association or approval evidence is missing | **BUILT** | commit `81df130` (send gating); fresh-evidence enforcement added by `df849d3` | `grep -rn "can_send\|send_gate" backend/app` |
 | F11 | TFV filing: guarded **service** plus strict operator **route** | **BUILT (operator-gated)** | service `907b829`; route `1d95fbf` | `grep -rn "telnyx_tollfree_filing\|with_telnyx" backend/app/services/telnyx_tollfree_filing.py backend/app/api/routes/registration.py` |
 | F12 | `TfvOut` / `_tfv_out` exposes `carrier_refs` (fixes the earlier `TfvOut` inconsistency) | **BUILT** | commit `1d95fbf` (route wiring) | `grep -n "carrier_refs" backend/app/api/routes/registration.py backend/app/models/numbers.py` |
 | F13 | Official list / read transport for carrier state reads (GET) | **BUILT** | commit `0719e59` (TFV list/read transport) | `grep -rn "list\|\.get(" backend/app/providers/telnyx/tollfree_verification.py` |
@@ -121,23 +124,35 @@ Each row states what is built, the evidence, how to verify it, and where it is c
 | F16 | No automatic POST retries after an ambiguous or timeout outcome; ambiguous records stay blocked | **BUILT** | commits `9b9e261`, `ef724d8` | acceptance criteria T20, T24 in section 6 |
 | F17 | No local approval in filing or reconciliation — reconciliation can only confirm what the carrier reports | **BUILT** | commits `907b829`, `9b9e261`, `ef724d8` | acceptance criteria T19, T21 in section 6 |
 | F18 | Legacy `submit_brand` / `submit_campaign` / `submit_tollfree` remain **LOCAL-ONLY** and do **not** call Telnyx | **BUILT (legacy, LOCAL-ONLY)** | `backend/app/services/registration.py` | `grep -n "submit_brand\|submit_campaign\|submit_tollfree" backend/app/services/registration.py` |
+| F19 | Pure bounded-approval-evidence module `app.compliance.telnyx_approval`; evidence stored at `carrier_refs["telnyx_approval"]`, bound to the **exact** carrier id, with state `approved`/`revoked`, a UTC `checked_at`, and a `source` of `status_decision`/`refresh` | **BUILT** | commit `87b63db` (bounded approval evidence) | `grep -rn "telnyx_approval" backend/app` |
+| F20 | Approval-freshness bound `TELNYX_APPROVAL_MAX_AGE_SECONDS` (default `604800`; validated in the inclusive range `300..2592000`; no disable) | **BUILT** | commit `87b63db` | `grep -rn "TELNYX_APPROVAL_MAX_AGE_SECONDS" backend/app` |
+| F21 | First carrier-confirmed `approved` `/status` writes approval evidence **atomically** with the status advance | **BUILT** | commit `df849d3` (enforce fresh approval evidence) | `grep -rn "telnyx_approval" backend/app/api/routes/registration.py` |
+| F22 | Operator+compliance guarded **read-only POST** `refresh-telnyx` routes (brand/campaign/TFV) whose **only carrier interaction is a GET**; they refresh or revoke approval evidence **without changing the terminal local status**; a carrier error or mismatched carrier id mutates nothing | **BUILT (operator-gated)** | commit `df849d3` | `grep -rn "refresh-telnyx" backend/app/api/routes/registration.py` |
+| F23 | Telnyx campaign/TFV send gate requires **fresh, matching, `approved`** approval evidence; there is **no network call and no new carrier query** on the send path; non-Telnyx behavior is unchanged | **BUILT** | commit `df849d3` | `grep -rn "telnyx_approval" backend/app/compliance` |
+| F24 | Dedicated Telnyx order-route campaign guard regression test | **BUILT** | commit `c6284e0` | `backend/tests/test_telnyx_order_campaign_guard.py` |
+| F25 | TFV reconciliation operator runbook | **BUILT (documentation deliverable)** | commit `c6284e0` | `docs/runbooks/TELNYX_TFV_RECONCILIATION.md` |
 
 Key TFV module paths referenced above:
 
 - `backend/app/services/telnyx_tollfree_filing.py` — TFV filing service (F11, `907b829`).
 - `backend/app/providers/telnyx/tollfree_verification.py` — Telnyx TFV provider
   transport/payload (F13, `0719e59`).
-- `backend/app/api/routes/registration.py` — operator-gated filing and reconciliation
-  routes (F4, F5, F11, F12, F15).
+- `backend/app/api/routes/registration.py` — operator-gated filing and reconciliation routes,
+  plus operator+compliance-guarded read-only POST approval refresh/revoke routes whose only
+  carrier interaction is a GET (F4, F5, F11, F12, F15, F22).
+- `backend/app/compliance/telnyx_approval.py` — bounded approval evidence (F19–F23, `87b63db`).
 - `docs/runbooks/TELNYX_TFV_RECONCILIATION.md` — operator runbook for TFV filing
-  reconciliation and controlled marker repair (P0-O1, documentation deliverable; the named
-  owner and audit-trail assignment remain an `OWNER DECISION`).
+  reconciliation and controlled marker repair (P0-O1, documentation deliverable, `c6284e0`;
+  the named owner and audit-trail assignment remain an `OWNER DECISION`).
 
 **Explicitly retired claims.** This ledger **no longer** claims that any of the following
 are unbuilt: carrier clients; filing writers; carrier-confirmed approval; number
-association; TFV reference visibility; timeout reconciliation. It **does** keep the legacy
-`submit_*` paths flagged as `LOCAL-ONLY` (F18, D-5) and does **not** claim they call the
-carrier.
+association; TFV reference visibility; timeout reconciliation; bounded approval evidence;
+approval refresh/revocation; a dedicated order-route guard test. It also **no longer** claims
+that the send gate trusts approval indefinitely or cannot represent a carrier downgrade — a
+downgrade is now expressed as separate revoked/stale approval evidence (F19–F23) while the
+terminal status is left intact. It **does** keep the legacy `submit_*` paths flagged as
+`LOCAL-ONLY` (F18, D-5) and does **not** claim they call the carrier.
 
 ## 4. State machine and approval semantics (kept, now locked by tests)
 
@@ -163,27 +178,23 @@ carrier.
   carrier read and then applies the carrier-confirmed decision (F6/F7); there is **no
   webhook and no poller** claimed here — the operator trigger is what admits the change.
   Every writer routes through `advance_status`; no writer assigns `entity.status` directly.
+- **Terminal approval vs. separate approval evidence.** A terminal local `approved` is
+  **intentionally not demoted** (D-3). Bounded evidence lives in
+  `carrier_refs["telnyx_approval"]` (`backend/app/compliance/telnyx_approval.py`, `87b63db`),
+  bound to the **exact** carrier id, with state `approved`/`revoked`, a UTC `checked_at`, and a
+  `source` of `status_decision`/`refresh`. Freshness is bounded by
+  `TELNYX_APPROVAL_MAX_AGE_SECONDS` (default `604800`; validated `300..2592000`; no disable).
+  The first carrier-confirmed `approved` `/status` writes the evidence atomically with the
+  status advance (`df849d3`), and operator+compliance guarded **read-only POST**
+  `refresh-telnyx` routes — whose only carrier interaction is a GET — refresh or revoke the
+  evidence without touching the terminal status. The Telnyx campaign/TFV send gate requires
+  fresh, matching, `approved` evidence and does **no** carrier query on the send path; a
+  downgrade is therefore expressed as revoked/stale evidence while the status stays
+  `approved`.
 
 ## 5. Remaining gaps (prioritized)
 
 ### P0 — blocking
-
-**P0-C1 (code / design). Stale local terminal approvals can remain sendable.**
-A brand, campaign, or TFV that reached a terminal local approval can outlive a later
-carrier downgrade or suspension. Nothing in the implemented work re-reads carrier state at
-send time, so an entity may stay sendable after the carrier has withdrawn the approval.
-`NOT BUILT`.
-
-- Constraint: do **not** fix this by polling the carrier on every send (cost, latency, rate
-  limits) and do **not** write a lower status onto the entity, which would violate the
-  `TERMINAL_REGISTRATION` state machine (D-3).
-- Required design: a safe **carrier-state freshness / revocation** mechanism — for example a
-  bounded-TTL freshness record consulted by the send gate, plus an explicit revocation
-  record the gate consults, leaving the terminal status intact and expressing revocation as
-  separate evidence rather than a status change.
-- `Verify:` `grep -rn "freshness\|revocation\|revoked" backend/app`.
-- `Test:` T25 in section 6 — a terminal-approved entity whose carrier approval is later
-  withdrawn stops passing the send gate, and the terminal status itself is unchanged.
 
 **P0-E1 (external). Real Telnyx credentials, account, and profile setup plus authorized
 live verification.** The test suite is `httpx.MockTransport` only; no live carrier call has
@@ -195,11 +206,12 @@ been made. `BLOCKED`.
 - `Test:` a single, explicitly authorized live smoke verification against a non-production
   entity, recorded as a manual audit note.
 
-**P0-O1 (operational). Reconciliation runbook.** The timeout/late-approval reconciliation
-service and route (F14/F15) can legitimately return **zero**, **multiple**, or **mismatched**
-carrier records, and durable attempt markers (F2) can be left inconsistent after a crash or
-partial outage. The **written runbook is now DELIVERED**;
-**the assigned owner and audit trail remain `OWNER DECISION` (`NOT BUILT`).**
+**P0-O1 (operational). Reconciliation runbook — owner / audit-trail / support workflow.** The
+timeout/late-approval reconciliation service and route (F14/F15) can legitimately return
+**zero**, **multiple**, or **mismatched** carrier records, and durable attempt markers (F2)
+can be left inconsistent after a crash or partial outage. The **written runbook is DELIVERED**
+(`docs/runbooks/TELNYX_TFV_RECONCILIATION.md`, commit `c6284e0`); **the assigned owner,
+audit-trail storage, and Telnyx support workflow remain `OWNER DECISION`.**
 
 - Delivered: `docs/runbooks/TELNYX_TFV_RECONCILIATION.md` — a case-by-case operator runbook
   for zero records, multiple records, a mismatched record, carrier timeout/error, a malformed
@@ -217,6 +229,12 @@ partial outage. The **written runbook is now DELIVERED**;
   is still open;
   `grep -rn "marker" docs backend/app/services`.
 
+> **Former P0-C1 (stale approval / revocation) is now BUILT** — see F19–F23 (`87b63db`,
+> `df849d3`). Bounded approval evidence plus operator+compliance-guarded read-only POST
+> refresh/revoke routes (carrier GET only), consulted by the send gate, close the code gap. It
+> is no longer listed as a blocking code gap; the residual risk is the freshness-window policy
+> in section 7.
+
 ### P0 / P1 — owner decisions (each blocks its area; see section 7)
 
 - **P0-D1.** Spend authorization and current fees for billable brand/campaign filing.
@@ -231,10 +249,6 @@ partial outage. The **written runbook is now DELIVERED**;
 
 ### P1 — verification
 
-- **P1-V1 (dedicated order-route guard regression test).** The order-time campaign guard
-  (F9) should have a dedicated route-level regression test. `Verify:` confirm whether such a
-  test exists; if it is still absent, add it. Broader guard coverage exists via the route
-  test suite, but a named test for the order path is the acceptance criterion.
 - **P1-V2 (production PostgreSQL concurrency verification).** The test suite runs on SQLite,
   which ignores `SELECT … FOR UPDATE`, so lock/claim behavior used by filing, number
   association, and reconciliation is unverified under real concurrency. `Verify:` run the
@@ -243,10 +257,19 @@ partial outage. The **written runbook is now DELIVERED**;
 ## 6. Acceptance test matrix
 
 These are **acceptance criteria**, not a verified one-to-one map to the existing suite.
-Historical aggregate runs for this pass: **319 Telnyx/registration tests passed**, **224
+Historical aggregate runs for earlier passes: **319 Telnyx/registration tests passed**, **224
 tollfree/TFV-selected tests passed**, **52 route/reconciliation tests passed**, **Ruff
-clean**. No individual test name below was matched to a specific assertion in this pass; the
-matrix records the behavior each row must protect.
+clean**. For the bounded-approval / revocation pass and the order-route guard, targeted runs
+reported **103** evidence/config tests passed, **37** existing affected Telnyx registration
+tests passed, and **29** new refresh/send-gate tests passed, with **Ruff and diff checks
+clean**; the dedicated order-route guard test file
+`backend/tests/test_telnyx_order_campaign_guard.py` was added (commit `c6284e0`). A broader
+selector run reported **587 passed, 2402 deselected, and 1 failure** —
+`backend/tests/test_bugfix_area2.py::test_send_message_skips_registration_gate_when_plan_supplied`,
+which fails in prepaid billing (a `TelephonyCreditsError`) **before** reaching the
+registration gate; that failure is **unrelated** to this change and the broad run is **not**
+claimed fully green. No individual test name below was matched to a specific assertion in
+this pass; the matrix records the behavior each row must protect.
 
 Names are suggestions; place them beside the existing tests that import
 `app.services.registration`. Coverage column values:
@@ -283,13 +306,16 @@ Names are suggestions; place them beside the existing tests that import
 | T22 | `tfv_out_exposes_carrier_refs` | TFV with a Telnyx reference | `TfvOut` returns `carrier_refs["telnyx"]` | built behavior (F12) |
 | T23 | `tfv_filing_route_is_strict` | operator route with invalid input | refused; nothing written to the carrier or the entity | built behavior (F11) |
 | T24 | `no_auto_post_retry_after_timeout` | timeout on a POST | no second POST is issued automatically | built behavior (F16) |
-| T25 | `terminal_approval_stops_sending_after_revocation` | terminal-approved entity, carrier approval later withdrawn | the send gate refuses; the terminal status is unchanged | **target** (P0-C1) |
-| T26 | `order_route_campaign_guard` | order path with a non-carrier-approved campaign | the order is refused | **target** (P1-V1 — confirm whether a named test already exists) |
+| T25 | `terminal_approval_stops_sending_after_revocation` | terminal-approved entity, carrier approval later withdrawn | the send gate refuses on revoked/stale evidence; the terminal status is unchanged | built behavior (F19–F23) |
+| T26 | `order_route_campaign_guard` | order path with a non-carrier-approved campaign | the order is refused | built behavior (F24; `backend/tests/test_telnyx_order_campaign_guard.py`) |
 | T27 | `postgres_single_winner_on_claim` | PostgreSQL, concurrent claim/reconcile | exactly one winner; no duplicate carrier write | **target** (P1-V2) |
+| T28 | `approval_evidence_written_on_confirmed_approval` | first carrier-confirmed `approved` `/status` | `carrier_refs["telnyx_approval"]` is written atomically (state `approved`, exact id, UTC `checked_at`, `source="status_decision"`) | built behavior (F19–F21) |
+| T29 | `refresh_route_revokes_evidence_without_status_change` | operator+compliance read-only POST `refresh-telnyx` (carrier GET only) on a terminal-approved entity | evidence moves to `revoked` (or refreshes); the terminal status is unchanged; a carrier error / mismatched id mutates nothing | built behavior (F22) |
+| T30 | `stale_evidence_blocks_send` | approval evidence older than `TELNYX_APPROVAL_MAX_AGE_SECONDS` | the Telnyx campaign/TFV send gate refuses; no carrier query is made | built behavior (F20, F23) |
 
 Tests marked **built behavior** are protected by code paths in the BUILT ledger and the
-aggregate runs above. Tests marked **target** (T25–T27) are criteria for behavior that is not
-yet built or not yet regression-verified; they are explicitly **not** passing.
+aggregate runs above. The test marked **target** (T27) is a criterion for behavior that is not
+yet regression-verified against PostgreSQL; it is explicitly **not** passing on SQLite.
 
 ## 7. Owner decisions and prerequisites (blockers)
 
@@ -299,6 +325,10 @@ yet built or not yet regression-verified; they are explicitly **not** passing.
 - Production carrier **credentials**, account and profile setup, and messaging profile(s),
   provisioned outside the repository, plus explicit authorization for a single live
   verification (P0-E1).
+- The **approval-freshness window** policy: whether the `TELNYX_APPROVAL_MAX_AGE_SECONDS`
+  default (`604800`) and validated range (`300..2592000`) are acceptable, and who is
+  accountable for operating the read-only POST refresh/revoke routes (whose only carrier
+  interaction is a GET).
 - **Prepaid / settlement** policy and the enforcement point (before the billable call).
 - **KYC** enablement scope.
 - **Pricing** pass-through (if any) for billable registrations.
@@ -306,9 +336,9 @@ yet built or not yet regression-verified; they are explicitly **not** passing.
 - **Non-Telnyx unknown-registration** policy (a carrier record with no local entity, and the
   reverse).
 - **Deploy** window, rollback plan, and a rollback owner.
-- A **named owner** (role assignment) and an **audit-trail** storage location for the
-  reconciliation runbook (P0-O1) — the runbook document itself is delivered; the accountable
-  owner and audit trail are still open.
+- A **named owner** (role assignment), an **audit-trail** storage location, and the Telnyx
+  **support workflow** for the reconciliation runbook (P0-O1) — the runbook document itself
+  is delivered; the accountable owner and audit trail are still open.
 
 ## 8. Non-goals for the implementer
 
@@ -318,16 +348,16 @@ yet built or not yet regression-verified; they are explicitly **not** passing.
 
 ## 9. Open questions
 
-1. What is the minimum acceptable carrier-state **freshness** window for the send gate
-   (P0-C1), and is a revocation record sufficient, or is a signed carrier notification
-   required?
+1. What is the acceptable carrier-state **freshness** window for the send gate? It is now a
+   setting, `TELNYX_APPROVAL_MAX_AGE_SECONDS` (default `604800`; validated `300..2592000`; no
+   disable). Is that default/range sufficient, and is a revocation record sufficient, or is a
+   signed carrier notification required?
 2. Is a single live verification (P0-E1) sufficient evidence to authorize production
    filing, or is a staged pilot required?
 3. Who owns the reconciliation runbook, and where is the audit trail stored (P0-O1)? The
-   runbook document is delivered; this owner/audit-trail question remains open.
-4. Does the order path have a dedicated guard regression test today (P1-V1), or must one be
-   added?
-5. Which code paths rely on `SELECT … FOR UPDATE`, and has each been exercised against
+   runbook document is delivered; this owner/audit-trail/support-workflow question remains
+   open.
+4. Which code paths rely on `SELECT … FOR UPDATE`, and has each been exercised against
    PostgreSQL (P1-V2)?
-6. Should the legacy LOCAL-ONLY `submit_*` paths (D-5, F18) be retired, guarded, or left in
+5. Should the legacy LOCAL-ONLY `submit_*` paths (D-5, F18) be retired, guarded, or left in
    place with a warning, so a local `submitted` is never mistaken for carrier-submitted?
