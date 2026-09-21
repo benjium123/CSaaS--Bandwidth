@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import account as account_routes
+from app.api.routes import admin_auth as admin_auth_routes
 from app.api.routes import agent as agent_routes
 from app.api.routes import ai_providers as ai_provider_routes
 from app.api.routes import analytics as analytics_routes
@@ -253,6 +254,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_routes.router)
     app.include_router(status_routes.router)
     app.include_router(auth_routes.router)
+    app.include_router(admin_auth_routes.router)
     app.include_router(billing_routes.router)
     app.include_router(org_routes.router)
     app.include_router(me_routes.router)

@@ -12,6 +12,12 @@ membership the user has, so being an agent in one workspace does not cancel bein
 another - privileged in ANY org counts, and one admin membership obliges a factor for the whole
 account.
 
+Platform operators (``platform_operators`` rows) are ALSO obliged to hold a second factor,
+regardless of the org-role policy and regardless of the ``require_2fa_privileged_users``
+config flag. An operator can be orgless (a reviewer with no customer workspace), so the
+org-role check alone would leave them factorless; the operator lookup runs FIRST so an active
+operator always requires a factor, including reviewers.
+
 The answer is DERIVED LIVE from the user's current roles on every call. It is never stored on
 the user row and never cached. A flag stamped at signup would outlive a later promotion: an
 agent who becomes an admin would keep signing in with a password alone, and nothing in the
@@ -47,10 +53,21 @@ async def requires_second_factor(
 ) -> bool:
     """Is this account obliged to hold a second factor at all?
 
-    Loads the user's roles across every org and delegates to ``required_from_roles``. It is
-    deliberately independent of whether the account currently HAS a factor: the "you may not
-    remove your last factor" guards need to know the obligation, not the current state.
+    An active platform operator is ALWAYS obliged, regardless of the org-role policy and
+    regardless of ``require_2fa_privileged_users``: an operator can be orgless (a reviewer
+    with no customer workspace), so the org-role check alone would leave them factorless.
+    The operator lookup runs BEFORE the config short-circuit so the flag cannot switch the
+    obligation off for operators.
+
+    For non-operators the answer is the org-role policy: load the user's roles across every
+    org and delegate to ``required_from_roles``. It is deliberately independent of whether
+    the account currently HAS a factor: the "you may not remove your last factor" guards
+    need to know the obligation, not the current state.
     """
+    from app.services import operators as operators_svc
+
+    if await operators_svc.is_operator(session, user.id):
+        return True
     if not settings.require_2fa_privileged_users:
         return False
     from app.repositories.orgs import list_memberships_for_user

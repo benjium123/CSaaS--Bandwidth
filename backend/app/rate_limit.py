@@ -18,7 +18,7 @@ _MAX_KEYS = 50_000
 
 class SlidingWindowLimiter:
     def __init__(self) -> None:
-        self._events: "OrderedDict[str, deque[float]]" = OrderedDict()
+        self._events: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = Lock()
 
     def allow(self, key: str, max_requests: int, window_seconds: int) -> float:
@@ -62,6 +62,22 @@ class SlidingWindowLimiter:
 
 _limiter = SlidingWindowLimiter()
 
+#: Paths that share a single IP ceiling with another route. The admin login endpoint is the
+#: same credential check as the public one, so it must not be a second, independent ceiling:
+#: an attacker who can spend the public login budget can otherwise spend the admin one too,
+#: doubling the attempts available against the same account. Canonicalizing the path here
+#: (rather than at the call site) keeps the policy in one place and means the admin route
+#: needs no line of its own.
+_CANONICAL_PATHS = {
+    "/api/v1/auth/admin/login": "/api/v1/auth/login",
+}
+
+
+def _canonical_path(path: str) -> str:
+    """Map a request path to the path whose ceiling it shares. Unknown paths are unchanged."""
+    return _CANONICAL_PATHS.get(path, path)
+
+
 #: Routes whose IP ceiling is NOT the global default, resolved by exact path.
 #:
 #: Deliberately a table here rather than an argument at the call site. `/auth/register` is
@@ -74,7 +90,7 @@ _limiter = SlidingWindowLimiter()
 #: Two windows stop different attacks: the short one stops a script, the long one stops a
 #: patient script. See the config comment on `registration_ip_burst_max` for why these numbers.
 def _route_ip_buckets(settings: Settings, path: str) -> tuple[tuple[int, int], ...]:
-    if path == "/api/v1/auth/register":
+    if _canonical_path(path) == "/api/v1/auth/register":
         return (
             (settings.registration_ip_burst_max, settings.registration_ip_burst_seconds),
             (settings.registration_ip_hourly_max, settings.registration_ip_hourly_seconds),
@@ -159,6 +175,11 @@ async def enforce_rate_limit(request: Request, identifier: str) -> None:
     global default everywhere: it exists to stop repeated attempts against ONE account or
     address, which is a different question from how many accounts one machine may create.
 
+    The bucket base is built from the CANONICAL path (see ``_CANONICAL_PATHS``), so routes that
+    are the same operation under two URLs share one ceiling instead of each getting their own.
+    The identifier is supplied by the caller and never read from a request header, so a client
+    cannot choose its own bucket.
+
     WHAT THIS CANNOT DO. Every bucket resolves through Redis and falls back to an in-process
     limiter when Redis is unreachable, so a 5-per-minute ceiling silently becomes 5 per minute
     PER WORKER. The tighter the ceiling the more that fallback matters, which is why open
@@ -170,7 +191,8 @@ async def enforce_rate_limit(request: Request, identifier: str) -> None:
         return
 
     ip = _client_ip(request)
-    base = f"{request.method}:{request.url.path}"
+    canonical_path = _canonical_path(request.url.path)
+    base = f"{request.method}:{canonical_path}"
 
     default = (settings.rate_limit_max_requests, settings.rate_limit_window_seconds)
     buckets: list[tuple[str, int, int]] = []
