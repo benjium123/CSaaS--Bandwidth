@@ -161,7 +161,7 @@ export function LoginPage() {
               </Link>
               {/* Only on the first step: once a password has been accepted the account
                   exists, and offering to create one there would be a non-sequitur. */}
-              <Link to="/signup" className="ex-link">
+              <Link to="/signbox" className="ex-link">
                 No account? Start a workspace
               </Link>
             </>

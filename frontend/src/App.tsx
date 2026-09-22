@@ -1,3 +1,4 @@
+import { LandingPage } from "@/pages/LandingPage";
 import { ChooseNumbersPage } from "@/pages/ChooseNumbersPage";
 import { ConfirmEmailPage } from "@/pages/ConfirmEmailPage";
 import * as React from "react";
@@ -168,6 +169,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
 export function App() {
   const { me, orgId, ready } = useAuth();
   const location = useLocation();
+  // The public homepage stays available independently of account setup state.
+  if (location.pathname === "/") return <LandingPage />;
   // Admin entry: intercept /admin and /admin/* only (never /administrator).
   if (
     location.pathname === "/admin" ||
@@ -188,12 +191,9 @@ export function App() {
         <Route path="/auth/sso/callback" element={<SsoCallbackPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
-        {/* No marketing route here on purpose. The landing page is authored outside this
-            repo, so `/` falls through to the `*` fallback below and shows the sign-in form,
-            which is what main has always done. Sign-in also keeps its own /login path, so
-            every "back to sign in" link stays valid either way. */}
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignUpPage />} />
+        <Route path="/signbox" element={<SignUpPage />} />
+        <Route path="/signup" element={<Navigate to="/signbox" replace />} />
         <Route path="/recover" element={<RecoverAccountPage />} />
         <Route path="/report" element={<ReportNumberPage />} />
         <Route path="*" element={<LoginPage />} />
