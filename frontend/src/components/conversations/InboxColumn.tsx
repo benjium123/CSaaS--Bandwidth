@@ -20,6 +20,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   GripVertical,
+  PanelLeftClose,
   LogOut,
   MessageSquare,
   Phone,
@@ -506,6 +507,7 @@ export function InboxColumn({
   onOpenScheduled,
   canCompose,
   canComposeLoading,
+  onCollapse,
   className,
 }: {
   inboxes: Inbox[];
@@ -521,6 +523,7 @@ export function InboxColumn({
   onOpenScheduled?: () => void;
   canCompose?: boolean;
   canComposeLoading?: boolean;
+  onCollapse?: () => void;
   className?: string;
 }): React.JSX.Element {
   const { me, api, logout } = useAuth();
@@ -579,6 +582,7 @@ export function InboxColumn({
       >
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2 pt-4">
           <BrandHeader />
+          {onCollapse && <button type="button" className="ri-collapse" onClick={onCollapse}><PanelLeftClose size={16} aria-hidden="true" />Collapse sidebar</button>}
 
           {/* Search and the bell sit above the navigation, not inside it: neither is a
               place you go. The magnifier opens the SAME command palette the icon rail

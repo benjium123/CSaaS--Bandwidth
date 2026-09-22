@@ -74,6 +74,7 @@ function latestWs(): FakeWebSocket {
 }
 
 beforeEach(() => {
+  localStorage.removeItem("ringlite.inbox.rail-collapsed");
   FakeWebSocket.instances.length = 0;
   vi.stubGlobal("WebSocket", FakeWebSocket);
 });
@@ -190,6 +191,20 @@ function renderPageAt(path: string, client: ApiClient) {
 }
 
 describe("ConversationsPage", () => {
+  it("collapses the sidebar, keeps number selection available, and remembers the preference", async () => {
+    const view = renderPage(makeStubClient(routes()));
+    await screen.findByText("Ada Lovelace");
+    await userEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(screen.queryByRole("complementary", { name: "Inbox column" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sales, +14694617576" })).toHaveAttribute("aria-current", "true");
+    expect(localStorage.getItem("ringlite.inbox.rail-collapsed")).toBe("true");
+    view.unmount();
+    renderPage(makeStubClient(routes()));
+    await userEvent.click(await screen.findByRole("button", { name: "Expand sidebar" }));
+    expect(await screen.findByRole("complementary", { name: "Inbox column" })).toBeInTheDocument();
+    expect(localStorage.getItem("ringlite.inbox.rail-collapsed")).toBe("false");
+  });
+
   // ConversationsPage only owns the list/timeline/contact-panel columns - the app Shell
   // (frontend/src/App.tsx) mounts the one persistent <Sidebar />, so it is covered by the
   // "Sidebar" describe block in components/conversations/conversations.test.tsx instead

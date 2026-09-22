@@ -3,7 +3,7 @@ import "@/components/conversations/ringliteInbox.css";
 import * as React from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { PanelRight } from "lucide-react";
+import { PanelRight, PanelLeftOpen, MessagesSquare } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import {
   fetchConversations,
@@ -23,7 +23,7 @@ import {
   type NewConversationKind,
 } from "@/components/conversations/NewConversationPanel";
 import { Composer } from "@/components/inbox/Composer";
-import { InboxColumn, type InboxColumnSelection } from "@/components/conversations/InboxColumn";
+import { InboxColumn, lineInitials, type InboxColumnSelection } from "@/components/conversations/InboxColumn";
 import { ScheduledDrawer } from "@/components/conversations/ScheduledDrawer";
 import { Button, Sheet } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -90,6 +90,14 @@ export function ConversationsPage() {
   const [filter, setFilter] = React.useState<ConversationFilter>("open");
   const [q, setQ] = React.useState("");
   const debouncedQ = useDebouncedValue(q, 300);
+  const [railCollapsed, setRailCollapsed] = React.useState(() => {
+    try { return localStorage.getItem("ringlite.inbox.rail-collapsed") === "true"; } catch { return false; }
+  });
+  function toggleRail() {
+    const next = !railCollapsed;
+    setRailCollapsed(next);
+    try { localStorage.setItem("ringlite.inbox.rail-collapsed", String(next)); } catch { /* The current session still works when storage is unavailable. */ }
+  }
   const [contactPanelOpen, setContactPanelOpen] = React.useState(false);
   const [mobileInboxSheetOpen, setMobileInboxSheetOpen] = React.useState(false);
   // P28: the send-later list. Local state, not a URL param - it is a peek at a queue, not
@@ -395,6 +403,7 @@ export function ConversationsPage() {
       }}
       canCompose={canCompose}
       canComposeLoading={inboxesQuery.isLoading}
+      onCollapse={isBelowSm ? undefined : toggleRail}
       className={cn("h-full", isBelowSm ? "!w-full border-r-0" : "")}
     />
   );
@@ -437,6 +446,7 @@ export function ConversationsPage() {
           : "lg:grid-cols-[240px_minmax(0,1fr)_0px]",
       )}
       data-panel={contactPanelOpen ? "open" : "closed"}
+      data-rail-collapsed={!isBelowSm && railCollapsed}
     >
       {isBelowSm ? (
         <>
@@ -461,6 +471,14 @@ export function ConversationsPage() {
             {inboxColumnElement}
           </Sheet>
         </>
+      ) : railCollapsed ? (
+        <aside className="ri-compact-rail" aria-label="Phone numbers">
+          <button type="button" onClick={toggleRail} aria-label="Expand sidebar" title="Expand sidebar" aria-expanded={false}><PanelLeftOpen size={20} /></button>
+          <div className="ri-compact-lines">
+            <button type="button" onClick={() => handleInboxSelect({ kind: "all" })} aria-label="All conversations" title="All conversations" aria-current={isAllInboxes ? "true" : undefined}><MessagesSquare size={19} /></button>
+            {inboxes.map(inbox => <button key={inbox.id} type="button" onClick={() => handleInboxSelect({ kind: "inbox", inboxId: inbox.id })} aria-label={`${inbox.name}, ${inbox.e164}`} title={`${inbox.name} · ${inbox.e164}`} aria-current={selectedInboxId === inbox.id ? "true" : undefined}><span>{lineInitials(inbox.name)}</span>{(unreadQuery.data?.counts[inbox.id] ?? 0) > 0 && <i aria-label="Unread conversations" />}</button>)}
+          </div>
+        </aside>
       ) : (
         inboxColumnElement
       )}
