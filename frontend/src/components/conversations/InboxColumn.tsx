@@ -242,7 +242,7 @@ function NewConversationMenu({
 /** The reference's `.nav-sec` - a section label, not a control. */
 function RailSection({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-2 pb-1.5 pt-5 text-[0.6875rem] font-semibold text-muted-foreground">
+    <div className="ri-rail-label px-2 pb-1.5 pt-5 text-[0.6875rem] font-semibold text-muted-foreground">
       {children}
     </div>
   );
@@ -277,7 +277,8 @@ function BrandHeader() {
   }, [open]);
 
   return (
-    <div className="relative px-1 pb-3 pt-1">
+    <div className="ri-brand relative px-1 pb-3 pt-1">
+      <div className="ri-wordmark" aria-label="Ringlite"><span className="ri-signal" aria-hidden="true"><i /><i /><i /></span>ringlite<span className="ri-edition">WORKSPACE</span></div>
       <Button
         ref={triggerRef}
         type="button"

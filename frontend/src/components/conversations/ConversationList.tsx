@@ -158,7 +158,7 @@ export function FilterChips({
               aria-pressed={active}
               onClick={() => onFilterChange(active ? "open" : chip.filter)}
               className={cn(
-                "rounded-full px-2.5 py-1 text-xs font-medium",
+                "cx-chip rounded-full px-2.5 py-1 text-xs font-medium",
                 active
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted text-foreground hover:bg-foreground/10",
@@ -187,7 +187,7 @@ export function FilterChips({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "rounded-full px-2.5 py-1 text-xs font-medium",
+          "cx-chip rounded-full px-2.5 py-1 text-xs font-medium",
           activeChip
             ? "bg-primary text-primary-foreground"
             : "bg-muted text-foreground hover:bg-foreground/10",
@@ -302,12 +302,13 @@ export function ConversationList({
   return (
     <aside
       className={cn(
-        "flex h-full min-w-0 flex-col border-r border-border bg-background",
+        "ri-conversations flex h-full min-w-0 flex-col border-r border-border bg-background",
         className,
       )}
       aria-label="Conversation list"
     >
-      <div className="border-b border-border p-3">
+      <div className="ri-list-heading border-b border-border p-3">
+        <p className="ri-kicker">Conversations</p>
         {/* The reference's `.list-top`: the two tabs sit at the LEFT at their own width
             (they are a choice between two things, not a segmented control filling the
             column) and the two start-something icon buttons sit at the right. */}

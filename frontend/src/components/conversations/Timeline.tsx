@@ -575,7 +575,7 @@ export function Timeline({
       role="log"
       aria-live="polite"
       aria-label="Conversation timeline"
-      className="min-h-0 flex-1 overflow-y-auto bg-background p-3"
+      className="ri-timeline min-h-0 flex-1 overflow-y-auto bg-background p-3"
     >
       <div className="space-y-4">
         {query.hasNextPage && (

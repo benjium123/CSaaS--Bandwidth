@@ -1,0 +1,126 @@
+/* Ringlite's inbox presentation. All controls, permissions and navigation remain
+   owned by the existing components. Palette comes from consoleTheme in both modes. */
+.console-surface.ringlite-inbox {
+  --ri-edge: hsl(var(--cx-line));
+  --ri-blue: hsl(var(--cx-accent));
+  --ri-paper: hsl(var(--cx-base));
+  --ri-desk: hsl(var(--cx-surface));
+  isolation: isolate;
+  color-scheme: dark;
+}
+.console-surface.ringlite-inbox.is-light { color-scheme: light; }
+.console-surface.ringlite-inbox * { scrollbar-width: thin; scrollbar-color: hsl(var(--cx-line)) transparent; }
+
+.console-surface.ringlite-inbox .cx-rail {
+  min-height: 0;
+  background: linear-gradient(160deg, hsl(var(--cx-accent) / .065), transparent 55%), var(--ri-desk);
+  border-right: 1px solid var(--ri-edge);
+}
+.console-surface.ringlite-inbox .ri-wordmark {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 1px 8px 22px;
+  font: 780 25px/1 'Archivo Variable', sans-serif;
+  letter-spacing: -1.3px;
+}
+.console-surface.ringlite-inbox .ri-signal { display: inline-flex; align-items: center; gap: 3px; color: var(--ri-blue); }
+.console-surface.ringlite-inbox .ri-signal i { width: 4px; height: 14px; background: currentColor; border-radius: 3px; transform: rotate(23deg); }
+.console-surface.ringlite-inbox .ri-signal i:nth-child(2) { height: 25px; }
+.console-surface.ringlite-inbox .ri-signal i:nth-child(3) { height: 19px; }
+.console-surface.ringlite-inbox .ri-edition { margin-left: auto; font: 7px/1.5 'Martian Mono Variable', monospace; letter-spacing: .06em; color: hsl(var(--cx-subtle)); }
+.console-surface.ringlite-inbox .ri-brand > button { border: 1px solid var(--ri-edge); background: var(--ri-paper); border-radius: 7px; padding: 10px; }
+.console-surface.ringlite-inbox .cx-brand-mark { border-radius: 5px; background: hsl(var(--cx-accent) / .12); color: var(--ri-blue); }
+.console-surface.ringlite-inbox .ri-rail-label,
+.console-surface.ringlite-inbox .ri-kicker { font: 500 9px/1.6 'Martian Mono Variable', monospace; text-transform: uppercase; letter-spacing: .11em; color: hsl(var(--cx-subtle)); }
+.console-surface.ringlite-inbox .ri-rail-label { display: flex; align-items: center; gap: 12px; padding-top: 24px; padding-bottom: 10px; }
+.console-surface.ringlite-inbox .ri-rail-label::after { content: ''; height: 1px; flex: 1; background: var(--ri-edge); }
+.console-surface.ringlite-inbox .cx-rail .cx-row { border: 1px solid transparent; border-radius: 7px; margin: 2px 0; }
+.console-surface.ringlite-inbox .cx-rail .cx-row[aria-current='true'] { border-color: hsl(var(--cx-accent) / .35); background: var(--ri-paper); box-shadow: 0 3px 10px hsl(var(--cx-text) / .035); }
+.console-surface.ringlite-inbox .cx-rail .cx-row::before { top: 12px; bottom: 12px; left: -1px; width: 3px; border-radius: 2px; }
+.console-surface.ringlite-inbox .cx-line-avatar { border-radius: 5px; background: color-mix(in srgb, var(--cx-line-av, var(--ri-blue)) 12%, var(--ri-paper)); color: hsl(var(--cx-text)); border: 1px solid color-mix(in srgb, var(--cx-line-av, var(--ri-blue)) 50%, transparent); border-bottom-width: 3px; font: 500 9px 'Martian Mono Variable', monospace; }
+.console-surface.ringlite-inbox .cx-rail nav a { border-radius: 5px; }
+.console-surface.ringlite-inbox .cx-rail .cx-row .cx-num { font-family: 'Onest Variable', sans-serif; font-size: 11px; font-variant-numeric: tabular-nums; }
+.console-surface.ringlite-inbox .ri-brand > [role='menu'] { top: 92px; }
+
+.console-surface.ringlite-inbox .ri-workspace { background: var(--ri-desk); }
+.console-surface.ringlite-inbox .ri-conversations { background: var(--ri-paper); }
+.console-surface.ringlite-inbox .ri-list-heading { padding: 22px 18px 16px; }
+.console-surface.ringlite-inbox .ri-kicker { margin-bottom: 12px; }
+.console-surface.ringlite-inbox .ri-list-heading [role='tablist'] { gap: 18px; }
+.console-surface.ringlite-inbox .ri-list-heading .cx-tab { font-family: 'Archivo Variable', sans-serif; font-size: 22px; font-weight: 650; letter-spacing: -.045em; padding-bottom: 10px; border-radius: 0; }
+.console-surface.ringlite-inbox .ri-list-heading .cx-tab[aria-selected] { background: transparent; }
+.console-surface.ringlite-inbox .ri-conversations .cx-chip { border-radius: 4px; font-size: 10px; padding: 4px 7px; }
+.console-surface.ringlite-inbox .ri-conversations .cx-input { background: var(--ri-desk); border-radius: 5px; margin-top: 12px; height: 34px; }
+.console-surface.ringlite-inbox .ri-conversations ul { padding: 0 10px; }
+.console-surface.ringlite-inbox .ri-conversations .cx-row { border-radius: 0; border-bottom: 1px solid var(--ri-edge); padding: 16px 10px; gap: 11px; }
+.console-surface.ringlite-inbox .ri-conversations .cx-row[aria-current='true'] { background: hsl(var(--cx-accent) / .09); }
+.console-surface.ringlite-inbox .ri-conversations .cx-row::before { top: 12px; bottom: 12px; width: 3px; border-radius: 2px; }
+.console-surface.ringlite-inbox .cx-avatar { border-radius: 9px; background: var(--ri-desk); border: 1px solid var(--ri-edge); color: hsl(var(--cx-text)); font-family: 'Archivo Variable', sans-serif; font-weight: 650; }
+.console-surface.ringlite-inbox .cx-row[aria-current='true'] .cx-avatar { background: hsl(var(--cx-accent) / .12); color: var(--ri-blue); border-color: hsl(var(--cx-accent) / .25); }
+.console-surface.ringlite-inbox .cx-unread-dot { width: 5px; height: 5px; border-radius: 1px; box-shadow: none; }
+
+.console-surface.ringlite-inbox .cx-thread { background: var(--ri-paper); }
+.console-surface.ringlite-inbox .ri-thread-header { padding: 8px 6px; background: var(--ri-paper); }
+.console-surface.ringlite-inbox .ri-thread-header header { border-bottom: 0; }
+.console-surface.ringlite-inbox .ri-thread-header h2 { font: 650 20px/1.4 'Archivo Variable', sans-serif; letter-spacing: -.035em; }
+.console-surface.ringlite-inbox .ri-thread-header .cx-avatar { width: 40px; height: 40px; }
+.console-surface.ringlite-inbox .cx-call { border-radius: 6px; background: hsl(var(--cx-live) / .12); color: hsl(var(--cx-text)); border: 1px solid hsl(var(--cx-live) / .3); }
+.console-surface.ringlite-inbox .cx-call svg { color: hsl(var(--cx-live)); }
+.console-surface.ringlite-inbox .ri-timeline { padding: 20px 24px; background: radial-gradient(ellipse at 100% 0, hsl(var(--cx-accent) / .035), transparent 65%), var(--ri-paper); }
+.console-surface.ringlite-inbox .cx-daybreak { display: flex; align-items: center; gap: 14px; width: 100%; border-radius: 0; padding: 8px 0; background: var(--ri-paper); color: hsl(var(--cx-subtle)); font: 9px/1.6 'Martian Mono Variable', monospace; letter-spacing: .03em; }
+.console-surface.ringlite-inbox .cx-daybreak::before,.console-surface.ringlite-inbox .cx-daybreak::after { content: ''; height: 1px; flex: 1; background: var(--ri-edge); }
+.console-surface.ringlite-inbox .cx-msg { border-radius: 10px; line-height: 1.65; padding: 10px 14px; }
+.console-surface.ringlite-inbox .cx-msg-in { background: var(--ri-desk); }
+.console-surface.ringlite-inbox .cx-msg-out { background: hsl(var(--cx-accent-2)); border-color: hsl(var(--cx-accent-2)); }
+.console-surface.ringlite-inbox .cx-callcard { border-radius: 7px; background: var(--ri-desk); border: 1px solid var(--ri-edge); border-left: 3px solid hsl(var(--cx-live)); }
+.console-surface.ringlite-inbox .cx-meta,.console-surface.ringlite-inbox .cx-run-who { color: hsl(var(--cx-subtle)); }
+.console-surface.ringlite-inbox .cx-composer { border-top: 0; padding: 14px 20px 18px; background: var(--ri-paper); }
+.console-surface.ringlite-inbox .cx-composer-box { border-radius: 8px; border-color: var(--ri-edge); background: var(--ri-desk); box-shadow: 0 4px 18px hsl(var(--cx-text) / .025); }
+.console-surface.ringlite-inbox .cx-composer-box:focus-within { border-color: hsl(var(--cx-accent) / .65); box-shadow: 0 0 0 2px hsl(var(--cx-accent) / .09); }
+.console-surface.ringlite-inbox .cx-send { border-radius: 5px; background: hsl(var(--cx-accent-2)); }
+.console-surface.ringlite-inbox .cx-panel { background: var(--ri-desk); }
+.console-surface.ringlite-inbox .cx-panel-head { align-items: flex-start; text-align: left; border-bottom: 1px solid var(--ri-edge); margin-bottom: 18px; }
+.console-surface.ringlite-inbox .cx-panel-av { border-radius: 12px; background: var(--ri-paper); }
+.console-surface.ringlite-inbox .cx-panel-name { font-family: 'Archivo Variable', sans-serif; font-weight: 650; letter-spacing: -.035em; }
+.console-surface.ringlite-inbox :focus-visible { outline: 2px solid var(--ri-blue); outline-offset: 3px; }
+
+@media (min-width: 640px) {
+  .console-surface.ringlite-inbox { grid-template-rows: minmax(0, 1fr); }
+  .console-surface.ringlite-inbox > .cx-rail { width: 256px; }
+}
+@media (min-width: 640px) and (max-width: 1023px) {
+  .console-surface.ringlite-inbox { grid-template-columns: 256px minmax(0, 1fr); }
+}
+@media (max-width: 639px) {
+  .console-surface.ringlite-inbox { grid-template-rows: auto minmax(0, 1fr); }
+  .console-surface.ringlite-inbox .ri-workspace { grid-template-rows: minmax(0, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .console-surface.ringlite-inbox[data-panel='closed'] { grid-template-columns: 256px minmax(0, 1fr) 0; }
+  .console-surface.ringlite-inbox[data-panel='open'] { grid-template-columns: 256px minmax(0, 1fr) 272px; }
+  .console-surface.ringlite-inbox .ri-workspace { padding: 12px 0 12px 12px; }
+  .console-surface.ringlite-inbox .ri-conversations { border: 1px solid var(--ri-edge); border-radius: 10px 0 0 10px; overflow: hidden; }
+  .console-surface.ringlite-inbox .cx-thread { border: 1px solid var(--ri-edge); border-left: 0; border-radius: 0 10px 10px 0; overflow: hidden; margin-right: 12px; }
+  .console-surface.ringlite-inbox .cx-panel { border-left: 0; }
+  .console-surface.ringlite-inbox .ri-brand,.console-surface.ringlite-inbox .ri-workspace { animation: ri-arrive .4s ease-out both; }
+  .console-surface.ringlite-inbox .ri-workspace { animation-delay: .05s; }
+}
+@media (min-width: 768px) and (max-width: 1399px) {
+  .console-surface.ringlite-inbox[data-panel='open'] .ri-workspace { grid-template-columns: 270px minmax(0, 1fr); }
+}
+@media (max-width: 767px) {
+  .console-surface.ringlite-inbox .ri-list-heading { padding: 15px; }
+  .console-surface.ringlite-inbox .ri-thread-header { padding: 6px 0; }
+  .console-surface.ringlite-inbox .ri-thread-header h2 { font-size: 17px; }
+  .console-surface.ringlite-inbox .ri-thread-header header > div:first-child { flex-wrap: wrap; gap: 8px; }
+  .console-surface.ringlite-inbox .ri-thread-header header > div:first-child > div:first-child { flex: 1 1 100%; }
+  .console-surface.ringlite-inbox .ri-thread-header header > div:first-child > div:last-child { margin-left: 40px; }
+  .console-surface.ringlite-inbox [role='dialog']:has(.cx-rail) { z-index: 70; }
+  .console-surface.ringlite-inbox [role='dialog'] > div:has(> .cx-rail) { padding: 0; }
+  .console-surface.ringlite-inbox .ri-timeline { padding: 14px; }
+  .console-surface.ringlite-inbox .cx-composer { padding: 10px 12px; }
+}
+@keyframes ri-arrive { from { opacity: .7; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .console-surface.ringlite-inbox .ri-brand,.console-surface.ringlite-inbox .ri-workspace { animation: none; } }

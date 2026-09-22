@@ -1,3 +1,5 @@
+import "@fontsource-variable/archivo";
+import "@/components/conversations/ringliteInbox.css";
 import * as React from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -25,12 +27,7 @@ import { InboxColumn, type InboxColumnSelection } from "@/components/conversatio
 import { ScheduledDrawer } from "@/components/conversations/ScheduledDrawer";
 import { Button, Sheet } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
-// The console's face, per docs/design/console-reference.html. Self-hosted: the mockup
-// pulls Onest from Google Fonts and we cannot, because our CSP is `font-src 'self'`.
-// Archivo used to be imported here and no longer is — nothing under `.console-surface`
-// asks for it since the theme moved to Onest. AuthShell still imports it for its own
-// surface, which is where the pages that use it (onboarding, plan picker) get it from.
-// The landing page used to be the third of those; it now lives outside this repo.
+// Shared palette and self-hosted typography; inbox styling is isolated by route.
 import "@fontsource-variable/onest/wght.css";
 // Still needed: `.cx-num`, `.cx-label` and `.cx-meta` keep the mono face for numbers read
 // as data rather than as prose.
@@ -428,7 +425,7 @@ export function ConversationsPage() {
     // the three, which is the wrong way round. Those 40px go to the conversation.
     <div
       className={cn(
-        "console-surface",
+        "console-surface ringlite-inbox",
         surfaceThemeClass(theme),
         "grid h-full grid-cols-[minmax(0,1fr)] bg-background text-foreground",
         // Transitioning grid-template-columns (rather than toggling a width) is what lets
@@ -476,7 +473,7 @@ export function ConversationsPage() {
           conversation list with it and putting the reply box out of reach. Timeline itself
           already has `min-h-0 flex-1 overflow-y-auto`; the constraint was missing on its
           ancestors, which is why the symptom looked like "the timeline won't scroll". */}
-      <main className="grid min-h-0 min-w-0 grid-cols-[1fr] md:grid-cols-[320px_1fr]">
+      <main className="ri-workspace grid min-h-0 min-w-0 grid-cols-[1fr] md:grid-cols-[320px_1fr]">
         <ConversationList
           items={items}
           selectedContactE164={urlContact}
@@ -502,7 +499,7 @@ export function ConversationsPage() {
           canComposeLoading={inboxesQuery.isLoading}
         />
 
-        <section className="cx-thread flex min-h-0 min-w-0 flex-col">
+        <section className={cn("cx-thread min-h-0 min-w-0 flex-col", selectedConversation || composeMode ? "flex" : "hidden md:flex")}>
           {composeMode ? (
             <NewConversationPanel
               // Load-bearing key: the panel seeds its state on mount, so without a
@@ -522,7 +519,7 @@ export function ConversationsPage() {
             />
           ) : (
             <>
-              <div className="flex items-center border-b border-border">
+              <div className="ri-thread-header flex items-center border-b border-border">
                 <div className="min-w-0 flex-1">
                   <ConversationHeader
                     conversation={selectedConversation}
