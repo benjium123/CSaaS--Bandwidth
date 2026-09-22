@@ -189,6 +189,8 @@ export const MISSING_LABELS: Record<string, string> = {
   "applicant.legal_name": "Your legal name",
   "applicant.country": "Your country",
   "applicant.phone": "Your phone number",
+  "use_case.business_description": "Describe your business",
+  "applicant.business_description": "Describe your business",
   "applicant.industry": "Your industry",
   "applicant.purpose": "Your calling or texting purpose",
   "applicant.customer_country": "Your customers' country",

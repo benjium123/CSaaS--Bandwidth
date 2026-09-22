@@ -83,6 +83,7 @@ class BusinessIn(BaseModel):
 
 
 class UseCaseIn(BaseModel):
+    business_description: str = Field(default="", max_length=4000)
     description: str = Field(min_length=20, max_length=4000)
     vertical: str = Field(min_length=2, max_length=64)
     who_you_contact: str = Field(min_length=5, max_length=2000)
@@ -113,6 +114,7 @@ class ApplicationIn(BaseModel):
     purpose: str = Field(default="", max_length=4000)
     customer_country: str = Field(default="", max_length=2)
     accept_personal_agreement: bool = False
+    unified_company: bool = False
 
 
 @router.put("/application")
@@ -174,7 +176,7 @@ async def save_application(
             "destination_countries": [customer_country] if customer_country else [],
         }
     else:
-        details["application_version"] = 3
+        details["application_version"] = 4 if payload.unified_company else 3
         details["user_id"] = str(user.id)
         if payload.accept_personal_agreement:
             details["agreement_version"] = kyc_svc.AGREEMENT_VERSION

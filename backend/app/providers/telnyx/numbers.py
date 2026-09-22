@@ -67,16 +67,30 @@ class TelnyxNumberProviderMixin:
             params=params,
             headers={"Authorization": f"Bearer {self.api_key}"},
         )
+        if resp.status_code == 400 and any(
+            str(e.get("code")) == "10031" and "No numbers found" in str(e.get("detail", ""))
+            for e in resp.json().get("errors", [])
+            if isinstance(e, dict)
+        ):
+            return []
         if resp.status_code != 200:
-            raise FeatureUnavailableError(
-                f"Telnyx number search failed with {resp.status_code}"
-            )
+            raise FeatureUnavailableError(f"Telnyx number search failed with {resp.status_code}")
         payload = resp.json()
         out: list[AvailableNumber] = []
         for item in payload.get("data") or []:
             if not isinstance(item, dict):
                 continue
             region = item.get("region_information") or {}
+            if isinstance(region, list):
+                entries = {
+                    r.get("region_type"): r.get("region_name")
+                    for r in region
+                    if isinstance(r, dict)
+                }
+                region = {
+                    "administrative_area": entries.get("state"),
+                    "locality": entries.get("location") or entries.get("rate_center"),
+                }
             cost_info = item.get("cost_information") or {}
             out.append(
                 AvailableNumber(
@@ -149,9 +163,7 @@ class TelnyxNumberProviderMixin:
             headers={"Authorization": f"Bearer {self.api_key}"},
         )
         if resp.status_code != 200:
-            raise FeatureUnavailableError(
-                f"Telnyx order status failed with {resp.status_code}"
-            )
+            raise FeatureUnavailableError(f"Telnyx order status failed with {resp.status_code}")
 
         try:
             payload = resp.json()
@@ -218,6 +230,4 @@ class TelnyxNumberProviderMixin:
         except httpx.TransportError as exc:
             raise FeatureUnavailableError(f"Telnyx unreachable: {exc}") from exc
         if resp.status_code not in (200, 202, 204, 404):
-            raise ValidationFailedError(
-                f"Telnyx refused to release {e164}: {resp.status_code}"
-            )
+            raise ValidationFailedError(f"Telnyx refused to release {e164}: {resp.status_code}")

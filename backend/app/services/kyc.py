@@ -241,7 +241,9 @@ def update_use_case(settings: Settings, profile: KycProfile, data: dict) -> str:
     cleaned = dict(data)
     # Company use-case edits must preserve the separately saved applicant form.
     if (profile.use_case or {}).get("applicant_details"):
-        cleaned["applicant_details"] = profile.use_case["applicant_details"]
+        cleaned["applicant_details"] = dict(profile.use_case["applicant_details"])
+        if str(cleaned.get("business_description") or "").strip():
+            cleaned["applicant_details"]["application_version"] = 4
     cleaned["destination_countries"] = sorted(
         {str(c).upper() for c in (cleaned.get("destination_countries") or []) if str(c).strip()}
     )
@@ -268,6 +270,17 @@ def accept_agreement(
     profile.agreement_accepted_at = _now()
     profile.agreement_accepted_by = user_id
     profile.agreement_ip = ip
+    applicant = (profile.use_case or {}).get("applicant_details")
+    if applicant and applicant.get("user_id") == str(user_id):
+        profile.use_case = {
+            **profile.use_case,
+            "applicant_details": {
+                **applicant,
+                "agreement_version": version,
+                "agreement_accepted_at": profile.agreement_accepted_at.isoformat(),
+                "agreement_accepted_by": str(user_id),
+            },
+        }
 
 
 # --------------------------------------------------------------------------------------
@@ -710,10 +723,23 @@ async def missing_for_submission(session: AsyncSession, profile: KycProfile) -> 
             and not str(applicant.get("business_description") or "").strip()
         ):
             missing.append("applicant.business_description")
-        for field in ("legal_name", "country", "phone", "industry", "purpose", "customer_country"):
+        fields = (
+            ("legal_name", "country", "phone")
+            if applicant.get("application_version") == 4
+            else ("legal_name", "country", "phone", "industry", "purpose", "customer_country")
+        )
+        if (
+            applicant.get("application_version") == 4
+            and not str(use_case.get("business_description") or "").strip()
+        ):
+            missing.append("use_case.business_description")
+        for field in fields:
             if not str(applicant.get(field) or "").strip():
                 missing.append(f"applicant.{field}")
-        if applicant.get("agreement_version") != AGREEMENT_VERSION:
+        if (
+            applicant.get("application_version") != 4
+            and applicant.get("agreement_version") != AGREEMENT_VERSION
+        ):
             missing.append("applicant.agreement")
         own = next(
             (

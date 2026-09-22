@@ -1,11 +1,11 @@
 import * as React from "react";
+import { COUNTRIES } from "@/lib/countries";
 import { DocumentReview, OwnerResidence } from "@/components/kyc/OwnerResidence";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import {
   COUNTRY_OPTIONS,
   DOCUMENT_KINDS,
   ENTITY_OPTIONS,
-  VERTICAL_OPTIONS,
   missingLabel,
   statusCopy,
   uploadKycDocument,
@@ -273,15 +273,18 @@ function PersonalDetailsStep({ profile, editable, signedInEmail }: { profile: Ky
 function UseCaseStep({ profile, editable, accountType }: { profile: KycProfile; editable: boolean; accountType: AccountType }) {
   const { api } = useAuth();
   const personal = accountType === "individual";
-  const initial: KycUseCase = profile.use_case ?? {
-    description: "",
-    vertical: personal ? "personal" : "",
+  const applicant = (profile.use_case as (KycUseCase & { applicant_details?: { industry?: string; purpose?: string; business_description?: string; customer_country?: string } }) | null)?.applicant_details;
+  const initial: KycUseCase = {
     who_you_contact: "",
     list_source: "",
     monthly_calls: 0,
     monthly_texts: 0,
-    destination_countries: ["US"],
     sample_script: "",
+    ...profile.use_case,
+    business_description: profile.use_case?.business_description || applicant?.business_description || "",
+    description: profile.use_case?.description || applicant?.purpose || "",
+    vertical: profile.use_case?.vertical || applicant?.industry || (personal ? "personal" : ""),
+    destination_countries: profile.use_case?.destination_countries?.length ? profile.use_case.destination_countries : [applicant?.customer_country || "US"],
   };
   const [form, setForm] = React.useState<KycUseCase>(initial);
   const [monthlyCallsInput, setMonthlyCallsInput] = React.useState(String(initial.monthly_calls ?? 0));
@@ -317,6 +320,10 @@ function UseCaseStep({ profile, editable, accountType }: { profile: KycProfile; 
           ? "Be specific. Calls that don't match what you describe here are flagged for review."
           : "Be specific. Calls and messages that don't match what you describe here are flagged for review."}
       </p>
+      {!personal && <>
+        <Field label="Industry"><Input aria-label="Industry" value={form.vertical} onChange={text("vertical")} disabled={!editable} required minLength={2} maxLength={64} /></Field>
+        <Field label="Describe your business. What do you do?"><Textarea aria-label="Describe your business" value={form.business_description ?? ""} onChange={text("business_description")} disabled={!editable} required maxLength={4000} rows={4} /></Field>
+      </>}
       <Field label={personal ? "What will you use calling for?" : "What will you use calling and texting for?"}>
         <Textarea
           aria-label={personal ? "What will you use calling for" : "What will you use calling and texting for"}
@@ -326,16 +333,6 @@ function UseCaseStep({ profile, editable, accountType }: { profile: KycProfile; 
           disabled={!editable}
         />
       </Field>
-      {!personal && (
-        <Field label="Line of business">
-          <Select aria-label="Line of business" value={form.vertical} onChange={text("vertical")} disabled={!editable}>
-            <option value="">Choose…</option>
-            {VERTICAL_OPTIONS.map((v) => (
-              <option key={v.value} value={v.value}>{v.label}</option>
-            ))}
-          </Select>
-        </Field>
-      )}
       <Field label={personal ? "Who will you call?" : "Who will you call or text?"}>
         <Textarea
           aria-label={personal ? "Who will you call" : "Who will you call or text"}
@@ -357,13 +354,10 @@ function UseCaseStep({ profile, editable, accountType }: { profile: KycProfile; 
             <Input aria-label="Texts per month" type="number" inputMode="numeric" min={0} value={monthlyTextsInput} onChange={num("monthly_texts")} disabled={!editable} />
           </Field>
         )}
-        <Field label="Countries you contact" hint="Comma separated, e.g. US, CA">
-          <Input
-            aria-label="Countries you contact"
-            value={form.destination_countries.join(", ")}
-            onChange={(e) => setForm((f) => ({ ...f, destination_countries: e.target.value.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean) }))}
-            disabled={!editable}
-          />
+        <Field label="Country in which your customers are">
+          <Select aria-label="Customer country" value={form.destination_countries[0] ?? ""} onChange={e => setForm(f => ({ ...f, destination_countries: [e.target.value] }))} disabled={!editable} required>
+            <option value="">Select country</option>{COUNTRIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </Select>
         </Field>
       </div>
       <Field label={personal ? "Example of a typical call (optional)" : "Example of a typical call or message (optional)"}>
@@ -395,6 +389,7 @@ function PeopleStep({
   reverify,
   detailsReady,
   signedInEmail,
+  selfVerificationElsewhere = false,
 }: {
   profile: KycProfile;
   editable: boolean;
@@ -402,20 +397,21 @@ function PeopleStep({
   reverify: boolean;
   detailsReady: boolean;
   signedInEmail: string | null | undefined;
+  selfVerificationElsewhere?: boolean;
 }) {
   const { api } = useAuth();
   const personal = accountType === "individual";
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [percent, setPercent] = React.useState("100");
-  const [isMe, setIsMe] = React.useState(profile.persons.length === 0);
+  const [isMe, setIsMe] = React.useState(!selfVerificationElsewhere && profile.persons.length === 0);
   const [role, setRole] = React.useState<"owner" | "beneficial_owner">(profile.persons.some((p) => p.role === "owner") ? "beneficial_owner" : "owner");
   const [link, setLink] = React.useState<{ person: string; url: string } | null>(null);
 
   const add = useKycMutation(api, () =>
     api.request("/api/v1/kyc/persons", {
       method: "POST",
-      json: { role, full_name: name.trim(), email: email.trim() || null, ownership_percent: percent ? Number(percent) : null, is_me: isMe },
+      json: { role, full_name: name.trim(), email: email.trim() || null, ownership_percent: percent ? Number(percent) : null, is_me: selfVerificationElsewhere ? false : isMe },
     }),
   );
   const startPersonal = useKycMutation(api, async () => {
@@ -458,15 +454,15 @@ function PeopleStep({
     <div className="space-y-[14px]">
       <p className="text-[11.5px] leading-[1.55] text-[hsl(var(--cx-muted))]">
         {personal
-          ? "Take a photo of a driver's license, ID card or passport, then a selfie. We never see or store the images - our identity partner does."
-          : "Add every owner of 25% or more. Each one takes a photo of a driver's license, ID card or passport and a selfie. We never see or store the images - our identity partner does."}
+          ? "Take a photo of a driver's license, ID card or passport, then a selfie. Our identity partner securely processes your ID and selfie for review."
+          : "Add every owner of 25% or more. Each one takes a photo of a driver's license, ID card or passport and a selfie. Our identity partner securely processes your ID and selfie for review."}
       </p>
       {persons.length > 0 && (
         <ul className="space-y-[8px]">
           {persons.map((p) => {
             // Personal: only the signed-in person may act, and only on their own row.
             const canVerify = personal ? p.is_you : true;
-            const showVerify = canVerify && (p.status !== "verified" || reverify) && p.status !== "processing" && (!personal || detailsReady);
+            const showVerify = !(selfVerificationElsewhere && p.is_you) && canVerify && (p.status !== "verified" || reverify) && p.status !== "processing" && (!personal || detailsReady);
             return (
               <li
                 key={p.id}
@@ -535,6 +531,7 @@ function PeopleStep({
       )}
       {verify.isError && <p role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(verify.error)}</p>}
       {showAdd && (
+        <details className="rounded-xl border border-blue-100 p-4"><summary className="cursor-pointer font-semibold text-blue-700">Add another owner or director</summary>
         <form
           className="grid gap-[12px] sm:grid-cols-2"
           onSubmit={(e) => {
@@ -566,10 +563,10 @@ function PeopleStep({
               <Field label="Ownership %">
                 <Input aria-label="Ownership percent" type="number" min={0} max={100} value={percent} onChange={(e) => setPercent(e.target.value)} />
               </Field>
-              <label className="flex items-center gap-[10px] text-[13px] text-[hsl(var(--cx-text))] sm:col-span-2">
+              {!selfVerificationElsewhere && <label className="flex items-center gap-[10px] text-[13px] text-[hsl(var(--cx-text))] sm:col-span-2">
                 <input type="checkbox" checked={isMe} onChange={(e) => setIsMe(e.target.checked)} />
                 This person is me
-              </label>
+              </label>}
             </>
           )}
           <div className="flex flex-wrap items-center gap-[12px] sm:col-span-2">
@@ -578,7 +575,7 @@ function PeopleStep({
             </Button>
             {add.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(add.error)}</span>}
           </div>
-        </form>
+        </form></details>
       )}
     </div>
   );
@@ -643,7 +640,7 @@ function DocumentsStep({ profile, editable }: { profile: KycProfile; editable: b
   );
 }
 
-function AgreementStep({ profile, editable, accountType }: { profile: KycProfile; editable: boolean; accountType: AccountType }) {
+function AgreementStep({ profile, editable, accountType, onReady }: { profile: KycProfile; editable: boolean; accountType: AccountType; onReady?: (ready: boolean) => void }) {
   const { api } = useAuth();
   const [checked, setChecked] = React.useState(false);
   const accepted = profile.agreement.accepted_version === profile.agreement.current_version;
@@ -666,12 +663,12 @@ function AgreementStep({ profile, editable, accountType }: { profile: KycProfile
       ) : editable ? (
         <div className="flex flex-wrap items-center gap-[12px]">
           <label className="flex items-center gap-[10px] text-[13px] text-[hsl(var(--cx-text))]">
-            <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+            <input type="checkbox" checked={checked} onChange={(e) => { setChecked(e.target.checked); onReady?.(e.target.checked); }} />
             {accountType === "individual" ? "I agree" : "I agree, on behalf of the business"}
           </label>
-          <Button type="button" className="rounded-full" disabled={!checked || accept.isPending} onClick={() => accept.mutate(undefined)}>
+          {!onReady && <Button type="button" className="rounded-full" disabled={!checked || accept.isPending} onClick={() => accept.mutate(undefined)}>
             Accept
-          </Button>
+          </Button>}
           {accept.isError && <span role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">{mutationErrorMessage(accept.error)}</span>}
         </div>
       ) : null}
@@ -679,10 +676,17 @@ function AgreementStep({ profile, editable, accountType }: { profile: KycProfile
   );
 }
 
-export function VerifyBusinessPage() {
+export function VerifyBusinessPage({ embedded = false, representative }: { embedded?: boolean; representative?: React.ReactNode } = {}) {
   const { api, me, orgId } = useAuth();
   const profileQ = useKycProfile(api);
-  const submit = useKycMutation(api, () => api.request("/api/v1/kyc/submit", { method: "POST" }));
+  const [agreementReady, setAgreementReady] = React.useState(false);
+  const submit = useKycMutation(api, async () => {
+    const profile = profileQ.data;
+    if (embedded && profile && (profile.agreement.accepted_version !== profile.agreement.current_version || profile.missing.includes("applicant.agreement"))) {
+      await api.request("/api/v1/kyc/agreement", { method: "POST", json: { version: profile.agreement.current_version, accept: true } });
+    }
+    return api.request("/api/v1/kyc/submit", { method: "POST" });
+  });
   const canEdit = hasPermission(me, orgId, "org:update");
 
   if (profileQ.isPending) return <Spinner label="Loading verification" />;
@@ -703,8 +707,10 @@ export function VerifyBusinessPage() {
   // Personal accounts may not claim a finished identity check without a verified self,
   // even when the server sends nothing missing (no person added yet). The extra key keeps
   // the Submit button disabled and the checklist honest.
-  const requiredMissing = personal && !selfVerified ? [...profile.missing, "id_verification"] : [...profile.missing];
-  const readyToSubmit = requiredMissing.length === 0;
+  const applicantSaved = !!(profile.use_case as (KycUseCase & { applicant_details?: unknown }) | null)?.applicant_details;
+  const requiredMissing = embedded && !applicantSaved ? [...profile.missing, "applicant.legal_name"] : personal && !selfVerified ? [...profile.missing, "id_verification"] : [...profile.missing];
+  const agreementAccepted = profile.agreement.accepted_version === profile.agreement.current_version;
+  const readyToSubmit = embedded ? requiredMissing.filter(m => m !== "agreement" && m !== "applicant.agreement").length === 0 && (agreementReady || agreementAccepted) : requiredMissing.length === 0;
   const visibleMissing = personal
     ? requiredMissing.filter((key) => key !== "business_email")
     : requiredMissing;
@@ -743,7 +749,7 @@ export function VerifyBusinessPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-[14px]">
-      <SurfaceCard className="space-y-[12px]">
+      {!embedded && <SurfaceCard className="space-y-[12px]">
         {/* Heading level 2 is where this page already sat (it renders inside the Settings
             tab, under that page's h1); PageHeader keeps it there. */}
         <PageHeader
@@ -796,7 +802,7 @@ export function VerifyBusinessPage() {
             </ul>
           </div>
         )}
-      </SurfaceCard>
+      </SurfaceCard>}
 
       {personal ? (
         <Anchor id="business">
@@ -811,8 +817,9 @@ export function VerifyBusinessPage() {
           </StepCard>
         </Anchor>
       )}
+      {representative && <StepCard n={2} title="Company representative" done={selfVerified}>{representative}</StepCard>}
       <Anchor id="use_case">
-        <StepCard n={2} title={personal ? "How you'll use calling" : "How you'll use calling and texting"} done={!profile.missing.some((m) => m.startsWith("use_case."))}>
+        <StepCard n={embedded ? 3 : 2} title={personal ? "How you'll use calling" : "How you'll use calling and texting"} done={!profile.missing.some((m) => m.startsWith("use_case."))}>
           <UseCaseStep profile={profile} editable={editable} accountType={accountType} />
         </StepCard>
       </Anchor>
@@ -823,33 +830,34 @@ export function VerifyBusinessPage() {
         <Anchor id="owners">
           <Anchor id="identity">
             <StepCard n={3} title="Your ID check" done={identityDone}>
-              <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} accountType={accountType} reverify={reverify} detailsReady={detailsDone} signedInEmail={me?.email} />
+              <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} accountType={accountType} reverify={reverify} detailsReady={detailsDone} signedInEmail={me?.email} selfVerificationElsewhere={embedded} />
             </StepCard>
           </Anchor>
         </Anchor>
       ) : (
         <Anchor id="owners">
-          <StepCard n={3} title="Owners, ID check and home address" done={identityDone}>
-            <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} accountType={accountType} reverify={reverify} detailsReady={detailsDone} signedInEmail={me?.email} />
+          <StepCard n={embedded ? 4 : 3} title="Ownership and residential addresses" done={identityDone}>
+            <PeopleStep profile={profile} editable={editable || profile.status === "reverification_due"} accountType={accountType} reverify={reverify} detailsReady={detailsDone} signedInEmail={me?.email} selfVerificationElsewhere={embedded} />
           </StepCard>
         </Anchor>
       )}
       {!personal && (
         <Anchor id="documents">
-          <StepCard n={4} title="Business documents" done={!missing.has("documents")}>
+          <StepCard n={embedded ? 5 : 4} title="Business documents" done={!missing.has("documents")}>
             <DocumentsStep profile={profile} editable={editable} />
           </StepCard>
         </Anchor>
       )}
       <Anchor id="agreement">
-        <StepCard n={personal ? 4 : 5} title="Agreement" done={!missing.has("agreement")}>
-          <AgreementStep profile={profile} editable={editable} accountType={accountType} />
+        <StepCard n={personal ? 4 : embedded ? 6 : 5} title="Agreement" done={!missing.has("agreement")}>
+          <AgreementStep profile={profile} editable={editable} accountType={accountType} onReady={embedded ? setAgreementReady : undefined} />
         </StepCard>
       </Anchor>
 
       {editable && (
         <Anchor id="submit">
           <SurfaceCard className="space-y-[12px]">
+            {embedded && requiredMissing.some(m => m !== "agreement" && m !== "applicant.agreement") && <ul className="list-disc pl-5 text-sm text-slate-600">{[...new Set(requiredMissing.filter(m => m !== "agreement" && m !== "applicant.agreement").map(m => missingLabel(m, accountType)))].map(m => <li key={m}>{m}</li>)}</ul>}
             <p className="text-[13px] text-[hsl(var(--cx-text))]">{readyToSubmit ? "Everything is ready. Submit for review." : "Complete the items above to submit for review."}</p>
             <div className="flex flex-wrap items-center gap-[12px]">
               <Button type="button" className="rounded-full" disabled={!readyToSubmit || submit.isPending} onClick={() => submit.mutate(undefined)}>

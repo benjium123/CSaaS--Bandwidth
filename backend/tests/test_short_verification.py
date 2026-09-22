@@ -135,3 +135,52 @@ async def test_short_application_validation(kyc_app, bad):
         "/api/v1/kyc/application", json={**FORM, **bad}, headers=auth_headers(token, org)
     )
     assert r.status_code == 422, r.text
+
+
+async def test_unified_company_uses_one_use_case_and_final_agreement(kyc_app):
+    client, *_ = kyc_app
+    token = await register_and_login(client, "unified-company@example.com")
+    org = await _signup_org(client, token, "Unified Company")
+    h = auth_headers(token, org["id"])
+    saved = await client.put(
+        "/api/v1/kyc/application",
+        headers=h,
+        json={
+            "legal_name": "Ada Solo",
+            "country": "PK",
+            "phone": "+923001234567",
+            "unified_company": True,
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["use_case"]["applicant_details"]["application_version"] == 4
+    assert not any(
+        m in saved.json()["missing"]
+        for m in [
+            "applicant.industry",
+            "applicant.purpose",
+            "applicant.customer_country",
+            "applicant.agreement",
+        ]
+    )
+    assert "use_case.business_description" in saved.json()["missing"]
+    use_case = {
+        "business_description": "Business consulting and planning",
+        "description": "We call our existing customers about appointments.",
+        "vertical": "Consulting",
+        "who_you_contact": "Existing customers",
+        "list_source": "Customers opt in on our website",
+        "monthly_calls": 100,
+        "monthly_texts": 100,
+        "destination_countries": ["US"],
+    }
+    result = await client.put("/api/v1/kyc/profile/use-case", headers=h, json=use_case)
+    assert result.status_code == 200, result.text
+    data = (await client.get("/api/v1/kyc/profile", headers=h)).json()
+    assert data["use_case"]["business_description"] == use_case["business_description"]
+    assert "use_case.business_description" not in data["missing"]
+    assert data["use_case"]["applicant_details"]["legal_name"] == "Ada Solo"
+    await _accept_agreement(client, h)
+    data = (await client.get("/api/v1/kyc/profile", headers=h)).json()
+    assert "agreement" not in data["missing"]
+    assert "applicant.agreement" not in data["missing"]

@@ -46,7 +46,7 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
     await cache.invalidateQueries({ queryKey: KYC_KEY });
     await cache.invalidateQueries({ queryKey: CAPABILITIES_QUERY_KEY });
   };
-  const save = () => api.request<KycProfile>("/api/v1/kyc/application", { method: "PUT", json: { ...form, accept_personal_agreement: accepted, phone: `+${prefix}${number.replace(/\D/g, "")}` } });
+  const save = () => api.request<KycProfile>("/api/v1/kyc/application", { method: "PUT", json: { ...form, accept_personal_agreement: personal && accepted, unified_company: !personal, phone: `+${prefix}${number.replace(/\D/g, "")}` } });
   const run = async (action: "verify" | "submit" | "save") => {
     if (busy) return;
     setBusy(true); setError("");
@@ -69,24 +69,24 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
     finally { setBusy(false); }
   };
   const selectCountries = COUNTRIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>);
-  const complete = !!(form.legal_name.trim() && form.country && number.trim() && form.industry.trim() && form.business_description?.trim() && form.purpose.trim() && form.customer_country);
+  const complete = !!(form.legal_name.trim() && form.country && number.trim() && (!personal || (form.industry.trim() && form.business_description?.trim() && form.purpose.trim() && form.customer_country)));
   return <form className="space-y-6" onSubmit={e => { e.preventDefault(); void run(personal ? "submit" : "save"); }}>
     <fieldset disabled={!canEdit || busy} className="space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
-      <legend className="px-2 text-lg font-semibold">1. Your details</legend>
+      <legend className="px-2 text-lg font-semibold">{personal ? "1. Your details" : "Your personal details"}</legend>
       <label className="block space-y-2"><span>Legal name</span><Input aria-label="Legal name" autoComplete="name" value={form.legal_name} onChange={e => update("legal_name", e.target.value)} required minLength={2} maxLength={255} /></label>
-      <label className="block space-y-2"><span>Country</span><Select aria-label="Country" value={form.country} onChange={e => update("country", e.target.value)} required><option value="">Select country</option>{selectCountries}</Select></label>
-      <div className="space-y-2"><span>Phone number</span><div className="grid gap-2 sm:grid-cols-2">
+      <label className="block space-y-2"><span>{personal ? "Country" : "Your country of residence"}</span><Select aria-label="Country" value={form.country} onChange={e => update("country", e.target.value)} required><option value="">Select country</option>{selectCountries}</Select></label>
+      <div className="space-y-2"><span>{personal ? "Phone number" : "Your personal phone number"}</span><div className="grid gap-2 sm:grid-cols-2">
         <Select aria-label="Phone country prefix" value={dialCountry} onChange={e => { setDialCountry(e.target.value); setSaved(false); }}>{COUNTRIES.map(c => <option key={c.value} value={c.value}>{c.label} (+{c.dialCode})</option>)}</Select>
         <Input aria-label="Phone number" autoComplete="tel-national" type="tel" value={number} onChange={e => { setNumber(e.target.value); setSaved(false); }} required />
       </div></div>
     </fieldset>
     <section id="identity" className="scroll-mt-6 space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
-      <h2 className="text-lg font-semibold">2. Verify your identity</h2>
+      <h2 className="text-lg font-semibold">{personal ? "2. Verify your identity" : "Verify your identity"}</h2>
       <p>Verify your ID and selfie securely with Didit.</p>
       {verified ? <p role="status">Identity verified</p> : owner?.status === "processing" ? <p role="status">Your identity check is processing. This page updates automatically.</p> : (canEdit || mustReverify) ? <Button type="button" disabled={busy || (!mustReverify && (!form.legal_name.trim() || !form.country || !number.trim()))} onClick={() => void run("verify")}>{owner?.status === "pending" ? "Continue with Didit" : "Verify with Didit"}</Button> : <p>Identity verification is not complete.</p>}
       {owner?.last_error && <p role="alert">{owner.last_error}</p>}
     </section>
-    <fieldset id="use_case" disabled={!canEdit || busy} className="scroll-mt-6 space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
+    {personal && <><fieldset id="use_case" disabled={!canEdit || busy} className="scroll-mt-6 space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
       <legend className="px-2 text-lg font-semibold">3. How you’ll use Ringlite</legend>
       <label className="block space-y-2"><span>Industry</span><Input aria-label="Industry" value={form.industry} onChange={e => update("industry", e.target.value)} required maxLength={64} /></label>
       <label className="block space-y-2"><span>Describe your business. What do you do?</span><Textarea aria-label="Describe your business" value={form.business_description ?? ""} onChange={e => update("business_description", e.target.value)} required maxLength={4000} rows={4} placeholder="Tell us about your work, products or services." /></label>
@@ -97,10 +97,10 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
       <h2 className="text-lg font-semibold">Agreement</h2>
       <ul className="list-disc space-y-2 pl-5 text-sm">{PERSONAL_AGREEMENT_POINTS.map(point => <li key={point}>{point}</li>)}</ul>
       <label className="flex items-center gap-3"><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} disabled={!canEdit || busy} required />I accept the agreement</label>
-    </section>
+    </section></>}
     {error && <p role="alert" className="text-red-600">{error}</p>}
-    {canEdit && <Button type="submit" disabled={busy || !complete || !accepted || !verified}>{busy ? "Saving…" : personal ? "Submit for review" : "Save personal verification"}</Button>}
-    {saved && !personal && <p role="status">Personal verification saved. Complete the company application below to submit for review.</p>}
+    {canEdit && <Button type="submit" disabled={busy || !complete || (personal && (!accepted || !verified))}>{busy ? "Saving…" : personal ? "Submit for review" : "Save your details"}</Button>}
+    {saved && !personal && <p role="status">Your details are saved. Continue with the company application.</p>}
   </form>;
 }
 
@@ -116,8 +116,7 @@ export function VerificationPage() {
       {query.isPending ? <Spinner label="Loading verification" /> : query.isError || !profile ? <p role="alert">{mutationErrorMessage(query.error)}</p> : <>
         {profile.account_type === "individual" && <p>Individual accounts support calling only. SMS and MMS are unavailable.</p>}
         {copy && <section role="status" className="verification-status rounded-2xl border p-5"><p className="verification-status-label">{["submitted", "in_review"].includes(profile.status) ? "APPLICATION RECEIVED" : "YOUR APPLICATION"}</p><h2 className="font-semibold">{copy.title}</h2><p>{copy.body}</p>{profile.info_request && <p>{profile.info_request}</p>}{profile.decision_reason && <p>{profile.decision_reason}</p>}</section>}
-        {!["submitted", "in_review"].includes(profile.status) && <PersonalForm key={orgId} profile={profile} />}
-        {profile.account_type !== "individual" && <VerifyBusinessPage />}
+        {!["submitted", "in_review"].includes(profile.status) && (profile.account_type === "individual" ? <PersonalForm key={orgId} profile={profile} /> : <VerifyBusinessPage embedded representative={<PersonalForm key={orgId} profile={profile} />} />)}
       </>}
     </div>
   </main>;
