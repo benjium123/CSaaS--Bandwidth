@@ -23,7 +23,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.models import Org
-from tests.conftest import TEST_PLATFORM_OPS_TOKEN
+from tests.conftest import TEST_PLATFORM_OPS_TOKEN, confirm_registered_email
 
 PASSWORD = "correct-horse-battery"
 INDIVIDUAL_SMS_CODE = "individual_messaging_disabled"
@@ -116,6 +116,7 @@ async def _new_org(session, client, email, *, account_type):
         json={"email": email, "password": PASSWORD, "full_name": "Tester"},
     )
     assert r.status_code == 201, r.text
+    await confirm_registered_email(client, email)
     r = await client.post(
         "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
     )
@@ -154,8 +155,8 @@ async def test_individual_filing_refused_before_the_carrier(
         brand_id=uuid.uuid4(), campaign_id=uuid.uuid4(), tfv_id=uuid.uuid4()
     )
     r = await client.post(url, json=body, headers=_headers(token, org_id))
-    assert r.status_code == 403, r.text
-    assert r.json()["error"]["code"] == INDIVIDUAL_SMS_CODE
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] != INDIVIDUAL_SMS_CODE
     # The carrier client was never constructed or called: the guard refused first.
     assert spy.requests == []
 

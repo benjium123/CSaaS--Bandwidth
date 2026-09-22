@@ -36,3 +36,9 @@ Email, submitted phone numbers and Didit verified identity hashes can be selecte
 Company onboarding uses one standalone flow: company details, representative/Didit, shared use case, ownership/residential addresses, company documents, then one final agreement and submit. The representative form collects only personal name, country and phone. Industry, business description, purpose and customer country live in the company use case. Version 4 applicant details do not require duplicate personal use-case answers or a separate agreement. Existing answers remain available and are used to prefill the shared fields.
 
 Telnyx inventory search uses exact requested area codes. Provider code 10031 with a no-numbers message is shown as an empty result, and region-information arrays supply city/state labels. The paid checkout still requires STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET; a price ID alone cannot enable charging or verified provisioning.
+
+
+## Unified signup and messaging
+New self-serve signups accept personal or work email and always create a personal identity-verification workspace. There is no company/individual selector or company KYC requirement for new signups. Email confirmation, Didit and administrator approval remain mandatory before purchasing numbers and calling. The stored `individual` value is retained for compatibility; it no longer means voice-only. Historical company KYC data remains intact.
+
+All account types can use existing messaging registration forms. Local Telnyx numbers require a company brand, carrier-approved 10DLC campaign, matching number assignment and fresh carrier approval evidence before SMS/MMS can leave the system. Toll-free numbers retain their separate carrier verification process. Registration is rechecked at dispatch, including queued messages. Identity approval alone never approves a campaign. Existing admin-imposed limits and suspensions remain enforced.

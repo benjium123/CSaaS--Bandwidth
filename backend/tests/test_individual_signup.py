@@ -26,7 +26,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
 from app.models import Org, User
-from tests.conftest import auth_headers, register_and_login
+from tests.conftest import auth_headers, confirm_registered_email, register_and_login
 
 PASSWORD = "correct-horse-battery"
 
@@ -60,9 +60,7 @@ async def _me(client, email: str) -> dict:
 async def _count(session, model) -> int:
     return (
         await session.execute(
-            sa.select(sa.func.count())
-            .select_from(model)
-            .execution_options(allow_unscoped=True)
+            sa.select(sa.func.count()).select_from(model).execution_options(allow_unscoped=True)
         )
     ).scalar_one()
 
@@ -119,17 +117,12 @@ async def test_individual_signup_saves_type_and_personal_name(client, session):
 # ----------------------------------------------------------------------------------
 # Business is the default when omitted, and stays business when explicit
 # ----------------------------------------------------------------------------------
-async def test_business_is_default_and_can_be_explicit(client):
-    default_reg = await _register(client, "founder-a@acme-widgets.com")
-    assert default_reg["memberships"][0]["account_type"] == "business"
-    # Unchanged fallback naming (email domain) for business signups.
-    assert default_reg["memberships"][0]["org_name"] == "Acme Widgets"
-
-    explicit_reg = await _register(
-        client, "founder-b@beta-tools.com", account_type="business"
-    )
-    assert explicit_reg["memberships"][0]["account_type"] == "business"
-    assert explicit_reg["memberships"][0]["org_name"] == "Beta Tools"
+@pytest.mark.parametrize("email", ["founder@gmail.com", "founder@company.com"])
+@pytest.mark.parametrize("legacy_type", ["business", "individual"])
+async def test_all_signup_types_use_personal_verification(client, email, legacy_type):
+    result = await _register(client, email, full_name="New Customer", account_type=legacy_type)
+    assert result["memberships"][0]["account_type"] == "individual"
+    assert result["memberships"][0]["org_name"] == "New Customer"
 
 
 # ----------------------------------------------------------------------------------
@@ -140,9 +133,9 @@ async def test_individual_signup_requires_full_name_and_writes_nothing(client, s
     orgs_before = await _count(session, Org)
 
     attempts = (
-        ("solo-missing@acme-widgets.com", {}),                    # omitted entirely
-        ("solo-empty@acme-widgets.com", {"full_name": ""}),      # empty
-        ("solo-blank@acme-widgets.com", {"full_name": "   "}),   # whitespace only -> strips empty
+        ("solo-missing@acme-widgets.com", {}),  # omitted entirely
+        ("solo-empty@acme-widgets.com", {"full_name": ""}),  # empty
+        ("solo-blank@acme-widgets.com", {"full_name": "   "}),  # whitespace only -> strips empty
     )
     for email, extra in attempts:
         r = await _post_register(client, email, account_type="individual", **extra)
@@ -176,7 +169,9 @@ async def test_invite_to_business_org_ignores_individual_request(client, session
     owner_email = f"owner-{uuid.uuid4().hex[:8]}@example.com"
     owner_token = await register_and_login(client, owner_email)
     owner_org = (await _me(client, owner_email))["memberships"][0]
-    assert owner_org["account_type"] == "business"
+    legacy_org = await session.get(Org, uuid.UUID(owner_org["org_id"]))
+    legacy_org.account_type = "business"
+    await session.commit()
 
     invitee_email = f"invitee-{uuid.uuid4().hex[:8]}@example.com"
     invite_token = await _mint_invite(client, owner_token, owner_org["org_id"], invitee_email)
@@ -211,15 +206,14 @@ async def test_invite_to_individual_org_keeps_individual_type(client, session):
     )
     owner_org = owner_reg["memberships"][0]
     assert owner_org["account_type"] == "individual"
+    await confirm_registered_email(client, owner_email)
     owner_token = await _login(client, owner_email)
 
     invitee_email = f"invitee-{uuid.uuid4().hex[:8]}@example.com"
     invite_token = await _mint_invite(client, owner_token, owner_org["org_id"], invitee_email)
 
     orgs_before = await _count(session, Org)
-    reg = await _register(
-        client, invitee_email, invite_token=invite_token, account_type="business"
-    )
+    reg = await _register(client, invitee_email, invite_token=invite_token, account_type="business")
     assert reg["memberships"] == []
     assert reg["permissions"] == []
 
@@ -288,8 +282,7 @@ def test_migration_0057_account_type_upgrade_and_downgrade():
         with engine.begin() as conn:
             conn.execute(
                 sa.text(
-                    "INSERT INTO orgs (id, name, slug) "
-                    "VALUES ('legacy', 'Legacy Co', 'legacy-co')"
+                    "INSERT INTO orgs (id, name, slug) VALUES ('legacy', 'Legacy Co', 'legacy-co')"
                 )
             )
 
@@ -309,9 +302,7 @@ def test_migration_0057_account_type_upgrade_and_downgrade():
                 sa.text("INSERT INTO orgs (id, name, slug) VALUES ('new', 'New Co', 'new-co')")
             )
             assert (
-                conn.execute(
-                    sa.text("SELECT account_type FROM orgs WHERE id = 'new'")
-                ).scalar_one()
+                conn.execute(sa.text("SELECT account_type FROM orgs WHERE id = 'new'")).scalar_one()
                 == "business"
             )
 
@@ -333,9 +324,7 @@ def test_migration_0057_account_type_upgrade_and_downgrade():
             # Both rows survive the downgrade; the legacy one is untouched.
             assert conn.execute(sa.text("SELECT COUNT(*) FROM orgs")).scalar_one() == 2
             assert (
-                conn.execute(
-                    sa.text("SELECT name FROM orgs WHERE id = 'legacy'")
-                ).scalar_one()
+                conn.execute(sa.text("SELECT name FROM orgs WHERE id = 'legacy'")).scalar_one()
                 == "Legacy Co"
             )
     finally:

@@ -338,6 +338,30 @@ async def make_org_with_number(
     """register -> login -> create org -> add a number. Returns (token, org, number)."""
     token = await register_and_login(client, email)
     org = await create_org(client, token, org_name)
+    from datetime import datetime, timezone
+
+    import sqlalchemy as sa
+
+    # Messaging fixtures model an already approved customer with billing handled
+    # separately. Signup itself is covered by the onboarding suites.
+    from app.models import KycProfile, Org, User
+
+    async with get_sessionmaker()() as setup_session:
+        setup_session.info["org_id"] = uuid.UUID(org["id"])
+        workspace = await setup_session.get(Org, uuid.UUID(org["id"]))
+        workspace.number_subscription_required = False
+        owner = (
+            await setup_session.execute(sa.select(User).where(User.email == email))
+        ).scalar_one()
+        profile = (
+            await setup_session.execute(
+                sa.select(KycProfile).where(KycProfile.org_id == workspace.id)
+            )
+        ).scalar_one()
+        profile.status = "approved"
+        profile.decided_by = owner.id
+        profile.decided_at = datetime.now(timezone.utc)
+        await setup_session.commit()
     r = await client.post(
         "/api/v1/numbers", json={"e164": e164}, headers=auth_headers(token, org["id"])
     )

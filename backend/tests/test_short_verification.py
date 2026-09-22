@@ -95,10 +95,17 @@ async def test_short_application_submits_and_admin_approves(
     assert r.json()["status"] == "approved"
 
 
-async def test_company_personal_details_preserve_company_requirements(kyc_app):
+async def test_company_personal_details_preserve_company_requirements(kyc_app, session):
     client, *_ = kyc_app
     token = await register_and_login(client, "company-short@example.com")
     org = await _signup_org(client, token, "Example Company")
+    import uuid
+
+    from app.models import Org
+
+    legacy = await session.get(Org, uuid.UUID(org["id"]))
+    legacy.account_type = "business"
+    await session.commit()
     h = auth_headers(token, org["id"])
     r = await client.put(
         "/api/v1/kyc/profile/business",
@@ -137,10 +144,17 @@ async def test_short_application_validation(kyc_app, bad):
     assert r.status_code == 422, r.text
 
 
-async def test_unified_company_uses_one_use_case_and_final_agreement(kyc_app):
+async def test_unified_company_uses_one_use_case_and_final_agreement(kyc_app, session):
     client, *_ = kyc_app
     token = await register_and_login(client, "unified-company@example.com")
     org = await _signup_org(client, token, "Unified Company")
+    import uuid
+
+    from app.models import Org
+
+    legacy = await session.get(Org, uuid.UUID(org["id"]))
+    legacy.account_type = "business"
+    await session.commit()
     h = auth_headers(token, org["id"])
     saved = await client.put(
         "/api/v1/kyc/application",

@@ -52,93 +52,18 @@ async function registerCall(client: ReturnType<typeof signupClient>) {
 
 const PASSPHRASE = "correct horse battery staple";
 
-describe("SignUpPage — an individual account is a first-class choice", () => {
-  it("submits a personal address for an individual account, with no company and no hint", async () => {
+describe("Unified signup", () => {
+  it.each(["someone@gmail.com", "someone@company.com"])("accepts %s with identity verification and no account-type choice", async (email) => {
     const client = signupClient();
     renderWithProviders(<SignUpPage />, client);
-
-    await userEvent.click(screen.getByRole("radio", { name: "Individual" }));
-
-    // Company is a business field, so it is GONE on this path... (it is asserted present on
-    // the business path in the next describe block).
+    expect(screen.queryByRole("radio")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Company" })).toBeNull();
-
-    await userEvent.type(screen.getByLabelText("Email"), "someone@gmail.com");
-
-    // ...and a personal address is allowed, so the consumer-domain courtesy does not fire.
+    await userEvent.type(screen.getByLabelText("Email"), email);
+    await userEvent.type(screen.getByLabelText("Your name"), "Someone");
+    await userEvent.type(screen.getByLabelText("Password"), PASSPHRASE);
+    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+    const call = await registerCall(client);
+    expect(call.init.json).toEqual({ email, password: PASSPHRASE, full_name: "Someone", company_name: "", account_type: "individual" });
     expect(screen.queryByText(/looks like a personal address/)).toBeNull();
-
-    await userEvent.type(screen.getByLabelText("Your name"), "Someone");
-    await userEvent.type(screen.getByLabelText("Password"), PASSPHRASE);
-
-    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
-
-    const call = await registerCall(client);
-    expect(call.init.json).toEqual({
-      email: "someone@gmail.com",
-      password: PASSPHRASE,
-      full_name: "Someone",
-      company_name: "",
-      account_type: "individual",
-    });
-  });
-});
-
-describe("SignUpPage — business stays the default and keeps its courtesy", () => {
-  it("defaults to a company account and still warns on a personal address", async () => {
-    const client = signupClient();
-    renderWithProviders(<SignUpPage />, client);
-
-    // The default is business: the Company radio is checked and its field is present.
-    expect(
-      (screen.getByRole("radio", { name: "Company" }) as HTMLInputElement).checked,
-    ).toBe(true);
-    expect(screen.getByRole("radio", { name: "Individual" })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "Company" })).toBeTruthy();
-
-    await userEvent.type(screen.getByLabelText("Work email"), "someone@gmail.com");
-    // The courtesy still fires on the business path.
-    expect(screen.getByText(/looks like a personal address/)).toBeTruthy();
-
-    await userEvent.type(screen.getByLabelText("Your name"), "Someone");
-    await userEvent.type(screen.getByRole("textbox", { name: "Company" }), "Acme");
-    await userEvent.type(screen.getByLabelText("Password"), PASSPHRASE);
-
-    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
-
-    const call = await registerCall(client);
-    expect(call.init.json).toEqual({
-      email: "someone@gmail.com",
-      password: PASSPHRASE,
-      full_name: "Someone",
-      company_name: "Acme",
-      account_type: "business",
-    });
-  });
-});
-
-describe("SignUpPage — switching to individual discards a typed company", () => {
-  it("sends an empty company_name even after a company was entered", async () => {
-    const client = signupClient();
-    renderWithProviders(<SignUpPage />, client);
-
-    await userEvent.type(screen.getByRole("textbox", { name: "Company" }), "Acme Ltd");
-    // The switch removes the field entirely; the state underneath could still hold
-    // "Acme Ltd", which is exactly what this test exists to prove is NOT sent.
-    await userEvent.click(screen.getByRole("radio", { name: "Individual" }));
-    expect(screen.queryByRole("textbox", { name: "Company" })).toBeNull();
-
-    await userEvent.type(screen.getByLabelText("Email"), "me@gmail.com");
-    await userEvent.type(screen.getByLabelText("Your name"), "Me");
-    await userEvent.type(screen.getByLabelText("Password"), "a different long passphrase");
-
-    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
-
-    const call = await registerCall(client);
-    expect(call.init.json).toMatchObject({
-      account_type: "individual",
-      company_name: "",
-      full_name: "Me",
-    });
   });
 });

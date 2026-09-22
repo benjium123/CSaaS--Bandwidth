@@ -58,9 +58,9 @@ const AGREEMENT_POINTS = [
 // unsolicited-robocall protections are kept verbatim - they are not business-specific.
 export const PERSONAL_AGREEMENT_POINTS = [
   "Everything in this application is true. Giving false information is fraud and ends the account.",
-  "We only call people who expect to hear from us, and we follow do-not-call and consent laws.",
-  "Calls may be recorded and automatically reviewed to detect scams and abuse. We are responsible for telling the people we contact when the law requires it.",
-  "Using the service for scams, spoofing, harassment or unsolicited robocalls leads to immediate suspension, a fixed penalty per violating call taken from our balance, and reports to law enforcement.",
+  "We only call and text people who expect to hear from us, and we follow do-not-call and consent laws.",
+  "Calls and messages may be recorded and automatically reviewed to detect scams and abuse. We are responsible for telling the people we contact when the law requires it.",
+  "Using the service for scams, spoofing, harassment or unsolicited robocalls leads to immediate suspension, a fixed penalty per violating call or message taken from our balance, and reports to law enforcement.",
   "This account is personal to you and cannot be sold or shared.",
 ];
 
@@ -324,7 +324,7 @@ function UseCaseStep({ profile, editable, accountType }: { profile: KycProfile; 
         <Field label="Industry"><Input aria-label="Industry" value={form.vertical} onChange={text("vertical")} disabled={!editable} required minLength={2} maxLength={64} /></Field>
         <Field label="Describe your business. What do you do?"><Textarea aria-label="Describe your business" value={form.business_description ?? ""} onChange={text("business_description")} disabled={!editable} required maxLength={4000} rows={4} /></Field>
       </>}
-      <Field label={personal ? "What will you use calling for?" : "What will you use calling and texting for?"}>
+      <Field label={personal ? "What will you use calling/texting for?" : "What will you use calling and texting for?"}>
         <Textarea
           aria-label={personal ? "What will you use calling for" : "What will you use calling and texting for"}
           rows={3}
@@ -768,7 +768,7 @@ export function VerifyBusinessPage({ embedded = false, representative }: { embed
             </p>
             {personal && (
               <p className="mt-[4px] text-[11.5px] text-[hsl(var(--cx-muted))]">
-                Your account is approved for calling only. SMS and MMS are not available on personal accounts.
+                Your account is approved. Choose your phone numbers to start calling. Register a company and an approved 10DLC campaign to enable texting.
               </p>
             )}
             {profile.next_reverification_at && (

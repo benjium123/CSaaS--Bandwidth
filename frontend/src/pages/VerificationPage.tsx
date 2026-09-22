@@ -90,7 +90,7 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
       <legend className="px-2 text-lg font-semibold">3. How you’ll use Ringlite</legend>
       <label className="block space-y-2"><span>Industry</span><Input aria-label="Industry" value={form.industry} onChange={e => update("industry", e.target.value)} required maxLength={64} /></label>
       <label className="block space-y-2"><span>Describe your business. What do you do?</span><Textarea aria-label="Describe your business" value={form.business_description ?? ""} onChange={e => update("business_description", e.target.value)} required maxLength={4000} rows={4} placeholder="Tell us about your work, products or services." /></label>
-      <label className="block space-y-2"><span>{personal ? "What will you use calling for?" : "What will you use calling/texting for?"}</span><Textarea aria-label="Calling or texting purpose" value={form.purpose} onChange={e => update("purpose", e.target.value)} required maxLength={4000} rows={4} /></label>
+      <label className="block space-y-2"><span>{personal ? "What will you use calling/texting for?" : "What will you use calling/texting for?"}</span><Textarea aria-label="Calling or texting purpose" value={form.purpose} onChange={e => update("purpose", e.target.value)} required maxLength={4000} rows={4} /></label>
       <label className="block space-y-2"><span>Country in which your customers are</span><Select aria-label="Customer country" value={form.customer_country} onChange={e => update("customer_country", e.target.value)} required><option value="">Select country</option>{selectCountries}</Select></label>
     </fieldset>
     <section className="space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
@@ -114,7 +114,7 @@ export function VerificationPage() {
     <div className="mx-auto max-w-3xl space-y-6">
       <header><p className="text-sm font-semibold">Ringlite</p><h1 className="mt-2 text-3xl font-semibold">Account verification</h1></header>
       {query.isPending ? <Spinner label="Loading verification" /> : query.isError || !profile ? <p role="alert">{mutationErrorMessage(query.error)}</p> : <>
-        {profile.account_type === "individual" && <p>Individual accounts support calling only. SMS and MMS are unavailable.</p>}
+        {profile.account_type === "individual" && <p>After approval, choose your phone numbers and start calling. To send texts, register your company and obtain approval for a 10DLC campaign.</p>}
         {copy && <section role="status" className="verification-status rounded-2xl border p-5"><p className="verification-status-label">{["submitted", "in_review"].includes(profile.status) ? "APPLICATION RECEIVED" : "YOUR APPLICATION"}</p><h2 className="font-semibold">{copy.title}</h2><p>{copy.body}</p>{profile.info_request && <p>{profile.info_request}</p>}{profile.decision_reason && <p>{profile.decision_reason}</p>}</section>}
         {!["submitted", "in_review"].includes(profile.status) && (profile.account_type === "individual" ? <PersonalForm key={orgId} profile={profile} /> : <VerifyBusinessPage embedded representative={<PersonalForm key={orgId} profile={profile} />} />)}
       </>}

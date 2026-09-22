@@ -204,7 +204,7 @@ function Wizard({
           </h1>
           <p className="ob-lede">
             {isIndividual
-              ? "Calling unlocks after your application is approved. Decisions typically arrive within one hour. Texting is not available for individual accounts."
+              ? "Calling unlocks after your application is approved. Decisions typically arrive within one hour. Texting requires an approved 10DLC campaign."
               : "Calling and texting unlock once this is approved. Everything else in your workspace works now, so you can set it up while you wait."}
           </p>
         </header>
@@ -340,7 +340,7 @@ function Waiting({ profile, accountType }: { profile: KycProfile; accountType: A
           {/* Typical review time is guidance, not a guaranteed deadline. */}
           <AuthNotice>
             {isIndividual
-              ? "Once approved, you will go straight to choosing your phone number. Individual accounts support calling only."
+              ? "Once approved, you will go straight to choosing your phone numbers. Texting requires an approved 10DLC campaign."
               : "Once approved, you will go straight to choosing your phone number. You can then set up your team."}
           </AuthNotice>
         </div>
@@ -381,7 +381,7 @@ function Approved({
         title="You're verified"
         lede={
           isIndividual
-            ? "Calling is on. Texting is not available for individual accounts."
+            ? "Calling is on. Register your company and an approved 10DLC campaign to enable texting."
             : "Calling and texting are on."
         }
       >

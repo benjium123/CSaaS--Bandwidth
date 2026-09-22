@@ -68,30 +68,6 @@ function numberLabel(byId: Map<string, NumberOut>, numberId: string): string {
   return match ? match.e164 : NUMBER_UNAVAILABLE;
 }
 
-/**
- * The individual-account notice. It is a separate component so that the gate in
- * `TollFreeVerificationCard` can return before any of the inner queries are mounted.
- */
-function IndividualTollFreeNotice(): JSX.Element {
-  return (
-    <SurfaceCard className="space-y-[11px]">
-      <PageHeader
-        headingLevel={2}
-        title="Toll-free verification"
-        description={PAGE_DESCRIPTION}
-      />
-      <p className="text-[12.5px] text-[hsl(var(--cx-muted))]">
-        Individual accounts support calling only. SMS and MMS are unavailable.
-      </p>
-    </SurfaceCard>
-  );
-}
-
-/**
- * The business toll-free verification card. Split out so that the account-type gate in
- * `TollFreeVerificationCard` can return before this component - and therefore before its
- * queries and mutations - is ever mounted.
- */
 function TollFreeVerificationCardInner() {
   const { api } = useAuth();
   const gate = useGate();
@@ -473,25 +449,13 @@ function TollFreeVerificationCardInner() {
   );
 }
 
-/**
- * Toll-free verification card. Individual accounts cannot verify toll-free numbers, so
- * the account-type gate lives here, in a wrapper, and returns before the inner card - and
- * therefore before its queries and mutations - is ever mounted.
- */
+/** Carrier verification for toll-free numbers, available to all account types. */
 export function TollFreeVerificationCard() {
-  const { me, orgId, ready } = useAuth();
+  const { me, ready } = useAuth();
 
-  // "We have not asked yet" is not "business". Until /auth/me has landed we cannot know
-  // the account type, so show loading rather than mounting the inner card.
+  // Wait for authentication before mounting verification queries.
   if (!ready || me == null) {
     return <Spinner label="Loading toll-free verification" />;
-  }
-
-  const membership = me.memberships.find((m) => m.org_id === orgId);
-  // An absent account_type is a legacy business membership (see Membership in
-  // AuthContext): only an explicit "individual" is treated as individual.
-  if (membership?.account_type === "individual") {
-    return <IndividualTollFreeNotice />;
   }
 
   return <TollFreeVerificationCardInner />;

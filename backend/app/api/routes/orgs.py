@@ -25,13 +25,12 @@ from app.models import WILDCARD, InboxGrant, Invite, OrgMembership, Role, User
 from app.models.rbac import is_privileged_permissions
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
-from app.services import account_security, contact_visibility
+from app.services import account_security, contact_visibility, password_policy
 from app.services import audit as audit_svc
 from app.services import calling_settings as calling_settings_svc
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
 from app.services import kyc as kyc_svc
-from app.services import password_policy
 from app.services import retention as retention_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
@@ -111,6 +110,9 @@ async def create_org(
             code="kyc_pending_elsewhere",
         )
     org = await orgs_repo.create_org_with_owner(session, name=payload.name, owner_id=user.id)
+    org.account_type = "individual"
+    org.number_subscription_required = True
+    await session.flush()
     await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
     # P41: every new workspace starts unverified; telephony waits for approval.
     set_org_context(session, org.id)

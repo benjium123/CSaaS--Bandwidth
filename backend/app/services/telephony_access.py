@@ -16,11 +16,9 @@ it until an operator releases the numbers.
 With KYC_ENFORCED off nothing in the verification block is checked (development and
 pre-P41 tests).
 
-Individual workspaces (Org.account_type == "individual") have one extra rule that runs at
-the very top of refusal(), before the monitor and before verification: they never text
-(kind "sms"/"sms_dispatch" is refused outright), and calling or buying numbers always
-requires an approved KYC profile with a recorded decision (decided_by/decided_at) even
-when KYC_ENFORCED is off. Business workspaces are untouched by any of this.
+Personal identity verification requires a recorded approval for calling, number
+purchases and messaging, even when KYC_ENFORCED is off. Messaging additionally
+passes the independent per-number carrier registration gate.
 
 A SECOND, independent requirement sits beside verification: an entitled Stripe
 subscription (models/subscriptions.is_entitled). It is behind
@@ -51,12 +49,11 @@ Kind = Literal["sms", "sms_dispatch", "call", "number"]
 
 #: messaging failure codes written when a queued message is refused at dispatch.
 REFUSAL_PUBLIC_TEXT = {
-    "account_not_verified": "Not sent - texting unlocks once your business is verified.",
+    "account_not_verified": "Not sent - texting unlocks once your identity is verified.",
     "account_suspended": "Not sent - this account is suspended.",
     "daily_limit_reached": "Not sent - today's texting limit for this account was reached.",
     "account_paused": "Not sent - calling and texting are paused while we review this account.",
     "subscription_required": "Not sent - choose a plan to start texting.",
-    "individual_messaging_disabled": "Not sent - texting is not available for individual accounts.",
 }
 
 #: account types an org may declare. Anything else (including NULL) is treated as business.
@@ -95,15 +92,9 @@ async def refusal(
 ) -> str | None:
     """None when allowed, else a machine code: account_not_verified, account_suspended,
     account_paused, daily_limit_reached, number_limit_reached, deposit_required,
-    subscription_required, individual_messaging_disabled."""
-    # Individual workspaces are handled first, before the monitor and before verification:
-    # an individual org can never text (kind "sms"/"sms_dispatch"), and for calls and
-    # numbers it must pass KYC below regardless of KYC_ENFORCED (see kyc_required). A
-    # business org (or an org row we could not find) skips this entirely.
+    subscription_required."""
     org = await _org(session, org_id)
     is_individual = org is not None and org.account_type == _INDIVIDUAL_ACCOUNT_TYPE
-    if is_individual and kind in ("sms", "sms_dispatch"):
-        return "individual_messaging_disabled"
 
     # P43: the traffic monitor's automatic pause / restriction applies whether or not
     # business verification is enforced.
@@ -115,13 +106,11 @@ async def refusal(
     # Business verification. Unchanged for every business org: the block below is what it
     # always was, nested under the flag it was already guarded by, so the subscription
     # check can run after it rather than being skipped by its early return. Individual
-    # orgs additionally always reach it for calling and numbers.
+    # orgs additionally always reach it for every telephony operation.
     # Org.kyc_required lets an operator require verification on a single workspace;
     # getattr keeps that safe when the org row is absent (None) or predates the column.
     kyc_required = (
-        settings.kyc_enforced
-        or bool(getattr(org, "kyc_required", False))
-        or (is_individual and kind in ("call", "number"))
+        settings.kyc_enforced or bool(getattr(org, "kyc_required", False)) or is_individual
     )
     if kyc_required:
         profile = await _profile(session, org_id)
@@ -219,13 +208,6 @@ def _raise_for(code: str) -> None:
         # plan" are different actions and the console must not conflate them.
         raise PermissionDeniedError(
             "Choose a plan to start calling and texting", code="subscription_required"
-        )
-    if code == "individual_messaging_disabled":
-        # Individual workspaces cannot text at all; this is not a verification problem, so
-        # it gets its own code rather than AccountNotVerifiedError.
-        raise PermissionDeniedError(
-            "Texting is not available for individual accounts",
-            code="individual_messaging_disabled",
         )
     if code == "number_limit_reached":
         raise PermissionDeniedError(

@@ -274,7 +274,9 @@ async def send_message(
                         MediaAsset.id.in_(media_ids), MediaAsset.status == "stored"
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         if len(assets) != len(set(media_ids)):
             raise ValidationFailedError("One or more media attachments were not found")
@@ -417,9 +419,7 @@ async def send_message(
             session, org_id, registry, plan, message, media_urls or []
         )
     else:
-        sent = await _dispatch_to_carrier(
-            session, org_id, carrier, message, media_urls or []
-        )
+        sent = await _dispatch_to_carrier(session, org_id, carrier, message, media_urls or [])
     if media_urls:
         sent = await _fallback_mms_to_sms(
             session,
@@ -614,6 +614,37 @@ async def _dispatch_to_carrier(
         )
         await session.commit()
         return message
+    # Re-check carrier registration at dispatch: approval may have expired or been
+    # revoked while the message was queued. Personal and legacy company accounts
+    # follow the same per-number gate.
+    set_org_context(session, org_id)
+    number = (
+        await session.execute(
+            sa.select(OrgNumber).where(
+                OrgNumber.org_id == org_id, OrgNumber.e164 == message.from_e164
+            )
+        )
+    ).scalar_one_or_none()
+    if number is not None:
+        allowed, reason = await registration.check_number_may_send(
+            session,
+            org_id,
+            number,
+            require_registration=telephony_access._settings_of(session).require_number_registration,
+        )
+    else:
+        allowed, reason = False, "No active number configured for this account"
+    if not allowed:
+        message.status = "rejected"
+        message.hold_until = None
+        message.error_code = "registration_required"
+        message.error_detail = reason
+        message.failure_reason_public = (
+            "Not sent - complete messaging registration for this number."
+        )
+        await session.commit()
+        return message
+
     # P43: the AI text guard, after the account-level gates and before any carrier.
     from app.services import monitor_text
 
@@ -922,9 +953,7 @@ async def cancel_scheduled_message(
     if message.status != SCHEDULED_STATUS:
         raise ConflictError("This message has already been sent")
     result = await session.execute(
-        sa.delete(Message).where(
-            Message.id == message_id, Message.status == SCHEDULED_STATUS
-        )
+        sa.delete(Message).where(Message.id == message_id, Message.status == SCHEDULED_STATUS)
     )
     if result.rowcount == 0:
         await session.rollback()
@@ -947,7 +976,6 @@ async def resolve_from_number(
     raise ValidationFailedError(
         "resolve_from_number was replaced by select_sender in P2; call that instead"
     )
-
 
 
 # --------------------------------------------------------------------------------------
@@ -1162,9 +1190,7 @@ async def _ingest_inbound(
     return Outcome.DONE
 
 
-async def _ingest_dlr(
-    session: AsyncSession, carrier_name: str, event: DeliveryReceipt
-) -> Outcome:
+async def _ingest_dlr(session: AsyncSession, carrier_name: str, event: DeliveryReceipt) -> Outcome:
     # JUSTIFIED allow_unscoped: a DLR carries no org; this lookup resolves it, constrained
     # to one exact (carrier, provider_message_id) pair.
     stmt = (

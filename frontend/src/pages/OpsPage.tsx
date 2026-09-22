@@ -270,7 +270,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
           <Card className="space-y-1.5">
             <p className="text-sm font-medium">Individual account</p>
             <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
-              Voice-only: SMS/MMS is not available on individual accounts.
+              Identity approval enables calling. SMS/MMS additionally requires approved carrier messaging registration.
             </p>
             <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
               Identity is verified through Didit, then approved by a platform super-admin.

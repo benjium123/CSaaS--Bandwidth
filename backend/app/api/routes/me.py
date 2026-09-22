@@ -41,9 +41,7 @@ class OrgSummaryOut(BaseModel):
     registration_state: str
     account_type: str
     kyc_status: str
-    onboarding_step: Literal[
-        "verification", "awaiting_review", "remediation", "numbers", "ready"
-    ]
+    onboarding_step: Literal["verification", "awaiting_review", "remediation", "numbers", "ready"]
     calling_ready: bool
     messaging_ready: bool
 
@@ -126,16 +124,20 @@ async def capabilities(
     ).scalar_one()
 
     active_numbers = (
-        await ctx.session.execute(
-            sa.select(OrgNumber)
-            .where(
-                OrgNumber.status == "active",
-                OrgNumber.is_active.is_(True),
-                OrgNumber.released_at.is_(None),
+        (
+            await ctx.session.execute(
+                sa.select(OrgNumber)
+                .where(
+                    OrgNumber.status == "active",
+                    OrgNumber.is_active.is_(True),
+                    OrgNumber.released_at.is_(None),
+                )
+                .limit(50)
             )
-            .limit(50)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     # Scan at most the first 50 active numbers; the precedence is pending > rejected >
     # approved, with any unknown falling through to "unknown".
@@ -167,17 +169,13 @@ async def capabilities(
     # status fail closed to "verification".
     kyc_status = (
         await ctx.session.execute(
-            sa.select(KycProfile.status)
-            .where(KycProfile.org_id == ctx.org.id)
-            .limit(1)
+            sa.select(KycProfile.status).where(KycProfile.org_id == ctx.org.id).limit(1)
         )
     ).scalar_one_or_none()
     if kyc_status is None:
         kyc_status = "missing"
 
-    onboarding_step: Literal[
-        "verification", "awaiting_review", "remediation", "numbers", "ready"
-    ]
+    onboarding_step: Literal["verification", "awaiting_review", "remediation", "numbers", "ready"]
     if kyc_status in ("approved", "reverification_due"):
         if has_number:
             onboarding_step = "ready"
@@ -191,11 +189,7 @@ async def capabilities(
         onboarding_step = "verification"
 
     calling_ready = onboarding_step == "ready"
-    messaging_ready = (
-        ctx.org.account_type == "business"
-        and onboarding_step == "ready"
-        and registration_state == "approved"
-    )
+    messaging_ready = onboarding_step == "ready" and registration_state == "approved"
 
     return CapabilitiesOut(
         permissions=permissions,
@@ -234,9 +228,7 @@ async def list_my_notifications(
         unread_only=unread,
         limit=limit,
     )
-    unread_count = await notifications_svc.unread_count(
-        ctx.session, ctx.org.id, ctx.actor_user_id
-    )
+    unread_count = await notifications_svc.unread_count(ctx.session, ctx.org.id, ctx.actor_user_id)
 
     # One batched lookup for the (our_e164, contact_e164) pair of every notification's
     # thread, so the bell can navigate straight to a conversation - it is addressed by
@@ -301,11 +293,7 @@ async def set_my_inbox_order(
         # API keys have no per-member preference row to store this on.
         return
     valid_ids = set(
-        (
-            await ctx.session.execute(
-                sa.select(Inbox.id).where(Inbox.id.in_(payload.inbox_ids))
-            )
-        )
+        (await ctx.session.execute(sa.select(Inbox.id).where(Inbox.id.in_(payload.inbox_ids))))
         .scalars()
         .all()
     )

@@ -49,6 +49,7 @@ describe("Composer individual (calling-only) workspace", () => {
     renderWithProviders(<Composer onSend={onSend} threadId="t1" />, client);
 
     // The composer lands on note mode for a calling-only workspace with a thread.
+    await userEvent.click(await screen.findByRole("tab", { name: "Internal note" }));
     const noteField = await screen.findByLabelText("Note");
     await userEvent.type(noteField, "hello note");
 
@@ -68,36 +69,10 @@ describe("Composer individual (calling-only) workspace", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("individual without a thread: reply disabled and onSend never called", async () => {
+  it.each(["individual", "business"] as const)("%s workspace can send through the registered-number path", async (accountType) => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     const client = makeStubClient({
-      "/api/v1/auth/me": meWith("individual"),
-    });
-
-    renderWithProviders(<Composer onSend={onSend} />, client);
-
-    // Wait for /auth/me to land so isIndividual is true.
-    await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Reply" })).toBeDisabled(),
-    );
-    expect(screen.getByRole("tab", { name: "Internal note" })).toBeDisabled();
-
-    const sendButton = screen.getByRole("button", { name: "Send" });
-    expect(sendButton).toBeDisabled();
-
-    // The reply textarea is disabled for individuals, so typing cannot reach onSend.
-    const messageField = screen.getByLabelText("Message");
-    expect(messageField).toBeDisabled();
-    await userEvent.type(messageField, "hello");
-    await userEvent.keyboard("{Enter}");
-
-    expect(onSend).not.toHaveBeenCalled();
-  });
-
-  it("business workspace can still send a reply", async () => {
-    const onSend = vi.fn().mockResolvedValue(undefined);
-    const client = makeStubClient({
-      "/api/v1/auth/me": meWith("business"),
+      "/api/v1/auth/me": meWith(accountType),
     });
 
     renderWithProviders(<Composer onSend={onSend} />, client);

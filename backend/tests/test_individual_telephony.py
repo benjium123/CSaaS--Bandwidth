@@ -16,13 +16,13 @@ import sqlalchemy as sa
 
 from app.config import Settings
 from app.db.base import set_org_context
-from app.errors import AccountNotVerifiedError, PermissionDeniedError
+from app.errors import AccountNotVerifiedError
 from app.models import KycProfile, Message, MessageThread, Org
 from app.services import messaging, telephony_access
-from tests.conftest import TEST_PLATFORM_OPS_TOKEN
+from tests.conftest import TEST_PLATFORM_OPS_TOKEN, confirm_registered_email
 
 PASSWORD = "correct-horse-battery"
-INDIVIDUAL_SMS_CODE = "individual_messaging_disabled"
+INDIVIDUAL_SMS_CODE = "account_not_verified"
 
 
 def _flagged(base: Settings, **overrides: object) -> Settings:
@@ -47,6 +47,7 @@ async def _new_org(
         json={"email": email, "password": PASSWORD, "full_name": "Tester"},
     )
     assert r.status_code == 201, r.text
+    await confirm_registered_email(client, email.lower())
     user_id = uuid.UUID(r.json()["id"])
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
     assert r.status_code == 200, r.text
@@ -62,6 +63,7 @@ async def _new_org(
             org.account_type = account_type
         if kyc_required is not None:
             org.kyc_required = kyc_required
+        org.number_subscription_required = False
         await session.commit()
     return org_id, user_id, token
 
@@ -108,9 +110,8 @@ async def test_individual_texting_refused_whatever_the_flags(
     )
     enforced = _flagged(settings, kyc_enforced=kyc_enforced)
     for kind in ("sms", "sms_dispatch"):
-        assert (
-            await telephony_access.refusal(session, enforced, org_id, kind)
-            == INDIVIDUAL_SMS_CODE
+        assert await telephony_access.refusal(session, enforced, org_id, kind) == (
+            None if profile_status == "approved" else "account_not_verified"
         )
 
 
@@ -120,10 +121,8 @@ async def test_individual_texting_gate_raises_its_own_permission_denied_code(
     org_id, _, _ = await _new_org(
         session, client, "ind-sms-raise@example.com", account_type="individual"
     )
-    with pytest.raises(PermissionDeniedError) as caught:
-        await telephony_access.require_telephony_allowed(
-            session, org_id, "sms", settings=settings
-        )
+    with pytest.raises(AccountNotVerifiedError) as caught:
+        await telephony_access.require_telephony_allowed(session, org_id, "sms", settings=settings)
     assert caught.value.code == INDIVIDUAL_SMS_CODE
     assert caught.value.http_status == 403
 
@@ -166,9 +165,7 @@ async def test_business_with_kyc_required_blocked_until_approved(client, session
         "account_not_verified"
     )
     with pytest.raises(AccountNotVerifiedError):
-        await telephony_access.require_telephony_allowed(
-            session, org_id, "sms", settings=settings
-        )
+        await telephony_access.require_telephony_allowed(session, org_id, "sms", settings=settings)
 
     await _set_profile(
         session,
@@ -202,9 +199,7 @@ async def test_individual_calling_refused_while_kyc_pending(client, session, set
 
 
 @pytest.mark.parametrize("kind", ["call", "number"])
-async def test_individual_calling_allowed_with_approved_decision(
-    client, session, settings, kind
-):
+async def test_individual_calling_allowed_with_approved_decision(client, session, settings, kind):
     org_id, user_id, _ = await _new_org(
         session, client, f"ind-approved-{kind}@example.com", account_type="individual"
     )
@@ -299,9 +294,7 @@ async def test_individual_dispatch_rejected_without_calling_the_carrier(
     assert fake.sent == []
     assert result.status == "rejected"
     assert result.error_code == INDIVIDUAL_SMS_CODE
-    assert result.failure_reason_public == telephony_access.REFUSAL_PUBLIC_TEXT[
-        INDIVIDUAL_SMS_CODE
-    ]
+    assert result.failure_reason_public == telephony_access.REFUSAL_PUBLIC_TEXT[INDIVIDUAL_SMS_CODE]
     assert result.error_detail == "Account not allowed to send"
 
 
@@ -360,8 +353,7 @@ async def test_individual_registration_mutations_refused(
     if payload is not None:
         body = {
             k: (
-                str(v)
-                .format(
+                str(v).format(
                     brand_id=brand_id,
                     campaign_id=campaign_id,
                     number_id=number_id,
@@ -378,5 +370,94 @@ async def test_individual_registration_mutations_refused(
         "X-Platform-Ops-Token": TEST_PLATFORM_OPS_TOKEN,
     }
     r = await client.request(method, url, json=body, headers=headers)
-    assert r.status_code == 403, r.text
-    assert r.json()["error"]["code"] == INDIVIDUAL_SMS_CODE
+    assert r.status_code in (201, 404), r.text
+
+
+@pytest.mark.parametrize("registered", [False, True])
+async def test_approved_personal_account_dispatch_requires_telnyx_campaign(
+    app_with_carrier, session, registered
+):
+    from app.compliance.telnyx_approval import build_evidence
+    from app.models import OrgNumber
+    from app.models.numbers import Brand, Campaign
+
+    client, fake, _application = app_with_carrier
+    fake.name = "telnyx"
+    org_id, user_id, _ = await _new_org(
+        session, client, "registered-person@example.com", account_type="individual"
+    )
+    await _set_profile(
+        session,
+        org_id,
+        status="approved",
+        decided_by=user_id,
+        decided_at=datetime.now(timezone.utc),
+    )
+    set_org_context(session, org_id)
+    number = OrgNumber(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        e164="+15125550111",
+        carrier="telnyx",
+        number_type="local",
+        status="active",
+        is_active=True,
+    )
+    if registered:
+        brand = Brand(id=uuid.uuid4(), org_id=org_id, name="Customer Company", status="approved")
+        session.add(brand)
+        await session.flush()
+        campaign = Campaign(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            brand_id=brand.id,
+            name="Customer campaign",
+            status="approved",
+            carrier_refs={
+                "telnyx": "carrier-campaign",
+                "telnyx_approval": build_evidence(
+                    state="approved",
+                    carrier_id="carrier-campaign",
+                    checked_at=datetime.now(timezone.utc),
+                    source="status_decision",
+                ),
+            },
+        )
+        session.add(campaign)
+        await session.flush()
+        number.campaign_id = campaign.id
+        number.provisioning = {
+            "telnyx_campaign_assignment": {
+                "state": "assigned",
+                "campaign_id": str(campaign.id),
+                "carrier_id": "carrier-campaign",
+            }
+        }
+    session.add(number)
+    thread = MessageThread(
+        id=uuid.uuid4(), org_id=org_id, our_e164=number.e164, contact_e164="+15125550222"
+    )
+    session.add(thread)
+    await session.flush()
+    message = Message(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        thread_id=thread.id,
+        direction="outbound",
+        status="queued",
+        from_e164=number.e164,
+        to_e164=thread.contact_e164,
+        body="Your appointment is confirmed.",
+        carrier="telnyx",
+        media=[],
+    )
+    session.add(message)
+    await session.commit()
+    result = await messaging._dispatch_to_carrier(session, org_id, fake, message, None)
+    if registered:
+        assert len(fake.sent) == 1
+        assert result.status == "accepted"
+    else:
+        assert fake.sent == []
+        assert result.status == "rejected"
+        assert result.error_code == "registration_required"

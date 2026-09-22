@@ -258,7 +258,7 @@ function individualStatusCopy(status: KycStatus): { title: string; body: string 
     case "draft":
       return {
         title: "Verify your identity to start calling",
-        body: "Complete your identity verification to apply for calling access. SMS and MMS are unavailable on individual accounts.",
+        body: "Complete your identity verification to apply for calling access. Company details are only needed later for messaging registration.",
       };
     case "submitted":
     case "in_review":
@@ -274,7 +274,7 @@ function individualStatusCopy(status: KycStatus): { title: string; body: string 
     case "rejected":
       return {
         title: "Your identity could not be verified",
-        body: "Calling is unavailable for this personal account. SMS and MMS are unavailable. Contact support if you think this is a mistake.",
+        body: "Calling and texting are unavailable until your application is approved. Contact support if you think this is a mistake.",
       };
     case "suspended":
       return {
@@ -284,7 +284,7 @@ function individualStatusCopy(status: KycStatus): { title: string; body: string 
     case "reverification_due":
       return {
         title: "Identity re-verification is due",
-        body: "Repeat identity verification to keep calling. SMS and MMS are unavailable.",
+        body: "Repeat identity verification to keep using your account.",
       };
     default:
       return null;
