@@ -279,6 +279,8 @@ async def identifiers_for_org(
         ban_list.identifier("address", ban_list.address_key(profile.registered_address)),
         ban_list.identifier("address", ban_list.address_key(profile.operating_address)),
     ]
+    applicant = (profile.use_case or {}).get("applicant_details") or {}
+    ids.append(ban_list.identifier("phone", applicant.get("phone")))
     website_domain = ban_list.domain_of(profile.website)
     if website_domain:
         ids.append(ban_list.identifier("website_domain", website_domain))
@@ -845,9 +847,7 @@ async def _us_open_registry(
     lookup = {"source": source["label"], "state": region, "found": bool(rows)}
     if not rows:
         return await registry_from_documents(session, profile, link, lookup=lookup)
-    match = next(
-        (r for r in rows if names_match(r.get(source["name"]), profile.legal_name)), None
-    )
+    match = next((r for r in rows if names_match(r.get(source["name"]), profile.legal_name)), None)
     row = match or rows[0]
     status = str(row.get(source["status"]) or "") if source["status"] else "active"
     detail = {
@@ -1067,9 +1067,7 @@ def check_documents(
     unsure: list[str] = []
     waiting = False
     for person in owners:
-        proofs = [
-            d for d in documents if d.kind == "proof_of_address" and d.person_id == person.id
-        ]
+        proofs = [d for d in documents if d.kind == "proof_of_address" and d.person_id == person.id]
         if not proofs:
             problems.append(f"No proof of address for {person.full_name}")
             continue

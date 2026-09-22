@@ -794,6 +794,13 @@ async def submit(
         raise ValidationFailedError(
             "Finish these parts first: " + ", ".join(missing), code="kyc_incomplete"
         )
+    persons = await kyc_checks.persons_for(session, profile.org_id)
+    identifiers = await kyc_checks.identifiers_for_org(session, profile, persons)
+    if await ban_list.matches(session, identifiers):
+        raise ValidationFailedError(
+            "This application matches a blocked account. Contact support.",
+            code="account_blacklisted",
+        )
     transition(profile, "submitted")
     profile.submitted_at = _now()
     profile.submitted_by = user_id

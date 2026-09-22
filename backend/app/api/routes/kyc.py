@@ -152,6 +152,10 @@ async def save_application(
         "customer_country": customer_country,
         "phone": phonenumbers.format_number(phone, phonenumbers.PhoneNumberFormat.E164),
     }
+    from app.services import ban_list
+
+    if await ban_list.matches(ctx.session, [ban_list.identifier("phone", details["phone"])]):
+        raise ValidationFailedError("This phone number cannot be used for verification")
     personal = ctx.org.account_type == "individual"
     if personal:
         profile.legal_name = details["legal_name"]

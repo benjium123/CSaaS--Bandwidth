@@ -838,3 +838,89 @@ async def reactivate_user(
     )
     await op.session.commit()
     return Response(status_code=204)
+
+
+class AccountActionIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+    identifiers: list[str] = Field(default_factory=list, max_length=100)
+    confirmation: str = Field(default="", max_length=320)
+
+
+@router.get("/customer-accounts")
+async def all_customer_accounts(
+    op: Reviewer,
+    q: str = Query(default="", max_length=320),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> dict:
+    from app.services import customer_accounts
+
+    return await customer_accounts.directory(op.session, q.strip(), offset, limit)
+
+
+@router.get("/customer-accounts/{user_id}")
+async def customer_account_detail(user_id: uuid.UUID, op: Admin) -> dict:
+    from app.services import customer_accounts
+
+    user = await customer_accounts.target(op.session, user_id, op.user.id)
+    orgs, blockers = await customer_accounts.deletion_plan(op.session, user)
+    values = await customer_accounts.identifiers(op.session, user)
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "identifiers": [{"key": v["key"], "kind": v["kind"], "label": v["label"]} for v in values],
+        "delete_workspaces": [{"id": str(o.id), "name": o.name} for o in orgs],
+        "blockers": blockers,
+    }
+
+
+@router.post("/customer-accounts/{user_id}/blacklist", status_code=204)
+async def blacklist_customer_account(
+    user_id: uuid.UUID, payload: AccountActionIn, request: Request, op: Admin
+) -> Response:
+    from app.services import account_security, customer_accounts
+
+    await check_step_up(request, op.session, op.user, kind="recent_2fa", action="ban")
+    user = await customer_accounts.target(op.session, user_id, op.user.id)
+    if not payload.identifiers or not payload.reason.strip():
+        raise ValidationFailedError("Select identifiers and enter a reason")
+    count = await customer_accounts.apply_bans(
+        op.session, user, op.user.id, payload.identifiers, payload.reason
+    )
+    user.is_active = False
+    revoked = await account_security.revoke_sessions(
+        op.session, request.app.state.settings, user.id, revoked_by=op.user.id
+    )
+    op.session.add(
+        SecurityAlert(
+            kind="account_blacklisted",
+            status="reviewed",
+            reviewed_by=op.user.id,
+            detail={"target_user_id": str(user.id), "reason": payload.reason, "identifiers": count},
+        )
+    )
+    await op.session.commit()
+    await account_security.mark_revoked(request.app.state.settings, revoked)
+    return Response(status_code=204)
+
+
+@router.post("/customer-accounts/{user_id}/delete", status_code=204)
+async def delete_customer_account(
+    user_id: uuid.UUID, payload: AccountActionIn, request: Request, op: Admin
+) -> Response:
+    from app.services import customer_accounts
+
+    await check_step_up(request, op.session, op.user, kind="recent_2fa", action="user_support")
+    user = await customer_accounts.target(op.session, user_id, op.user.id)
+    if not payload.reason.strip():
+        raise ValidationFailedError("Enter a reason")
+    await customer_accounts.delete_account(
+        op.session,
+        request,
+        user,
+        op.user.id,
+        payload.confirmation,
+        payload.identifiers,
+        payload.reason,
+    )
+    return Response(status_code=204)

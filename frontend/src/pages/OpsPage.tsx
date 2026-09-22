@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import "./opsReview.css";
 import { IdentityEvidence } from "@/components/ops/IdentityEvidence";
 import { MonitoringTab } from "@/components/ops/MonitoringTab";
+import { CustomerAccountsTab } from "@/components/ops/CustomerAccountsTab";
 import { AccountsTab } from "@/components/ops/AccountsTab";
 import { BillingTab } from "@/components/ops/BillingTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -650,6 +651,7 @@ function UsersTab() {
 }
 
 const TABS = [
+  { id: "customers", label: "All accounts" },
   { id: "queue", label: "Review queue" },
   { id: "alerts", label: "Security alerts" },
   { id: "bans", label: "Ban list" },
@@ -709,6 +711,7 @@ export function OpsPage() {
       ) : (
         <>
           <section key={tab} aria-label={TABS.find(item => item.id === tab)?.label}>
+            {tab === "customers" && <CustomerAccountsTab />}
             {tab === "queue" && <QueueTab onOpen={setOpenOrg} />}
             {tab === "alerts" && <AlertsTab />}
             {tab === "bans" && <BanListTab />}

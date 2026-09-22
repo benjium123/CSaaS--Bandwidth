@@ -342,6 +342,9 @@ async def register(
                 "or sign up as an individual."
             )
 
+    if await ban_list.matches(session, [ban_list.identifier("email", str(payload.email))]):
+        raise ValidationFailedError("Registration is not available for this account")
+
     await password_policy.check(settings, payload.password, email=payload.email)
     user = await users_repo.create_user(
         session, email=payload.email, password=payload.password, full_name=payload.full_name
