@@ -57,13 +57,31 @@ def is_configured(settings) -> bool:
     return bool(secret and secret.strip())
 
 
+def _plain(obj: Any) -> Any:
+    """Convert a Stripe SDK object into plain dicts, recursively.
+
+    Since stripe-python 8 a StripeObject is NOT a dict: ``obj.get(...)`` raises
+    AttributeError, and every caller here reads responses with ``.get``. That failed only
+    in production - the tests mock the SDK with plain dicts. A ListObject is left alone so
+    callers can still page through it with ``auto_paging_iter``.
+    """
+    try:
+        from stripe import ListObject, StripeObject
+    except ImportError:
+        return obj
+    if isinstance(obj, StripeObject) and not isinstance(obj, ListObject):
+        return obj.to_dict()
+    return obj
+
+
 async def _run_sync(func, *args, **kwargs):
-    """Run a blocking Stripe SDK call off the event loop."""
+    """Run a blocking Stripe SDK call off the event loop; responses come back as dicts."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
+    result = await loop.run_in_executor(
         None,
         functools.partial(func, *args, **kwargs),
     )
+    return _plain(result)
 
 
 async def create_checkout_session(
@@ -236,7 +254,7 @@ def verify_webhook(settings, payload: bytes, signature: str) -> dict:
         raise FeatureUnavailableError("Card payments are not set up yet.") from exc
 
     try:
-        return stripe.Webhook.construct_event(payload, signature, webhook_secret)
+        return _plain(stripe.Webhook.construct_event(payload, signature, webhook_secret))
     except Exception as exc:
         log.warning("stripe_webhook_verification_failed", error=str(exc))
         raise UnauthenticatedError(
@@ -253,6 +271,7 @@ async def list_payment_methods(settings, *, customer_id: str) -> list[dict]:
     )
     out: list[dict] = []
     for pm in result.auto_paging_iter():
+        pm = _plain(pm)
         card = pm.get("card") or {}
         out.append(
             {
@@ -415,7 +434,10 @@ def verify_webhook_any(settings, payload: bytes, signature: str) -> tuple[dict, 
     except ImportError as exc:
         raise FeatureUnavailableError("Card payments are not set up yet.") from exc
     try:
-        return stripe.Webhook.construct_event(payload, signature, identity_secret), "identity"
+        return (
+            _plain(stripe.Webhook.construct_event(payload, signature, identity_secret)),
+            "identity",
+        )
     except Exception as exc:
         log.warning("stripe_identity_webhook_verification_failed", error=str(exc))
         raise UnauthenticatedError(
