@@ -576,6 +576,22 @@ export function useOrgMembers(api: ApiClient) {
   });
 }
 
+export interface SeatsOut {
+  enforced: boolean;
+  limit: number | null;
+  members: number;
+  pending_invites: number;
+  available: number | null;
+}
+
+/** User seats: one per paid phone number, the owner included. */
+export function useOrgSeats(api: ApiClient) {
+  return useQuery({
+    queryKey: ["org-seats"],
+    queryFn: () => api.request<SeatsOut>("/api/v1/orgs/current/seats"),
+  });
+}
+
 export function useInvites(api: ApiClient) {
   return useQuery({
     queryKey: ["org-invites"],

@@ -303,6 +303,9 @@ async def complete_sso_login(
             detail={"email": email, "protocol": protocol},
         )
     if membership is None:
+        from app.services import seats
+
+        await seats.require_seat(session, org.id)
         role = await _role_for_new_member(session, org, groups or [])
         session.add(OrgMembership(org_id=org.id, user_id=user.id, role_id=role.id))
         audit_svc.record(

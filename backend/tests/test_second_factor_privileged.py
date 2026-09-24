@@ -42,6 +42,8 @@ from app.models.rbac import SYSTEM_ROLES, is_privileged_permissions
 from app.services import second_factor
 from tests.conftest import auth_headers, create_org, make_settings, register_and_login
 
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
+
 #: conftest's default password shape (>= password_min_length of 10).
 PASSWORD = "correct-horse-battery"
 

@@ -32,6 +32,7 @@ from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
 from app.services import kyc as kyc_svc
 from app.services import retention as retention_svc
+from app.services import seats as seats_svc
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
 
@@ -307,6 +308,14 @@ async def current_org_roles(
     ]
 
 
+@router.get("/current/seats")
+async def current_org_seats(
+    ctx: Annotated[OrgContext, Depends(require_permission("members:read"))],
+) -> dict:
+    """User seats: one per paid, unreleased phone number, the owner included."""
+    return (await seats_svc.usage(ctx.session, ctx.org.id)).public()
+
+
 @router.get("/current/members", response_model=list[MemberOut])
 async def current_org_members(
     ctx: Annotated[OrgContext, Depends(require_permission("members:read"))],
@@ -448,6 +457,9 @@ async def create_member(
         #     NotFoundError (404) - the whole request is rejected on the FIRST bad id.
         for inbox_id in granted_inbox_ids:
             await _get_inbox_for_org(ctx, inbox_id)
+
+    # Each paid number buys one user; checked before any row is written.
+    await seats_svc.require_seat(ctx.session, ctx.org.id)
 
     # create_user hashes the password itself and raises ConflictError (409) on a duplicate.
     user = await users_repo.create_user(

@@ -396,6 +396,9 @@ async def create_user(request: Request, ctx: ScimContext = Depends(scim_context)
         )
         ctx.session.add(user)
         await ctx.session.flush()
+    from app.services import seats
+
+    await seats.require_seat(ctx.session, ctx.org.id)
     role = await _default_role(ctx)
     ctx.session.add(OrgMembership(org_id=ctx.org.id, user_id=user.id, role_id=role.id))
     audit_svc.record(

@@ -132,6 +132,19 @@ def _active_settings():
 
 
 @pytest.fixture
+def paid_seats(monkeypatch):
+    """For tests about something other than seats: every workspace has paid for plenty of
+    numbers, so adding people is never refused for lack of one. Seat limits themselves are
+    covered against real number purchases in test_seats.py."""
+    from app.services import seats
+
+    async def _plenty(session, org_id):
+        return 1_000
+
+    monkeypatch.setattr(seats, "paid_numbers", _plenty)
+
+
+@pytest.fixture
 def settings() -> Settings:
     return make_settings()
 

@@ -94,6 +94,11 @@ async def create_invite(
         if member is not None:
             raise ConflictError(f"{email} is already a member of this organisation")
 
+    # An outstanding invite holds a seat, so invitations cannot outrun paid numbers.
+    from app.services import seats
+
+    await seats.require_seat(session, org_id)
+
     raw = secrets.token_urlsafe(TOKEN_BYTES)
     invite = Invite(
         id=uuid.uuid4(),
@@ -146,8 +151,11 @@ async def find_redeemable(session: AsyncSession, raw_token: str, email: str) -> 
 
 async def redeem(session: AsyncSession, invite: Invite, user_id: uuid.UUID) -> None:
     """Attach the new user to the invite's org with the invite's role, and spend it."""
+    from app.services import seats
+
     session.info[ALLOW_UNSCOPED_KEY] = True
     try:
+        await seats.require_seat(session, invite.org_id, redeeming_invite=True)
         role = (
             await session.execute(
                 sa.select(Role).where(

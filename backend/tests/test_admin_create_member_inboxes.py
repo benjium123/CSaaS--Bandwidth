@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
@@ -18,6 +19,8 @@ from app.models import AuditLogEntry, InboxGrant, OrgMembership, Role
 from app.models.rbac import SYSTEM_ROLES
 from app.repositories import users as users_repo
 from tests.conftest import auth_headers, create_org, register_and_login
+
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
 
 PASSWORD = "correct-horse-battery"
 ENDPOINT = "/api/v1/orgs/current/members"

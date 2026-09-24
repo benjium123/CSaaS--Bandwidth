@@ -28,6 +28,8 @@ from alembic.operations import Operations
 from app.models import Org, User
 from tests.conftest import auth_headers, confirm_registered_email, register_and_login
 
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
+
 PASSWORD = "correct-horse-battery"
 
 

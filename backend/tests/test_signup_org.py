@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 import sqlalchemy as sa
 
 from app.models import PERMISSIONS, Org
 from tests.conftest import auth_headers, register_and_login
+
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
 
 PASSWORD = "correct-horse-battery"
 

@@ -8,7 +8,7 @@ Platform admins can explicitly override automated KYC blockers using the review 
 
 - `STRIPE_SECRET_KEY`: live Stripe secret key, configured only on the server.
 - `STRIPE_WEBHOOK_SECRET`: signing secret for `/api/v1/webhooks/stripe`.
-- `STRIPE_NUMBER_PRICE_ID`: `price_1UIESILz6FHVmZlMqHZPBBiw`.
+- `STRIPE_NUMBER_PRICE_ID`: `price_1UJHkZ744iNFjjqnkirIkrGn`.
 - `PUBLIC_WEB_URL`: the deployed customer-facing origin; used for email and checkout return links.
 - Telnyx credentials must support number search and ordering.
 

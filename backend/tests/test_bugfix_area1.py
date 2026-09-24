@@ -26,6 +26,8 @@ from tests.conftest import (
     register_and_login,
 )
 
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
+
 
 async def _attach_member(
     session, org_id: uuid.UUID, email: str, permissions: list[str]

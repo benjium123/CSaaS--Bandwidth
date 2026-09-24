@@ -17,6 +17,8 @@ from app.models import AuditLogEntry, Org, OrgDomain, OrgMembership, ScimToken, 
 from app.models import Session as IdentitySession
 from tests.conftest import auth_headers, create_org, make_settings, register_and_login
 
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
+
 DOMAIN = "scim-corp.example.com"
 TXT = {"records": []}
 

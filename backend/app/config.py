@@ -90,7 +90,8 @@ class Settings(BaseSettings):
     #: would charge USD-derived numbers in another currency. Refused at boot unless someone
     #: deliberately accepts that with the flag below.
     stripe_price_currency: str = "usd"
-    stripe_number_price_id: str = "price_1UIESILz6FHVmZlMqHZPBBiw"
+    #: Live "Ringlite phone number" price (prod_VJvbJOHANqLMKJ): $15/month per number.
+    stripe_number_price_id: str = "price_1UJHkZ744iNFjjqnkirIkrGn"
     #: Only set this once amounts are actually denominated in stripe_price_currency.
     allow_non_usd_pricing: bool = False
     # P24: where a customer lands after completing a top-up. Empty derives from

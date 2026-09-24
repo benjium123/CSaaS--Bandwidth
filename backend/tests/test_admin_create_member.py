@@ -12,12 +12,15 @@ from __future__ import annotations
 import json
 import uuid
 
+import pytest
 import sqlalchemy as sa
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.models import AccountAuditEntry, AuditLogEntry, OrgMembership, Role
 from app.repositories import users as users_repo
 from tests.conftest import auth_headers, create_org, register_and_login
+
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
 
 PASSWORD = "correct-horse-battery"
 ENDPOINT = "/api/v1/orgs/current/members"

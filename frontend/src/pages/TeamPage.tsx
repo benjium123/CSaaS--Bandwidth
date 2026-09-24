@@ -6,6 +6,7 @@ import {
   useCreateInvite,
   useInvites,
   useOrgMembers,
+  useOrgSeats,
   useRevokeInvite,
   type InviteCreatedOut,
   type InviteOut,
@@ -92,6 +93,12 @@ export function TeamPage() {
   } = useInvites(api);
   const createInvite = useCreateInvite(api);
   const revokeInvite = useRevokeInvite(api);
+  const { data: seats, refetch: refetchSeats } = useOrgSeats(api);
+  // Seats move whenever someone joins or an invite is sent, revoked or spent.
+  React.useEffect(() => {
+    void refetchSeats();
+  }, [members, invites, refetchSeats]);
+  const seatLimit = seats?.enforced && typeof seats.limit === "number" ? seats.limit : null;
 
   const rolesQuery = useRoles(api, activeTab === "roles");
   const createRole = useCreateRole(api);
@@ -266,7 +273,20 @@ export function TeamPage() {
             {/* Heading on the left, the invitation action on the right - the same header
                 shape the Roles tab uses. The button renders only for people who may invite. */}
             <div className="flex items-center justify-between">
-              <h1 className="text-[19px] font-semibold tracking-[-0.015em]">Team</h1>
+              <div>
+                <h1 className="text-[19px] font-semibold tracking-[-0.015em]">Team</h1>
+                {seatLimit !== null && seats && (
+                  <p className="text-[13px] text-muted-foreground" data-testid="seat-usage">
+                    {seats.members + seats.pending_invites} of {seatLimit} user{" "}
+                    {seatLimit === 1 ? "seat" : "seats"} used. Each phone number adds one user.{" "}
+                    {seats.available === 0 && (
+                      <a href="/choose-numbers" className="font-medium text-primary underline">
+                        Buy a number to add someone
+                      </a>
+                    )}
+                  </p>
+                )}
+              </div>
               {canInvite && (
                 <Button
                   type="button"

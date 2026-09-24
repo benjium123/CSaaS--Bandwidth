@@ -19,6 +19,8 @@ from app.db.base import set_org_context
 from app.models import Invite
 from tests.conftest import auth_headers, create_org, make_settings, register_and_login
 
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
+
 PASSWORD = "correct-horse-battery"
 
 

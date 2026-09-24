@@ -275,3 +275,45 @@ describe("TeamPage", () => {
     );
   });
 });
+
+describe("TeamPage seats", () => {
+  const stubs = (seats: unknown) =>
+    makeStubClient({
+      "/api/v1/orgs/current/members": MEMBERS,
+      "/api/v1/orgs/current/invites": INVITES,
+      "/api/v1/orgs/current/seats": seats,
+    });
+
+  it("shows seats used against paid numbers and links to buying one when full", async () => {
+    renderWithProviders(
+      <TeamPage />,
+      stubs({ enforced: true, limit: 2, members: 1, pending_invites: 1, available: 0 }),
+    );
+    const usage = await screen.findByTestId("seat-usage");
+    expect(usage.textContent?.trim()).toBe(
+      "2 of 2 user seats used. Each phone number adds one user. Buy a number to add someone",
+    );
+    expect(screen.getByRole("link", { name: "Buy a number to add someone" })).toHaveAttribute(
+      "href",
+      "/choose-numbers",
+    );
+  });
+
+  it("offers no buy link while a seat is free", async () => {
+    renderWithProviders(
+      <TeamPage />,
+      stubs({ enforced: true, limit: 3, members: 1, pending_invites: 1, available: 1 }),
+    );
+    expect((await screen.findByTestId("seat-usage")).textContent).toContain("2 of 3 user seats");
+    expect(screen.queryByRole("link", { name: /buy a number/i })).toBeNull();
+  });
+
+  it("shows nothing about seats for a workspace that is not seat-limited", async () => {
+    renderWithProviders(
+      <TeamPage />,
+      stubs({ enforced: false, limit: null, members: 4, pending_invites: 0, available: null }),
+    );
+    expect(await screen.findByText("owner@example.com")).toBeInTheDocument();
+    expect(screen.queryByTestId("seat-usage")).toBeNull();
+  });
+});

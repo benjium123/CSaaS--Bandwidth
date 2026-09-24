@@ -19,6 +19,8 @@ from tests.conftest import (
     register_and_login,
 )
 
+pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
+
 
 @pytest.fixture(autouse=True)
 def outbox():
