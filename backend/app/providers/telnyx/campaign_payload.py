@@ -8,7 +8,7 @@ from explicit user input: we never invent a boolean, a sample, or consent.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn
 
 from app.errors import ValidationFailedError
@@ -74,8 +74,47 @@ def _assertions(assertions: Mapping[str, bool]) -> dict[str, bool]:
     return {name: provided[name] for name in ASSERTION_FIELDS if name in provided}
 
 
+#: Telnyx /10dlc/enum/usecase: use cases that need sub-use-cases, as (min, max), and the
+#: use cases allowed AS a sub-use-case (validSubUsecase=true).
+SUB_USECASE_BOUNDS: dict[str, tuple[int, int]] = {
+    "MIXED": (2, 5),
+    "LOW_VOLUME": (1, 5),
+    "SOLE_PROPRIETOR": (1, 5),
+}
+VALID_SUB_USECASES: frozenset[str] = frozenset(
+    {
+        "2FA",
+        "ACCOUNT_NOTIFICATION",
+        "CUSTOMER_CARE",
+        "DELIVERY_NOTIFICATION",
+        "FRAUD_ALERT",
+        "HIGHER_EDUCATION",
+        "MARKETING",
+        "POLLING_VOTING",
+        "PUBLIC_SERVICE_ANNOUNCEMENT",
+        "SECURITY_ALERT",
+    }
+)
+
+
+def _sub_usecases(usecase: str, sub_usecases: Sequence[str] | None) -> list[str] | None:
+    """The carrier refuses MIXED / LOW_VOLUME / SOLE_PROPRIETOR without these."""
+    chosen = list(dict.fromkeys(str(s).strip().upper() for s in (sub_usecases or []) if s))
+    bounds = SUB_USECASE_BOUNDS.get(usecase)
+    if bounds is None:
+        return None
+    low, high = bounds
+    if not low <= len(chosen) <= high or any(s not in VALID_SUB_USECASES for s in chosen):
+        _fail("sub_usecases")
+    return chosen
+
+
 def build_campaign_payload(
-    campaign: Campaign, *, telnyx_brand_id: str, assertions: Mapping[str, bool]
+    campaign: Campaign,
+    *,
+    telnyx_brand_id: str,
+    assertions: Mapping[str, bool],
+    sub_usecases: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Return the campaignBuilder body; raises ValidationFailedError on bad input."""
     brand_id = telnyx_brand_id.strip() if isinstance(telnyx_brand_id, str) else ""
@@ -87,6 +126,8 @@ def build_campaign_payload(
         "usecase": _usecase(campaign),
         "messageFlow": _text(campaign, "opt_in_process", required=True),
     }
+    if (subs := _sub_usecases(payload["usecase"], sub_usecases)) is not None:
+        payload["subUsecases"] = subs
     for index, sample in enumerate(_samples(campaign), 1):
         payload[f"sample{index}"] = sample
     for wire, field in OPTIONAL_TEXT.items():

@@ -450,5 +450,7 @@ __all__ = [
     "ADMIN_INVITE_ISSUED_VIA",
     "AdminInvite",
     "NumberPurchase",
+    "TenDlcRegistration",
 ]
 from app.models.number_purchase import NumberPurchase
+from app.models.tendlc import TenDlcRegistration

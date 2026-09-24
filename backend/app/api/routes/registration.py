@@ -481,6 +481,119 @@ async def list_brands(
     return [_brand_out(b) for b in rows]
 
 
+class TextingCheckoutIn(BaseModel):
+    """Self-serve texting registration. Everything the carrier checks is validated before
+    the customer is sent to pay."""
+
+    brand_id: uuid.UUID
+    campaign_id: uuid.UUID
+    first_name: str = Field(default="", max_length=100)
+    last_name: str = Field(default="", max_length=100)
+    #: Sole proprietors only: the carrier texts the verification code here.
+    mobile_phone: str | None = Field(default=None, max_length=20)
+    #: MIXED needs 2-5 of these, SOLE_PROPRIETOR 1-5, other use cases none.
+    sub_usecases: list[str] = Field(default_factory=list, max_length=5)
+    #: The campaign attestations the customer makes; never defaulted on their behalf.
+    assertions: dict[str, bool]
+
+
+class TextingOtpIn(BaseModel):
+    pin: str = Field(min_length=6, max_length=6)
+
+
+async def _texting_out(ctx: OrgContext, reg) -> dict:
+    from app.services import tendlc
+
+    brand = await ctx.session.get(Brand, reg.brand_id)
+    campaign = await ctx.session.get(Campaign, reg.campaign_id)
+    return tendlc.public(reg, brand, campaign)
+
+
+@router.get("/texting")
+async def texting_registration(
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:read"))],
+) -> dict:
+    """The workspace's self-serve texting registration (or none) and what it costs."""
+    from app.services import tendlc
+
+    reg = await tendlc.current(ctx.session, ctx.org.id)
+    return {
+        "registration": await _texting_out(ctx, reg) if reg else None,
+        "quotes": {tier: tendlc.quote(tier) for tier in tendlc.MONTHLY_CENTS},
+    }
+
+
+@router.post("/texting/checkout")
+async def texting_checkout(
+    payload: TextingCheckoutIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> dict:
+    from app.services import tendlc
+
+    reg = await tendlc.start_checkout(
+        ctx.session,
+        request.app.state.settings,
+        ctx.org.id,
+        brand_id=payload.brand_id,
+        campaign_id=payload.campaign_id,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        mobile_phone=payload.mobile_phone,
+        assertions=payload.assertions,
+        sub_usecases=payload.sub_usecases,
+        customer_email=await _actor_email(ctx),
+    )
+    return await _texting_out(ctx, reg)
+
+
+async def _actor_email(ctx: OrgContext) -> str | None:
+    from app.models import User
+
+    user = await ctx.session.get(User, ctx.actor_user_id) if ctx.actor_user_id else None
+    return user.email if user else None
+
+
+async def _own_registration(ctx: OrgContext, registration_id: uuid.UUID):
+    from app.models import TenDlcRegistration
+
+    reg = await ctx.session.get(TenDlcRegistration, registration_id)
+    if reg is None or reg.org_id != ctx.org.id:
+        raise NotFoundError("Registration not found")
+    return reg
+
+
+@router.post("/texting/{registration_id}/otp")
+async def texting_verify_otp(
+    registration_id: uuid.UUID,
+    payload: TextingOtpIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> dict:
+    """The 6-digit code the carrier texted to a sole proprietor's mobile."""
+    from app.services import tendlc
+
+    reg = await _own_registration(ctx, registration_id)
+    await tendlc.verify_otp(ctx.session, request.app.state.settings, reg, payload.pin)
+    return await _texting_out(ctx, await _own_registration(ctx, registration_id))
+
+
+@router.post("/texting/{registration_id}/otp/resend")
+async def texting_resend_otp(
+    registration_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> dict:
+    from app.services import tendlc
+
+    reg = await _own_registration(ctx, registration_id)
+    if reg.stage != "otp_pending":
+        raise ConflictError("There is no verification code waiting for this registration.")
+    await tendlc.send_otp(ctx.session, request.app.state.settings, reg)
+    await ctx.session.commit()
+    return await _texting_out(ctx, reg)
+
+
 @router.post("/brands", response_model=BrandOut, status_code=201)
 async def create_brand(
     payload: BrandIn,

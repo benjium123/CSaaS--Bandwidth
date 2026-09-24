@@ -5,6 +5,7 @@ import { Spinner } from "@/components/ui/primitives";
 
 import { BrandsPanel } from "./BrandsPanel";
 import { CampaignsPanel } from "./CampaignsPanel";
+import { TextingRegistrationCard } from "./TextingRegistrationCard";
 
 /**
  * The workspace's 10DLC registration screen.
@@ -53,6 +54,7 @@ function TenDlcRegistrationInner(): JSX.Element {
             and campaigns.
           </p>
         </div>
+        <TextingRegistrationCard />
         <BrandsPanel />
         <CampaignsPanel />
       </div>

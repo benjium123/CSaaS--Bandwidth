@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     stripe_price_currency: str = "usd"
     #: Live "Ringlite phone number" price (prod_VJvbJOHANqLMKJ): $15/month per number.
     stripe_number_price_id: str = "price_1UJHkZ744iNFjjqnkirIkrGn"
+    #: Live 10DLC campaign pass-through fees (prod_VJxPdkTbXGhw6k): $10/month standard,
+    #: $2/month sole proprietor. See services/tendlc.py for the one-time fees.
+    stripe_tendlc_standard_price_id: str = "price_1UJJUY744iNFjjqnhOjPZHaj"
+    stripe_tendlc_sole_prop_price_id: str = "price_1UJJUZ744iNFjjqn1pnIhHFu"
     #: Only set this once amounts are actually denominated in stripe_price_currency.
     allow_non_usd_pricing: bool = False
     # P24: where a customer lands after completing a top-up. Empty derives from

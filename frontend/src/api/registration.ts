@@ -245,3 +245,167 @@ export function useSubmitCampaign(api: ApiClient) {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Self-serve 10DLC texting registration
+// ---------------------------------------------------------------------------
+
+export const TEXTING_REGISTRATION_PATH = "/api/v1/registration/texting";
+
+export type TextingFeeTier = "standard" | "sole_proprietor";
+
+export interface TextingQuote {
+  fee_tier: TextingFeeTier;
+  brand_fee_cents: number;
+  campaign_review_cents: number;
+  monthly_cents: number;
+  upfront_months: number;
+  due_today_cents: number;
+}
+
+export type TextingStage =
+  | "checkout"
+  | "paid"
+  | "brand_filed"
+  | "otp_pending"
+  | "brand_approved"
+  | "campaign_filed"
+  | "active"
+  | "brand_rejected"
+  | "campaign_rejected"
+  | "needs_attention"
+  | "expired";
+
+export interface TextingRegistration extends TextingQuote {
+  id: string;
+  stage: TextingStage;
+  brand_id: string;
+  campaign_id: string;
+  brand_status: string | null;
+  campaign_status: string | null;
+  checkout_url: string | null;
+  otp_sent_at: string | null;
+  detail: string | null;
+}
+
+export interface TextingRegistrationState {
+  registration: TextingRegistration | null;
+  quotes: { standard: TextingQuote; sole_proprietor: TextingQuote };
+}
+
+export interface TextingCheckoutInput {
+  brand_id: string;
+  campaign_id: string;
+  first_name: string;
+  last_name: string;
+  mobile_phone: string | null;
+  sub_usecases: string[];
+  assertions: Record<string, boolean>;
+}
+
+export const TEXTING_REGISTRATION_KEY = ["registration", "texting"] as const;
+
+/** Stages where the background job is moving things along without the customer. */
+export const TEXTING_POLL_STAGES: readonly TextingStage[] = [
+  "paid",
+  "brand_filed",
+  "brand_approved",
+  "campaign_filed",
+];
+
+export const TEXTING_POLL_MS = 15_000;
+
+/**
+ * The path for a single texting registration, with the id percent-encoded. Both the OTP
+ * verify and resend endpoints hang off this, and both must not let a stray `/` in the id
+ * re-route the request.
+ */
+function textingRegistrationPath(registrationId: string): string {
+  return `${TEXTING_REGISTRATION_PATH}/${encodeURIComponent(registrationId)}`;
+}
+
+export async function fetchTextingRegistration(
+  api: ApiClient,
+): Promise<TextingRegistrationState> {
+  return api.request<TextingRegistrationState>(TEXTING_REGISTRATION_PATH);
+}
+
+export async function startTextingCheckout(
+  api: ApiClient,
+  input: TextingCheckoutInput,
+): Promise<TextingRegistration> {
+  // The input is sent as-is; the component owns the shape (blank names, nulled mobile, the
+  // canonical sub-use-case order, the attestation map + terms flag).
+  return api.request<TextingRegistration>(`${TEXTING_REGISTRATION_PATH}/checkout`, {
+    method: "POST",
+    json: input,
+  });
+}
+
+export async function verifyTextingOtp(
+  api: ApiClient,
+  registrationId: string,
+  pin: string,
+): Promise<TextingRegistration> {
+  return api.request<TextingRegistration>(`${textingRegistrationPath(registrationId)}/otp`, {
+    method: "POST",
+    json: { pin },
+  });
+}
+
+export async function resendTextingOtp(
+  api: ApiClient,
+  registrationId: string,
+): Promise<TextingRegistration> {
+  // No body: the endpoint looks up the stored registration and re-sends the code.
+  return api.request<TextingRegistration>(
+    `${textingRegistrationPath(registrationId)}/otp/resend`,
+    { method: "POST" },
+  );
+}
+
+export function useTextingRegistration(api: ApiClient) {
+  return useQuery({
+    queryKey: TEXTING_REGISTRATION_KEY,
+    queryFn: () => fetchTextingRegistration(api),
+    retry: false,
+    refetchInterval: (query) => {
+      const stage = query.state.data?.registration?.stage;
+      if (stage === undefined) return false;
+      return TEXTING_POLL_STAGES.includes(stage) ? TEXTING_POLL_MS : false;
+    },
+  });
+}
+
+export function useTextingCheckout(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TextingCheckoutInput) => startTextingCheckout(api, input),
+    onSuccess: () => {
+      // The registration state, the brand list and the campaign list all live under the
+      // same `registration` prefix, so one invalidation refreshes every panel.
+      void qc.invalidateQueries({ queryKey: ["registration"], exact: false });
+    },
+  });
+}
+
+export function useVerifyTextingOtp(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (variables: { registrationId: string; pin: string }) =>
+      verifyTextingOtp(api, variables.registrationId, variables.pin),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["registration"], exact: false });
+    },
+  });
+}
+
+export function useResendTextingOtp(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (registrationId: string) => resendTextingOtp(api, registrationId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["registration"], exact: false });
+    },
+  });
+}

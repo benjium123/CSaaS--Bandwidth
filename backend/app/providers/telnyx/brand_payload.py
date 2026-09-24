@@ -60,6 +60,7 @@ def build_brand_payload(
     first_name: Any,
     last_name: Any,
     brand_relationship: Any,
+    mobile_phone: Any = None,
 ) -> dict:
     """Map ``brand`` plus caller-supplied legal/contact names to Telnyx camelCase."""
     relationship = _require(brand_relationship, "brandRelationship").upper()
@@ -86,6 +87,8 @@ def build_brand_payload(
     if entity_type == "SOLE_PROPRIETOR":
         payload["firstName"] = _require(first_name, "firstName")
         payload["lastName"] = _require(last_name, "lastName")
+        # TCR texts the one-time PIN that verifies a sole proprietor to this number.
+        payload["mobilePhone"] = _require(mobile_phone, "mobilePhone")
         _maybe(payload, "companyName", company_name)
         _maybe(payload, "ein", brand.ein)
     else:

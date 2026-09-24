@@ -778,7 +778,10 @@ async def stripe_webhook(
         await session.commit()
         return Response(status_code=204)
 
-    from app.services import number_purchases
+    from app.services import number_purchases, tendlc
+
+    if await tendlc.handle_event(session, event):
+        return Response(status_code=204)
 
     if await number_purchases.handle_event(session, request, event):
         return Response(status_code=204)

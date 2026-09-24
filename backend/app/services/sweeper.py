@@ -144,6 +144,12 @@ SECURITY_LISTS_INTERVAL_SECONDS = 86400
 TRUNK_SYNC_TICK_INTERVAL_SECONDS = 600
 _trunk_sync_last_run: float | None = None
 
+#: Self-serve 10DLC: files paid registrations, reads the carrier's verdicts, attaches
+#: numbers and keeps campaign approval evidence fresh. Carrier reviews take hours to days,
+#: so every five minutes is plenty; the slot is reserved before running, as above.
+TENDLC_TICK_INTERVAL_SECONDS = 300
+_tendlc_last_run: float | None = None
+
 #: 8.18/4.15/6.19: arbitrary constant lock key, one per "the whole sweeper pass". Any
 #: int works for pg_try_advisory_lock - it just needs to be the SAME constant every call
 #: so concurrent workers contend on the identical lock.
@@ -632,6 +638,18 @@ async def _run_once_locked(app) -> dict[str, int]:
                 results["trunk_numbers_synced"] = sum(trunk_counts.values())
             except Exception:
                 log.exception("sweeper_trunk_sync_reconcile_failed")
+
+    global _tendlc_last_run  # noqa: PLW0603
+    now_monotonic = time.monotonic()
+    if _tendlc_last_run is None or now_monotonic - _tendlc_last_run >= TENDLC_TICK_INTERVAL_SECONDS:
+        _tendlc_last_run = now_monotonic
+        try:
+            from app.services import tendlc
+
+            tendlc_counts = await tendlc.tick(get_sessionmaker(), app.state.settings)
+            results["tendlc_advanced"] = tendlc_counts.get("advanced", 0)
+        except Exception:
+            log.exception("sweeper_tendlc_tick_failed")
 
     # P41: derived per-workspace messaging health - today's and yesterday's rollup rows,
     # then the owner/admin warnings. Same hourly gate discipline as reputation above:

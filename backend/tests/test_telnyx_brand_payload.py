@@ -57,9 +57,11 @@ def test_corporate_maps_to_telnyx_camel_case() -> None:
 
 def test_sole_proprietor_keeps_contact_and_optional_company_ein() -> None:
     brand = _brand(entity_type="SOLE_PROPRIETOR", ein=None)
-    payload = _build(brand, first_name="Dana", last_name="Sole")
+    payload = _build(brand, first_name="Dana", last_name="Sole", mobile_phone="+15125550199")
     assert payload["entityType"] == "SOLE_PROPRIETOR"
     assert (payload["firstName"], payload["lastName"]) == ("Dana", "Sole")
+    # TCR texts the verification PIN here.
+    assert payload["mobilePhone"] == "+15125550199"
     assert "companyName" not in payload and "ein" not in payload
 
 
@@ -75,6 +77,12 @@ def test_missing_required_fields_rejected_by_name() -> None:
         with pytest.raises(ValidationFailedError) as exc:
             _build(_brand(**overrides), company_name=company_name)
         assert field in str(exc.value)
+
+
+def test_sole_proprietor_needs_a_mobile_for_the_verification_pin() -> None:
+    with pytest.raises(ValidationFailedError) as exc:
+        _build(_brand(entity_type="SOLE_PROPRIETOR", ein=None), first_name="Dana", last_name="Sole")
+    assert "mobilePhone" in str(exc.value)
 
 
 def test_explicit_contact_names_required_for_sole_proprietor() -> None:

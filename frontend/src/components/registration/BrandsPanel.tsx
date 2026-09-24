@@ -14,6 +14,7 @@ import { Button, Input, MutationStatus, Pill, Select, Spinner } from "@/componen
 
 import {
   BRAND_FIELD_LABELS,
+  BRAND_VERTICALS,
   CARRIER_REFS_EMPTY,
   STATUS_DESCRIPTIONS,
   SUBMIT_BRAND_LABEL,
@@ -167,11 +168,18 @@ function BrandCreateForm({
         </Field>
 
         <Field id="brand-vertical" label="Vertical">
-          <Input
+          <Select
             id="brand-vertical"
             value={fields.vertical}
             onChange={(event) => update("vertical", event.target.value)}
-          />
+          >
+            <option value="">Select an industry</option>
+            {BRAND_VERTICALS.map((vertical) => (
+              <option key={vertical.value} value={vertical.value}>
+                {vertical.label}
+              </option>
+            ))}
+          </Select>
         </Field>
 
         <Field id="brand-website" label="Website">

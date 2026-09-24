@@ -245,6 +245,10 @@ async def fulfill(session, request, purchase):
             await _record_number(session, request, purchase, index, carrier, result)
         purchase.state = _settled_state(purchase.numbers)
         purchase.detail = None
+        await session.commit()
+        from app.services import tendlc
+
+        await tendlc.associate_new_numbers(session, settings, purchase.org_id)
     except Exception as error:
         # Carrier timeouts are ambiguous. Never retry a potentially accepted order or
         # charge again automatically; retain the paid cart for operator reconciliation.
@@ -393,6 +397,9 @@ async def retry(session, request, purchase_id):
     purchase.state = _settled_state(purchase.numbers)
     purchase.detail = _NEEDS_HELP if purchase.state == "needs_attention" else None
     await session.commit()
+    from app.services import tendlc
+
+    await tendlc.associate_new_numbers(session, settings, purchase.org_id)
     log.info("number_purchase_retried", purchase_id=str(purchase.id), failures=failures)
     return purchase, failures
 

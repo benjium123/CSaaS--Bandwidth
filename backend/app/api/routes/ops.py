@@ -503,7 +503,8 @@ INDIVIDUAL_DECISION_EMAILS = {
     "approved": (
         "Your identity is verified",
         "Good news - your identity passed verification. Calling and phone numbers are now "
-        "available in your workspace. Texting is not available on individual accounts.",
+        "available in your workspace. To text customers, register for texting under "
+        "Settings > Messaging; texting starts once the carriers approve your campaign.",
     ),
     "needs_info": (
         "We need a little more information to verify your identity",

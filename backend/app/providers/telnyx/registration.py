@@ -170,6 +170,24 @@ class TelnyxRegistrationClient:
         )
         return _require_id(data, ("brandId", "id"), "brand")
 
+    async def trigger_sms_otp(self, brand_id: str, *, pin_sms: str, success_sms: str) -> dict:
+        """POST /10dlc/brand/{brandId}/smsOtp: text a sole proprietor their 6-digit PIN.
+        Calling it again re-sends a fresh PIN (each lives 24 hours)."""
+        return await self._post(
+            f"{_BRAND_PATH}/{quote(str(brand_id), safe='')}/smsOtp",
+            {"pinSms": pin_sms, "successSms": success_sms},
+            "sole proprietor PIN",
+        )
+
+    async def verify_sms_otp(self, brand_id: str, pin: str) -> dict:
+        """PUT /10dlc/brand/{brandId}/smsOtp: submit the PIN the owner received."""
+        return await self._send(
+            "PUT",
+            f"{_BRAND_PATH}/{quote(str(brand_id), safe='')}/smsOtp",
+            operation="sole proprietor PIN check",
+            payload={"otpPin": pin},
+        )
+
     # -- campaigns ------------------------------------------------------------
 
     async def create_campaign(self, payload: dict) -> dict:

@@ -62,7 +62,7 @@ carrier outcome as unknown.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 
 import httpx
@@ -322,6 +322,7 @@ async def file_campaign_with_telnyx(
     campaign: Campaign,
     *,
     assertions: Mapping[str, bool],
+    sub_usecases: Sequence[str] | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> Campaign:
     """Submit one local campaign to Telnyx's 10DLC campaignBuilder endpoint.
@@ -355,7 +356,7 @@ async def file_campaign_with_telnyx(
     # Everything local and cheap fails before any credential is decrypted or any byte is
     # sent: build_campaign_payload rejects an incomplete campaign or a bad assertion set.
     payload = build_campaign_payload(
-        locked, telnyx_brand_id=telnyx_brand_id, assertions=assertions
+        locked, telnyx_brand_id=telnyx_brand_id, assertions=assertions, sub_usecases=sub_usecases
     )
     # Best-effort de-duplication only; the committed marker is the guard that matters.
     payload[REFERENCE_ID_FIELD] = reference_id

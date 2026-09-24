@@ -166,6 +166,7 @@ async def file_brand_with_telnyx(
     first_name: Any,
     last_name: Any,
     brand_relationship: Any,
+    mobile_phone: Any = None,
     client: httpx.AsyncClient | None = None,
 ) -> Brand:
     """Submit ``brand`` to Telnyx exactly once and record the carrier ``brandId``.
@@ -202,6 +203,7 @@ async def file_brand_with_telnyx(
         first_name=first_name,
         last_name=last_name,
         brand_relationship=brand_relationship,
+        mobile_phone=mobile_phone,
     )
 
     resolved = await _resolve_telnyx_settings(session, settings)
