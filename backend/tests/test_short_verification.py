@@ -86,6 +86,16 @@ async def test_short_application_submits_and_admin_approves(
             headers=ah,
         )
         assert requested.status_code == 200, requested.text
+        # Overriding the checks needs a written reason; without one nothing is decided.
+        unexplained = await client.post(
+            f"/api/v1/ops/applications/{org}/approve",
+            json={"note": "  ", "manual_override": True},
+            headers=ah,
+        )
+        assert unexplained.status_code == 422, unexplained.text
+        assert unexplained.json()["error"]["code"] == "override_reason_required"
+        still = await client.get(f"/api/v1/ops/applications/{org}", headers=ah)
+        assert still.json()["status"] != "approved"
     r = await client.post(
         f"/api/v1/ops/applications/{org}/approve",
         json={"note": "Reviewed", "manual_override": manual},

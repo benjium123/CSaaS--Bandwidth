@@ -6,6 +6,9 @@ import { Button, Input, mutationErrorMessage } from "@/components/ui/primitives"
 
 type Purchase = { id: string; state: string; checkout_url?: string; detail?: string; numbers: { e164: string; state: string }[] };
 
+/** A path on this site. "//x" and "/\x" are both read by browsers as another host. */
+export const isLocalPath = (path: string) => path.startsWith("/") && !/^\/[/\\]/.test(path);
+
 export function ChooseNumbersPage() {
   const { api } = useAuth();
   const qc = useQueryClient();
@@ -16,6 +19,10 @@ export function ChooseNumbersPage() {
   const [error, setError] = useState("");
   const [purchase, setPurchase] = useState<Purchase | null>(null);
   const purchaseId = new URLSearchParams(window.location.search).get("purchase");
+  const requestedNext = new URLSearchParams(window.location.search).get("next");
+  if (requestedNext && /^\/(?!\/)/.test(requestedNext)) {
+    try { sessionStorage.setItem("ringlite.afterNumbers", requestedNext); } catch { /* storage may be blocked */ }
+  }
   const available = useAvailableNumbers(api, { carrier: "telnyx", area_code: search ?? "", limit: 20 }, search !== null);
   useEffect(() => {
     if (!purchaseId) {
@@ -34,7 +41,12 @@ export function ChooseNumbersPage() {
         if (result.state === "complete") {
           await qc.invalidateQueries({ queryKey: ["numbers"] });
           await qc.invalidateQueries({ queryKey: ["me", "capabilities"] });
-          window.location.assign("/inbox");
+          let next = "/inbox";
+          try {
+            next = sessionStorage.getItem("ringlite.afterNumbers") || next;
+            sessionStorage.removeItem("ringlite.afterNumbers");
+          } catch { /* storage may be blocked */ }
+          window.location.assign(/^\/(?!\/)/.test(next) ? next : "/inbox");
         } else if (["paid", "provisioning", "activating"].includes(result.state)) timer = setTimeout(() => void check(), 5000);
       } catch (e) { if (!stopped) setError(mutationErrorMessage(e)); }
     }
@@ -66,7 +78,7 @@ export function ChooseNumbersPage() {
       <h1 className="mt-3 text-4xl font-semibold tracking-tight text-slate-900">Choose your phone numbers</h1>
       <p className="mt-4 max-w-2xl text-lg leading-7 text-slate-500">A local presence for every conversation. Each number is $15/month. Select your numbers, complete payment, and open your inbox.</p>
       {error && <p role="alert" className="mt-6 rounded-xl bg-red-50 p-4 text-red-800">{error}</p>}
-      {purchase && <section className="mt-8 rounded-2xl border border-blue-200 bg-white p-6"><h2 className="text-xl font-semibold">{purchase.state === "checkout" ? "Your checkout is ready" : "Setting up your phone numbers"}</h2><p className="my-4">{purchase.detail || (purchase.state === "checkout" ? "No payment has been confirmed yet. You can return to secure checkout." : "Payment received. We are connecting your numbers to your inbox.")}</p>{purchase.checkout_url && <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={() => window.location.assign(purchase.checkout_url!)}>Return to checkout</Button>}{purchase.state === "checkout" && !purchase.checkout_url && <Button className="bg-blue-600 text-white hover:bg-blue-700" disabled={pending} onClick={() => void checkout()}>Retry checkout</Button>}{purchase.state === "checkout" && purchase.checkout_url && <Button className="bg-blue-600 text-white hover:bg-blue-700" disabled={pending} variant="ghost" onClick={() => void cancelCheckout()}>Choose different numbers</Button>}<p className="mt-3 text-xs text-slate-500">Purchase reference: {purchase.id}</p></section>}
+      {purchase && <section className="mt-8 rounded-2xl border border-blue-200 bg-white p-6"><h2 className="text-xl font-semibold">{purchase.state === "checkout" ? "Your checkout is ready" : purchase.state === "refunded" ? "Your payment was refunded" : "Setting up your phone numbers"}</h2><p className="my-4">{purchase.detail || (purchase.state === "checkout" ? "No payment has been confirmed yet. You can return to secure checkout." : "Payment received. We are connecting your numbers to your inbox.")}</p>{purchase.state === "refunded" && <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={() => window.location.assign("/choose-numbers")}>Choose numbers again</Button>}{purchase.checkout_url && <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={() => window.location.assign(purchase.checkout_url!)}>Return to checkout</Button>}{purchase.state === "checkout" && !purchase.checkout_url && <Button className="bg-blue-600 text-white hover:bg-blue-700" disabled={pending} onClick={() => void checkout()}>Retry checkout</Button>}{purchase.state === "checkout" && purchase.checkout_url && <Button className="bg-blue-600 text-white hover:bg-blue-700" disabled={pending} variant="ghost" onClick={() => void cancelCheckout()}>Choose different numbers</Button>}<p className="mt-3 text-xs text-slate-500">Purchase reference: {purchase.id}</p></section>}
       {!purchaseId && <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_320px]">
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold">Find your local number</h2>

@@ -94,10 +94,13 @@ export function AddTeammateDrawer({
   open: boolean;
   onClose: () => void;
 }) {
-  const { api } = useAuth();
+  const { api, me, orgId } = useAuth();
   const gate = useGate();
   const canInvite = gate.can("members:invite");
-  const canOrder = gate.can("numbers:manage");
+  // Per-number billing: numbers are bought through Stripe checkout, one per teammate.
+  const paidCheckout =
+    me?.memberships?.find((m) => m.org_id === orgId)?.number_subscription_required === true;
+  const canOrder = gate.can("numbers:manage") && !paidCheckout;
   const canGrant = gate.can("inboxes:admin");
 
   const createMember = useCreateMember(api);
@@ -254,6 +257,7 @@ export function AddTeammateDrawer({
                 open={open}
                 canOrder={canOrder}
                 canGrant={canGrant}
+                paidCheckout={paidCheckout}
                 value={choice}
                 onChange={setChoice}
               />

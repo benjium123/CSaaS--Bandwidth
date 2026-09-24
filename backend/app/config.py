@@ -279,6 +279,11 @@ class Settings(BaseSettings):
     telnyx_api_key: SecretStr = SecretStr("")
     telnyx_public_key: SecretStr = SecretStr("")
     telnyx_messaging_profile_id: str = ""
+    #: What one number costs Ringlite at Telnyx before the first renewal ($1 upfront +
+    #: $1 first month). Number checkout is refused unless the Telnyx balance covers it.
+    telnyx_number_reserve_cents: int = 200
+    #: Balance kept back for everyone else's texts and calls; a purchase may not spend it.
+    telnyx_balance_floor_cents: int = 500
     telnyx_voice_connection_id: str = ""
     telnyx_default_number: str = ""
     #: How long carrier-confirmed Telnyx brand/campaign/TFV registration approval evidence

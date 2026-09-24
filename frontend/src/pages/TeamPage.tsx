@@ -125,7 +125,10 @@ export function TeamPage() {
   const [expandedUserId, setExpandedUserId] = React.useState<string | null>(null);
 
   /** Whether the Add-teammate drawer is open. */
-  const [addOpen, setAddOpen] = React.useState(false);
+  // Back from buying a teammate's number (/team?add=1): open the drawer straight away.
+  const [addOpen, setAddOpen] = React.useState(
+    () => new URLSearchParams(window.location.search).get("add") === "1",
+  );
 
   const canEditRoles = hasPermission(me, orgId, "roles:write");
   const canResetMembers = hasPermission(me, orgId, "members:update");
@@ -291,7 +294,11 @@ export function TeamPage() {
                 <Button
                   type="button"
                   className="rounded-full px-5"
-                  onClick={() => setAddOpen(true)}
+                  onClick={() =>
+                    seatLimit !== null && seats?.available === 0
+                      ? window.location.assign("/choose-numbers?next=%2Fteam%3Fadd%3D1")
+                      : setAddOpen(true)
+                  }
                 >
                   Add teammate
                 </Button>

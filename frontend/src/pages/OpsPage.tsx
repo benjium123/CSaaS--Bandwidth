@@ -160,6 +160,7 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
   const appQ = useOps<Application>(["application", orgId], `/api/v1/ops/applications/${orgId}`);
   const action = useOpsAction(orgId);
   const [note, setNote] = React.useState("");
+  const [override, setOverride] = React.useState(false);
   const [registryLink, setRegistryLink] = React.useState("");
   const [deposit, setDeposit] = React.useState("");
   const [dailyCalls, setDailyCalls] = React.useState("");
@@ -237,6 +238,12 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
               {app.approval_blockers.map((b) => <li key={b}>{b}</li>)}
             </ul>
           )}
+          {isAdmin && app.approval_blockers.length > 0 && (
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} />
+              <span>I reviewed these failed checks and approve anyway. The reason goes in the note below and is recorded.</span>
+            </label>
+          )}
           <Textarea
             aria-label="Reviewer note"
             rows={2}
@@ -248,10 +255,10 @@ function ApplicationView({ orgId, onBack }: { orgId: string; onBack: () => void 
             {app.status === "submitted" && <Button type="button" variant="outline" onClick={() => run("review")}>Start review</Button>}
             <Button
               type="button"
-              disabled={(!isAdmin && app.approval_blockers.length > 0) || action.isPending || !canApprove}
+              disabled={(app.approval_blockers.length > 0 && !(isAdmin && override && note.trim())) || action.isPending || !canApprove}
               onClick={() => {
                 if (!canApprove) return;
-                run("approve", { note, manual_override: isAdmin });
+                run("approve", { note, manual_override: isAdmin && override && app.approval_blockers.length > 0 });
               }}
             >
               Approve
@@ -513,6 +520,85 @@ function AlertsTab() {
   );
 }
 
+type OpsPurchase = {
+  id: string;
+  org_id: string;
+  state: string;
+  detail: string | null;
+  numbers: { e164: string; state: string; number_id?: string }[];
+  subscription_status: string | null;
+  updated_at: string | null;
+};
+
+const STUCK_PURCHASE_STATES = ["needs_attention", "provisioning"];
+
+/** Paid purchases that did not finish. Retry looks each number up at Telnyx before ordering,
+ *  so it never buys twice; refund drops only numbers that were never set up. */
+function PurchasesTab() {
+  const q = useOps<OpsPurchase[]>(["number-purchases"], "/api/v1/ops/number-purchases");
+  const action = useOpsAction(null);
+  const [message, setMessage] = React.useState("");
+  if (q.isPending) return <Spinner label="Loading purchases" />;
+  if (q.isError) return <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(q.error)}</p>;
+  const stuck = q.data.filter((p) => STUCK_PURCHASE_STATES.includes(p.state));
+  async function run(p: OpsPurchase, kind: "retry" | "refund") {
+    if (kind === "refund") {
+      const count = p.numbers.filter((n) => !n.number_id && n.state !== "released" && n.state !== "refunded").length;
+      if (!window.confirm(`Refund ${count} unprovisioned number(s) (${count * 15}) and stop billing for them?`)) return;
+    }
+    setMessage("");
+    try {
+      const result = (await action.mutateAsync({ path: `/api/v1/ops/number-purchases/${p.id}/${kind}` })) as {
+        state: string;
+        failures?: string[];
+      };
+      setMessage(
+        result.failures?.length
+          ? `Still needs attention: ${result.failures.join("; ")}`
+          : `Purchase is now ${result.state.replace(/_/g, " ")}.`,
+      );
+    } catch (e) {
+      setMessage(mutationErrorMessage(e));
+    }
+  }
+  return (
+    <div className="space-y-3">
+      {message && <p role="status" className="text-[13px] text-[hsl(var(--cx-text))]">{message}</p>}
+      {stuck.length === 0 ? (
+        <p className="text-[13px] text-[hsl(var(--cx-muted))]">No paid purchases are waiting on provisioning.</p>
+      ) : (
+        <ul className="space-y-2">
+          {stuck.map((p) => (
+            <li key={p.id} className="space-y-2 rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[13.5px] font-semibold text-[hsl(var(--cx-text))]">
+                  {p.state.replace(/_/g, " ")} · workspace {p.org_id.slice(0, 8)} · subscription {p.subscription_status ?? "none"}
+                </span>
+                <span className="flex gap-2">
+                  <Button type="button" size="sm" variant="outline" disabled={action.isPending} onClick={() => void run(p, "retry")}>
+                    Retry provisioning
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" disabled={action.isPending} onClick={() => void run(p, "refund")}>
+                    Refund unprovisioned
+                  </Button>
+                </span>
+              </div>
+              <ul className="text-[13px] text-[hsl(var(--cx-subtle))]">
+                {p.numbers.map((n) => (
+                  <li key={n.e164}>
+                    {n.e164} — {n.number_id ? n.state : `${n.state} (not provisioned)`}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[12px] text-[hsl(var(--cx-muted))]">Purchase {p.id}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function BanListTab() {
   const { api } = useAuth();
   const queryClient = useQueryClient();
@@ -657,6 +743,7 @@ const TABS = [
   { id: "bans", label: "Ban list" },
   { id: "monitoring", label: "Monitoring" },
   { id: "billing", label: "Billing" },
+  { id: "purchases", label: "Number purchases" },
   { id: "accounts", label: "Workspaces" },
   { id: "users", label: "Users" },
 ];
@@ -717,6 +804,7 @@ export function OpsPage() {
             {tab === "bans" && <BanListTab />}
             {tab === "monitoring" && <MonitoringTab />}
             {tab === "billing" && <BillingTab />}
+            {tab === "purchases" && <PurchasesTab />}
             {tab === "accounts" && <AccountsTab />}
             {tab === "users" && <UsersTab />}
           </section>

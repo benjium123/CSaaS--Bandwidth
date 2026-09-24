@@ -21,9 +21,15 @@ describe("Review and paid number setup", () => {
     expect(screen.getByRole("navigation", { name: "Administration navigation" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/?section=billing");
     const approve = await screen.findByRole("button", { name: "Approve" });
-    expect(approve).toBeEnabled();
+    // A failed check is never overridden by default: the admin ticks the override and
+    // writes the reason first.
+    expect(approve).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     expect(screen.getAllByText(/I call my clients/)[0]).toHaveTextContent("In my own words.");
+    await userEvent.click(screen.getByRole("checkbox", { name: /approve anyway/ }));
+    expect(approve).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Reviewer note"), "Sanctions list checked by hand");
+    expect(approve).toBeEnabled();
     await userEvent.click(approve);
     await waitFor(() => expect(client.calls.some(c => c.path.endsWith("/approve") && (c.init.json as { manual_override?: boolean })?.manual_override === true)).toBe(true));
     await userEvent.click(screen.getByRole("link", { name: "Review queue" }));

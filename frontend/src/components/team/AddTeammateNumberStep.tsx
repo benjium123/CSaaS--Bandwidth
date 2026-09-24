@@ -51,11 +51,14 @@ export function AddTeammateNumberStep({
   open,
   canOrder,
   canGrant,
+  paidCheckout = false,
   value,
   onChange,
 }: {
   /** The drawer's open state. EVERY query here is `enabled: open`. */
   open: boolean;
+  /** Per-number billing: a new number is bought through secure checkout, never here. */
+  paidCheckout?: boolean;
   /** numbers:manage - may buy. */
   canOrder: boolean;
   /** inboxes:admin - may see who holds what, and may assign. */
@@ -163,10 +166,20 @@ export function AddTeammateNumberStep({
       {errorMessage(assignmentsQuery.error)}
     </p>
   ) : free.length === 0 ? (
-    <ConsoleEmpty>
-      Every number in this workspace is already held by someone. Buy a new one for this
-      teammate, or free up a number from Team &gt; Manage numbers.
-    </ConsoleEmpty>
+    paidCheckout ? (
+      <ConsoleEmpty>
+        Each teammate gets their own number. Every number here is already in use, so{" "}
+        <a href="/choose-numbers?next=%2Fteam%3Fadd%3D1" className="font-medium underline">
+          buy a number for them ($15/month)
+        </a>{" "}
+        and you will come straight back here to create their login.
+      </ConsoleEmpty>
+    ) : (
+      <ConsoleEmpty>
+        Every number in this workspace is already held by someone. Buy a new one for this
+        teammate, or free up a number from Team &gt; Manage numbers.
+      </ConsoleEmpty>
+    )
   ) : (
     <>
       <div className="flex flex-col gap-2">

@@ -2,9 +2,9 @@
 
 The owner occupies a seat like anyone else, so a workspace that bought three numbers holds
 three people. The seat count is read from the SAME source Stripe bills from - the entries of
-number purchases whose subscription is entitled, minus released ones (release lowers the
-Stripe quantity in ``number_purchases.sync_released_number``) - so what a customer pays for
-and what they may use can never drift apart.
+number purchases whose subscription is entitled, minus released and refunded ones (both
+lower the Stripe quantity, in ``sync_released_number`` and ``refund_unprovisioned``) - so
+what a customer pays for and what they may use can never drift apart.
 
 Workspaces created before per-number billing (``number_subscription_required`` false) are
 not limited: they never bought seats and must not lose the ability to add teammates.
@@ -63,7 +63,10 @@ async def paid_numbers(session: AsyncSession, org_id: uuid.UUID) -> int:
         )
     ).scalars()
     return sum(
-        1 for numbers in purchases for entry in numbers or [] if entry.get("state") != "released"
+        1
+        for numbers in purchases
+        for entry in numbers or []
+        if entry.get("state") not in ("released", "refunded")
     )
 
 

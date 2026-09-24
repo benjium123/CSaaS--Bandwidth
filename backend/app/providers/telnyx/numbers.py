@@ -116,6 +116,10 @@ class TelnyxNumberProviderMixin:
         body: dict = {"phone_numbers": [{"phone_number": e164}]}
         if getattr(self, "messaging_profile_id", ""):
             body["messaging_profile_id"] = self.messaging_profile_id
+        # Without a connection Telnyx has nowhere to send an inbound call, so a bought
+        # number would ring out to nothing until someone assigned it in the portal.
+        if getattr(self, "voice_connection_id", ""):
+            body["connection_id"] = self.voice_connection_id
 
         try:
             resp = await client.post(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -20,10 +21,10 @@ from app.providers.numbers import AvailableNumber, NumberSearch, OrderResult, pa
 from app.providers.plivo.numbers import PlivoNumberProviderMixin
 from app.providers.probes import ProbeResult
 from app.providers.registry import CarrierRegistry, build_registry
+from app.providers.registry_org import build_registry_for_org
 from app.providers.signalwire.numbers import SignalWireNumberProviderMixin
 from app.providers.telnyx.adapter import TelnyxMessagingCarrier
 from app.providers.telnyx.numbers import TelnyxNumberProviderMixin
-from app.providers.registry_org import build_registry_for_org
 from app.repositories import users as users_repo
 from app.services import credentials as credentials_svc
 from app.services import provider_accounts as provider_accounts_svc
@@ -91,7 +92,9 @@ async def test_bandwidth_search_parses_both_xml_shapes():
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         if len(calls) == 1:
-            return httpx.Response(200, content=_DETAIL_XML, headers={"Content-Type": "application/xml"})
+            return httpx.Response(
+                200, content=_DETAIL_XML, headers={"Content-Type": "application/xml"}
+            )
         return httpx.Response(200, content=_LIST_XML, headers={"Content-Type": "application/xml"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -412,7 +415,11 @@ async def test_signalwire_search_order_release():
                     "capabilities": {"sms": True, "mms": True, "voice": True},
                 },
             )
-        if request.method == "GET" and "IncomingPhoneNumbers" in request.url.path and "PN" not in request.url.path:
+        if (
+            request.method == "GET"
+            and "IncomingPhoneNumbers" in request.url.path
+            and "PN" not in request.url.path
+        ):
             return httpx.Response(
                 200,
                 json={"incoming_phone_numbers": [{"sid": "PN123"}]},
@@ -554,10 +561,14 @@ async def test_poll_pending_number_orders_transitions_and_limit(session):
 
     session.expire_all()
     rows = (
-        await session.execute(
-            sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        (
+            await session.execute(
+                sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_ref = {r.provider_ref: r for r in rows}
 
     for i in range(10):
@@ -615,10 +626,14 @@ async def test_poll_pending_skips_carrier_without_order_status(session):
 
     session.expire_all()
     rows = (
-        await session.execute(
-            sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        (
+            await session.execute(
+                sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_ref = {r.provider_ref: r for r in rows}
 
     assert by_ref["bw-1"].status == "active"
@@ -743,7 +758,7 @@ async def test_telnyx_order_status_url_quotes_provider_ref():
     # past the fixed "/number_orders/" prefix - i.e. no actual extra path segments.
     prefix = b"/v2/number_orders/"
     assert captured["raw_path"].startswith(prefix)
-    assert b"/" not in captured["raw_path"][len(prefix):].replace(b"%2F", b"")
+    assert b"/" not in captured["raw_path"][len(prefix) :].replace(b"%2F", b"")
 
 
 async def test_telnyx_messaging_carrier_now_has_order_status():
@@ -1132,9 +1147,7 @@ async def test_order_route_db_backed_carrier_sets_provider_account_id_and_label(
             return ProbeResult(name, True, "Credentials accepted.", "test://telnyx")
 
         monkeypatch.setattr(provider_accounts_svc.probes, "probe", fake_probe_ok)
-        probed = await client.post(
-            f"/api/v1/provider-accounts/{account_id}/probe", headers=headers
-        )
+        probed = await client.post(f"/api/v1/provider-accounts/{account_id}/probe", headers=headers)
         assert probed.status_code == 200, probed.text
         assert probed.json()["status"] == "active"
 
@@ -1183,9 +1196,7 @@ async def _add_member_with_role(
     return token
 
 
-async def test_rbac_numbers_manage_gates_order_search_release(
-    app_with_number_carrier, session
-):
+async def test_rbac_numbers_manage_gates_order_search_release(app_with_number_carrier, session):
     client, fake, _application = app_with_number_carrier
     owner_token = await register_and_login(client, "p18-rbac-owner@example.com")
     org = await create_org(client, owner_token, "Org P18 RBAC")
@@ -1229,9 +1240,7 @@ async def test_rbac_numbers_manage_gates_order_search_release(
     )
     assert order_attempt.status_code == 403
 
-    release_attempt = await client.delete(
-        f"/api/v1/numbers/{number_id}", headers=readonly_headers
-    )
+    release_attempt = await client.delete(f"/api/v1/numbers/{number_id}", headers=readonly_headers)
     assert release_attempt.status_code == 403
 
     # A member with no numbers permission at all cannot even list.
@@ -1483,9 +1492,7 @@ async def test_list_numbers_batches_provider_account_label_query(
     assert len(resp.json()) == 10
     assert all(row["provider_account_label"] == "Batched Label" for row in resp.json())
 
-    provider_account_queries = [
-        s for s in query_counter.statements if "provider_accounts" in s
-    ]
+    provider_account_queries = [s for s in query_counter.statements if "provider_accounts" in s]
     assert len(provider_account_queries) == 1, (
         "expected exactly one batched provider_accounts query for the whole list, got "
         f"{len(provider_account_queries)}: {provider_account_queries}"
@@ -1528,12 +1535,16 @@ async def test_poll_pending_number_orders_sql_filters_unpollable_carriers_first(
 
     session.expire_all()
     rows = (
-        await session.execute(
-            sa.select(OrgNumber)
-            .where(OrgNumber.provider_ref == "bw-late")
-            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        (
+            await session.execute(
+                sa.select(OrgNumber)
+                .where(OrgNumber.provider_ref == "bw-late")
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows[0].status == "active"
 
 
@@ -1578,10 +1589,14 @@ async def test_poll_pending_number_orders_commit_per_row_survives_a_mid_pass_fai
 
     session.expire_all()
     rows = (
-        await session.execute(
-            sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        (
+            await session.execute(
+                sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_ref = {r.provider_ref: r for r in rows}
     # ...but row 1's transition survived row 2's exception - commit-per-row, not one
     # transaction for the whole org.
@@ -1610,7 +1625,10 @@ async def test_poll_pending_number_orders_scopes_correctly_across_two_orgs(sessi
     session.info.pop("org_id", None)
 
     fake = _FakeOrderCarrier(
-        {"a-1": _StatusResult(status="active"), "b-1": _StatusResult(status="failed", detail="no numbers")}
+        {
+            "a-1": _StatusResult(status="active"),
+            "b-1": _StatusResult(status="failed", detail="no numbers"),
+        }
     )
     registry = CarrierRegistry({"bandwidth": fake}, primary="bandwidth")
 
@@ -1621,10 +1639,14 @@ async def test_poll_pending_number_orders_scopes_correctly_across_two_orgs(sessi
 
     session.expire_all()
     rows = (
-        await session.execute(
-            sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        (
+            await session.execute(
+                sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_ref = {r.provider_ref: r for r in rows}
     assert by_ref["a-1"].status == "active"
     assert by_ref["a-1"].org_id == org_a
@@ -1722,10 +1744,14 @@ async def test_poll_pending_number_orders_primes_and_scopes_db_backed_carriers(
 
     session.expire_all()
     rows = (
-        await session.execute(
-            sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        (
+            await session.execute(
+                sa.select(OrgNumber).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_ref = {r.provider_ref: r for r in rows}
     assert by_ref["order-a-1"].status == "active"
     assert by_ref["order-a-1"].org_id == org_a
@@ -1764,3 +1790,33 @@ async def test_db_backed_providers_ttl_expiry_still_returns_the_provider(monkeyp
 
     # Cleanup: this module-level cache persists across tests in the same process.
     registry_org_module._ORG_REGISTRY_CACHE.pop((org_id, 0), None)
+
+
+@pytest.mark.parametrize("connection_id", ["conn-livekit", ""])
+async def test_telnyx_order_attaches_the_voice_connection_when_configured(connection_id):
+    """Without a connection Telnyx cannot route an inbound call anywhere, so a bought
+    number is silent until someone assigns it by hand in the portal."""
+    sent = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "id": "o1",
+                    "status": "success",
+                    "phone_numbers": [{"phone_number": "+12125550100"}],
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        carrier = TelnyxHarness(http)
+        carrier.voice_connection_id = connection_id
+        await carrier.order_number("+12125550100")
+
+    if connection_id:
+        assert sent["connection_id"] == "conn-livekit"
+    else:
+        assert "connection_id" not in sent

@@ -61,9 +61,70 @@ async def number_purchase_queue(op: Reviewer) -> list[dict]:
             "org_id": str(row.org_id),
             "subscription_id": row.subscription_id,
             "subscription_status": row.subscription_status,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
         for row in rows
     ]
+
+
+async def _purchase_org(op: OperatorContext, purchase_id: uuid.UUID) -> uuid.UUID:
+    from app.models import NumberPurchase
+
+    org_id = (
+        await op.session.execute(
+            sa.select(NumberPurchase.org_id)
+            .where(NumberPurchase.id == purchase_id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one_or_none()
+    if org_id is None:
+        raise NotFoundError("Purchase not found")
+    set_org_context(op.session, org_id)
+    return org_id
+
+
+def _audit_purchase(op: OperatorContext, org_id, purchase_id, action: str, detail: dict) -> None:
+    from app.services import audit as audit_svc
+
+    audit_svc.record(
+        op.session,
+        org_id,
+        action=action,
+        target_type="number_purchase",
+        target_id=str(purchase_id),
+        actor_user_id=op.user.id,
+        detail={"operator_user_id": str(op.user.id), **detail},
+    )
+
+
+@router.post("/number-purchases/{purchase_id}/retry")
+async def retry_number_purchase(purchase_id: uuid.UUID, request: Request, op: Admin) -> dict:
+    """Finish provisioning a paid purchase that stalled. Looks each missing number up on
+    the Telnyx account before ordering, so a timed-out order is never placed twice."""
+    from app.services import number_purchases
+
+    org_id = await _purchase_org(op, purchase_id)
+    purchase, failures = await number_purchases.retry(op.session, request, purchase_id)
+    _audit_purchase(op, org_id, purchase_id, "number_purchase.retried", {"failures": failures})
+    await op.session.commit()
+    return {**number_purchases.public(purchase), "failures": failures}
+
+
+@router.post("/number-purchases/{purchase_id}/refund")
+async def refund_number_purchase(purchase_id: uuid.UUID, request: Request, op: Admin) -> dict:
+    """Stop billing for and refund the numbers of a paid purchase that were never
+    provisioned. Provisioned numbers are kept and stay billed."""
+    from app.services import number_purchases
+
+    org_id = await _purchase_org(op, purchase_id)
+    purchase = await number_purchases.refund_unprovisioned(
+        op.session, request.app.state.settings, purchase_id
+    )
+    _audit_purchase(
+        op, org_id, purchase_id, "number_purchase.refunded", {"detail": purchase.detail}
+    )
+    await op.session.commit()
+    return number_purchases.public(purchase)
 
 
 class NoteIn(BaseModel):
@@ -500,6 +561,13 @@ async def approve(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Revi
     if await kyc_svc._is_individual(op.session, org_id) and op.operator.role != "admin":
         raise PermissionDeniedError(
             "An individual account can only be approved by an admin operator"
+        )
+    # Overriding sanctions, identity or document checks is a deliberate act with a reason,
+    # never a side effect of which operator happened to click Approve.
+    if payload.manual_override and not payload.note.strip():
+        raise ValidationFailedError(
+            "Write why you are approving despite the failed checks.",
+            code="override_reason_required",
         )
     await kyc_svc.approve(
         op.session,
