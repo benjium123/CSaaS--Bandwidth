@@ -349,3 +349,28 @@
   .sb-ticket { grid-template-columns: minmax(0, 1fr) auto; }
   .sb-ticket-signals { grid-column: 1 / -1; order: 3; }
 }
+
+/* ---------------------------------------------------------------- guard rail
+ * Tabs written for the old light console (and any added later) use stock light
+ * Tailwind colours. On the Switchboard they read as grey-on-black or glow white, so they
+ * are re-pointed at the palette here rather than trusting every future tab to remember. */
+.sb :is(.bg-white, .bg-slate-50, .bg-gray-50, .bg-neutral-50, .bg-slate-100, .bg-gray-100) { background-color: var(--sb-raise) !important; }
+.sb :is(.bg-blue-50, .bg-sky-50, .bg-indigo-50) { background-color: rgba(127, 200, 255, 0.07) !important; }
+.sb :is(.bg-red-50, .bg-rose-50) { background-color: rgba(255, 107, 87, 0.08) !important; }
+.sb :is(.bg-amber-50, .bg-yellow-50, .bg-orange-50) { background-color: rgba(244, 170, 58, 0.08) !important; }
+.sb :is(.bg-green-50, .bg-emerald-50) { background-color: rgba(95, 212, 160, 0.08) !important; }
+.sb :is(.text-slate-900, .text-gray-900, .text-neutral-900, .text-slate-800, .text-gray-800, .text-black) { color: var(--sb-text) !important; }
+.sb :is(.text-slate-700, .text-gray-700, .text-slate-600, .text-gray-600, .text-neutral-600, .text-slate-500, .text-gray-500, .text-neutral-500) { color: var(--sb-dim) !important; }
+.sb :is(.text-slate-400, .text-gray-400, .text-neutral-400) { color: var(--sb-mute) !important; }
+.sb :is(.text-blue-600, .text-blue-700, .text-blue-800, .text-blue-900, .text-sky-700, .text-indigo-700) { color: var(--sb-sky) !important; }
+.sb :is(.text-red-600, .text-red-700, .text-red-800, .text-rose-700) { color: var(--sb-stop) !important; }
+.sb :is(.text-amber-700, .text-amber-800, .text-amber-900, .text-yellow-800, .text-orange-700) { color: var(--sb-amber) !important; }
+.sb :is(.text-green-700, .text-emerald-700, .text-green-800) { color: var(--sb-go) !important; }
+.sb :is(.border-slate-100, .border-slate-200, .border-gray-100, .border-gray-200, .border-blue-100, .border-blue-200, .border-neutral-200) { border-color: var(--sb-line) !important; }
+.sb :is(.border-red-100, .border-red-200) { border-color: rgba(255, 107, 87, 0.3) !important; }
+.sb :is(.border-amber-200, .border-amber-300) { border-color: rgba(244, 170, 58, 0.35) !important; }
+.sb :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]) { background-color: rgba(11, 16, 14, 0.75); color: var(--sb-text); border-color: var(--sb-line-2); }
+.sb :is(input, textarea)::placeholder { color: var(--sb-mute); }
+.sb select option { background: var(--sb-panel); color: var(--sb-text); }
+
+.sb-title { overflow-wrap: anywhere; }

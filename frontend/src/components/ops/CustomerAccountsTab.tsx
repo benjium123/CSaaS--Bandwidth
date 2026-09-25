@@ -2,42 +2,106 @@ import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Input, Textarea, Spinner, Pill, mutationErrorMessage } from "@/components/ui/primitives";
+import { Spinner, mutationErrorMessage } from "@/components/ui/primitives";
 
 type Account = { id: string; email: string; full_name: string; created_at: string; is_active: boolean; email_verified: boolean; is_operator: boolean; workspaces: { id: string; name: string; account_type: string; role: string; status: string }[] };
 type Detail = { id: string; email: string; identifiers: { key: string; kind: string; label: string }[]; delete_workspaces: { id: string; name: string }[]; blockers: string[] };
 
+/** One account: delete it (one confirmation), or block it from coming back. */
 function AccountActions({ id, close }: { id: string; close: () => void }) {
   const { api } = useAuth();
   const cache = useQueryClient();
+  const [confirming, setConfirming] = React.useState(false);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [reason, setReason] = React.useState("");
-  const [confirmation, setConfirmation] = React.useState("");
-  const [deleting, setDeleting] = React.useState(false);
   const detail = useQuery({ queryKey: ["customer-account", id], queryFn: () => api.request<Detail>(`/api/v1/ops/customer-accounts/${id}`), retry: false });
-  const action = useMutation({ mutationFn: (kind: "blacklist" | "delete") => api.request(`/api/v1/ops/customer-accounts/${id}/${kind}`, { method: "POST", json: { reason, identifiers: selected, confirmation } }), onSuccess: async () => { await cache.invalidateQueries({ queryKey: ["customer-accounts"] }); await cache.invalidateQueries({ queryKey: ["ops"] }); close(); } });
-  if (detail.isPending) return <Spinner label="Loading account controls" />;
-  if (detail.isError) return <div><Button onClick={close} variant="outline">Back to all accounts</Button><p role="alert">{mutationErrorMessage(detail.error)}</p></div>;
+  const action = useMutation({
+    mutationFn: ({ kind, json }: { kind: "blacklist" | "delete"; json: unknown }) =>
+      api.request(`/api/v1/ops/customer-accounts/${id}/${kind}`, { method: "POST", json }),
+    onSuccess: async () => {
+      await cache.invalidateQueries({ queryKey: ["customer-accounts"] });
+      await cache.invalidateQueries({ queryKey: ["ops"] });
+      close();
+    },
+  });
+  const back = <button type="button" className="sb-back" onClick={close}>← Back to all accounts</button>;
+  if (detail.isPending) return <Spinner label="Loading account" />;
+  if (detail.isError) return <div>{back}<p role="alert" className="sb-error">{mutationErrorMessage(detail.error)}</p></div>;
   const data = detail.data;
-  return <section className="space-y-6 rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
-    <Button variant="outline" onClick={close}>Back to all accounts</Button>
-    <div><h2 className="text-xl font-semibold">Manage account</h2><p className="mt-1 break-all text-slate-600">{data.email}</p></div>
-    <div className="rounded-xl border border-blue-100 bg-blue-50 p-5 space-y-3">
-      <h3 className="font-semibold text-blue-900">Blacklist identifiers</h3>
-      <p className="text-sm text-slate-600">Choose what to block from future signups and verification. Blacklisting also disables this login and revokes its sessions.</p>
-      {data.identifiers.map(item => <label key={item.key} className="flex items-start gap-3 rounded-lg bg-white p-3 text-sm"><input type="checkbox" checked={selected.includes(item.key)} onChange={e => setSelected(old => e.target.checked ? [...old, item.key] : old.filter(k => k !== item.key))} /><span className="break-all">{item.label}<span className="block text-xs text-slate-500">{item.kind === "person" ? "Didit identity match (verified name and birth date)" : item.kind}</span></span></label>)}
-      {!data.identifiers.some(i => i.kind === "person") && <p className="text-sm text-slate-500">No completed Didit identity is available to blacklist yet.</p>}
+  const remove = () =>
+    action.mutate({
+      kind: "delete",
+      // The server keeps these for the audit log; the operator should not have to type them.
+      json: { reason: reason.trim() || "Deleted by an operator", identifiers: selected, confirmation: data.email },
+    });
+
+  return (
+    <div className="flex flex-col gap-5">
+      {back}
+      <header>
+        <div className="sb-eyebrow">Account</div>
+        <h2 className="sb-title" style={{ fontSize: "clamp(26px, 5vw, 38px)" }}>{data.email}</h2>
+      </header>
+
+      <section className="sb-panel sb-panel-pad">
+        <h2>Delete account</h2>
+        <p className="sb-lede" style={{ marginTop: 0 }}>
+          Removes this login and {data.delete_workspaces.length === 1 ? "its workspace" : "its workspaces"}
+          {data.delete_workspaces.length > 0 ? ` (${data.delete_workspaces.map((o) => o.name).join(", ")})` : ""}.
+          This cannot be undone.
+        </p>
+        {data.blockers.length > 0 ? (
+          <ul role="status" className="sb-blockers">
+            {data.blockers.map((b) => <li key={b}>{b}</li>)}
+          </ul>
+        ) : !confirming ? (
+          <div className="sb-actions" style={{ maxWidth: 260 }}>
+            <button type="button" className="sb-btn" data-kind="stop" onClick={() => setConfirming(true)}>
+              Delete account
+            </button>
+          </div>
+        ) : (
+          <div className="sb-actions" style={{ maxWidth: 420 }}>
+            <p className="sb-foot" style={{ marginTop: 0 }}>Delete {data.email} for good?</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="sb-btn" data-kind="stop" style={{ background: "var(--sb-stop)", color: "#1d0703" }} disabled={action.isPending} onClick={remove}>
+                {action.isPending ? "Deleting…" : "Yes, delete it"}
+              </button>
+              <button type="button" className="sb-btn" data-kind="quiet" onClick={() => setConfirming(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <details className="sb-more">
+        <summary>Block them from signing up again</summary>
+        <div className="sb-more-body">
+          <p className="sb-foot" style={{ marginTop: 0 }}>
+            Blocking also signs them out and disables this login. Tick what to block; it also applies if you delete the account afterwards.
+          </p>
+          {data.identifiers.map((item) => (
+            <label key={item.key} className="sb-check-inline" style={{ marginTop: 0 }}>
+              <input type="checkbox" checked={selected.includes(item.key)} onChange={(e) => setSelected((old) => (e.target.checked ? [...old, item.key] : old.filter((k) => k !== item.key)))} />
+              <span>
+                {item.label}
+                <span className="sb-foot" style={{ display: "block", margin: 0 }}>
+                  {item.kind === "person" ? "Their verified identity (name and date of birth)" : item.kind}
+                </span>
+              </span>
+            </label>
+          ))}
+          {!data.identifiers.some((i) => i.kind === "person") && <p className="sb-foot" style={{ margin: 0 }}>They have not finished an identity check, so only the email can be blocked.</p>}
+          <textarea className="sb-textarea" aria-label="Account action reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Why (optional, kept in the audit log)" style={{ minHeight: 64 }} />
+          <div>
+            <button type="button" className="sb-btn" data-kind="amber" disabled={!selected.length || action.isPending} onClick={() => action.mutate({ kind: "blacklist", json: { reason: reason.trim() || "Blocked by an operator", identifiers: selected, confirmation: "" } })}>
+              Block selected
+            </button>
+          </div>
+        </div>
+      </details>
+      {action.isError && <p role="alert" className="sb-error">{mutationErrorMessage(action.error)}</p>}
     </div>
-    <label className="block space-y-2"><span className="font-medium">Reason</span><Textarea aria-label="Account action reason" value={reason} onChange={e => setReason(e.target.value)} maxLength={500} placeholder="Explain why you are taking this action" /></label>
-    <Button disabled={!selected.length || !reason.trim() || action.isPending} onClick={() => action.mutate("blacklist")}>Blacklist selected identifiers</Button>
-    <div className="space-y-3 border-t border-red-100 pt-6">
-      <h3 className="font-semibold text-red-700">Delete account permanently</h3>
-      <p className="text-sm text-slate-600">Removes this login, its sessions, and the workspaces listed below with their Ringlite data. Other people's accounts are preserved. Selected blacklist hashes and an operator audit record remain. Provider-held records and backups follow their retention policies.</p>
-      <ul className="list-disc pl-5 text-sm">{data.delete_workspaces.map(org => <li key={org.id}>{org.name}</li>)}</ul>
-      {data.blockers.length > 0 ? <div role="status" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900"><p className="font-semibold">Before deletion</p><ul className="list-disc pl-5">{data.blockers.map(b => <li key={b}>{b}</li>)}</ul></div> : !deleting ? <Button variant="outline" onClick={() => setDeleting(true)}>Review permanent deletion</Button> : <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4"><label className="block space-y-2"><span>Type {data.email} to confirm</span><Input aria-label="Confirm account email" value={confirmation} onChange={e => setConfirmation(e.target.value)} autoComplete="off" /></label><Button disabled={confirmation !== data.email || !reason.trim() || action.isPending} onClick={() => action.mutate("delete")}>Delete account permanently</Button><Button variant="outline" onClick={() => setDeleting(false)}>Cancel</Button></div>}
-    </div>
-    {action.isError && <p role="alert" className="text-red-700">{mutationErrorMessage(action.error)}</p>}
-  </section>;
+  );
 }
 
 export function CustomerAccountsTab() {
@@ -49,11 +113,57 @@ export function CustomerAccountsTab() {
   const [offset, setOffset] = React.useState(0);
   const query = useQuery({ queryKey: ["customer-accounts", search, offset], queryFn: () => api.request<{ accounts: Account[]; total: number }>(`/api/v1/ops/customer-accounts?q=${encodeURIComponent(search)}&offset=${offset}&limit=50`) });
   if (selected) return <AccountActions key={selected} id={selected} close={() => setParams({ section: "customers" })} />;
-  return <section className="space-y-5">
-    <div className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm"><h2 className="text-xl font-semibold">All accounts</h2><p className="mt-1 text-sm text-slate-500">Every signup, including unconfirmed emails and incomplete, approved or rejected applications.</p><form className="mt-4 flex gap-3" onSubmit={e => { e.preventDefault(); setSearch(text.trim()); setOffset(0); }}><Input aria-label="Search accounts" placeholder="Search name or email" value={text} onChange={e => setText(e.target.value)} /><Button type="submit">Search</Button></form></div>
-    {query.isPending ? <Spinner label="Loading accounts" /> : query.isError ? <p role="alert">{mutationErrorMessage(query.error)}</p> : <>
-      <div className="overflow-x-auto rounded-2xl border border-blue-100 bg-white shadow-sm"><table><thead><tr><th>Account</th><th>Signed up</th><th>Verification</th><th>Workspaces / applications</th><th>Actions</th></tr></thead><tbody>{query.data.accounts.map(account => <tr key={account.id}><td><div className="font-semibold">{account.full_name || "Unnamed account"}</div><div className="text-sm text-slate-500">{account.email}</div><Pill tone={account.is_active ? "info" : "danger"}>{account.is_active ? "Active login" : "Disabled"}</Pill>{account.is_operator && <Pill tone="neutral">Administrator</Pill>}</td><td className="text-sm">{new Date(account.created_at).toLocaleDateString()}</td><td className="text-sm">{account.email_verified ? "Email confirmed" : "Email not confirmed"}</td><td>{account.workspaces.length ? account.workspaces.map(org => <div key={org.id} className="mb-2 text-sm"><Link className="font-semibold text-blue-700 underline" to={`?section=queue&application=${org.id}`}>{org.name}</Link><div className="text-slate-500">{org.account_type} · {org.status.replace(/_/g, " ")} · {org.role}</div></div>) : <span className="text-sm text-slate-500">No workspace</span>}</td><td>{!account.is_operator && me?.operator_role === "admin" && <Button variant="outline" onClick={() => setParams({ section: "customers", account: account.id })}>Manage account</Button>}</td></tr>)}</tbody></table>{query.data.accounts.length === 0 && <p className="p-6 text-slate-500">No accounts match your search.</p>}</div>
-      <div className="flex items-center justify-between"><p className="text-sm text-slate-500">{query.data.total} accounts</p><div className="flex gap-2"><Button variant="outline" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>Previous</Button><Button variant="outline" disabled={offset + 50 >= query.data.total} onClick={() => setOffset(offset + 50)}>Next</Button></div></div>
-    </>}
-  </section>;
+  return (
+    <div className="flex flex-col gap-4">
+      <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); setSearch(text.trim()); setOffset(0); }}>
+        <input className="sb-textarea" style={{ minHeight: 0, height: 44, marginTop: 0, flex: "1 1 240px" }} aria-label="Search accounts" placeholder="Search name or email" value={text} onChange={(e) => setText(e.target.value)} />
+        <button type="submit" className="sb-btn" data-kind="amber">Search</button>
+      </form>
+      {query.isPending ? <Spinner label="Loading accounts" /> : query.isError ? <p role="alert" className="sb-error">{mutationErrorMessage(query.error)}</p> : (
+        <>
+          {query.data.accounts.length === 0 ? (
+            <div className="sb-empty"><p>No accounts match your search.</p></div>
+          ) : (
+            <ul className="sb-tickets" style={{ marginTop: 0 }}>
+              {query.data.accounts.map((account) => (
+                <li key={account.id}>
+                  <div className="sb-ticket" data-risk={account.is_active ? "low" : "high"} style={{ cursor: "default" }}>
+                    <div className="min-w-0">
+                      <div className="sb-ticket-name">{account.full_name || "Unnamed account"}</div>
+                      <div className="sb-ticket-sub" style={{ overflowWrap: "anywhere" }}>{account.email} · joined {new Date(account.created_at).toLocaleDateString()}</div>
+                    </div>
+                    <div className="sb-ticket-signals">
+                      <span className="sb-tag" data-tone={account.is_active ? "go" : "stop"}>{account.is_active ? "Active" : "Disabled"}</span>
+                      <span className="sb-tag" data-tone={account.email_verified ? undefined : "amber"}>{account.email_verified ? "Email confirmed" : "Email not confirmed"}</span>
+                      {account.is_operator && <span className="sb-tag" data-tone="sky">Administrator</span>}
+                      {account.workspaces.map((org) => (
+                        <Link key={org.id} className="sb-tag" data-plain="true" to={`?section=queue&application=${org.id}`}>
+                          {org.name} · {org.account_type} · {org.status.replace(/_/g, " ")}
+                        </Link>
+                      ))}
+                      {account.workspaces.length === 0 && <span className="sb-tag" data-plain="true">No workspace</span>}
+                    </div>
+                    <div>
+                      {!account.is_operator && me?.operator_role === "admin" && (
+                        <button type="button" className="sb-btn" data-kind="quiet" onClick={() => setParams({ section: "customers", account: account.id })}>
+                          Manage account
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex items-center justify-between">
+            <p className="sb-foot" style={{ margin: 0 }}>{query.data.total} accounts</p>
+            <div className="flex gap-2">
+              <button type="button" className="sb-btn" data-kind="quiet" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>Previous</button>
+              <button type="button" className="sb-btn" data-kind="quiet" disabled={offset + 50 >= query.data.total} onClick={() => setOffset(offset + 50)}>Next</button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
