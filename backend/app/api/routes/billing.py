@@ -411,6 +411,7 @@ async def get_bundles(
             "units_per_bundle": bundles_svc.UNITS_PER_BUNDLE[kind],
             "list_micros": await bundles_svc.bundle_list_price(ctx.session, kind),
             "volume_discount": kind in bundles_svc.VOLUME_DISCOUNT_KINDS,
+            "volume_discount_bps": bundles_svc.VOLUME_DISCOUNT_BPS_BY_KIND.get(kind, 0),
             "pay_as_you_go_micros": await telephony_billing_price(ctx, f"{kind}_out"),
         }
     return out
@@ -441,7 +442,7 @@ async def create_bundle_checkout(
     size = bundles_svc.UNITS_PER_BUNDLE[payload.kind]
     name = f"{size:,} {payload.kind.upper()} bundle"
     if q["discount"] > 0:
-        name += f" ({bundles_svc.VOLUME_DISCOUNT_BPS // 100}% volume discount)"
+        name += f" ({bundles_svc.VOLUME_DISCOUNT_BPS_BY_KIND[payload.kind] // 100}% volume discount)"
     checkout = await stripe_client.create_bundle_checkout_session(
         settings,
         org=ctx.org,

@@ -26,14 +26,10 @@ grep -q '^TELEPHONY_PREPAID_DEFAULT=' /opt/csaas/.env || echo 'TELEPHONY_PREPAID
 ```bash
 bash deploy/deploy.sh          # from C:/Users/omer_/csaas on main
 ```
-Migration 0065 switches ALL orgs to prepaid, billed from the migration instant.
-**Right after**, give the launch credit, or inbound calls to those orgs are declined:
-```bash
-ssh root@144.126.152.175 "docker exec -i csaas-api-1 python scripts/launch_credit.py"          # dry run
-ssh root@144.126.152.175 "docker exec -i csaas-api-1 python scripts/launch_credit.py --apply"  # $20 each
-```
-(Or per org from Ops -> Console -> org -> Credit adjustment. To exempt an org, Console ->
-org -> Prepaid off.)
+Migration 0065 switches ALL orgs to prepaid, billed from the migration instant. There is no
+launch credit: every org starts at its current balance ($0) and recharges itself (Settings ->
+Billing). Until it does, its outbound is refused and inbound calls are declined. To exempt an
+org, Ops -> Console -> org -> Prepaid off.
 
 ## 4. Fax
 ```bash

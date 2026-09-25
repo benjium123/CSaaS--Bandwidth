@@ -39,7 +39,7 @@ function BundleRow({ info, kind, canPay }: { info: BundlesInfo; kind: BundleKind
   const copy = KIND_COPY[kind];
   const kindInfo = info.kinds[kind];
   const quote = bundleQuote(info, kind, qty);
-  const discountPct = info.volume_discount_bps / 100;
+  const discountPct = (kindInfo.volume_discount_bps ?? info.volume_discount_bps) / 100;
   const belowVolumeMin = kindInfo.volume_discount && qty < info.volume_min_qty;
   const disabled = !canPay || checkout.isPending;
 

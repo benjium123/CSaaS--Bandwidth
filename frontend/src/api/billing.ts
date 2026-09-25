@@ -24,6 +24,8 @@ export interface BundleKindInfo {
   units_per_bundle: number;
   list_micros: number;
   volume_discount: boolean;
+  /** Per-kind discount (SMS 20%, MMS 10%); older servers only send the top-level one. */
+  volume_discount_bps?: number;
   pay_as_you_go_micros: number;
 }
 
@@ -476,7 +478,7 @@ export function bundleQuote(
   const qualifiesForDiscount = kindInfo.volume_discount && qty >= info.volume_min_qty;
   const unitPaid = qualifiesForDiscount
     ? Math.floor(
-        Math.floor((kindInfo.list_micros * (10_000 - info.volume_discount_bps)) / 10_000) /
+        Math.floor((kindInfo.list_micros * (10_000 - (kindInfo.volume_discount_bps ?? info.volume_discount_bps))) / 10_000) /
           10_000,
       ) * 10_000
     : kindInfo.list_micros;

@@ -236,10 +236,17 @@ def test_quote_from_list_sms_five_gets_discount():
     assert q["units"] == 5_000
 
 
-def test_quote_from_list_mms_five_no_discount():
-    q = bundles.quote_from_list("mms", 5, 3_000_000)
+def test_quote_from_list_mms_four_no_discount():
+    q = bundles.quote_from_list("mms", 4, 3_000_000)
     assert q["discount"] == 0
-    assert q["paid"] == 15_000_000
+    assert q["paid"] == 12_000_000
+
+
+def test_quote_from_list_mms_five_gets_ten_percent():
+    q = bundles.quote_from_list("mms", 5, 3_000_000)
+    assert q["unit_paid"] == 2_700_000
+    assert q["discount"] == 1_500_000
+    assert q["paid"] == 13_500_000
     assert q["units"] == 500
 
 

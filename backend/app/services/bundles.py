@@ -7,7 +7,8 @@ reference), serialised per org by the same advisory lock credits uses.
 Pricing (defaults, editable in platform_prices):
 - SMS bundle: 1,000 segments for $12. Buying VOLUME_MIN_QTY or more in ONE purchase takes
   VOLUME_DISCOUNT_BPS off the whole purchase ($9.60 each at 5+).
-- MMS bundle: 100 MMS for $3 ($0.03 each; Telnyx worst case is $0.025). No volume discount.
+- MMS bundle: 100 MMS for $3 ($0.03 each; Telnyx worst case is $0.025). 5+ in one purchase
+  takes 10% off ($2.70 each).
 """
 
 from __future__ import annotations
@@ -27,9 +28,11 @@ from app.services import credits
 #: Message units in one bundle, per kind.
 UNITS_PER_BUNDLE: dict[str, int] = {"sms": 1_000, "mms": 100}
 VOLUME_MIN_QTY = 5
-VOLUME_DISCOUNT_BPS = 2_000
+#: Volume discount per bundle kind, in basis points, at VOLUME_MIN_QTY or more.
+VOLUME_DISCOUNT_BPS_BY_KIND: dict[str, int] = {"sms": 2_000, "mms": 1_000}
+VOLUME_DISCOUNT_BPS = VOLUME_DISCOUNT_BPS_BY_KIND["sms"]
 #: Which bundle kinds get the volume discount.
-VOLUME_DISCOUNT_KINDS: frozenset[str] = frozenset({"sms"})
+VOLUME_DISCOUNT_KINDS: frozenset[str] = frozenset(VOLUME_DISCOUNT_BPS_BY_KIND)
 MAX_QTY = 500
 
 
@@ -56,7 +59,7 @@ def quote_from_list(kind: str, qty: int, list_each: int) -> dict[str, int]:
         raise ValidationFailedError(f"Choose between 1 and {MAX_QTY} bundles.")
     unit_paid = list_each
     if kind in VOLUME_DISCOUNT_KINDS and qty >= VOLUME_MIN_QTY:
-        unit_paid = list_each * (10_000 - VOLUME_DISCOUNT_BPS) // 10_000
+        unit_paid = list_each * (10_000 - VOLUME_DISCOUNT_BPS_BY_KIND[kind]) // 10_000
     unit_paid = (unit_paid // 10_000) * 10_000  # whole cents
     total_list = list_each * qty
     paid = unit_paid * qty
