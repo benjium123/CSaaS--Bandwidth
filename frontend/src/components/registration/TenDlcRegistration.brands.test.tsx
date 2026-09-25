@@ -47,7 +47,34 @@ interface StubOptions {
 function stubRoutes({ brands = [], permissions = MANAGER_PERMISSIONS }: StubOptions = {}) {
   return {
     // The AuthProvider fetches this itself; without a stub it throws "No stub for ...".
-    "/api/v1/auth/me": { id: "u-1", email: "u@example.com", permissions: [] },
+    // A business owner in org-1: the panel waits on a membership before it renders.
+    "/api/v1/auth/me": {
+      id: "u-1",
+      email: "u@example.com",
+      full_name: "Test User",
+      permissions: [],
+      memberships: [
+        {
+          org_id: "org-1",
+          org_name: "Org One",
+          org_slug: "org-one",
+          role_name: "owner",
+          account_type: "business",
+        },
+      ],
+    },
+    "/api/v1/registration/texting": {
+      registration: null,
+      quotes: {
+        standard: { fee_tier: "standard", monthly_cents: 1000, upfront_months: 3, due_today_cents: 5450 },
+        sole_proprietor: {
+          fee_tier: "sole_proprietor",
+          monthly_cents: 200,
+          upfront_months: 3,
+          due_today_cents: 3050,
+        },
+      },
+    },
     "/api/v1/me/capabilities": capabilities(permissions),
     "/api/v1/registration/brands": ((path: string, init: RequestInit & { json?: unknown }) => {
       if ((init.method ?? "GET") === "POST") {

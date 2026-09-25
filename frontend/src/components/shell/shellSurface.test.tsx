@@ -50,6 +50,9 @@ const NEW_ORG = {
   has_number: false,
   member_count: 1,
   registration_state: "none",
+  // Past the onboarding gate (LifecycleGate): these tests are about the shell layout, and
+  // the gate keeps any workspace that is not "ready" out of the console entirely.
+  onboarding_step: "ready",
 };
 
 function renderApp(path: string, extraRoutes: Record<string, unknown> = {}) {
@@ -124,6 +127,7 @@ describe("the inbox route shows conversations only", () => {
           has_number: true,
           member_count: 3,
           registration_state: "approved",
+          onboarding_step: "ready",
         },
       },
     });

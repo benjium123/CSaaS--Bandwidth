@@ -138,6 +138,7 @@ function renderApp(initialEntries: string[] = ["/inbox"]) {
         has_number: true,
         member_count: 2,
         registration_state: "approved",
+        onboarding_step: "ready",
       },
     },
   });

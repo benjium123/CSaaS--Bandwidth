@@ -984,6 +984,11 @@ async def approve(
         transition(profile, "in_review")
     transition(profile, "approved")
     profile.decided_at = _now()
+    # The one-time welcome credit waits for this approval (idempotent; the hourly sweep is
+    # only the backstop).
+    from app.services import billing_ops
+
+    await billing_ops.grant_welcome_credit(session, profile.org_id)
     profile.decided_by = operator_id
     profile.decision_reason = note.strip() or None
     profile.next_reverification_at = _now() + timedelta(days=settings.kyc_reverify_days)

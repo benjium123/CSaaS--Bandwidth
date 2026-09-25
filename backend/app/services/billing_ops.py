@@ -22,12 +22,43 @@ def _welcome_amount() -> int:
     return max(int(get_active_settings().welcome_credit_micros or 0), 0)
 
 
+async def _kyc_cleared(session, org_id) -> bool:  # noqa: ANN001
+    """The welcome credit follows the same verification rule as calling
+    (telephony_access): an org that must verify gets it only once approved, so a throwaway
+    signup cannot collect it; an org exempt from verification gets it straight away."""
+    import sqlalchemy as sa
+
+    from app.config import get_active_settings
+    from app.db.base import set_org_context
+    from app.models import KYC_TELEPHONY_STATUSES, KycProfile, Org
+
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    if org is None:
+        return False
+    # Same settings source as telephony_access._settings_of: the session-bound ones first.
+    bound = session.info.get("settings")
+    settings = bound if bound is not None else get_active_settings()
+    must_verify = (
+        bool(getattr(settings, "kyc_enforced", False))
+        or bool(getattr(org, "kyc_required", False))
+        or org.account_type == "individual"
+    )
+    if not must_verify:
+        return True
+    status = (
+        await session.execute(sa.select(KycProfile.status).where(KycProfile.org_id == org_id))
+    ).scalar_one_or_none()
+    return status in KYC_TELEPHONY_STATUSES
+
+
 async def grant_welcome_credit(session, org_id) -> None:  # noqa: ANN001
-    """Credit the org its one-time welcome credit. Idempotent. Does not commit."""
+    """Credit the org its one-time welcome credit once its verification is approved.
+    Idempotent; a no-op before approval (the hourly sweep grants it after). Does not commit."""
     from app.services import credits
 
     amount = _welcome_amount()
-    if amount <= 0:
+    if amount <= 0 or not await _kyc_cleared(session, org_id):
         return
     await credits.adjust(
         session,
@@ -69,6 +100,8 @@ async def grant_missing_welcome_credits(session) -> int:  # noqa: ANN001
         if f"{WELCOME_REFERENCE}:{org_id}" in done:
             continue
         try:
+            if not await _kyc_cleared(session, org_id):
+                continue
             await grant_welcome_credit(session, org_id)
             await session.commit()
             granted += 1

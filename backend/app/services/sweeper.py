@@ -521,10 +521,42 @@ async def _run_once_locked(app) -> dict[str, int]:
         else:
             await calls_svc.hangup_active_leg(session, registry, call)
 
+    # Rooms that exist right now, fetched once per pass and only when a call asks. None =
+    # cannot tell (no LiveKit, the call did not go through it, an error, or an EMPTY list -
+    # LiveKit forgets rooms if its Redis restarts, so "no rooms at all" while calls are open
+    # is not trusted). A call counts as gone only when its room is missing on TWO passes in
+    # a row; a gone call is then only closed in the database, never hung up.
+    live_rooms: dict[str, set[str] | None] = {}
+    missing_before: set = getattr(app.state, "_calls_room_missing", set())
+    missing_now: set = set()
+    app.state._calls_room_missing = missing_now
+
+    async def _call_is_live(session, call) -> bool | None:  # noqa: ANN001, ARG001
+        room = (call.extra or {}).get("room")
+        api = getattr(app.state, "livekit", None)
+        if (call.extra or {}).get("via") != "livekit" or not room or api is None:
+            return None
+        if "rooms" not in live_rooms:
+            try:
+                names = {r.get("name") for r in await api.list_rooms()}
+                live_rooms["rooms"] = names or None
+            except Exception:
+                log.warning("sweeper_livekit_list_rooms_failed")
+                live_rooms["rooms"] = None
+        rooms = live_rooms["rooms"]
+        if rooms is None:
+            return None
+        if room in rooms:
+            return True
+        missing_now.add(call.id)
+        return False if call.id in missing_before else None
+
     try:
         async with get_sessionmaker()() as session:
             results.update(
-                await telephony_billing_svc.telephony_tick(session, hangup=_hangup_for_credits)
+                await telephony_billing_svc.telephony_tick(
+                    session, hangup=_hangup_for_credits, is_live=_call_is_live
+                )
             )
     except Exception:
         log.exception("sweeper_telephony_billing_failed")
