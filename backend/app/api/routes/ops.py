@@ -459,8 +459,19 @@ async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
 
 
 @router.get("/applications/{org_id}/persons/{person_id}/evidence")
-async def identity_evidence(
+async def identity_evidence_summary(
     org_id: uuid.UUID, person_id: uuid.UUID, request: Request, response: Response, op: Reviewer
+) -> dict:
+    """What a reviewer needs from Didit: who, document, live & same face, sanctions/PEP,
+    where from, and the photos (by reference). The full decision stays on the server."""
+    from app.services import didit_evidence
+
+    raw = await identity_evidence(org_id, person_id, request, response, op)
+    return didit_evidence.summarize(raw)
+
+
+async def identity_evidence(
+    org_id: uuid.UUID, person_id: uuid.UUID, request: Request, response: Response, op
 ) -> dict:
     await kyc_svc.load_for_operator(op.session, org_id)
     persons = await kyc_checks.persons_for(op.session, org_id)

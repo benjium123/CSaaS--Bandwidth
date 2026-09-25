@@ -259,7 +259,7 @@ describe("OpsPage", () => {
     });
     renderWithProviders(<OpsPage />, client);
     expect(await screen.findByText("Debt Relief Now LLC")).toBeInTheDocument();
-    expect(screen.getByText(/video call needed/)).toBeInTheDocument();
+    expect(screen.getByText(/video call needed/i)).toBeInTheDocument();
     expect(screen.getByText("AI: reject 91%")).toBeInTheDocument();
   });
 });
