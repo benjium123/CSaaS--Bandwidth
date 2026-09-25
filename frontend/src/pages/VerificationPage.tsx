@@ -4,10 +4,9 @@ import { useAuth, hasPermission } from "@/auth/AuthContext";
 import { CAPABILITIES_QUERY_KEY } from "@/api/capabilities";
 import { KYC_KEY, useKycProfile, type KycProfile, statusCopy } from "@/api/kyc";
 import { COUNTRIES } from "@/lib/countries";
-import { Button, Input, Select, Textarea, Spinner, mutationErrorMessage } from "@/components/ui/primitives";
+import { Spinner, mutationErrorMessage } from "@/components/ui/primitives";
 import { PERSONAL_AGREEMENT_POINTS, VerifyBusinessPage } from "./VerifyBusinessPage";
-import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
-import "@/components/kyc/verificationTheme.css";
+import { JourneyShell } from "@/components/journey/JourneyShell";
 
 type Details = { legal_name: string; country: string; phone: string; industry: string; business_description?: string; purpose: string; customer_country: string; agreement_version?: string };
 
@@ -16,7 +15,7 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
   const cache = useQueryClient();
   const personal = profile.account_type === "individual";
   const stored = (profile.use_case as (typeof profile.use_case & { applicant_details?: Details }))?.applicant_details;
-  const [form, setForm] = React.useState<Details>(() => stored ?? {
+  const [form, setForm] = React.useState<Details>(() => ({
     legal_name: personal ? profile.business.legal_name ?? me?.full_name ?? "" : me?.full_name ?? "",
     country: personal ? profile.business.country ?? "" : "",
     phone: personal ? profile.business.business_phone ?? "" : "",
@@ -24,7 +23,8 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
     business_description: personal ? profile.use_case?.business_description ?? "" : "",
     purpose: personal ? profile.use_case?.description ?? "" : "",
     customer_country: personal ? profile.use_case?.destination_countries?.[0] ?? "" : "",
-  });
+    ...Object.fromEntries(Object.entries(stored ?? {}).filter(([, v]) => v != null)),
+  }));
   const [dialCountry, setDialCountry] = React.useState(() => {
     const match = [...COUNTRIES].sort((a, b) => b.dialCode.length - a.dialCode.length)
       .find(c => form.phone.startsWith(`+${c.dialCode}`));
@@ -70,54 +70,59 @@ function PersonalForm({ profile }: { profile: KycProfile }) {
   };
   const selectCountries = COUNTRIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>);
   const complete = !!(form.legal_name.trim() && form.country && number.trim() && (!personal || (form.industry.trim() && form.business_description?.trim() && form.purpose.trim() && form.customer_country)));
-  return <form className="space-y-6" onSubmit={e => { e.preventDefault(); void run(personal ? "submit" : "save"); }}>
-    <fieldset disabled={!canEdit || busy} className="space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
-      <legend className="px-2 text-lg font-semibold">{personal ? "1. Your details" : "Your personal details"}</legend>
-      <label className="block space-y-2"><span>Legal name</span><Input aria-label="Legal name" autoComplete="name" value={form.legal_name} onChange={e => update("legal_name", e.target.value)} required minLength={2} maxLength={255} /></label>
-      <label className="block space-y-2"><span>{personal ? "Country" : "Your country of residence"}</span><Select aria-label="Country" value={form.country} onChange={e => update("country", e.target.value)} required><option value="">Select country</option>{selectCountries}</Select></label>
-      <div className="space-y-2"><span>{personal ? "Phone number" : "Your personal phone number"}</span><div className="grid gap-2 sm:grid-cols-2">
-        <Select aria-label="Phone country prefix" value={dialCountry} onChange={e => { setDialCountry(e.target.value); setSaved(false); }}>{COUNTRIES.map(c => <option key={c.value} value={c.value}>{c.label} (+{c.dialCode})</option>)}</Select>
-        <Input aria-label="Phone number" autoComplete="tel-national" type="tel" value={number} onChange={e => { setNumber(e.target.value); setSaved(false); }} required />
+  const detailsDone = !!(form.legal_name.trim() && form.country && number.trim());
+  return <form className="rj-stack" style={{ marginTop: 0 }} onSubmit={e => { e.preventDefault(); void run(personal ? "submit" : "save"); }}>
+    <fieldset disabled={!canEdit || busy} className="rj-card rj-in" style={{ "--i": 1 } as React.CSSProperties}>
+      <legend><span className="rj-card-head" style={{ marginBottom: 0 }}><span className="rj-num" data-done={detailsDone || undefined}>1</span><span>{personal ? "Your details" : "Your personal details"}</span></span></legend>
+      <label className="rj-field"><span>Legal name</span><input aria-label="Legal name" autoComplete="name" value={form.legal_name} onChange={e => update("legal_name", e.target.value)} required minLength={2} maxLength={255} /></label>
+      <label className="rj-field"><span>{personal ? "Country" : "Your country of residence"}</span><select aria-label="Country" value={form.country} onChange={e => update("country", e.target.value)} required><option value="">Select country</option>{selectCountries}</select></label>
+      <div className="rj-field"><span className="rj-label">{personal ? "Phone number" : "Your personal phone number"}</span><div className="rj-row">
+        <select aria-label="Phone country prefix" value={dialCountry} onChange={e => { setDialCountry(e.target.value); setSaved(false); }}>{COUNTRIES.map(c => <option key={c.value} value={c.value}>{c.label} (+{c.dialCode})</option>)}</select>
+        <input aria-label="Phone number" autoComplete="tel-national" type="tel" inputMode="tel" value={number} onChange={e => { setNumber(e.target.value); setSaved(false); }} required />
       </div></div>
     </fieldset>
-    <section id="identity" className="scroll-mt-6 space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
-      <h2 className="text-lg font-semibold">{personal ? "2. Verify your identity" : "Verify your identity"}</h2>
-      <p>Verify your ID and selfie securely with Didit.</p>
-      {verified ? <p role="status">Identity verified</p> : owner?.status === "processing" ? <p role="status">Your identity check is processing. This page updates automatically.</p> : (canEdit || mustReverify) ? <Button type="button" disabled={busy || (!mustReverify && (!form.legal_name.trim() || !form.country || !number.trim()))} onClick={() => void run("verify")}>{owner?.status === "pending" ? "Continue with Didit" : "Verify with Didit"}</Button> : <p>Identity verification is not complete.</p>}
-      {owner?.last_error && <p role="alert">{owner.last_error}</p>}
+    <section id="identity" className="rj-card rj-in" style={{ scrollMarginTop: 90, "--i": 2 } as React.CSSProperties}>
+      <div className="rj-card-head"><span className="rj-num" data-done={verified || undefined}>2</span><div><h2>Verify your identity</h2><p className="rj-card-sub">A photo of your ID and a quick selfie, handled securely by Didit. About two minutes.</p></div></div>
+      {verified ? <p role="status" className="rj-ok">Identity verified</p> : owner?.status === "processing" ? <p role="status" className="rj-note">Your identity check is processing. This page updates automatically.</p> : (canEdit || mustReverify) ? <button type="button" className="rj-btn" disabled={busy || (!mustReverify && (!form.legal_name.trim() || !form.country || !number.trim()))} onClick={() => void run("verify")}>{owner?.status === "pending" ? "Continue with Didit" : "Verify with Didit"}</button> : <p className="rj-note">Identity verification is not complete.</p>}
+      {owner?.last_error && <p role="alert" className="rj-error" style={{ marginTop: 12 }}>{owner.last_error}</p>}
     </section>
-    {personal && <><fieldset id="use_case" disabled={!canEdit || busy} className="scroll-mt-6 space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
-      <legend className="px-2 text-lg font-semibold">3. How you’ll use Ringlite</legend>
-      <label className="block space-y-2"><span>Industry</span><Input aria-label="Industry" value={form.industry} onChange={e => update("industry", e.target.value)} required maxLength={64} /></label>
-      <label className="block space-y-2"><span>Describe your business. What do you do?</span><Textarea aria-label="Describe your business" value={form.business_description ?? ""} onChange={e => update("business_description", e.target.value)} required maxLength={4000} rows={4} placeholder="Tell us about your work, products or services." /></label>
-      <label className="block space-y-2"><span>{personal ? "What will you use calling/texting for?" : "What will you use calling/texting for?"}</span><Textarea aria-label="Calling or texting purpose" value={form.purpose} onChange={e => update("purpose", e.target.value)} required maxLength={4000} rows={4} /></label>
-      <label className="block space-y-2"><span>Country in which your customers are</span><Select aria-label="Customer country" value={form.customer_country} onChange={e => update("customer_country", e.target.value)} required><option value="">Select country</option>{selectCountries}</Select></label>
+    {personal && <><fieldset id="use_case" disabled={!canEdit || busy} className="rj-card rj-in" style={{ scrollMarginTop: 90, "--i": 3 } as React.CSSProperties}>
+      <legend><span className="rj-card-head" style={{ marginBottom: 0 }}><span className="rj-num">3</span><span>How you’ll use Ringlite</span></span></legend>
+      <label className="rj-field"><span>Industry</span><input aria-label="Industry" value={form.industry} onChange={e => update("industry", e.target.value)} required maxLength={64} placeholder="e.g. Real estate, Consulting" /></label>
+      <label className="rj-field"><span>Describe your business. What do you do?</span><textarea aria-label="Describe your business" value={form.business_description ?? ""} onChange={e => update("business_description", e.target.value)} required maxLength={4000} rows={4} placeholder="Tell us about your work, products or services." /></label>
+      <label className="rj-field"><span>What will you use calling/texting for?</span><textarea aria-label="Calling or texting purpose" value={form.purpose} onChange={e => update("purpose", e.target.value)} required maxLength={4000} rows={4} placeholder="e.g. Following up with clients about appointments." /></label>
+      <label className="rj-field"><span>Country in which your customers are</span><select aria-label="Customer country" value={form.customer_country} onChange={e => update("customer_country", e.target.value)} required><option value="">Select country</option>{selectCountries}</select></label>
     </fieldset>
-    <section className="space-y-4 rounded-2xl border border-[hsl(var(--cx-line))] p-5">
-      <h2 className="text-lg font-semibold">Agreement</h2>
-      <ul className="list-disc space-y-2 pl-5 text-sm">{PERSONAL_AGREEMENT_POINTS.map(point => <li key={point}>{point}</li>)}</ul>
-      <label className="flex items-center gap-3"><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} disabled={!canEdit || busy} required />I accept the agreement</label>
+    <section className="rj-card rj-in" style={{ "--i": 4 } as React.CSSProperties}>
+      <div className="rj-card-head"><span className="rj-num" data-done={accepted || undefined}>4</span><div><h2>Agreement</h2></div></div>
+      <ul className="rj-points">{PERSONAL_AGREEMENT_POINTS.map(point => <li key={point}>{point}</li>)}</ul>
+      <label className="rj-check"><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} disabled={!canEdit || busy} required />I accept the agreement</label>
     </section></>}
-    {error && <p role="alert" className="text-red-600">{error}</p>}
-    {canEdit && <Button type="submit" disabled={busy || !complete || (personal && (!accepted || !verified))}>{busy ? "Saving…" : personal ? "Submit for review" : "Save your details"}</Button>}
-    {saved && !personal && <p role="status">Your details are saved. Continue with the company application.</p>}
+    {error && <p role="alert" className="rj-error">{error}</p>}
+    {canEdit && <button type="submit" className="rj-btn" data-block="true" disabled={busy || !complete || (personal && (!accepted || !verified))}>{busy ? "Saving…" : personal ? "Submit for review" : "Save your details"}</button>}
+    {canEdit && personal && !verified && <p className="rj-note" style={{ textAlign: "center", margin: 0 }}>Finish the identity check to submit.</p>}
+    {saved && !personal && <p role="status" className="rj-ok">Your details are saved. Continue with the company application.</p>}
   </form>;
 }
 
 export function VerificationPage() {
-  const { theme } = useSurfaceTheme();
   const { api, orgId } = useAuth();
   const query = useKycProfile(api);
   const profile = query.data;
   const copy = profile && statusCopy(profile.status, profile.account_type);
-  return <main className={`ringlite-verification console-surface ${surfaceThemeClass(theme)} min-h-screen bg-background px-4 py-8 text-foreground`}>
-    <div className="mx-auto max-w-3xl space-y-6">
-      <header><p className="text-sm font-semibold">Ringlite</p><h1 className="mt-2 text-3xl font-semibold">Account verification</h1></header>
-      {query.isPending ? <Spinner label="Loading verification" /> : query.isError || !profile ? <p role="alert">{mutationErrorMessage(query.error)}</p> : <>
-        {profile.account_type === "individual" && <p>After approval, choose your phone numbers and start calling. To send texts, register your company and obtain approval for a 10DLC campaign.</p>}
-        {copy && <section role="status" className="verification-status rounded-2xl border p-5"><p className="verification-status-label">{["submitted", "in_review"].includes(profile.status) ? "APPLICATION RECEIVED" : "YOUR APPLICATION"}</p><h2 className="font-semibold">{copy.title}</h2><p>{copy.body}</p>{profile.info_request && <p>{profile.info_request}</p>}{profile.decision_reason && <p>{profile.decision_reason}</p>}</section>}
-        {!["submitted", "in_review"].includes(profile.status) && (profile.account_type === "individual" ? <PersonalForm key={orgId} profile={profile} /> : <VerifyBusinessPage embedded representative={<PersonalForm key={orgId} profile={profile} />} />)}
+  const waiting = !!profile && ["submitted", "in_review"].includes(profile.status);
+  const personal = profile?.account_type === "individual";
+  return <JourneyShell step={waiting ? 1 : 0}>
+    <header className="rj-in" style={{ marginTop: 34 }}>
+      <span className="rj-eyebrow">Account verification</span>
+      <h1 className="rj-title">{waiting ? <>We’re on <em>it.</em></> : personal ? <>Verify it’s <em>you.</em></> : <>Verify your <em>business.</em></>}</h1>
+      <p className="rj-lede">{waiting ? "A person on our team reviews every application, usually within a few hours. We’ll email you the moment it’s done." : personal ? "Four short steps. Once we approve you, choose your phone numbers and start calling. Texting needs a quick carrier registration after that." : "Tell us about the company and the person running the account. Once approved you can choose numbers and start calling."}</p>
+    </header>
+    <div className="rj-stack">
+      {query.isPending ? <Spinner label="Loading verification" /> : query.isError || !profile ? <p role="alert" className="rj-error">{mutationErrorMessage(query.error)}</p> : <>
+        {copy && <section role="status" className="rj-status rj-in"><span className="rj-eyebrow">{waiting ? "Application received" : "Your application"}</span><h2>{copy.title}</h2><p>{copy.body}</p>{profile.info_request && <p>{profile.info_request}</p>}{profile.decision_reason && <p>{profile.decision_reason}</p>}</section>}
+        {!waiting && (personal ? <PersonalForm key={orgId} profile={profile} /> : <VerifyBusinessPage embedded representative={<PersonalForm key={orgId} profile={profile} />} />)}
       </>}
     </div>
-  </main>;
+  </JourneyShell>;
 }
