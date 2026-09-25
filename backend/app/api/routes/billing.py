@@ -39,6 +39,12 @@ router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 class NumberCheckoutIn(BaseModel):
     numbers: list[str] = Field(min_length=1, max_length=20)
+    #: Where these numbers will be used: 911 calls are sent there. Either an address the
+    #: workspace already registered, or a new one to validate and register now.
+    emergency_address_id: uuid.UUID | None = None
+    emergency_address: dict | None = None
+    #: The buyer read how 911 over VoIP differs from a landline (47 CFR 9.11(a)(5)).
+    acknowledge_e911: bool = False
 
 
 @router.get("/number-purchases/current")
@@ -101,10 +107,34 @@ async def cancel_number_checkout(
 async def number_checkout(
     payload: NumberCheckoutIn, request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
 ) -> dict:
-    from app.services import number_purchases
+    from app.models import EmergencyAddress
+    from app.services import e911, number_purchases
 
+    if not payload.acknowledge_e911:
+        raise ValidationFailedError(
+            "Confirm you have read how 911 works with internet phone numbers.",
+            code="e911_acknowledgment_required",
+        )
+    if payload.emergency_address_id is not None:
+        address = await ctx.session.get(EmergencyAddress, payload.emergency_address_id)
+        if address is None or address.org_id != ctx.org.id:
+            raise ValidationFailedError("Choose where these numbers will be used.")
+    elif payload.emergency_address:
+        address = await e911.create_address(
+            ctx.session, request.app.state.settings, ctx.org.id, payload.emergency_address
+        )
+        await ctx.session.commit()
+    else:
+        raise ValidationFailedError(
+            "Enter the address where these numbers will be used, for 911.",
+            code="e911_address_required",
+        )
     purchase = await number_purchases.create(
-        ctx.session, request.app.state.settings, ctx.org.id, payload.numbers
+        ctx.session,
+        request.app.state.settings,
+        ctx.org.id,
+        payload.numbers,
+        emergency_address_id=address.id,
     )
     return number_purchases.public(purchase)
 

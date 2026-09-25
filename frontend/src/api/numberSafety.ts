@@ -1,107 +1,12 @@
 /**
- * Number safety: E911 emergency addresses and their assignment to numbers, number
- * portability checks and customer port-in requests, the ops-side port queue, and the
+ * Number safety: number portability checks and customer port-in requests, the ops-side port queue, and the
  * pending console grants queue.
  *
- * Mirrors backend/app/api/routes: GET/POST /api/v1/e911/addresses, POST
- * /api/v1/e911/numbers/{id}/address, /api/v1/ports*, /api/v1/ops/ports*, and
+ * Mirrors backend/app/api/routes: /api/v1/ports*, /api/v1/ops/ports*, and
  * /api/v1/ops/console/grants*.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, fetchAuthedBlob, type ApiClient } from "./client";
-
-/* ------------------------------------------------------------------------- */
-/* E911                                                                       */
-/* ------------------------------------------------------------------------- */
-
-export interface EmergencyAddress {
-  id: string;
-  label: string;
-  caller_name: string;
-  line1: string;
-  line2: string;
-  city: string;
-  state: string;
-  postal_code: string;
-  country: string;
-  status: "pending" | "valid" | "invalid" | string;
-  last_error: string | null;
-}
-
-export interface E911Number {
-  id: string;
-  e164: string;
-  emergency_address_id: string | null;
-  e911_status: "none" | "pending" | "active" | "failed" | string;
-  e911_error: string | null;
-}
-
-export interface EmergencyAddressesOut {
-  addresses: EmergencyAddress[];
-  numbers: E911Number[];
-}
-
-export interface AddressIn {
-  label?: string;
-  caller_name: string;
-  line1: string;
-  line2?: string;
-  city: string;
-  state: string;
-  postal_code: string;
-  country?: string;
-}
-
-/** Carrier-shaped verification suggestion - keys vary by carrier (line1/street,
- * postal_code/zip, ...), so this stays loose on purpose. */
-export type AddressSuggestion = Record<string, string>;
-
-export const E911_QUERY_KEY = ["e911"] as const;
-
-/** Pulls the suggestions out of a 422 `address_not_verified` ApiError; anything else (a
- * different error code, a non-ApiError) has no suggestions. */
-export function addressSuggestions(err: unknown): AddressSuggestion[] {
-  if (!(err instanceof ApiError)) return [];
-  const apiErr = err as unknown as {
-    code?: string;
-    details?: { suggestions?: AddressSuggestion[] } | null;
-  };
-  if (apiErr.code !== "address_not_verified") return [];
-  return apiErr.details?.suggestions ?? [];
-}
-
-export function useEmergencyAddresses(api: ApiClient) {
-  return useQuery({
-    queryKey: E911_QUERY_KEY,
-    queryFn: () => api.request<EmergencyAddressesOut>("/api/v1/e911/addresses"),
-  });
-}
-
-export function useCreateEmergencyAddress(api: ApiClient) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: AddressIn) =>
-      api.request<EmergencyAddress>("/api/v1/e911/addresses", { method: "POST", json: body }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: E911_QUERY_KEY });
-    },
-  });
-}
-
-export function useAssignEmergencyAddress(api: ApiClient) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { numberId: string; addressId: string }) =>
-      api.request<E911Number>(`/api/v1/e911/numbers/${vars.numberId}/address`, {
-        method: "POST",
-        json: { address_id: vars.addressId },
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: E911_QUERY_KEY });
-      qc.invalidateQueries({ queryKey: ["numbers"] });
-    },
-  });
-}
+import { fetchAuthedBlob, type ApiClient } from "./client";
 
 /* ------------------------------------------------------------------------- */
 /* Porting (customer)                                                         */

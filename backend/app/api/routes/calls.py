@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.api.routes import flows as flow_routes
 from app.api.routes.numbers import to_e164
-from app.auth.deps import OrgContext, get_current_user, require_permission
+from app.auth.deps import OrgContext, get_current_org, get_current_user, require_permission
 from app.errors import (
     CarrierNotConfiguredError,
     ConflictError,
@@ -390,13 +390,92 @@ async def _resolve_room_from_number(
     return candidate.e164
 
 
+async def _emergency_call(payload: CallIn, request: Request, ctx: OrgContext, user: User):
+    """911 / 933, dialed directly with no prefix (Kari's Law). Goes out on a number whose
+    registered address is active, bypasses every billing and limit gate, and tells the
+    workspace's owners and admins that 911 was dialed."""
+    import asyncio
+
+    import structlog
+
+    from app.services import e911
+
+    dialed = payload.to.strip().replace(" ", "")
+    settings = request.app.state.settings
+    api = getattr(request.app.state, "livekit", None)
+    if api is None or not voice_service.room_trunks(settings):
+        raise FeatureUnavailableError(
+            "Calling is unavailable right now. Use another phone for 911."
+        )
+    preferred = None
+    if payload.from_:
+        try:
+            preferred = to_e164(payload.from_)
+        except ValidationFailedError:
+            preferred = None
+    from_norm = await e911.pick_caller_id(ctx.session, ctx.org.id, preferred)
+    if from_norm is None:
+        raise FeatureUnavailableError(
+            "This workspace has no phone number. Use another phone for 911."
+        )
+    call, _leg, room, token = await voice_service.start_room_call(
+        ctx.session,
+        api,
+        settings,
+        request.app.state.event_bus,
+        org_id=ctx.org.id,
+        to=dialed,
+        from_e164=from_norm,
+        identity=f"user-{user.id}",
+        name=user.email,
+        tag="emergency",
+        emergency=True,
+    )
+    structlog.get_logger("calls").warning(
+        "emergency_call_placed", org_id=str(ctx.org.id), dialed=dialed, call_id=str(call.id)
+    )
+    task = asyncio.get_running_loop().create_task(
+        _notify_emergency(settings, ctx.org.id, user.full_name or user.email, from_norm, dialed)
+    )
+    _EMERGENCY_TASKS.add(task)
+    task.add_done_callback(_EMERGENCY_TASKS.discard)
+    detail = await _detail_out(ctx.session, request, call, include_transcript=False)
+    body = detail.model_dump(mode="json")
+    url = settings.livekit_public_url or settings.livekit_url
+    body.update({"room": room, "token": token, "url": url})
+    return JSONResponse(status_code=201, content=body)
+
+
+#: Strong references to in-flight 911 notices (a bare task can be collected mid-send).
+_EMERGENCY_TASKS: set = set()
+
+
+async def _notify_emergency(settings, org_id, caller, from_e164, dialed) -> None:
+    from app.db.base import set_org_context
+    from app.db.session import get_sessionmaker
+    from app.services import e911
+
+    async with get_sessionmaker()() as session:
+        set_org_context(session, org_id)
+        await e911.notify(
+            session, settings, org_id, caller=caller, from_e164=from_e164, dialed=dialed
+        )
+
+
 @router.post("/calls", response_model=CallDetailOut, status_code=201)
 async def create_call(
     payload: CallIn,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+    ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> CallDetailOut | Response:
+    from app.services import e911
+
+    # Kari's Law: anyone on the phone system can dial 911 directly, whatever their role.
+    # Every other destination needs calls:place (and its identity gate), exactly as before.
+    if e911.is_emergency(payload.to) and ctx.api_key is None:
+        return await _emergency_call(payload, request, ctx, user)
+    await require_permission("calls:place")(request, ctx)
     if payload.machine_detection not in _MACHINE_DETECTION_MODES:
         raise ValidationFailedError("machine_detection must be 'off' or 'async'")
     if payload.via not in _VIA_MODES:

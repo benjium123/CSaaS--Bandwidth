@@ -165,11 +165,11 @@ async def test_release_reduces_quantity_and_last_number_cancels(session, stripe_
     assert purchase.subscription_status == "canceled"
 
 
-@pytest.mark.parametrize(("available", "refused"), [(None, False), (899, True), (900, False)])
+@pytest.mark.parametrize(("available", "refused"), [(None, False), (1199, True), (1200, False)])
 async def test_checkout_is_refused_when_telnyx_cannot_fund_the_numbers(
     session, stripe_mock, monkeypatch, available, refused
 ):
-    """Two numbers need 2 x $2 plus the $5 floor = $9 at Telnyx. Below that the customer is
+    """Two numbers need 2 x $3.50 (number + first E911 month) plus the $5 floor = $12. Below that the customer is
     never sent to pay; None (Telnyx not configured) does not block."""
     org = await approved_org(session)
     settings = make_settings(stripe_webhook_secret="whsec_test")

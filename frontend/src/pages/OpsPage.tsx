@@ -601,6 +601,94 @@ function PurchasesTab() {
   );
 }
 
+type OpsTextingRegistration = {
+  id: string;
+  org_id: string;
+  org_name: string;
+  brand_name: string;
+  campaign_name: string;
+  stage: string;
+  fee_tier: string;
+  detail: string | null;
+  paid_at: string | null;
+  updated_at: string | null;
+};
+
+const CANCELLABLE_TEXTING_STAGES = ["checkout", "paid", "brand_filed", "otp_pending", "brand_approved", "campaign_filed"];
+
+/** 10DLC recovery: registrations the carrier left half-finished. Reconcile adopts the
+ *  carrier-side brand/campaign; cancel stops the registration and refunds the rest. */
+function TextingRegistrationsTab() {
+  const q = useOps<OpsTextingRegistration[]>(["texting-registrations"], "/api/v1/ops/texting-registrations");
+  const action = useOpsAction(null);
+  const [message, setMessage] = React.useState("");
+  const { me } = useAuth();
+  const isAdmin = me?.operator_role === "admin";
+  if (q.isPending) return <Spinner label="Loading texting registrations" />;
+  if (q.isError) return <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(q.error)}</p>;
+  async function run(r: OpsTextingRegistration, kind: "reconcile" | "cancel") {
+    if (kind === "cancel") {
+      if (!window.confirm(`Cancel the texting registration for ${r.org_name} and refund what the carrier never charged?`)) return;
+    }
+    setMessage("");
+    try {
+      const result = (await action.mutateAsync({ path: `/api/v1/ops/texting-registrations/${r.id}/${kind}` })) as {
+        stage: string;
+        outcome?: string;
+        detail?: string;
+      };
+      setMessage(kind === "reconcile" ? result.outcome ?? "" : result.detail ?? "");
+    } catch (e) {
+      setMessage(mutationErrorMessage(e));
+    }
+  }
+  return (
+    <div className="space-y-3">
+      {message && <p role="status" className="text-[13px] text-[hsl(var(--cx-text))]">{message}</p>}
+      {q.data.length === 0 ? (
+        <p className="text-[13px] text-[hsl(var(--cx-muted))]">No texting registrations yet.</p>
+      ) : (
+        <ul className="space-y-2">
+          {q.data.map((r) => {
+            const canReconcile = isAdmin && r.stage === "needs_attention";
+            const canCancel = isAdmin && (r.stage === "needs_attention" || CANCELLABLE_TEXTING_STAGES.includes(r.stage));
+            return (
+              <li
+                key={r.id}
+                aria-label={`Texting registration for ${r.org_name}`}
+                className="space-y-2 rounded-[14px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] px-4 py-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[13.5px] font-semibold text-[hsl(var(--cx-text))]">
+                    {r.stage.replace(/_/g, " ")} · {r.org_name}
+                  </span>
+                  <span className="flex gap-2">
+                    {canReconcile && (
+                      <Button type="button" size="sm" variant="outline" disabled={action.isPending} onClick={() => void run(r, "reconcile")}>
+                        Reconcile with carrier
+                      </Button>
+                    )}
+                    {canCancel && (
+                      <Button type="button" size="sm" variant="outline" disabled={action.isPending} onClick={() => void run(r, "cancel")}>
+                        Cancel and refund
+                      </Button>
+                    )}
+                  </span>
+                </div>
+                <p className="text-[13px] text-[hsl(var(--cx-subtle))]">
+                  {r.brand_name} / {r.campaign_name} · {r.fee_tier.replace(/_/g, " ")}
+                </p>
+                {r.detail && <p className="text-[12px] text-[hsl(var(--cx-muted))]">{r.detail}</p>}
+                <p className="text-[12px] text-[hsl(var(--cx-muted))]">Registration {r.id}</p>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function BanListTab() {
   const { api } = useAuth();
   const queryClient = useQueryClient();
@@ -747,6 +835,7 @@ const TABS = [
   { id: "monitoring", label: "Monitoring" },
   { id: "billing", label: "Billing" },
   { id: "purchases", label: "Number purchases" },
+  { id: "texting", label: "Texting registrations" },
   { id: "ports", label: "Ports & grants" },
   { id: "accounts", label: "Workspaces" },
   { id: "users", label: "Users" },
@@ -810,6 +899,7 @@ export function OpsPage() {
             {tab === "monitoring" && <MonitoringTab />}
             {tab === "billing" && <BillingTab />}
             {tab === "purchases" && <PurchasesTab />}
+            {tab === "texting" && <TextingRegistrationsTab />}
             {tab === "ports" && <PortReviewTab />}
             {tab === "accounts" && <AccountsTab />}
             {tab === "users" && <UsersTab />}

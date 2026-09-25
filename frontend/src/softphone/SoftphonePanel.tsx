@@ -164,6 +164,8 @@ export function SoftphonePanel() {
   // branch was unconditional and this button rendered for every member of the org, then
   // 403'd on click. See the note on hasPermission in auth/AuthContext.tsx.
   const canPlaceCalls = hasPermission(me, orgId, "calls:place");
+  // Kari's Law: anyone can dial 911 (and the 933 test line), whatever their role.
+  const isEmergencyDial = (value: string) => ["911", "933"].includes(value.replace(/\s/g, ""));
 
   useRingTone(softphone.incoming.length > 0, ringtoneMuted);
 
@@ -616,11 +618,16 @@ export function SoftphonePanel() {
           <Button
             type="submit"
             className="w-full"
-            disabled={busy || !to.trim() || !canPlaceCalls}
-            title={canPlaceCalls ? undefined : "You don't have permission to place or answer calls"}
+            disabled={busy || !to.trim() || !(canPlaceCalls || isEmergencyDial(to))}
+            title={
+              canPlaceCalls || isEmergencyDial(to)
+                ? undefined
+                : "You don't have permission to place or answer calls"
+            }
           >
             <Phone className="mr-1 h-4 w-4" /> Call
           </Button>
+          <p className="text-[11px] text-muted-foreground">Dial 933 to test your 911 address.</p>
           {dialError && (
             <p role="alert" className={cn("text-sm text-destructive")}>
               {dialError}

@@ -281,18 +281,6 @@ async def _run_once_locked(app) -> dict[str, int]:
         except Exception:
             log.exception("sweeper_number_order_poll_failed")
 
-    # P44e: bind the workspace's 911 address to new numbers, and follow carrier E911
-    # provisioning to "active".
-    if registry is not None:
-        from app.services import e911 as e911_svc
-
-        try:
-            async with get_sessionmaker()() as session:
-                results["e911_assigned"] = await e911_svc.auto_assign_all(session, registry)
-                results["e911_refreshed"] = await e911_svc.refresh_pending(session, registry)
-        except Exception:
-            log.exception("sweeper_e911_failed")
-
     # P44f: follow Telnyx port-in orders and watch for port-outs of our numbers - at most
     # every 10 minutes (carrier API calls, nothing urgent at minute scale).
     if registry is not None:
@@ -691,6 +679,14 @@ async def _run_once_locked(app) -> dict[str, int]:
             results["tendlc_advanced"] = tendlc_counts.get("advanced", 0)
         except Exception:
             log.exception("sweeper_tendlc_tick_failed")
+        # E911: retry numbers whose emergency activation failed, follow provisioning ones.
+        try:
+            from app.services import e911
+
+            e911_counts = await e911.tick(get_sessionmaker(), app.state.settings)
+            results["e911_active"] = e911_counts.get("active", 0)
+        except Exception:
+            log.exception("sweeper_e911_tick_failed")
 
     # P41: derived per-workspace messaging health - today's and yesterday's rollup rows,
     # then the owner/admin warnings. Same hourly gate discipline as reputation above:

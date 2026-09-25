@@ -13,7 +13,7 @@ from cryptography.fernet import Fernet
 from app.db.base import set_org_context
 from app.errors import ConflictError, PermissionDeniedError
 from app.models import KycPerson, KycProfile, Org, OrgNumber, PortRequest, SecurityAlert
-from app.services import porting
+from app.services import e911, porting
 from app.storage.base import InMemoryObjectStore
 from tests.conftest import make_settings
 
@@ -181,7 +181,7 @@ async def test_approval_files_with_telnyx_and_the_sweeper_imports(session):
         await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == "+12145550199"))
     ).scalar_one()
     assert number.org_id == org.id and number.provider_ref == "tx-num-9"
-    assert number.e911_status == "none"  # the 911 address is still required
+    assert e911.status_of(number)["status"] == "missing"  # the 911 address is still required
 
 
 async def test_port_out_request_alerts_and_releases_when_gone(session):

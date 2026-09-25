@@ -235,6 +235,9 @@ export function TextingRegistrationCard({
 
     return (
       <>
+        {registration?.stage === "cancelled" && detail !== "" ? (
+          <p className={MUTED}>This registration was cancelled: {detail}</p>
+        ) : null}
         {rejected && detail !== "" ? (
           <div role="alert" className={DANGER}>
             Your last attempt was not approved: {detail}
@@ -257,6 +260,7 @@ export function TextingRegistrationCard({
 
     switch (registration.stage) {
       case "expired":
+      case "cancelled":
       case "brand_rejected":
       case "campaign_rejected":
         return renderForm(data, registration);

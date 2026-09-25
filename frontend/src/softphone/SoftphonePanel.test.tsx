@@ -446,6 +446,18 @@ describe("SoftphonePanel", () => {
     await userEvent.type(screen.getByLabelText("Number to call"), "+19725550199");
 
     expect(screen.getByRole("button", { name: /Call/ })).toBeDisabled();
+
+    // Kari's Law: 911 (and the 933 test line) stays dialable without calls:place.
+    const input = screen.getByLabelText("Number to call");
+    await userEvent.clear(input);
+    await userEvent.type(input, "911");
+    expect(screen.getByRole("button", { name: /Call/ })).toBeEnabled();
+    await userEvent.clear(input);
+    await userEvent.type(input, "9 3 3");
+    expect(screen.getByRole("button", { name: /Call/ })).toBeEnabled();
+    await userEvent.clear(input);
+    await userEvent.type(input, "9115");
+    expect(screen.getByRole("button", { name: /Call/ })).toBeDisabled();
   });
 
   // Item 2
@@ -599,5 +611,32 @@ describe("SoftphonePanel", () => {
     await waitFor(() =>
       expect(localStorage.getItem("csaas.softphone.callerId.org-1")).toBe(""),
     );
+  });
+
+  it("shows the 933 test hint under the dialer", async () => {
+    const meWithoutCallPermission = {
+      id: "u1",
+      email: "u@example.com",
+      full_name: "U Ser",
+      memberships: [
+        { org_id: "org-1", org_name: "Org", org_slug: "org", role_name: "agent" },
+      ],
+      permissions: ["contacts:read", "calls:read"],
+    };
+    const client = makeStubClient({
+      "/api/v1/auth/me": meWithoutCallPermission,
+      "/api/v1/numbers": [{ id: "n1", e164: "+12145550100", carrier: "bandwidth", is_active: true }],
+    });
+
+    renderWithProviders(
+      <SoftphoneProvider>
+        <SoftphonePanel />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Open softphone" }));
+
+    expect(screen.getByText("Dial 933 to test your 911 address.")).toBeInTheDocument();
   });
 });

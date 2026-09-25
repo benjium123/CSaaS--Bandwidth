@@ -110,6 +110,12 @@ async def _last_topup_ref(session: AsyncSession, org_id: uuid.UUID) -> str:
     return str(ref or "none")
 
 
+async def _has_call_minutes(session: AsyncSession, org_id) -> bool:  # noqa: ANN001
+    from app.services import bundles
+
+    return await bundles.units(session, org_id, "voice") > 0
+
+
 def _money(micros: int) -> str:
     return f"${micros / 1_000_000:,.2f}"
 
@@ -128,6 +134,11 @@ async def evaluate(session: AsyncSession, settings, org: Org) -> str:  # noqa: A
         session, org.id
     )
     state = state_for(balance, int(org.warn_threshold_micros or 0))
+    if state == "exhausted" and await _has_call_minutes(session, org.id):
+        # $0 but call-minute bundle minutes left: calls keep working (bundles are spent
+        # before the balance), so this is "low" - never tell them calls are declined.
+        # SMS/MMS units alone do not count: calls really are paused then.
+        state = "low"
     if state != org.billing_state:
         org.billing_state = state
         org.billing_state_changed_at = _now()

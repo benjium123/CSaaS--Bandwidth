@@ -1,8 +1,9 @@
 """Billing v2: platform price list, message bundles, payments, refusals, org billing state.
 
 Prices seeded (micros per unit): SMS $0.015/segment and MMS $0.035/message (in and out),
-calls $0.011/minute (in and out), fax $0.10/page (in and out), number $15/month; bundles
-$12 per 1,000 SMS and $3 per 100 MMS. Editable later from the admin console.
+calls $0.012/minute (in and out), fax $0.10/page (in and out), number $15/month; bundles
+$13 per 1,000 SMS, $3 per 100 MMS and $10 per 1,000 call minutes. Editable later from the
+admin console.
 """
 
 from datetime import datetime, timezone

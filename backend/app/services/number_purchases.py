@@ -61,7 +61,7 @@ def public(purchase):
     }
 
 
-async def create(session, settings, org_id, numbers):
+async def create(session, settings, org_id, numbers, *, emergency_address_id=None):
     from app.api.routes.numbers import to_e164
 
     normalized = [to_e164(n) for n in numbers]
@@ -139,6 +139,9 @@ async def create(session, settings, org_id, numbers):
             state="checkout",
         )
     )
+    if emergency_address_id is not None:
+        purchase.emergency_address_id = emergency_address_id
+        purchase.e911_acknowledged_at = datetime.now(timezone.utc)
     session.add(purchase)
     await session.commit()
     metadata = {"kind": "number_purchase", "purchase_id": str(purchase.id), "org_id": str(org_id)}
@@ -250,6 +253,9 @@ async def fulfill(session, request, purchase):
         from app.services import tendlc
 
         await tendlc.associate_new_numbers(session, settings, purchase.org_id)
+        from app.services import e911
+
+        await e911.enable_for_purchase(session, settings, purchase)
     except Exception as error:
         # Carrier timeouts are ambiguous. Never retry a potentially accepted order or
         # charge again automatically; retain the paid cart for operator reconciliation.
@@ -401,6 +407,9 @@ async def retry(session, request, purchase_id):
     from app.services import tendlc
 
     await tendlc.associate_new_numbers(session, settings, purchase.org_id)
+    from app.services import e911
+
+    await e911.enable_for_purchase(session, settings, purchase)
     log.info("number_purchase_retried", purchase_id=str(purchase.id), failures=failures)
     return purchase, failures
 

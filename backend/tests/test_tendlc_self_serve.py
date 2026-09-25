@@ -81,6 +81,8 @@ class FakeTelnyx:
         self.campaign_status = {"campaignStatus": "TCR_PENDING"}
         self.fail_brand_post = False
         self.bad_pin = False
+        #: What a brand search (GET /10dlc/brand?displayName=...) returns.
+        self.brand_records: list[dict] = []
 
     def posts(self, suffix: str) -> list[httpx.Request]:
         return [r for r in self.requests if r.method == "POST" and r.url.path.endswith(suffix)]
@@ -94,6 +96,8 @@ class FakeTelnyx:
             if request.method == "PUT":
                 self.brand_status = {"status": "OK", "identityStatus": "VERIFIED"}
             return httpx.Response(200, json={"brandId": "B123", "referenceId": "OTP1"})
+        if path.endswith("/10dlc/brand") and request.method == "GET":
+            return httpx.Response(200, json={"records": self.brand_records})
         if path.endswith("/10dlc/brand") and request.method == "POST":
             if self.fail_brand_post:
                 return httpx.Response(503, json={"errors": [{"detail": "try later"}]})
@@ -433,3 +437,77 @@ async def test_new_numbers_join_an_active_campaign_and_sole_proprietors_keep_one
 async def test_stripe_events_for_other_products_are_not_ours(session):
     event = {"type": "checkout.session.completed", "data": {"object": {"metadata": {}}}}
     assert await tendlc.handle_event(session, event) is False
+
+
+# --------------------------------------------------------------------------------------
+# Operator recovery
+# --------------------------------------------------------------------------------------
+async def _interrupted(session, stripe_stub, telnyx):
+    """A paid registration whose brand POST failed ambiguously (-> needs_attention),
+    with the attempt backdated past the reconcile guard."""
+    from datetime import datetime, timedelta, timezone
+
+    org, brand, campaign, _ = await _workspace(session)
+    reg = await _checkout(session, org, brand, campaign)
+    await _pay(session, reg)
+    telnyx.fail_brand_post = True
+    sm = get_sessionmaker()
+    await tendlc.tick(sm, _settings(), client=telnyx.client)
+    assert await _stage(reg.id) == "needs_attention"
+    telnyx.fail_brand_post = False
+    async with sm() as s:
+        set_org_context(s, org.id)
+        live = await s.get(Brand, brand.id)
+        refs = dict(live.carrier_refs)
+        marker = dict(refs[BRAND_ATTEMPT_KEY])
+        marker["attempted_at"] = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+        refs[BRAND_ATTEMPT_KEY] = marker
+        live.carrier_refs = refs
+        await s.commit()
+    return org, brand, reg
+
+
+async def test_reconcile_refiles_a_brand_telnyx_never_received(session, stripe_stub, telnyx):
+    org, brand, reg = await _interrupted(session, stripe_stub, telnyx)
+    async with get_sessionmaker()() as s:
+        result = await tendlc.reconcile(s, _settings(), reg.id, client=telnyx.client)
+    assert "filed again" in result["outcome"]
+    assert await _stage(reg.id) == "brand_filed"
+    assert len(telnyx.posts("/10dlc/brand")) == 2  # the lost one, then the real one
+
+
+async def test_reconcile_links_a_brand_telnyx_did_create_and_never_files_twice(
+    session, stripe_stub, telnyx
+):
+    org, brand, reg = await _interrupted(session, stripe_stub, telnyx)
+    telnyx.brand_records = [{"brandId": "B999", "email": "owner@texting.test"}]
+    async with get_sessionmaker()() as s:
+        result = await tendlc.reconcile(s, _settings(), reg.id, client=telnyx.client)
+    assert "linked" in result["outcome"]
+    assert len(telnyx.posts("/10dlc/brand")) == 1
+    async with get_sessionmaker()() as s:
+        set_org_context(s, org.id)
+        assert (await s.get(Brand, brand.id)).carrier_refs["telnyx"] == "B999"
+
+
+async def test_reconcile_refuses_to_guess_right_after_the_attempt(session, stripe_stub, telnyx):
+    org, brand, campaign, _ = await _workspace(session)
+    reg = await _checkout(session, org, brand, campaign)
+    await _pay(session, reg)
+    telnyx.fail_brand_post = True
+    await tendlc.tick(get_sessionmaker(), _settings(), client=telnyx.client)
+    async with get_sessionmaker()() as s:
+        with pytest.raises(ConflictError, match="minutes ago"):
+            await tendlc.reconcile(s, _settings(), reg.id, client=telnyx.client)
+
+
+async def test_cancelling_before_anything_was_filed_refunds_everything(session, stripe_stub):
+    org, brand, campaign, _ = await _workspace(session)
+    reg = await _checkout(session, org, brand, campaign)
+    await _pay(session, reg)
+    async with get_sessionmaker()() as s:
+        await tendlc.cancel(s, _settings(), reg.id)
+    assert await _stage(reg.id) == "cancelled"
+    refund = stripe_stub.Refund.create.call_args.kwargs
+    assert refund["amount"] == tendlc.quote("standard")["due_today_cents"]
+    stripe_stub.Subscription.cancel.assert_called_once()
