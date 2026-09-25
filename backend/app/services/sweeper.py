@@ -293,6 +293,27 @@ async def _run_once_locked(app) -> dict[str, int]:
         except Exception:
             log.exception("sweeper_e911_failed")
 
+    # P44f: follow Telnyx port-in orders and watch for port-outs of our numbers - at most
+    # every 10 minutes (carrier API calls, nothing urgent at minute scale).
+    if registry is not None:
+        import time as _time
+
+        last = getattr(app.state, "porting_polled_at", 0.0)
+        if _time.monotonic() - last >= 600:
+            app.state.porting_polled_at = _time.monotonic()
+            from app.services import porting as porting_svc
+
+            try:
+                async with get_sessionmaker()() as session:
+                    results["ports_updated"] = await porting_svc.poll_port_ins(
+                        session, app.state.settings, registry
+                    )
+                    results["port_outs_seen"] = await porting_svc.poll_port_outs(
+                        session, app.state.settings, registry
+                    )
+            except Exception:
+                log.exception("sweeper_porting_failed")
+
     # P43: second look at texts held by the AI safety check. Runs BEFORE the held-message
     # release so a text cleared here goes out on this same pass.
     if getattr(app.state.settings, "monitor_enforced", False):

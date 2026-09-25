@@ -718,6 +718,12 @@ async def release(
         await sync_released_number(ctx.session, request.app.state.settings, number)
         return await _out(ctx.session, number)
 
+    if getattr(number, "port_locked", False):
+        # P44f: a locked number cannot be released until its owner unlocks it.
+        raise PermissionDeniedError(
+            "This number is locked. Unlock it (Numbers -> Port lock) before releasing it.",
+            code="number_locked",
+        )
     registry = getattr(request.app.state, "carriers", None)
     carrier_obj = registry.get(number.carrier) if registry else None
     if carrier_obj is not None and isinstance(carrier_obj, numbers_api.NumberProvider):

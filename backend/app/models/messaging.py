@@ -118,6 +118,11 @@ class OrgNumber(Base, TenantScoped, TimestampMixin):
     e911_updated_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    #: P44f (migration 0069): owner-set lock - the number cannot be released or moved
+    #: inside the app until unlocked (account-takeover defence).
+    port_locked: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
 
 
 class MessageThread(Base, TenantScoped, TimestampMixin):

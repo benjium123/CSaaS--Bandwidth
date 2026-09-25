@@ -277,6 +277,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.api.routes import e911 as e911_routes
 
     app.include_router(e911_routes.router)
+    from app.api.routes import porting as porting_routes
+
+    app.include_router(porting_routes.router)
+    app.include_router(porting_routes.ops_router)
     app.include_router(sso_routes.router)
     app.include_router(saml_routes.router)
     app.include_router(enterprise_sso_routes.router)
