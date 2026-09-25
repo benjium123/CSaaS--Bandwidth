@@ -1,6 +1,6 @@
 import * as React from "react";
 import { NavLink } from "react-router-dom";
-import { Contact, Inbox, LogOut, Megaphone, Phone, Rocket, Search, Settings, ShieldCheck } from "lucide-react";
+import { Contact, Inbox, LogOut, Megaphone, Phone, Printer, Rocket, Search, Settings, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useGate, type Gate } from "@/api/capabilities";
 import { isWorkspaceFullySetUp } from "@/components/onboarding/OnboardingChecklist";
@@ -24,6 +24,7 @@ export const RAIL_ITEMS: RailItem[] = [
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/contacts", label: "Contacts", icon: Contact, permission: "contacts:read" },
   { to: "/calls", label: "Calls", icon: Phone, permission: "calls:read" },
+  { to: "/fax", label: "Fax", icon: Printer, permission: "inbox:read" },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone, permission: "campaigns:read" },
 ];
 

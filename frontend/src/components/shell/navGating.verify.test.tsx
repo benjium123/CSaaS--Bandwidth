@@ -117,8 +117,8 @@ describe("nav gating for a real agent (backend permission set)", () => {
     await screen.findByRole("link", { name: "Inbox" });
     const nav = screen.getByRole("navigation", { name: "Sidebar" });
     expect(within(nav).queryByRole("link", { name: "Campaigns" })).not.toBeInTheDocument();
-    // Inbox / Contacts / Calls remain.
-    expect(within(nav).getAllByRole("link")).toHaveLength(3);
+    // Inbox / Contacts / Calls / Fax remain (fax is gated on inbox:read).
+    expect(within(nav).getAllByRole("link")).toHaveLength(4);
   });
 
   it("B1 fixed: no Settings gear for an agent (Messaging now needs compliance:manage)", async () => {
@@ -138,12 +138,12 @@ describe("nav gating for a real agent (backend permission set)", () => {
 });
 
 describe("capabilities fallback when /me/capabilities fails", () => {
-  it("B2 fixed: when capabilities errors the rail falls back to me.permissions (3 links, no gear)", async () => {
+  it("B2 fixed: when capabilities errors the rail falls back to me.permissions (4 links incl. Fax, no gear)", async () => {
     renderWith(<Sidebar />, new Error("capabilities unavailable"));
 
     await screen.findByRole("link", { name: "Inbox" });
     const nav = screen.getByRole("navigation", { name: "Sidebar" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(3);
+    expect(within(nav).getAllByRole("link")).toHaveLength(4);
     expect(within(nav).queryByRole("link", { name: "Campaigns" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });

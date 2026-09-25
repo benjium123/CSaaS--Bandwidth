@@ -9,6 +9,7 @@ import { ConversationsPage } from "@/pages/ConversationsPage";
 import { ContactsPage } from "@/pages/ContactsPage";
 import { CampaignsPage } from "@/pages/CampaignsPage";
 import { CallsPage } from "@/pages/CallsPage";
+import { FaxPage } from "@/pages/FaxPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SsoCallbackPage } from "@/pages/SsoCallbackPage";
@@ -257,6 +258,7 @@ export function App() {
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/contacts/:contactId" element={<ContactsPage />} />
         <Route path="/calls" element={<CallsPage />} />
+        <Route path="/fax" element={<FaxPage />} />
         <Route path="/campaigns" element={<CampaignsPage />} />
         <Route path="/ops" element={<OpsPage />} />
         <Route path="/report" element={<ReportNumberPage />} />
