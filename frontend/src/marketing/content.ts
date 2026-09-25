@@ -230,7 +230,7 @@ export const COMPETITORS: Competitor[] = [
     summary: "Quo is a polished per-user phone system. Ringlite packages users and numbers in one monthly price.",
     rows: [
       { label: "How you pay", them: "Per user", us: "One monthly package with users and numbers" },
-      { label: "Calling", them: "\"Unlimited\" under a discretionary fair use policy", us: "200 minutes per user, shared, then a published per-minute rate" },
+      { label: "Calling", them: "\"Unlimited\" under a discretionary fair use policy", us: "An exact shared pool (Team 200, Business 1,000 min), then a published per-minute rate" },
       { label: "Texting registration", them: "Yes", us: "Built in" },
       { label: "Free trial", them: "7 days", us: "Welcome credit after approval" },
     ],

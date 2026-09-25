@@ -14,11 +14,11 @@ import {
   COVERAGE,
   CUSTOM_FROM_USERS,
   DAILY_OUTBOUND_PER_NUMBER,
-  MINUTES_PER_USER,
   PLANS,
   RATES,
   addOnLine,
   cents,
+  minutePoolsLine,
   minutesLine,
   money,
   packageLine,
@@ -64,10 +64,10 @@ export function PricingPage() {
         <p className="rl-eyebrow"><span /> PRICING</p>
         <h1 className="ms-h1">Your team and your numbers. <span>One simple price.</span></h1>
         <p className="ms-lede">
-          Every plan includes users and phone numbers, and you can add more of either any time. Each
-          user brings {MINUTES_PER_USER} call minutes a month, shared by the whole team. After that,
-          calls are {cents(RATES.minute)} a minute and texts {cents(RATES.text)}, with no "unlimited"
-          small print.
+          Every plan includes users and phone numbers, and you can add more of either any time. Team
+          and Business include call minutes the whole team shares ({minutePoolsLine()} a month).
+          After that, and on Starter, calls are {cents(RATES.minute)} a minute and texts
+          {" "}{cents(RATES.text)}, with no "unlimited" small print.
         </p>
       </section>
 
@@ -156,7 +156,7 @@ export function PricingPage() {
                       {q.extraNumbers} extra {q.extraNumbers === 1 ? "number" : "numbers"} × {money(q.plan.extraNumber ?? 0)}
                     </li>
                   )}
-                  <li>{(q.users * MINUTES_PER_USER).toLocaleString("en-US")} call minutes a month, shared</li>
+                  <li>{minutesLine(q.plan)}</li>
                   <li>Up to {q.callsAtOnce} {q.callsAtOnce === 1 ? "call" : "calls"} at once</li>
                 </ul>
               </>
@@ -184,8 +184,8 @@ export function PricingPage() {
         </div>
         <p className="ms-footnote">
           Monthly list prices per user, {COMPETITORS_CHECKED}. Competitors bundle "unlimited" US calling
-          under fair use policies; Ringlite includes {MINUTES_PER_USER} minutes per user and then charges
-          {cents(RATES.minute)}/min, so compare usage too if your team is on the phone all day.
+          under fair use policies; Ringlite includes an exact pool ({minutePoolsLine()} minutes) and
+          then charges {cents(RATES.minute)}/min, so compare usage too if your team is on the phone all day.
         </p>
       </section>
 
@@ -236,7 +236,7 @@ export function PricingPage() {
                 <th scope="row">Call minutes included</th>
                 {PLANS.map(plan => (
                   <td key={plan.code}>
-                    {plan.included ? `${(plan.included.users * MINUTES_PER_USER).toLocaleString("en-US")}/mo, shared` : "Custom"}
+                    {plan.minutes === null ? "Custom" : plan.minutes === 0 ? "Pay as you go" : `${plan.minutes.toLocaleString("en-US")}/mo, shared`}
                   </td>
                 ))}
               </tr>
@@ -266,7 +266,7 @@ export function PricingPage() {
       <section className="ms-rates rl-wrap rl-reveal" aria-labelledby="rates-h">
         <h2 id="rates-h">The rate card</h2>
         <dl className="ms-rates-list">
-          <div><dt>Call minutes included</dt><dd>{MINUTES_PER_USER} per user a month, shared</dd></div>
+          <div><dt>Call minutes included</dt><dd>{minutePoolsLine()} a month, shared</dd></div>
           <div><dt>Calls per minute after that</dt><dd>{cents(RATES.minute)}</dd></div>
           <div><dt>Text per segment</dt><dd>{cents(RATES.text)}</dd></div>
           <div><dt>Picture message</dt><dd>{cents(RATES.picture)}</dd></div>
@@ -290,8 +290,8 @@ export function PricingPage() {
           <article className="ms-card">
             <h3>Exact minutes, then pay as you go</h3>
             <p>
-              Every user adds {MINUTES_PER_USER} call minutes a month to one shared pool. Past the pool,
-              calls are {cents(RATES.minute)} a minute and texts {cents(RATES.text)} a segment, taken
+              Team and Business include one pool of call minutes the whole team shares
+              ({minutePoolsLine()} a month). Past the pool, and on Starter, calls are {cents(RATES.minute)} a minute and texts {cents(RATES.text)} a segment, taken
               from a prepaid balance you top up. Bundles bring the price down if you use a lot.
             </p>
           </article>

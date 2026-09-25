@@ -52,7 +52,7 @@ export function PlanCard() {
         <div>
           <dt className="text-muted-foreground">Call minutes this month</dt>
           <dd className="font-medium">{data.minutes?.remaining ?? 0} of {data.minutes?.included ?? 0} left</dd>
-          <dd className="text-xs text-muted-foreground">{data.minutes_per_user} per user, shared. Then credit.</dd>
+          <dd className="text-xs text-muted-foreground">Shared by the whole team. Then credit.</dd>
         </div>
       </dl>
 

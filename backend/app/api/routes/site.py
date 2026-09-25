@@ -58,7 +58,7 @@ ASK_GLOBAL_DAILY_MAX = 3000
 
 FIXED_FACTS = """- Ringlite is a business phone service: numbers, browser calling, business texting, one shared inbox.
 - Calls and texts reach the 48 contiguous US states only. No Canada, Alaska, Hawaii or international.
-- Ringlite never sells "unlimited" calling; plans include exact minutes, then a published per-minute rate.
+- Ringlite never sells "unlimited" calling. Starter is pay as you go; Team includes 200 and Business 1,000 call minutes a month, shared by the workspace; then a published per-minute rate.
 - Every account is identity-verified before it can call. Texting needs 10DLC carrier approval.
 - Ringlite is not HIPAA compliant and does not hold SOC 2."""
 

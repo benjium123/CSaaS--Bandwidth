@@ -33,7 +33,7 @@ export interface WorkspacePlan {
   minutes?: { included: number; remaining: number };
   extra_user_cents: number;
   extra_number_cents: number;
-  minutes_per_user: number;
+  minutes_per_user?: number;
   catalog: CatalogPlan[];
 }
 

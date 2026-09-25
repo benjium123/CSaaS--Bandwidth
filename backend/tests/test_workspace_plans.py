@@ -1,5 +1,6 @@
-"""Workspace plans: Solo $15 (1 user + 1 number), Team $45 (3 + 3), Business $75 (5 + 5),
-add-on users $15/month, add-on numbers $5/month, 200 pooled call minutes per user.
+"""Workspace plans: Starter $15 (1 user + 1 number), Team $45 (3 + 3), Business $130 (10 + 10),
+add-on users $15/month ($12 on Business), add-on numbers $5/month. Call minutes are a fixed
+pool per workspace: Starter none (pay as you go), Team 200, Business 1,000.
 
 Stripe is faked with a small STATEFUL double: modify() really changes the item quantities
 that the next retrieve() returns, so these tests prove what the workspace ends up paying for
@@ -384,22 +385,31 @@ async def test_business_add_on_users_are_12_dollars_and_move_to_that_price_on_up
 
 
 # ------------------------------------------------------------------------ minutes
-async def test_every_user_adds_200_pooled_minutes_and_they_admit_calls_without_credit(
-    session, stripe
-):
+async def test_team_shares_200_minutes_that_admit_calls_without_credit(session, stripe):
     from app.services import plans, telephony_billing
 
     org = await _org(session)
     await _on_plan(session, stripe, org, "team")
-    assert await plans.remaining(session, org.id, "voice_minutes") == 600
+    assert await plans.remaining(session, org.id, "voice_minutes") == 200
     await plans.ensure_period(session, org.id)
     await plan_billing.add_users(session, SETTINGS, org.id, 1, 1500)
-    assert await plans.remaining(session, org.id, "voice_minutes") == 800
+    assert await plans.remaining(session, org.id, "voice_minutes") == 200  # a fixed pool
 
     # No prepaid credit at all: the plan's minutes still let a call in.
     org.telephony_prepaid = True
     await session.commit()
     assert await telephony_billing.inbound_call_allowed(session, org.id, "telnyx") is True
+
+
+async def test_starter_is_pay_as_you_go_and_business_shares_1000_minutes(session, stripe):
+    from app.services import plans
+
+    starter = await _org(session)
+    await _on_plan(session, stripe, starter, "solo")
+    assert await plans.remaining(session, starter.id, "voice_minutes") == 0
+    business = await _org(session)
+    await _on_plan(session, stripe, business, "business")
+    assert await plans.remaining(session, business.id, "voice_minutes") == 1000
 
 
 async def test_a_workspace_without_a_plan_gets_no_minutes(session, stripe):

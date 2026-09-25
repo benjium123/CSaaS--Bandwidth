@@ -55,7 +55,6 @@ _UNSCOPED = {ALLOW_UNSCOPED_KEY: True}
 
 EXTRA_USER_CENTS = 1500  # Solo and Team; Business sets its own on PlanSpec
 EXTRA_NUMBER_CENTS = 500
-MINUTES_PER_USER = 200
 #: Stripe metadata kind on the subscription itself (the checkout session says number_purchase).
 SUBSCRIPTION_KIND = "workspace_plan"
 
@@ -70,14 +69,17 @@ class PlanSpec:
     setting: str
     extra_user_cents: int = EXTRA_USER_CENTS
     extra_user_setting: str = "stripe_extra_user_price_id"
+    #: Call minutes a month for the whole workspace (a fixed pool; add-on users add none).
+    minutes: int = 0
 
 
 PLANS: dict[str, PlanSpec] = {
     "solo": PlanSpec("solo", "Starter", 1, 1, 1500, "stripe_plan_solo_price_id"),
-    "team": PlanSpec("team", "Team", 3, 3, 4500, "stripe_plan_team_price_id"),
+    "team": PlanSpec("team", "Team", 3, 3, 4500, "stripe_plan_team_price_id", minutes=200),
     "business": PlanSpec(
         "business", "Business", 10, 10, 13000, "stripe_plan_business_price_id",
         extra_user_cents=1200, extra_user_setting="stripe_business_extra_user_price_id",
+        minutes=1000,
     ),
 }
 
@@ -109,7 +111,7 @@ async def ensure_catalog(session: AsyncSession, settings: Settings) -> None:
             "included": {
                 "seats": spec.users,
                 "numbers": spec.numbers,
-                "voice_minutes_per_user": MINUTES_PER_USER,
+                "voice_minutes": spec.minutes,
                 "sms_segments": 0,
             },
             "is_active": True,
@@ -149,7 +151,7 @@ class Entitlement:
 
     @property
     def minutes(self) -> int:
-        return MINUTES_PER_USER * self.users
+        return self.spec.minutes
 
     @property
     def monthly_cents(self) -> int:
@@ -393,8 +395,8 @@ async def handle_event(session: AsyncSession, request, event: dict) -> bool:
 
 
 async def refresh_voice_allowance(session: AsyncSession, org_id: uuid.UUID) -> None:
-    """Raise this period's pooled minutes to 200 x users when users were added mid-period.
-    Never lowers them: a removed user's minutes were paid for until the period ends."""
+    """Raise this period's pooled minutes to the plan's pool after a mid-period upgrade.
+    Never lowers them: minutes already paid for last until the period ends."""
     from app.models.plans import PlanAllowance
     from app.services import plans
 
@@ -659,7 +661,7 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
                 "numbers": spec.numbers,
                 "price_cents": spec.price_cents,
                 "extra_user_cents": spec.extra_user_cents,
-                "minutes": MINUTES_PER_USER * spec.users,
+                "minutes": spec.minutes,
                 "monthly_total_cents_if_switched": monthly_cents(spec, extra_u, extra_n),
             }
         )
@@ -669,7 +671,6 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
         "numbers": {"limit": None, "in_use": held},
         "extra_user_cents": EXTRA_USER_CENTS,
         "extra_number_cents": EXTRA_NUMBER_CENTS,
-        "minutes_per_user": MINUTES_PER_USER,
         "catalog": catalog,
     }
     if ent is None:

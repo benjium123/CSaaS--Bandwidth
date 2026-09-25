@@ -107,7 +107,7 @@ export function ChooseNumbersPage() {
       <h1 className="rj-title">{current ? <>Add <em>numbers.</em></> : <>Choose your <em>plan.</em></>}</h1>
       <p className="rj-lede">{current
         ? `Your plan has ${freeSlots} free number${freeSlots === 1 ? "" : "s"} left. Numbers beyond that are ${dollars(numberCents)} a month each.`
-        : "Every plan comes with users and phone numbers, and 200 call minutes a month for each user. Pick a plan and your numbers, pay securely with Stripe, and your inbox opens."}</p>
+        : "Every plan comes with users and phone numbers; Team and Business include call minutes the whole team shares. Pick a plan and your numbers, pay securely with Stripe, and your inbox opens."}</p>
     </header>
     {error && <p role="alert" className="rj-error" style={{ marginTop: 20 }}>{error}</p>}
     {purchase && <section className="rj-status rj-in" style={{ marginTop: 24 }}>
@@ -133,7 +133,7 @@ export function ChooseNumbersPage() {
                 <input type="radio" name="plan" value={p.code} checked={p.code === planCode} onChange={() => setPlanCode(p.code)} />
                 <span className="rj-plan-name">{p.name}{saving > 0 && <em>Save {dollars(saving)}</em>}</span>
                 <span className="rj-plan-price">{dollars(p.price_cents)}<small>/month</small></span>
-                <span className="rj-plan-facts">{p.users} user{p.users > 1 ? "s" : ""} · {p.numbers} number{p.numbers > 1 ? "s" : ""}<br />{p.minutes.toLocaleString()} call minutes/month</span>
+                <span className="rj-plan-facts">{p.users} user{p.users > 1 ? "s" : ""} · {p.numbers} number{p.numbers > 1 ? "s" : ""}<br />{p.minutes > 0 ? `${p.minutes.toLocaleString()} call minutes/month, shared` : "Calls pay as you go"}</span>
               </label>;
             })}</div>}
         </section>}

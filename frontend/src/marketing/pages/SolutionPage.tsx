@@ -2,7 +2,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { ArrowUpRight } from "lucide-react";
 import { CtaBand, FaqList, Icon, SitePage } from "@/marketing/SiteChrome";
 import { PRODUCTS, SOLUTIONS } from "@/marketing/content";
-import { MINUTES_PER_USER, addOnLine, money, packageLine, planByCode } from "@/marketing/pricing.config";
+import { addOnLine, minutePoolsLine, money, packageLine, planByCode } from "@/marketing/pricing.config";
 
 /** Products shown under "What you get", keyed by solution slug. */
 const DEFAULT_PRODUCT_SLUGS: readonly string[] = ["calling", "inbox", "texting"];
@@ -51,7 +51,7 @@ export function SolutionPage() {
     return product ? [product] : [];
   });
 
-  const allowance = `Each user brings ${MINUTES_PER_USER} call minutes a month, shared; after that, calls and texts are pay as you go at the published rates.`;
+  const allowance = `Team and Business include shared call minutes (${minutePoolsLine()} a month); after that, calls and texts are pay as you go at the published rates.`;
 
   return (
     <SitePage title={solution.menu} description={solution.lede}>

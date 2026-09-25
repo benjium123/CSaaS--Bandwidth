@@ -5,7 +5,7 @@ import { COMPETITORS, type Competitor } from "@/marketing/content";
 import {
   COMPETITORS_CHECKED,
   COMPETITOR_SEAT_PRICES,
-  MINUTES_PER_USER,
+  minutePoolsLine,
   money,
   recommend,
 } from "@/marketing/pricing.config";
@@ -54,7 +54,7 @@ export function ComparePage() {
             </p>
           ) : null}
         </div>
-        <p className="ms-footnote">Monthly list prices, {COMPETITORS_CHECKED}. Ringlite includes {MINUTES_PER_USER} call minutes per user, shared, then published per-minute and per-text rates.</p>
+        <p className="ms-footnote">Monthly list prices, {COMPETITORS_CHECKED}. Ringlite includes an exact shared pool of call minutes ({minutePoolsLine()} a month), then published per-minute and per-text rates.</p>
       </section>
 
       <section className="rl-wrap rl-reveal">

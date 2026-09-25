@@ -5,9 +5,9 @@
  * chat assistant all follow. Nothing else on the site hard-codes a price.
  *
  * Model (agreed 2026-09-26): each plan is a monthly package that includes a set number of
- * users and phone numbers; more users and numbers are add-ons. Every user brings
- * MINUTES_PER_USER call minutes a month, pooled across the workspace; calls past the pool and
- * all texts are pay as you go at the published rates below.
+ * users and phone numbers; more users and numbers are add-ons. Team and Business include a
+ * fixed pool of call minutes the whole workspace shares (add-on users add none); Starter is
+ * pay as you go. Calls past the pool and all texts use the published rates below.
  *
  * Billing is enforced by backend services/plan_billing.py, which does not read this file:
  * keep the two in step.
@@ -26,13 +26,12 @@ export interface Plan {
   /** Monthly price of each user / number above the package. null = not sold on this plan. */
   extraUser: number | null;
   extraNumber: number | null;
+  /** Call minutes a month shared by the workspace (0 = pay as you go). null = custom. */
+  minutes: number | null;
   features: string[];
   cta: { label: string; to: string };
   highlight?: boolean;
 }
-
-/** Call minutes each user adds to the workspace's shared monthly pool (plan_billing.MINUTES_PER_USER). */
-export const MINUTES_PER_USER = 200;
 
 /** Usage rates: calls past the minute pool, and every text. */
 export const RATES = {
@@ -65,6 +64,7 @@ export const PLANS: Plan[] = [
     included: { users: 1, numbers: 1 },
     extraUser: 15,
     extraNumber: 5,
+    minutes: 0,
     features: [
       "Calling from your browser",
       "Voicemail",
@@ -82,6 +82,7 @@ export const PLANS: Plan[] = [
     included: { users: 3, numbers: 3 },
     extraUser: 15,
     extraNumber: 5,
+    minutes: 200,
     features: [
       "Everything in Starter",
       "Team notes and assignments",
@@ -102,6 +103,7 @@ export const PLANS: Plan[] = [
     included: { users: 10, numbers: 10 },
     extraUser: 12,
     extraNumber: 5,
+    minutes: 1000,
     features: [
       "Everything in Team",
       "AI voice agent (AI minutes metered)",
@@ -121,6 +123,7 @@ export const PLANS: Plan[] = [
     included: null,
     extraUser: null,
     extraNumber: null,
+    minutes: null,
     features: [
       "Everything in Business",
       "Volume pricing on users, numbers and usage",
@@ -184,10 +187,17 @@ export function recommend(users: number, numbers: number): Quote {
   );
 }
 
-/** "600 call minutes a month, shared" for a plan's included users. */
+/** "1,000 call minutes a month, shared", or "Calls pay as you go" on Starter. */
 export function minutesLine(plan: Plan): string {
-  if (!plan.included) return "Call minutes to fit your team";
-  return `${(plan.included.users * MINUTES_PER_USER).toLocaleString("en-US")} call minutes a month, shared`;
+  if (plan.minutes === null) return "Call minutes to fit your team";
+  if (plan.minutes === 0) return "Calls pay as you go";
+  return `${plan.minutes.toLocaleString("en-US")} call minutes a month, shared`;
+}
+
+/** "Team 200 and Business 1,000" for copy that names every plan's pool. */
+export function minutePoolsLine(): string {
+  const pools = PLANS.filter(p => p.minutes).map(p => `${p.name} ${(p.minutes ?? 0).toLocaleString("en-US")}`);
+  return pools.join(" and ");
 }
 
 /** "3 users, 3 numbers" style summary of a package. */
