@@ -80,6 +80,13 @@ PLATFORM_PRICE_MICROS: dict[str, int] = {
 #: An inbound call is billed from arrival (LiveKit builds the room as soon as it rings),
 #: with this minimum even when nobody answers.
 INBOUND_MIN_SECONDS = 60
+#: Longest a call may run. A call still open past this is hung up, and no call is ever
+#: billed (or counted against a bundle) for more: a call whose hang-up was lost cannot
+#: grow the bill without end.
+MAX_CALL_SECONDS = 4 * 3600
+#: A LiveKit call open this long is checked against the rooms that actually exist; if
+#: its room is gone the hang-up was lost, and the call is closed on the spot.
+STALE_CHECK_AFTER_SECONDS = 120
 
 
 class TelephonyCreditsError(InsufficientCreditsError):
@@ -312,7 +319,8 @@ async def _minutes_in_flight(
     ).scalars().all()
     total = 0
     for other in calls:
-        if other.id == exclude_call_id or (other.extra or {}).get("refused"):
+        extra = other.extra or {}
+        if other.id == exclude_call_id or extra.get("refused") or extra.get("emergency"):
             continue
         if other.ended_at is not None:
             seconds = billable_seconds(other)
@@ -323,6 +331,7 @@ async def _minutes_in_flight(
             seconds = max(int((moment - _as_utc(start)).total_seconds()), 0)
             if other.direction != "outbound":
                 seconds = max(seconds, INBOUND_MIN_SECONDS)
+            seconds = min(seconds, MAX_CALL_SECONDS)
         total += spend._ceil_minutes(seconds)
     return total
 
@@ -529,13 +538,13 @@ def billable_seconds(call: Call) -> int:
     end, at least INBOUND_MIN_SECONDS even when nobody answered.
     """
     if call.direction == "outbound":
-        return max(int(call.duration_seconds or 0), 0)
+        return min(max(int(call.duration_seconds or 0), 0), MAX_CALL_SECONDS)
     start = call.created_at
     end = call.ended_at
     if start is None or end is None:
-        return max(int(call.duration_seconds or 0), INBOUND_MIN_SECONDS)
+        return min(max(int(call.duration_seconds or 0), INBOUND_MIN_SECONDS), MAX_CALL_SECONDS)
     elapsed = int((_as_utc(end) - _as_utc(start)).total_seconds())
-    return max(elapsed, INBOUND_MIN_SECONDS)
+    return min(max(elapsed, INBOUND_MIN_SECONDS), MAX_CALL_SECONDS)
 
 
 def call_hold_reference(call_id: uuid.UUID, n: int = 0) -> str:
@@ -746,15 +755,63 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
     return billed
 
 
+async def _close_call(
+    session: AsyncSession, call: Call, *, hangup: Any, reason: str, elapsed_seconds: int
+) -> None:
+    """End a call that is running too long or whose hang-up was lost. Tries the normal
+    hang-up first (it also ends a call that really is still up); if that fails or leaves the
+    call open, walks every leg to "hungup" so the call ends, is billed and leaves the pool."""
+    from app.services import calls as calls_svc
+
+    org_id, call_id = call.org_id, call.id
+    try:
+        await hangup(session, call)
+    except Exception:
+        await session.rollback()
+        log.warning("telephony_billing.close_hangup_failed", call_id=str(call_id), reason=reason)
+    set_org_context(session, org_id)
+    call = await session.get(Call, call_id, populate_existing=True)
+    if call is None:
+        return
+    if call.ended_at is None:
+        legs = await calls_svc.load_legs(session, call_id)
+        for leg in legs:
+            if leg.status not in calls_svc.TERMINAL_LEG_STATUSES:
+                calls_svc.advance_leg(leg, "hungup")
+        calls_svc.derive_call_status(call, legs)
+        if call.ended_at is None:
+            # No legs to walk (or a state the legs cannot express): end it directly.
+            call.ended_at = _now()
+            if call.answered_at is not None:
+                call.duration_seconds = max(
+                    int((_as_utc(call.ended_at) - _as_utc(call.answered_at)).total_seconds()), 0
+                )
+    audit_svc.record(
+        session,
+        org_id,
+        action="call.closed_" + reason,
+        target_type="call",
+        target_id=str(call_id),
+        detail={"used_seconds": elapsed_seconds},
+    )
+    await session.commit()
+    log.warning("telephony_billing.call_closed", call_id=str(call_id), reason=reason)
+
+
 async def enforce_active_calls(
     session: AsyncSession,
     *,
     hangup: Any,
     now: datetime | None = None,
+    is_live: Any = None,
 ) -> int:
     """Keep each running call's hold ahead of the minutes it has used - outbound from
     answer, inbound (billing v2) from arrival. When the balance can no longer cover the
-    next minute, hang the call up via ``hangup(session, call)``. Returns calls cut off."""
+    next minute, hang the call up via ``hangup(session, call)``. Returns calls cut off.
+
+    Never touches a 911/933 call. Also closes calls whose hang-up was lost: past
+    MAX_CALL_SECONDS always, and sooner when ``is_live(session, call)`` returns False (the
+    call's room no longer exists). ``is_live`` returning None means "cannot tell"."""
     moment = now or _now()
     rows = (
         await session.execute(
@@ -792,10 +849,27 @@ async def enforce_active_calls(
                     await session.rollback()
                     log.warning("telephony_billing.refused_hangup_retry_failed", call_id=str(call_id))
                 continue
+            if (call.extra or {}).get("emergency"):
+                # A 911/933 call is never cut, whatever the balance.
+                continue
+            elapsed_seconds = max(int((moment - _as_utc(start)).total_seconds()), 0)
+            if elapsed_seconds >= MAX_CALL_SECONDS:
+                await _close_call(
+                    session, call, hangup=hangup, reason="max_length", elapsed_seconds=elapsed_seconds
+                )
+                continue
+            if (
+                is_live is not None
+                and elapsed_seconds >= STALE_CHECK_AFTER_SECONDS
+                and await is_live(session, call) is False
+            ):
+                await _close_call(
+                    session, call, hangup=hangup, reason="stale", elapsed_seconds=elapsed_seconds
+                )
+                continue
             per_minute = await unit_price(session, org_id, call.carrier, _call_metric(call.direction))
             if per_minute <= 0:
                 continue
-            elapsed_seconds = max(int((moment - _as_utc(start)).total_seconds()), 0)
             used_micros = voice_price_micros(elapsed_seconds, per_minute)
             headroom_micros = CUTOFF_HEADROOM_MINUTES * per_minute
             held, holds = await _held_for_call(session, org_id, call.id)
@@ -1022,10 +1096,12 @@ async def stamp_rentals_forward(
 # Sweeper entry point
 # ------------------------------------------------------------------------------------
 async def telephony_tick(
-    session: AsyncSession, *, hangup: Any, now: datetime | None = None
+    session: AsyncSession, *, hangup: Any, now: datetime | None = None, is_live: Any = None
 ) -> dict[str, int]:
     return {
         "calls_billed": await bill_finished_calls(session, now=now),
-        "calls_cut_off_no_credit": await enforce_active_calls(session, hangup=hangup, now=now),
+        "calls_cut_off_no_credit": await enforce_active_calls(
+            session, hangup=hangup, now=now, is_live=is_live
+        ),
         "number_rentals_charged": await renew_number_rentals(session, today=(now or _now()).date()),
     }

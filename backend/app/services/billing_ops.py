@@ -22,12 +22,28 @@ def _welcome_amount() -> int:
     return max(int(get_active_settings().welcome_credit_micros or 0), 0)
 
 
+async def _kyc_cleared(session, org_id) -> bool:  # noqa: ANN001
+    """The welcome credit waits for an approved business/identity check, so a throwaway
+    signup cannot collect it."""
+    import sqlalchemy as sa
+
+    from app.db.base import set_org_context
+    from app.models import KYC_TELEPHONY_STATUSES, KycProfile
+
+    set_org_context(session, org_id)
+    status = (
+        await session.execute(sa.select(KycProfile.status).where(KycProfile.org_id == org_id))
+    ).scalar_one_or_none()
+    return status in KYC_TELEPHONY_STATUSES
+
+
 async def grant_welcome_credit(session, org_id) -> None:  # noqa: ANN001
-    """Credit the org its one-time welcome credit. Idempotent. Does not commit."""
+    """Credit the org its one-time welcome credit once its verification is approved.
+    Idempotent; a no-op before approval (the hourly sweep grants it after). Does not commit."""
     from app.services import credits
 
     amount = _welcome_amount()
-    if amount <= 0:
+    if amount <= 0 or not await _kyc_cleared(session, org_id):
         return
     await credits.adjust(
         session,
@@ -69,6 +85,8 @@ async def grant_missing_welcome_credits(session) -> int:  # noqa: ANN001
         if f"{WELCOME_REFERENCE}:{org_id}" in done:
             continue
         try:
+            if not await _kyc_cleared(session, org_id):
+                continue
             await grant_welcome_credit(session, org_id)
             await session.commit()
             granted += 1

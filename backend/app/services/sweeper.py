@@ -500,10 +500,30 @@ async def _run_once_locked(app) -> dict[str, int]:
         else:
             await calls_svc.hangup_active_leg(session, registry, call)
 
+    # Rooms that exist right now, fetched once per pass and only when a call asks. None =
+    # cannot tell (no LiveKit, or the call did not go through it): the call is left alone.
+    live_rooms: dict[str, set[str] | None] = {}
+
+    async def _call_is_live(session, call) -> bool | None:  # noqa: ANN001, ARG001
+        room = (call.extra or {}).get("room")
+        api = getattr(app.state, "livekit", None)
+        if (call.extra or {}).get("via") != "livekit" or not room or api is None:
+            return None
+        if "rooms" not in live_rooms:
+            try:
+                live_rooms["rooms"] = {r.get("name") for r in await api.list_rooms()}
+            except Exception:
+                log.warning("sweeper_livekit_list_rooms_failed")
+                live_rooms["rooms"] = None
+        rooms = live_rooms["rooms"]
+        return None if rooms is None else room in rooms
+
     try:
         async with get_sessionmaker()() as session:
             results.update(
-                await telephony_billing_svc.telephony_tick(session, hangup=_hangup_for_credits)
+                await telephony_billing_svc.telephony_tick(
+                    session, hangup=_hangup_for_credits, is_live=_call_is_live
+                )
             )
     except Exception:
         log.exception("sweeper_telephony_billing_failed")
