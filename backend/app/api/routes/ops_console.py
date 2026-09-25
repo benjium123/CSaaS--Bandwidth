@@ -149,7 +149,9 @@ class AdjustIn(BaseModel):
 
 
 @router.post("/orgs/{org_id}/adjust")
-async def console_adjust(org_id: uuid.UUID, payload: AdjustIn, op: Admin) -> dict:
+async def console_adjust(
+    org_id: uuid.UUID, payload: AdjustIn, op: Admin, request: Request
+) -> dict:
     """Manual credit (positive) or debit (negative) with a reason - e.g. launch credit."""
     from app.services import credits
 
@@ -157,6 +159,21 @@ async def console_adjust(org_id: uuid.UUID, payload: AdjustIn, op: Admin) -> dic
         raise ValidationFailedError("Amount cannot be zero")
     if await op.session.get(Org, org_id) is None:
         raise NotFoundError("Organisation not found")
+    from app.services import grant_approval
+
+    if await grant_approval.needs_second_operator_for_credit(
+        op.session, request.app.state.settings, op.user.id, payload.amount_micros
+    ):
+        pending_id = await grant_approval.request(
+            op.session,
+            org_id,
+            op.user.id,
+            {"type": "credit", "amount_micros": payload.amount_micros, "note": payload.note},
+        )
+        _audit(op, org_id, "billing.console_adjustment_requested",
+               {"amount_micros": payload.amount_micros, "note": payload.note})
+        await op.session.commit()
+        return {"pending_approval": str(pending_id)}
     set_org_context(op.session, org_id)
     entry = await credits.adjust(
         op.session,
@@ -184,6 +201,19 @@ async def console_grant_bundle(org_id: uuid.UUID, payload: BundleGrantIn, op: Ad
 
     if await op.session.get(Org, org_id) is None:
         raise NotFoundError("Organisation not found")
+    from app.services import grant_approval
+
+    if grant_approval.needs_second_operator_for_bundle(payload.kind, payload.units):
+        pending_id = await grant_approval.request(
+            op.session,
+            org_id,
+            op.user.id,
+            {"type": "bundle", "kind": payload.kind, "units": payload.units, "note": payload.note},
+        )
+        _audit(op, org_id, "billing.console_bundle_grant_requested",
+               {"kind": payload.kind, "units": payload.units, "note": payload.note})
+        await op.session.commit()
+        return {"pending_approval": str(pending_id)}
     entry = await bundles.credit(
         op.session,
         org_id,
@@ -260,3 +290,42 @@ async def console_telnyx(op: Reviewer, request: Request) -> dict:
             for d, c, u in rows
         ],
     }
+
+
+@router.get("/grants/pending")
+async def console_pending_grants(op: Admin) -> list[dict]:
+    """P44d: credit and bundle grants waiting for a second operator."""
+    from app.services import grant_approval
+
+    rows = await grant_approval.pending(op.session)
+    return [
+        {
+            "id": str(r.id),
+            "org_id": str(r.org_id),
+            "requested_at": r.created_at.isoformat() if r.created_at else None,
+            **dict(r.detail or {}),
+        }
+        for r in rows
+    ]
+
+
+class GrantDecisionIn(BaseModel):
+    approve: bool
+
+
+@router.post("/grants/{alert_id}/decide")
+async def console_decide_grant(alert_id: uuid.UUID, payload: GrantDecisionIn, op: Admin) -> dict:
+    """P44d: a DIFFERENT admin approves (applies) or rejects a pending grant."""
+    from app.services import grant_approval
+
+    result = await grant_approval.decide(
+        op.session, alert_id, op.user.id, approve=payload.approve
+    )
+    await op.session.commit()
+    log.info(
+        "console_grant_decided",
+        alert_id=str(alert_id),
+        approve=payload.approve,
+        operator_user_id=str(op.user.id),
+    )
+    return result

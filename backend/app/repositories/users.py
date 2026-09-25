@@ -27,6 +27,10 @@ async def create_user(
     session: AsyncSession, *, email: str, password: str, full_name: str = ""
 ) -> User:
     email = normalize_email(email)
+    # P44d: no throwaway inboxes (multi-account and signup fraud).
+    from app.services import email_policy
+
+    email_policy.require_permanent(email)
     if await get_by_email(session, email) is not None:
         raise ConflictError("An account with that email already exists")
     user = User(

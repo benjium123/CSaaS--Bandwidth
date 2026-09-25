@@ -69,6 +69,9 @@ async def create_invite(
     email = normalize_email(email)
     if not email or "@" not in email:
         raise ValidationFailedError("A valid email address is required")
+    from app.services import email_policy
+
+    email_policy.require_permanent(email)  # P44d
     if role_name not in INVITABLE_ROLES:
         raise ValidationFailedError(
             f"Role must be one of: {', '.join(INVITABLE_ROLES)}. "

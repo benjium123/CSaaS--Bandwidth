@@ -438,6 +438,12 @@ class Settings(BaseSettings):
     fraud_auto_recharge_max_micros_per_day: int = 300_000_000
     #: P44c: top-ups + bundle purchases a NEW workspace may start per UTC day.
     fraud_new_account_daily_purchase_micros: int = 100_000_000
+    #: P44d: extra disposable email domains to refuse, comma separated (on top of the
+    #: bundled list in app/data/disposable_domains.txt).
+    disposable_extra_domains: str = ""
+    #: P44d: positive console credit ONE operator may apply per UTC day before a second
+    #: operator must approve (services/grant_approval.py).
+    console_credit_solo_micros: int = 50_000_000
     monitor_enforced: bool = True
     #: The pre-send text check waits at most this long for the AI.
     monitor_text_ai_timeout_seconds: float = 6.0

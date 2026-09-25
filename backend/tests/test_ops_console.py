@@ -381,3 +381,61 @@ async def test_orgs_requires_operator_and_authentication(ops, session, ops_setti
     token = await register_and_login(ops, "customer@example.com")
     r = await ops.get("/api/v1/ops/console/orgs", headers=auth_headers(token))
     assert r.status_code in (401, 403), r.status_code
+
+
+async def test_large_credit_needs_a_second_operator(ops, session, ops_settings):
+    """P44d: above $50/day one operator only REQUESTS credit; a different admin applies it."""
+    first = await _operator(ops, session)
+    B = await _new_org(session, "B Plumbing", prepaid=False)
+
+    r = await ops.post(
+        f"/api/v1/ops/console/orgs/{B}/adjust",
+        json={"amount_micros": 40_000_000, "note": "goodwill"},
+        headers=auth_headers(first),
+    )
+    assert r.json()["balance_after_micros"] == 40_000_000  # under the solo limit
+    r = await ops.post(
+        f"/api/v1/ops/console/orgs/{B}/adjust",
+        json={"amount_micros": 20_000_000, "note": "more goodwill"},
+        headers=auth_headers(first),
+    )
+    assert r.status_code == 200, r.text
+    pending_id = r.json()["pending_approval"]
+    assert await credits.balance(session, B) == 40_000_000  # not applied yet
+
+    r = await ops.post(
+        f"/api/v1/ops/console/grants/{pending_id}/decide",
+        json={"approve": True},
+        headers=auth_headers(first),
+    )
+    assert r.status_code == 403, r.text  # the requester cannot approve their own grant
+
+    second = await _operator(ops, session, email="ops2@example.com")
+    listed = (await ops.get("/api/v1/ops/console/grants/pending", headers=auth_headers(second))).json()
+    assert [g["id"] for g in listed] == [pending_id]
+    r = await ops.post(
+        f"/api/v1/ops/console/grants/{pending_id}/decide",
+        json={"approve": True},
+        headers=auth_headers(second),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["balance_after_micros"] == 60_000_000
+    r = await ops.post(
+        f"/api/v1/ops/console/grants/{pending_id}/decide",
+        json={"approve": True},
+        headers=auth_headers(second),
+    )
+    assert r.status_code == 409  # decided once only
+
+
+async def test_big_bundle_grant_needs_a_second_operator(ops, session, ops_settings):
+    token = await _operator(ops, session)
+    B = await _new_org(session, "B Plumbing", prepaid=False)
+    r = await ops.post(
+        f"/api/v1/ops/console/orgs/{B}/bundles",
+        json={"kind": "sms", "units": 50_000, "note": "gift"},
+        headers=auth_headers(token),
+    )
+    assert r.status_code == 200, r.text
+    assert "pending_approval" in r.json()
+    assert await bundles.units(session, B, "sms") == 0
