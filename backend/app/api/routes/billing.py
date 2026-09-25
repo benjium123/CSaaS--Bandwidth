@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
@@ -49,6 +49,8 @@ class NumberCheckoutIn(BaseModel):
     plan_code: str | None = None
     #: The monthly increase the buyer was shown for add-on numbers beyond the plan.
     accept_charge_cents: int | None = None
+    #: First purchase only: bill the plan monthly or yearly (ten months up front).
+    billing_interval: Literal["month", "year"] = "month"
 
 
 class PlanUsersIn(BaseModel):
@@ -201,6 +203,7 @@ async def number_checkout(
         emergency_address_id=address.id,
         plan_code=payload.plan_code,
         accept_charge_cents=payload.accept_charge_cents,
+        billing_interval=payload.billing_interval,
     )
     if purchase.state == "paid":
         # Covered by the workspace plan: nothing to check out, order the numbers now.

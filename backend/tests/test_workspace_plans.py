@@ -19,7 +19,11 @@ import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.errors import PriceConfirmationRequiredError, ValidationFailedError
+from app.errors import (
+    FeatureUnavailableError,
+    PriceConfirmationRequiredError,
+    ValidationFailedError,
+)
 from app.models import KycProfile, Org, OrgNumber
 from app.models.subscriptions import Subscription
 from app.providers.numbers import OrderResult
@@ -27,8 +31,24 @@ from app.services import number_purchases, plan_billing, seats, stripe_client
 from tests.conftest import make_settings
 
 SETTINGS = make_settings(
-    stripe_webhook_secret="whsec_test", stripe_business_extra_user_price_id="price_test_business_user"
+    stripe_webhook_secret="whsec_test",
+    stripe_business_extra_user_price_id="price_test_business_user",
+    stripe_plan_solo_year_price_id="price_y_solo",
+    stripe_plan_team_year_price_id="price_y_team",
+    stripe_plan_business_year_price_id="price_y_business",
+    stripe_extra_user_year_price_id="price_y_user",
+    stripe_business_extra_user_year_price_id="price_y_business_user",
+    stripe_extra_number_year_price_id="price_y_number",
 )
+#: Yearly prices charge ten months once a year.
+YEARLY_CENTS = {
+    "price_y_solo": 15000,
+    "price_y_team": 45000,
+    "price_y_business": 130000,
+    "price_y_user": 15000,
+    "price_y_business_user": 12000,
+    "price_y_number": 5000,
+}
 CENTS = {
     SETTINGS.stripe_plan_solo_price_id: 1500,
     SETTINGS.stripe_plan_team_price_id: 4500,
@@ -36,6 +56,7 @@ CENTS = {
     SETTINGS.stripe_extra_user_price_id: 1500,
     SETTINGS.stripe_business_extra_user_price_id: 1200,
     SETTINGS.stripe_extra_number_price_id: 500,
+    **YEARLY_CENTS,
 }
 
 
@@ -62,7 +83,10 @@ class FakeStripe:
             "active": True,
             "unit_amount": CENTS[price_id],
             "currency": "usd",
-            "recurring": {"interval": "month", "interval_count": 1},
+            "recurring": {
+                "interval": "year" if price_id in YEARLY_CENTS else "month",
+                "interval_count": 1,
+            },
         }
 
     def _checkout(self, **kwargs):
@@ -135,8 +159,8 @@ async def _org(session) -> Org:
     return org
 
 
-async def _on_plan(session, stripe, org, plan="team", extras=()) -> str:
-    remote = stripe.add_subscription(org.id, plan_billing.plan_price_id(SETTINGS, plan), extras)
+async def _on_plan(session, stripe, org, plan="team", extras=(), interval="month") -> str:
+    remote = stripe.add_subscription(org.id, plan_billing.plan_price_id(SETTINGS, plan, interval), extras)
     await plan_billing.upsert_from_stripe(session, SETTINGS, remote, org.id)
     await session.commit()
     return remote["id"]
@@ -188,6 +212,84 @@ async def test_first_numbers_need_a_plan_and_check_out_plan_plus_extra_numbers(s
     }
     assert call["metadata"]["kind"] == "number_purchase"
     assert purchase.plan_code == "team" and purchase.state == "checkout"
+
+
+async def test_yearly_checkout_bills_ten_months_and_stays_yearly(session, stripe):
+    org = await _org(session)
+    numbers = ["+12125550101", "+12125550102", "+12125550103", "+12125550104"]
+    purchase = await number_purchases.create(
+        session, SETTINGS, org.id, numbers, plan_code="team", billing_interval="year"
+    )
+    assert stripe.checkout_calls[-1]["line_items"] == [
+        {"price": "price_y_team", "quantity": 1},
+        {"price": "price_y_number", "quantity": 1},
+    ]
+    assert purchase.billing_interval == "year"
+
+    # A monthly subscription does not satisfy a yearly cart.
+    monthly = stripe.add_subscription(
+        org.id, SETTINGS.stripe_plan_team_price_id, [(SETTINGS.stripe_extra_number_price_id, 1)]
+    )
+    with pytest.raises(ValidationFailedError):
+        plan_billing.verify_checkout_subscription(SETTINGS, monthly, "team", 4, "year")
+
+    sid = await _on_plan(session, stripe, org, "team", [("price_y_number", 1)], "year")
+    ent = await plan_billing.entitlement(session, org.id)
+    assert ent.interval == "year" and ent.period_cents == 50000
+    # Add-ons on a yearly plan are quoted and bought per year, at the yearly price.
+    with pytest.raises(PriceConfirmationRequiredError) as exc:
+        await plan_billing.add_users(session, SETTINGS, org.id, 1, None)
+    assert exc.value.quote["monthly_increase_cents"] == 15000
+    assert exc.value.quote["interval"] == "year"
+    await plan_billing.add_users(session, SETTINGS, org.id, 1, 15000)
+    assert stripe.monthly_cents(sid) == 45000 + 5000 + 15000
+    assert (await plan_billing.summary(session, SETTINGS, org.id))["plan"]["interval"] == "year"
+
+
+async def test_a_subscription_mixing_monthly_and_yearly_is_refused(session, stripe):
+    org = await _org(session)
+    remote = stripe.add_subscription(org.id, "price_y_team", [(SETTINGS.stripe_extra_number_price_id, 1)])
+    with pytest.raises(ValidationFailedError):
+        plan_billing.parse_items(SETTINGS, remote)
+
+
+async def test_yearly_is_refused_cleanly_while_its_prices_are_missing(session, stripe):
+    org = await _org(session)
+    bare = make_settings(stripe_webhook_secret="whsec_test")
+    assert plan_billing.yearly_available(bare) is False
+    with pytest.raises(FeatureUnavailableError):
+        await number_purchases.create(
+            session, bare, org.id, ["+12125550101"], plan_code="team", billing_interval="year"
+        )
+
+
+async def _members(session, org, count):
+    from app.models import OrgMembership, Role, User
+
+    role = Role(id=uuid.uuid4(), org_id=org.id, name="agent", permissions=[])
+    session.add(role)
+    for _ in range(count):
+        user = User(id=uuid.uuid4(), email=f"{uuid.uuid4().hex[:8]}@plan.test", hashed_password="x", full_name="M")
+        session.add(user)
+        await session.flush()
+        session.add(OrgMembership(id=uuid.uuid4(), org_id=org.id, user_id=user.id, role_id=role.id))
+    await session.commit()
+
+
+async def test_starter_stops_at_5_users_and_team_at_15(session, stripe):
+    org = await _org(session)
+    await _on_plan(session, stripe, org, "solo", [(SETTINGS.stripe_extra_user_price_id, 4)])
+    with pytest.raises(ValidationFailedError) as exc:
+        await plan_billing.add_users(session, SETTINGS, org.id, 1, 1500)
+    assert exc.value.code == "plan_user_limit" and "Team" in str(exc.value)
+
+    other = await _org(session)
+    await _on_plan(session, stripe, other, "business")
+    await _members(session, other, 16)
+    with pytest.raises(ValidationFailedError) as exc:
+        await plan_billing.change_plan(session, SETTINGS, other.id, "team", None)
+    assert exc.value.code == "plan_user_limit"
+    assert plan_billing.user_limit_error(plan_billing.PLANS["business"], 500) is None
 
 
 async def test_paid_checkout_puts_the_workspace_on_the_plan_and_numbers_are_plan_billed(
@@ -295,6 +397,7 @@ async def test_numbers_are_free_inside_the_plan_and_5_dollars_beyond(session, st
         await plan_billing.reserve_numbers(session, SETTINGS, org.id, 3, 500)
     assert exc.value.quote == {
         "monthly_increase_cents": 1000,
+        "interval": "month",
         "included_free": 1,
         "paid_numbers": 2,
     }

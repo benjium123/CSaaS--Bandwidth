@@ -22,6 +22,10 @@ class NumberPurchase(Base, TenantScoped, TimestampMixin):
     #: The workspace plan this cart was bought on (services/plan_billing.py); None for the
     #: retired per-number price.
     plan_code: Mapped[str | None] = mapped_column(sa.String(32))
+    #: "month" or "year": how the first purchase's plan is billed.
+    billing_interval: Mapped[str] = mapped_column(
+        sa.String(8), nullable=False, default="month", server_default="month"
+    )
     subscription_status: Mapped[str | None] = mapped_column(sa.String(32))
     detail: Mapped[str | None] = mapped_column(sa.Text())
     #: Where these numbers' 911 calls are sent (E911 registered location).

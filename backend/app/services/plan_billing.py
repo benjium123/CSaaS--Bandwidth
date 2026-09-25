@@ -55,6 +55,11 @@ _UNSCOPED = {ALLOW_UNSCOPED_KEY: True}
 
 EXTRA_USER_CENTS = 1500  # Solo and Team; Business sets its own on PlanSpec
 EXTRA_NUMBER_CENTS = 500
+MONTH = "month"
+YEAR = "year"
+INTERVALS = (MONTH, YEAR)
+#: A yearly plan (and its add-ons) costs ten months: two months free.
+MONTHS_BILLED_PER_YEAR = 10
 #: Stripe metadata kind on the subscription itself (the checkout session says number_purchase).
 SUBSCRIPTION_KIND = "workspace_plan"
 
@@ -71,11 +76,15 @@ class PlanSpec:
     extra_user_setting: str = "stripe_extra_user_price_id"
     #: Call minutes a month for the whole workspace (a fixed pool; add-on users add none).
     minutes: int = 0
+    #: Most users the plan can have, add-ons included. None = no limit.
+    max_users: int | None = None
 
 
 PLANS: dict[str, PlanSpec] = {
-    "solo": PlanSpec("solo", "Starter", 1, 1, 1500, "stripe_plan_solo_price_id"),
-    "team": PlanSpec("team", "Team", 3, 3, 4500, "stripe_plan_team_price_id", minutes=200),
+    "solo": PlanSpec("solo", "Starter", 1, 1, 1500, "stripe_plan_solo_price_id", max_users=5),
+    "team": PlanSpec(
+        "team", "Team", 3, 3, 4500, "stripe_plan_team_price_id", minutes=200, max_users=15
+    ),
     "business": PlanSpec(
         "business", "Business", 10, 10, 13000, "stripe_plan_business_price_id",
         extra_user_cents=1200, extra_user_setting="stripe_business_extra_user_price_id",
@@ -84,17 +93,55 @@ PLANS: dict[str, PlanSpec] = {
 }
 
 
-def plan_price_id(settings: Settings, code: str) -> str:
-    return getattr(settings, PLANS[code].setting)
+def _setting(name: str, interval: str) -> str:
+    """The settings field for a price: yearly twins are named ``*_year_price_id``."""
+    if interval not in INTERVALS:
+        raise ValidationFailedError("Choose monthly or yearly billing")
+    return name if interval == MONTH else name.replace("_price_id", "_year_price_id")
+
+
+def period_cents(monthly: int, interval: str) -> int:
+    """What ``monthly`` cents a month costs per billing period."""
+    return monthly * (MONTHS_BILLED_PER_YEAR if interval == YEAR else 1)
+
+
+def plan_price_id(settings: Settings, code: str, interval: str = MONTH) -> str:
+    return getattr(settings, _setting(PLANS[code].setting, interval))
+
+
+def number_price_id(settings: Settings, interval: str = MONTH) -> str:
+    return getattr(settings, _setting("stripe_extra_number_price_id", interval))
+
+
+def yearly_available(settings: Settings) -> bool:
+    """Every yearly price is configured, so a yearly plan can be sold and changed."""
+    return bool(number_price_id(settings, YEAR)) and all(
+        plan_price_id(settings, code, YEAR) and extra_user_price_id(settings, code, YEAR)
+        for code in PLANS
+    )
+
+
+def user_limit_error(spec: PlanSpec, users: int) -> ValidationFailedError | None:
+    """The refusal when ``users`` is more than ``spec`` allows, else None."""
+    if spec.max_users is None or users <= spec.max_users:
+        return None
+    bigger = next(
+        (p.name for p in PLANS.values() if p.max_users is None or p.max_users >= users), None
+    )
+    return ValidationFailedError(
+        f"{spec.name} allows up to {spec.max_users} users."
+        + (f" Move to {bigger} for more." if bigger else ""),
+        code="plan_user_limit",
+    )
 
 
 def monthly_cents(spec: PlanSpec, extra_users: int, extra_numbers: int) -> int:
     return spec.price_cents + extra_users * spec.extra_user_cents + extra_numbers * EXTRA_NUMBER_CENTS
 
 
-def extra_user_price_id(settings: Settings, code: str) -> str:
+def extra_user_price_id(settings: Settings, code: str, interval: str = MONTH) -> str:
     """The add-on user price for a plan: Business has its own, the others share one."""
-    return getattr(settings, PLANS[code].extra_user_setting)
+    return getattr(settings, _setting(PLANS[code].extra_user_setting, interval))
 
 
 # ------------------------------------------------------------------------------------
@@ -140,6 +187,7 @@ class Entitlement:
     spec: PlanSpec
     extra_users: int
     extra_numbers: int
+    interval: str = MONTH
 
     @property
     def users(self) -> int:
@@ -156,6 +204,11 @@ class Entitlement:
     @property
     def monthly_cents(self) -> int:
         return monthly_cents(self.spec, self.extra_users, self.extra_numbers)
+
+    @property
+    def period_cents(self) -> int:
+        """What each bill is: a month's worth, or ten months' on a yearly plan."""
+        return period_cents(self.monthly_cents, self.interval)
 
 
 async def entitlement(session: AsyncSession, org_id: uuid.UUID) -> Entitlement | None:
@@ -175,7 +228,13 @@ async def entitlement(session: AsyncSession, org_id: uuid.UUID) -> Entitlement |
     ).scalar_one_or_none()
     if row is None:
         return None
-    return Entitlement(row, PLANS[row.plan_code], int(row.extra_users), int(row.extra_numbers))
+    return Entitlement(
+        row,
+        PLANS[row.plan_code],
+        int(row.extra_users),
+        int(row.extra_numbers),
+        row.billing_interval or MONTH,
+    )
 
 
 async def numbers_held(session: AsyncSession, org_id: uuid.UUID) -> int:
@@ -216,14 +275,21 @@ async def is_plan_subscription(session: AsyncSession, stripe_subscription_id: st
 # ------------------------------------------------------------------------------------
 # Stripe prices and subscription items
 # ------------------------------------------------------------------------------------
-async def validate_price(stripe, price_id: str, cents: int) -> None:
-    """Refuse to sell on a price that is not exactly what this module promises."""
+async def validate_price(stripe, price_id: str, cents: int, interval: str = MONTH) -> None:
+    """Refuse to sell on a price that is not exactly what this module promises. ``cents`` is
+    the MONTHLY amount; a yearly price must charge ten months of it once a year."""
+    if not price_id:
+        raise FeatureUnavailableError(
+            "Yearly billing is not available yet. Choose monthly."
+            if interval == YEAR
+            else "Plan pricing needs administrator attention."
+        )
     price = await stripe_client._run_sync(stripe.Price.retrieve, price_id)
     recurring = price.get("recurring") or {}
     if (
-        price.get("unit_amount") != cents
+        price.get("unit_amount") != period_cents(cents, interval)
         or price.get("currency") != "usd"
-        or recurring.get("interval") != "month"
+        or recurring.get("interval") != interval
         or recurring.get("interval_count") != 1
         or recurring.get("usage_type", "licensed") != "licensed"
         or price.get("transform_quantity")
@@ -242,56 +308,90 @@ class ParsedItems:
     extra_numbers: int
     extra_numbers_item_id: str | None
     extra_users_price_id: str | None = None
+    interval: str = MONTH
 
 
 def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
     """Read plan and add-on quantities off a Stripe subscription. Anything unexpected on it
     (an unknown price, two plans, a plan quantity other than 1) is refused, not guessed."""
-    by_price = {plan_price_id(settings, code): code for code in PLANS}
-    plan_code = plan_item = users_item = numbers_item = users_price = None
+    by_price: dict[str, tuple[str, str]] = {}
+    user_prices: dict[str, str] = {}
+    number_prices: dict[str, str] = {}
+    for interval in INTERVALS:
+        for code in PLANS:
+            if pid := plan_price_id(settings, code, interval):
+                by_price[pid] = (code, interval)
+            if pid := extra_user_price_id(settings, code, interval):
+                user_prices[pid] = interval
+        if pid := number_price_id(settings, interval):
+            number_prices[pid] = interval
+    plan_code = plan_item = users_item = numbers_item = users_price = plan_interval = None
     extra_users = extra_numbers = 0
-    user_prices = {extra_user_price_id(settings, code) for code in PLANS} - {""}
+    intervals: set[str] = set()
     for item in (subscription.get("items") or {}).get("data", []):
         price_id = (item.get("price") or {}).get("id")
         quantity = int(item.get("quantity") or 0)
         if price_id in by_price:
             if plan_code is not None or quantity != 1:
                 raise ValidationFailedError("Subscription does not match a Ringlite plan")
-            plan_code, plan_item = by_price[price_id], item.get("id")
+            plan_code, plan_interval = by_price[price_id]
+            plan_item = item.get("id")
+            intervals.add(plan_interval)
         elif price_id in user_prices:
             extra_users, users_item, users_price = quantity, item.get("id"), price_id
-        elif price_id == settings.stripe_extra_number_price_id:
+            intervals.add(user_prices[price_id])
+        elif price_id in number_prices:
             extra_numbers, numbers_item = quantity, item.get("id")
+            intervals.add(number_prices[price_id])
         else:
             raise ValidationFailedError("Subscription has an item that is not a Ringlite plan")
     if plan_code is None:
         raise ValidationFailedError("Subscription does not include a Ringlite plan")
+    if len(intervals) != 1:
+        raise ValidationFailedError("Subscription mixes monthly and yearly prices")
     return ParsedItems(
-        plan_code, plan_item, extra_users, users_item, extra_numbers, numbers_item, users_price
+        plan_code,
+        plan_item,
+        extra_users,
+        users_item,
+        extra_numbers,
+        numbers_item,
+        users_price,
+        plan_interval,
     )
 
 
-def checkout_line_items(settings: Settings, code: str, numbers: int) -> list[dict]:
-    items = [{"price": plan_price_id(settings, code), "quantity": 1}]
+def checkout_line_items(
+    settings: Settings, code: str, numbers: int, interval: str = MONTH
+) -> list[dict]:
+    items = [{"price": plan_price_id(settings, code, interval), "quantity": 1}]
     extra = max(numbers - PLANS[code].numbers, 0)
     if extra:
-        items.append({"price": settings.stripe_extra_number_price_id, "quantity": extra})
+        items.append({"price": number_price_id(settings, interval), "quantity": extra})
     return items
 
 
-async def validate_checkout_prices(settings: Settings, stripe, code: str, numbers: int) -> None:
-    await validate_price(stripe, plan_price_id(settings, code), PLANS[code].price_cents)
+async def validate_checkout_prices(
+    settings: Settings, stripe, code: str, numbers: int, interval: str = MONTH
+) -> None:
+    await validate_price(
+        stripe, plan_price_id(settings, code, interval), PLANS[code].price_cents, interval
+    )
     if numbers > PLANS[code].numbers:
-        await validate_price(stripe, settings.stripe_extra_number_price_id, EXTRA_NUMBER_CENTS)
+        await validate_price(
+            stripe, number_price_id(settings, interval), EXTRA_NUMBER_CENTS, interval
+        )
 
 
 def verify_checkout_subscription(
-    settings: Settings, subscription: dict, code: str, numbers: int
+    settings: Settings, subscription: dict, code: str, numbers: int, interval: str = MONTH
 ) -> ParsedItems:
-    """The paid subscription is exactly the plan and add-on numbers the cart asked for."""
+    """The paid subscription is exactly the plan, billing interval and add-on numbers the
+    cart asked for."""
     parsed = parse_items(settings, subscription)
     if (
         parsed.plan_code != code
+        or parsed.interval != interval
         or parsed.extra_users != 0
         or parsed.extra_numbers != max(numbers - PLANS[code].numbers, 0)
     ):
@@ -337,6 +437,7 @@ async def upsert_from_stripe(
     row.stripe_customer_id = subscription.get("customer") or row.stripe_customer_id
     row.extra_users = parsed.extra_users
     row.extra_numbers = parsed.extra_numbers
+    row.billing_interval = parsed.interval
     row.current_period_end = _period_end(subscription)
     row.cancel_at_period_end = bool(subscription.get("cancel_at_period_end"))
 
@@ -418,9 +519,14 @@ async def refresh_voice_allowance(session: AsyncSession, org_id: uuid.UUID) -> N
 # ------------------------------------------------------------------------------------
 # Changing what the workspace pays for
 # ------------------------------------------------------------------------------------
-def _require_accepted(accept_cents: int | None, increase_cents: int, detail: dict) -> None:
+def _require_accepted(
+    accept_cents: int | None, increase_cents: int, detail: dict, interval: str = MONTH
+) -> None:
+    """``increase_cents`` is per billing period (a year on a yearly plan)."""
     if accept_cents != increase_cents:
-        raise PriceConfirmationRequiredError({"monthly_increase_cents": increase_cents, **detail})
+        raise PriceConfirmationRequiredError(
+            {"monthly_increase_cents": increase_cents, "interval": interval, **detail}
+        )
 
 
 def _stripe_failure(exc: Exception) -> ValidationFailedError:
@@ -449,17 +555,23 @@ async def _apply(
         stripe.Subscription.retrieve, ent.subscription.stripe_subscription_id
     )
     parsed = parse_items(settings, remote)
+    interval = parsed.interval  # plan changes keep the billing interval
     items: list[dict] = []
     if plan_code and plan_code != parsed.plan_code:
         await validate_price(
-            stripe, plan_price_id(settings, plan_code), PLANS[plan_code].price_cents
+            stripe,
+            plan_price_id(settings, plan_code, interval),
+            PLANS[plan_code].price_cents,
+            interval,
         )
-        items.append({"id": parsed.plan_item_id, "price": plan_price_id(settings, plan_code)})
+        items.append(
+            {"id": parsed.plan_item_id, "price": plan_price_id(settings, plan_code, interval)}
+        )
     target = plan_code or parsed.plan_code
-    user_price = extra_user_price_id(settings, target)
+    user_price = extra_user_price_id(settings, target, interval)
     if parsed.extra_users_item_id and parsed.extra_users_price_id != user_price:
         # A plan switch moves existing add-on users to the new plan's user price.
-        await validate_price(stripe, user_price, PLANS[target].extra_user_cents)
+        await validate_price(stripe, user_price, PLANS[target].extra_user_cents, interval)
         keep = parsed.extra_users if extra_users is None else extra_users
         if keep > 0:
             items.append({"id": parsed.extra_users_item_id, "price": user_price, "quantity": keep})
@@ -478,7 +590,7 @@ async def _apply(
             extra_numbers,
             parsed.extra_numbers,
             parsed.extra_numbers_item_id,
-            settings.stripe_extra_number_price_id,
+            number_price_id(settings, interval),
             EXTRA_NUMBER_CENTS,
         ),
     ):
@@ -489,7 +601,7 @@ async def _apply(
         elif item_id:
             items.append({"id": item_id, "deleted": True})
         else:
-            await validate_price(stripe, price_id, cents)
+            await validate_price(stripe, price_id, cents, interval)
             items.append({"price": price_id, "quantity": wanted})
     if not items:
         return ent
@@ -536,8 +648,10 @@ async def add_users(
     if not 1 <= count <= 50:
         raise ValidationFailedError("Add between 1 and 50 users at a time")
     ent = await require_entitlement(session, org_id)
-    increase = count * ent.spec.extra_user_cents
-    _require_accepted(accept_cents, increase, {"users": ent.users + count})
+    if refusal := user_limit_error(ent.spec, ent.users + count):
+        raise refusal
+    increase = period_cents(count * ent.spec.extra_user_cents, ent.interval)
+    _require_accepted(accept_cents, increase, {"users": ent.users + count}, ent.interval)
     return await _apply(
         session,
         settings,
@@ -562,7 +676,10 @@ async def reserve_numbers(
     if need == 0:
         return ent
     _require_accepted(
-        accept_cents, need * EXTRA_NUMBER_CENTS, {"included_free": free, "paid_numbers": need}
+        accept_cents,
+        period_cents(need * EXTRA_NUMBER_CENTS, ent.interval),
+        {"included_free": free, "paid_numbers": need},
+        ent.interval,
     )
     return await _apply(
         session,
@@ -581,19 +698,25 @@ async def change_plan(
     code: str,
     accept_cents: int | None,
 ) -> Entitlement:
-    """Move to another plan, keeping every user and number in use. Add-ons shrink to what
-    the new plan does not already include. ``accept_cents`` is the NEW monthly total."""
+    """Move to another plan, keeping every user and number in use and the billing interval.
+    Add-ons shrink to what the new plan does not already include. ``accept_cents`` is the NEW
+    total per billing period (a year on a yearly plan)."""
     if code not in PLANS:
         raise ValidationFailedError("Unknown plan")
     ent = await require_entitlement(session, org_id)
     if code == ent.spec.code:
         raise ValidationFailedError("You are already on this plan")
     spec = PLANS[code]
-    extra_users = max(await users_taken(session, org_id) - spec.users, 0)
+    taken = await users_taken(session, org_id)
+    if refusal := user_limit_error(spec, taken):
+        raise refusal
+    extra_users = max(taken - spec.users, 0)
     extra_numbers = max(await numbers_held(session, org_id) - spec.numbers, 0)
-    new_total = monthly_cents(spec, extra_users, extra_numbers)
+    new_total = period_cents(monthly_cents(spec, extra_users, extra_numbers), ent.interval)
     if accept_cents != new_total:
-        raise PriceConfirmationRequiredError({"monthly_total_cents": new_total, "plan": code})
+        raise PriceConfirmationRequiredError(
+            {"monthly_total_cents": new_total, "plan": code, "interval": ent.interval}
+        )
     return await _apply(
         session,
         settings,
@@ -649,6 +772,7 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
     ent = await entitlement(session, org_id)
     taken = await users_taken(session, org_id)
     held = await numbers_held(session, org_id)
+    interval = ent.interval if ent is not None else MONTH
     catalog = []
     for spec in PLANS.values():
         extra_u = max(taken - spec.users, 0)
@@ -662,7 +786,13 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
                 "price_cents": spec.price_cents,
                 "extra_user_cents": spec.extra_user_cents,
                 "minutes": spec.minutes,
+                "max_users": spec.max_users,
+                "yearly_price_cents": period_cents(spec.price_cents, YEAR),
                 "monthly_total_cents_if_switched": monthly_cents(spec, extra_u, extra_n),
+                # Per billing period of the CURRENT plan: what change_plan wants accepted.
+                "total_cents_if_switched": period_cents(
+                    monthly_cents(spec, extra_u, extra_n), interval
+                ),
             }
         )
     out: dict = {
@@ -671,6 +801,8 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
         "numbers": {"limit": None, "in_use": held},
         "extra_user_cents": EXTRA_USER_CENTS,
         "extra_number_cents": EXTRA_NUMBER_CENTS,
+        "yearly_available": yearly_available(settings),
+        "months_billed_per_year": MONTHS_BILLED_PER_YEAR,
         "catalog": catalog,
     }
     if ent is None:
@@ -684,6 +816,8 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
             "status": ent.subscription.status,
             "price_cents": ent.spec.price_cents,
             "monthly_total_cents": ent.monthly_cents,
+            "interval": ent.interval,
+            "period_total_cents": ent.period_cents,
             "renews_at": ent.subscription.current_period_end.isoformat()
             if ent.subscription.current_period_end
             else None,

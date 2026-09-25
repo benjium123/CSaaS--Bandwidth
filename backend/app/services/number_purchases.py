@@ -78,6 +78,7 @@ async def create(
     emergency_address_id=None,
     plan_code=None,
     accept_charge_cents=None,
+    billing_interval="month",
 ):
     """Start buying ``numbers``. Without a plan, ``plan_code`` is required and a Stripe
     Checkout for plan + add-on numbers is opened. With one, the numbers are free while the
@@ -104,9 +105,14 @@ async def create(
             raise ValidationFailedError(
                 "Choose a plan to buy your first numbers.", code="plan_required"
             )
-        await plan_billing.validate_checkout_prices(settings, stripe, plan_code, len(normalized))
+        if billing_interval not in plan_billing.INTERVALS:
+            raise ValidationFailedError("Choose monthly or yearly billing")
+        await plan_billing.validate_checkout_prices(
+            settings, stripe, plan_code, len(normalized), billing_interval
+        )
     else:
         plan_code = ent.spec.code
+        billing_interval = ent.interval
     await require_carrier_funds(settings, len(normalized))
     from app.models import Org
 
@@ -137,6 +143,7 @@ async def create(
             elif (
                 [n["e164"] for n in existing.numbers] == normalized
                 and existing.plan_code == plan_code
+                and existing.billing_interval == billing_interval
             ):
                 return existing
             else:
@@ -185,6 +192,7 @@ async def create(
         )
     )
     purchase.plan_code = plan_code
+    purchase.billing_interval = billing_interval
     if emergency_address_id is not None:
         purchase.emergency_address_id = emergency_address_id
         purchase.e911_acknowledged_at = datetime.now(timezone.utc)
@@ -207,12 +215,14 @@ async def create(
         mode="subscription",
         payment_method_types=["card"],
         payment_method_options=stripe_client.THREE_DS_OPTIONS,
-        line_items=plan_billing.checkout_line_items(settings, plan_code, len(normalized)),
+        line_items=plan_billing.checkout_line_items(
+            settings, plan_code, len(normalized), billing_interval
+        ),
         metadata=metadata,
         subscription_data={"metadata": plan_metadata},
         success_url=f"{base}/choose-numbers?purchase={purchase.id}",
         cancel_url=f"{base}/choose-numbers?purchase={purchase.id}&cancelled=1",
-        idempotency_key=f"number-purchase-{purchase.id}-{plan_code}",
+        idempotency_key=f"number-purchase-{purchase.id}-{plan_code}-{billing_interval}",
     )
     purchase.checkout_id = checkout["id"]
     purchase.checkout_url = checkout["url"]
@@ -281,7 +291,11 @@ async def fulfill(session, request, purchase):
             from app.services import plan_billing
 
             plan_billing.verify_checkout_subscription(
-                settings, subscription, purchase.plan_code, len(purchase.numbers)
+                settings,
+                subscription,
+                purchase.plan_code,
+                len(purchase.numbers),
+                purchase.billing_interval or "month",
             )
             await plan_billing.upsert_from_stripe(
                 session, settings, subscription, purchase.org_id

@@ -93,3 +93,7 @@ class Subscription(Base, TenantScoped, TimestampMixin):
     extra_numbers: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default="0"
     )
+    #: "month" or "year" (a yearly plan bills ten months up front; plan_billing.py).
+    billing_interval: Mapped[str] = mapped_column(
+        sa.String(8), nullable=False, default="month", server_default="month"
+    )
