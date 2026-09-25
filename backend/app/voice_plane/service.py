@@ -195,10 +195,20 @@ async def start_room_call(
 
         await e911.require_e911(session, settings, org_id, from_e164, to)
         await telephony_access.require_telephony_allowed(session, org_id, "call", to_e164=to)
-        await exposure.require_call_slot(session, settings, org_id)
+        await exposure.require_call_slot(
+            session, settings, org_id, from_e164=from_e164, user_id=exposure.placed_by(identity)
+        )
         await telephony_billing.require_call_credit(session, org_id, call)
     room = room_name_for_call(call.id)
-    call.extra = {"via": "livekit", "room": room, **({"emergency": True} if emergency else {})}
+    from app.services.exposure import placed_by as exposure_placed_by
+
+    person = exposure_placed_by(identity)
+    call.extra = {
+        "via": "livekit",
+        "room": room,
+        **({"emergency": True} if emergency else {}),
+        **({"placed_by": str(person)} if person else {}),
+    }
     # P43: chosen for monitoring now; the listener joins when the phone side answers.
     from app.services import monitor_calls
 

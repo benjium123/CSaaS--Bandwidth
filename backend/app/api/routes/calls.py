@@ -564,6 +564,7 @@ async def create_call(
         tag=payload.tag,
         record=payload.record,
         routes=routes,
+        placed_by=user.id,
     )
     # A call this request just created cannot have any transcript rows yet.
     return await _detail_out(ctx.session, request, call, include_transcript=False)

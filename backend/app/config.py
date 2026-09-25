@@ -429,9 +429,10 @@ class Settings(BaseSettings):
     #: KycProfile.limits (max_concurrent_calls, daily_spend_micros).
     fraud_exposure_enforced: bool = True
     fraud_new_account_days: int = 30
-    fraud_default_concurrent_calls: int = 5
-    fraud_new_account_daily_spend_micros: int = 25_000_000
-    fraud_daily_spend_micros: int = 250_000_000
+    fraud_calls_per_number: int = 2
+    fraud_calls_per_user: int = 2
+    fraud_new_account_daily_spend_micros: int = 10_000_000
+    fraud_daily_spend_micros: int = 50_000_000
     #: Auto-recharge: none while the workspace is new, then at most this many charges and
     #: this much money per 24 hours.
     fraud_auto_recharge_max_per_day: int = 3
@@ -451,7 +452,7 @@ class Settings(BaseSettings):
     e911_grace_days: int = 7
     #: P44g toll-free inbound guard (services/tollfree_guard.py).
     tollfree_guard_enforced: bool = True
-    tollfree_max_concurrent: int = 5
+    tollfree_max_concurrent: int = 2
     tollfree_daily_minutes: int = 500
     monitor_enforced: bool = True
     #: The pre-send text check waits at most this long for the AI.

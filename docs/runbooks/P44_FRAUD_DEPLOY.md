@@ -11,7 +11,9 @@ registration, auto-registration of numbers without an address, and the call gate
    `POST /api/v1/ops/applications/{org_id}/limits` with
    `{"limits": {"established": true, "daily_spend_micros": <daily ceiling>, "max_concurrent_calls": <n>}}`.
    These three keys survive later edits made in the Ops limits form. The defaults are
-   5 concurrent calls and $250/day for established accounts.
+   2 live calls per number, 2 per person, no workspace-wide cap, and a deliberately low
+   daily spend ceiling: $10/day new, $50/day established (raise one workspace with
+   `daily_spend_micros`). The Telnyx daily cap is a $1,000 backstop, not the brake.
 2. Decide E911 enforcement. Enforcement starts on `E911_ENFORCEMENT_START` (2026-09-26),
    and existing numbers get `E911_GRACE_DAYS` (7) more. A number bought later gets 7 days
    from its purchase. After that, calls from a number without an active 911 address are

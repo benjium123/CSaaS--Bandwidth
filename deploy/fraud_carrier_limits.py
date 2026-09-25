@@ -72,7 +72,9 @@ def main() -> None:
     ap.add_argument("mode", choices=["show", "apply"])
     ap.add_argument("--ovp", nargs="*", default=[], help="outbound voice profile ids")
     ap.add_argument("--mp", nargs="*", default=[], help="messaging profile ids")
-    ap.add_argument("--daily-spend", default="100", help="USD per day per profile")
+    # A HIGH backstop: the app's own per-workspace daily caps (services/exposure.py) are the
+    # brake; this only stops a runaway if the app itself is bypassed or broken.
+    ap.add_argument("--daily-spend", default="1000", help="USD per day per profile")
     ap.add_argument("--max-rate", type=float, default=0.05, help="max USD/min per destination")
     ap.add_argument("--concurrent", type=int, default=20)
     args = ap.parse_args()

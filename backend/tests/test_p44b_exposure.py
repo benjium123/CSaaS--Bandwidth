@@ -33,47 +33,78 @@ async def _org(session, *, age_days: int = 90) -> Org:
     return org
 
 
-def _live_call(org_id, status: str = "in_progress", age: timedelta = timedelta(minutes=1)):
+NUMBER = "+19725550199"
+OTHER = "+19725550188"
+
+
+def _live_call(
+    org_id,
+    status: str = "in_progress",
+    age: timedelta = timedelta(minutes=1),
+    *,
+    our: str = NUMBER,
+    direction: str = "outbound",
+    user=None,
+    tag=None,
+):
     return Call(
         id=uuid.uuid4(),
         org_id=org_id,
-        direction="outbound",
+        direction=direction,
         contact_e164="+19725550100",
-        our_e164="+19725550199",
+        our_e164=our,
         carrier="telnyx",
         status=status,
         created_at=_now() - age,
+        tag=tag,
+        extra={"placed_by": str(user)} if user else {},
     )
 
 
-async def test_sixth_concurrent_call_is_refused(session, settings):
-    org = await _org(session)
-    for _ in range(5):
-        session.add(_live_call(org.id))
-    await session.commit()
+async def _refused(session, settings, org_id, **kw):
     with pytest.raises(PermissionDeniedError) as err:
-        await exposure.require_call_slot(session, settings, org.id)
+        await exposure.require_call_slot(session, settings, org_id, **kw)
     assert err.value.code == "concurrent_call_limit"
 
 
-async def test_finished_and_stale_calls_do_not_hold_a_slot(session, settings):
+async def test_a_number_carries_at_most_two_live_calls(session, settings):
+    org = await _org(session)
+    session.add(_live_call(org.id))
+    session.add(_live_call(org.id, direction="inbound"))  # inbound counts on the number too
+    await session.commit()
+    await _refused(session, settings, org.id, from_e164=NUMBER)
+    await exposure.require_call_slot(session, settings, org.id, from_e164=OTHER)
+
+
+async def test_a_person_runs_at_most_two_calls_across_numbers(session, settings):
+    org = await _org(session)
+    me, colleague = uuid.uuid4(), uuid.uuid4()
+    session.add(_live_call(org.id, our=NUMBER, user=me))
+    session.add(_live_call(org.id, our=OTHER, user=me))
+    await session.commit()
+    third = "+19725550177"
+    await _refused(session, settings, org.id, from_e164=third, user_id=me)
+    await exposure.require_call_slot(session, settings, org.id, from_e164=third, user_id=colleague)
+
+
+async def test_finished_stale_and_911_calls_do_not_hold_a_slot(session, settings):
     org = await _org(session)
     for _ in range(3):
         session.add(_live_call(org.id, status="completed"))
     session.add(_live_call(org.id, age=timedelta(hours=5)))  # lost webhook
-    for _ in range(4):
-        session.add(_live_call(org.id))
+    session.add(_live_call(org.id, tag="emergency"))
+    session.add(_live_call(org.id))
     await session.commit()
-    await exposure.require_call_slot(session, settings, org.id)  # 4 live < 5
+    await exposure.require_call_slot(session, settings, org.id, from_e164=NUMBER)  # 1 live < 2
 
 
-async def test_operator_limit_raises_the_concurrency_cap(session, settings):
+async def test_an_operator_cap_bounds_the_whole_workspace(session, settings):
     org = await _org(session)
-    session.add(KycProfile(id=uuid.uuid4(), org_id=org.id, limits={"max_concurrent_calls": 8}))
-    for _ in range(6):
-        session.add(_live_call(org.id))
+    session.add(KycProfile(id=uuid.uuid4(), org_id=org.id, limits={"max_concurrent_calls": 3}))
+    for number in (NUMBER, OTHER, "+19725550177"):
+        session.add(_live_call(org.id, our=number))
     await session.commit()
-    await exposure.require_call_slot(session, settings, org.id)
+    await _refused(session, settings, org.id, from_e164="+19725550166")
 
 
 async def test_new_account_daily_spend_ceiling(session, settings):

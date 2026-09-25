@@ -271,6 +271,7 @@ async def create_outbound_call(
     tag: str = "",
     record: bool = False,
     routes: list | None = None,          # list[smart_routing.RouteCandidate]
+    placed_by: uuid.UUID | None = None,  # P44b: the person dialing (2 live calls each)
 ) -> tuple[Call, CallLeg]:
     if routes:
         attempts = [(candidate.provider, candidate.e164) for candidate in routes]
@@ -324,7 +325,10 @@ async def create_outbound_call(
         tag=tag or None,
         # F3a: the ONLY place this flag is read is the outbound-answer webhook handler
         # (webhooks.py::_outbound_answer_commands) deciding whether to StartRecording.
-        extra={"record": True} if record else {},
+        extra={
+            **({"record": True} if record else {}),
+            **({"placed_by": str(placed_by)} if placed_by else {}),
+        },
     )
     leg = CallLeg(
         id=uuid.uuid4(),
@@ -347,7 +351,13 @@ async def create_outbound_call(
     await telephony_access.require_telephony_allowed(session, org_id, "call", to_e164=to)
     from app.services import exposure
 
-    await exposure.require_call_slot(session, telephony_access._settings_of(session), org_id)
+    await exposure.require_call_slot(
+        session,
+        telephony_access._settings_of(session),
+        org_id,
+        from_e164=attempts[0][1],
+        user_id=placed_by,
+    )
     await telephony_billing.require_call_credit(session, org_id, call)
     # P43: monitored calls are recorded (announcement first) and reviewed by the safety AI.
     from app.services import monitor_calls

@@ -598,10 +598,8 @@ async def dialer_tick(
 
         cap_settings = settings or telephony_access._settings_of(session)
         if getattr(cap_settings, "fraud_exposure_enforced", True):
-            free = await exposure.max_concurrent_calls(
-                session, cap_settings, campaign.org_id
-            ) - await exposure.live_outbound_calls(session, campaign.org_id)
-            lines = min(lines, max(free, 0))
+            free = await exposure.free_call_slots(session, cap_settings, campaign.org_id)
+            lines = min(lines, free)
             if lines <= 0:
                 continue
 

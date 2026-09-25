@@ -4,9 +4,11 @@ The destination firewall (destination_policy.py) decides WHERE traffic may go; t
 bounds HOW MUCH of it there can be, because the prepaid hard stop only bounds the balance
 and auto-recharge refills the balance - a stolen card would keep paying.
 
-  concurrent calls   outbound calls not yet finished, per workspace (default 5)
-  daily spend        usage debited to the ledger since UTC midnight; $25/day for a workspace
-                     younger than FRAUD_NEW_ACCOUNT_DAYS, $250/day after that
+  concurrent calls   live calls per phone number (2) and outbound calls per person (2); a
+                     workspace-wide cap only when an operator sets one
+  daily spend        usage debited to the ledger since UTC midnight; kept LOW on purpose
+                     ($10/day for a workspace younger than FRAUD_NEW_ACCOUNT_DAYS, $50/day
+                     after that). The carrier-side cap is a high backstop, this is the brake.
   auto-recharge      none at all while the workspace is new; at most N charges a day after
 
 Operators raise a single workspace through ``KycProfile.limits`` (the same JSON the P41
@@ -78,32 +80,69 @@ async def _limits(session: AsyncSession, org_id: uuid.UUID) -> dict:
     return dict(profile.limits or {}) if profile is not None and profile.limits else {}
 
 
-async def live_outbound_calls(session: AsyncSession, org_id: uuid.UUID) -> int:
-    return int(
+async def _live_calls(session: AsyncSession, org_id: uuid.UUID) -> list[Call]:
+    """The workspace's calls still in progress. 911/933 calls are left out: they never use
+    up a slot another call needs."""
+    return list(
         (
             await session.execute(
-                sa.select(sa.func.count(Call.id))
+                sa.select(Call)
                 .where(
                     Call.org_id == org_id,
-                    Call.direction == "outbound",
                     Call.status.not_in(TERMINAL_CALL_STATUSES),
                     Call.created_at >= _now() - LIVE_CALL_WINDOW,
-                    # A 911/933 call never uses up a slot another call needs.
                     sa.or_(Call.tag.is_(None), Call.tag != "emergency"),
                 )
                 .execution_options(**{ALLOW_UNSCOPED_KEY: True})
             )
-        ).scalar_one()
+        )
+        .scalars()
+        .all()
     )
 
 
-async def max_concurrent_calls(
+async def live_outbound_calls(session: AsyncSession, org_id: uuid.UUID) -> int:
+    return sum(1 for c in await _live_calls(session, org_id) if c.direction == "outbound")
+
+
+def placed_by(identity: str | None) -> uuid.UUID | None:
+    """The person behind a room-call identity (``user-<uuid>``); None for the dialer, the
+    assistant test line or anything else that is not a person."""
+    if identity and identity.startswith("user-"):
+        try:
+            return uuid.UUID(identity[5:])
+        except ValueError:
+            return None
+    return None
+
+
+async def workspace_call_cap(session: AsyncSession, org_id: uuid.UUID) -> int | None:
+    """An operator-set cap on the whole workspace, if any (limits.max_concurrent_calls)."""
+    value = (await _limits(session, org_id)).get("max_concurrent_calls")
+    return value if isinstance(value, int) and value > 0 else None
+
+
+async def free_call_slots(
     session: AsyncSession, settings: Settings, org_id: uuid.UUID
 ) -> int:
-    value = (await _limits(session, org_id)).get("max_concurrent_calls")
-    if isinstance(value, int) and value > 0:
-        return value
-    return int(getattr(settings, "fraud_default_concurrent_calls", 5))
+    """How many more outbound calls the workspace could start now: the free per-number
+    slots over its active numbers, bounded by the workspace cap when one is set."""
+    from app.models import OrgNumber
+
+    per_number = int(getattr(settings, "fraud_calls_per_number", 2))
+    numbers = (
+        await session.execute(
+            sa.select(OrgNumber.e164)
+            .where(OrgNumber.org_id == org_id, OrgNumber.status == "active")
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalars().all()
+    live = await _live_calls(session, org_id)
+    free = sum(max(per_number - sum(1 for c in live if c.our_e164 == n), 0) for n in numbers)
+    cap = await workspace_call_cap(session, org_id)
+    if cap is not None:
+        free = min(free, cap - sum(1 for c in live if c.direction == "outbound"))
+    return max(free, 0)
 
 
 async def spent_today_micros(session: AsyncSession, org_id: uuid.UUID) -> int:
@@ -131,8 +170,8 @@ async def daily_spend_ceiling_micros(
     if isinstance(value, int) and value > 0:
         return value
     if await is_new(session, settings, org_id):
-        return int(getattr(settings, "fraud_new_account_daily_spend_micros", 25_000_000))
-    return int(getattr(settings, "fraud_daily_spend_micros", 250_000_000))
+        return int(getattr(settings, "fraud_new_account_daily_spend_micros", 10_000_000))
+    return int(getattr(settings, "fraud_daily_spend_micros", 50_000_000))
 
 
 async def refusal(
@@ -150,9 +189,16 @@ async def refusal(
 
 
 async def require_call_slot(
-    session: AsyncSession, settings: Settings, org_id: uuid.UUID
+    session: AsyncSession,
+    settings: Settings,
+    org_id: uuid.UUID,
+    *,
+    from_e164: str,
+    user_id: uuid.UUID | None = None,
 ) -> None:
-    """Refuse a NEW outbound call when the workspace already runs its maximum at once.
+    """Refuse a NEW outbound call when its number already carries its maximum of live calls
+    (in or out), when the person placing it already has their maximum going, or when the
+    workspace hits an operator-set cap.
 
     Called only where a new Call row is about to be created (carrier dial, room/SIP dial);
     a transfer or a fax continues or is not a live call and never takes a slot. Read then
@@ -161,9 +207,18 @@ async def require_call_slot(
     """
     if not getattr(settings, "fraud_exposure_enforced", True):
         return
-    if await live_outbound_calls(session, org_id) >= await max_concurrent_calls(
-        session, settings, org_id
-    ):
+    live = await _live_calls(session, org_id)
+    per_number = int(getattr(settings, "fraud_calls_per_number", 2))
+    per_user = int(getattr(settings, "fraud_calls_per_user", 2))
+    cap = await workspace_call_cap(session, org_id)
+    outbound = [c for c in live if c.direction == "outbound"]
+    full = sum(1 for c in live if c.our_e164 == from_e164) >= per_number
+    if user_id is not None:
+        mine = sum(1 for c in outbound if (c.extra or {}).get("placed_by") == str(user_id))
+        full = full or mine >= per_user
+    if cap is not None:
+        full = full or len(outbound) >= cap
+    if full:
         from app.services import telephony_access, telephony_billing
 
         await telephony_billing.record_refusal(session, org_id, kind="call", reason=CONCURRENT)
