@@ -331,3 +331,13 @@ def test_tendlc_customer_quote_shows_totals_only():
         "upfront_months": 3,
         "due_today_cents": 450 + 1500 + 500 + 3 * 1000,
     }
+
+
+async def test_zero_balance_with_only_sms_units_stays_exhausted(session, settings):
+    from app.services import billing_alerts
+
+    org = await _new_org(session)
+    await _enable(session, org.id)
+    await bundles.credit(session, org.id, "sms", 1_000, reference=f"sms-{uuid.uuid4()}")
+    await session.commit()
+    assert await billing_alerts.evaluate(session, settings, org) == "exhausted"
