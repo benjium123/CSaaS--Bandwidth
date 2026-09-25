@@ -289,6 +289,8 @@ class Settings(BaseSettings):
     #: Balance kept back for everyone else's texts and calls; a purchase may not spend it.
     telnyx_balance_floor_cents: int = 500
     telnyx_voice_connection_id: str = ""
+    #: Fax Application id (backend/scripts/telnyx_fax_setup.py prints it). Empty = fax is off.
+    telnyx_fax_connection_id: str = ""
     telnyx_default_number: str = ""
     #: How long carrier-confirmed Telnyx brand/campaign/TFV registration approval evidence
     #: stays fresh enough to permit sending. The send gate itself does NOT re-query Telnyx -

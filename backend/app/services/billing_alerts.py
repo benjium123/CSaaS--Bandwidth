@@ -122,7 +122,11 @@ async def evaluate(session: AsyncSession, settings, org: Org) -> str:  # noqa: A
             org.billing_state = "ok"
             org.billing_state_changed_at = _now()
         return "ok"
-    balance = await credits.balance(session, org.id)
+    # Holds are ledger debits that come back when a call ends; judging the level on the
+    # balance alone would flip low <-> exhausted around every call.
+    balance = await credits.balance(session, org.id) + await credits.outstanding_reserves(
+        session, org.id
+    )
     state = state_for(balance, int(org.warn_threshold_micros or 0))
     if state != org.billing_state:
         org.billing_state = state
@@ -130,10 +134,18 @@ async def evaluate(session: AsyncSession, settings, org: Org) -> str:  # noqa: A
     if state == "ok":
         return state
 
-    key = f"lowbal:{await _last_topup_ref(session, org.id)}:{state}"[:128]
-    if org.low_balance_alert_key == key:
+    ref = await _last_topup_ref(session, org.id)
+    key = f"lowbal:{ref}:{state}"[:128]
+    prev = org.low_balance_alert_key or ""
+    rank = {"low": 1, "exhausted": 2}
+    prev_ref, _, prev_state = prev[len("lowbal:"):].rpartition(":") if prev else ("", "", "")
+    # One alert per level per top-up cycle, and only when things got WORSE.
+    if prev_ref == ref and rank.get(prev_state, 0) >= rank[state]:
         return state
     org.low_balance_alert_key = key
+    # Commit the key BEFORE sending, so a failure later in the tick cannot resend it.
+    await session.commit()
+    set_org_context(session, org.id)
 
     from app.services import mailer, notifications
 

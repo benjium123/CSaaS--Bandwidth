@@ -461,3 +461,4 @@ from app.models.billing_v2 import (  # noqa: E402
     PlatformPrice,
     TelnyxCostDaily,
 )
+from app.models.fax import Fax, FaxEvent  # noqa: E402

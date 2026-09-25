@@ -603,7 +603,7 @@ async def _run_once_locked(app) -> dict[str, int]:
         try:
             from app.services import billing_ops
 
-            results.update(await billing_ops.hourly(app.state.settings))
+            results.update(await billing_ops.hourly(app.state.settings, app.state))
         except Exception:
             log.exception("sweeper_billing_hourly_failed")
 

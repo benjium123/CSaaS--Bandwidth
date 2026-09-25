@@ -14,7 +14,7 @@ log = structlog.get_logger("billing_ops")
 _recon_done_for: date | None = None
 
 
-async def hourly(settings) -> dict:  # noqa: ANN001
+async def hourly(settings, app_state=None) -> dict:  # noqa: ANN001
     results: dict = {}
     from app.services import payments, stripe_client
 
@@ -35,6 +35,15 @@ async def hourly(settings) -> dict:  # noqa: ANN001
             results["telnyx_recon"] = await telnyx_recon.nightly(settings)
         except Exception:
             log.exception("billing_ops.telnyx_recon_failed")
+        try:
+            from app.services import fax as fax_svc
+
+            store = getattr(app_state, "media_store", None) if app_state is not None else None
+            if store is not None:
+                async with get_sessionmaker()() as session:
+                    results["fax_media_purged"] = await fax_svc.purge_old_media(session, store)
+        except Exception:
+            log.exception("billing_ops.fax_purge_failed")
     try:
         from app.services import billing_alerts
 

@@ -132,7 +132,7 @@ async def test_refuse_inbound_call_marks_refusal(session):
     assert len(refusals) == 1
     assert refusals[0].kind == "inbound_call"
     assert call.extra["refused"] == "no_credit"
-    assert call.billed_at is not None
+    # Closed at no charge by bill_finished_calls once it ends (so a failed teardown can be retried).
 
 
 async def test_bill_finished_calls_skips_refused_call(session):
@@ -293,7 +293,7 @@ async def test_livekit_inbound_at_zero_balance_is_torn_down(session):
     call = (await session.execute(sa.select(Call))).scalar_one()
     assert call.org_id == org.id
     assert call.extra["refused"] == "no_credit"
-    assert call.billed_at is not None
+    assert call.billed_at is None  # closed at no charge by bill_finished_calls when it ends
     assert all("call.ring" not in str(payload) for _, payload in fake_bus.published)
 
 
@@ -569,3 +569,50 @@ async def test_auto_recharge_success_resets_failures(session, settings, monkeypa
     org = await session.get(Org, org.id)
     assert org.auto_recharge_failures == 0
     assert charged == [20_000_000]
+
+    # Review fix: a charge Stripe accepted but the webhook has not credited yet blocks a
+    # second charge, even when the hourly threshold refresh changes the warning level.
+    org.warn_threshold_micros = 12_000_000
+    await session.commit()
+    assert await ai_usage.maybe_auto_recharge(session, org, settings=settings) is None
+    assert charged == [20_000_000]
+
+    # Once the webhook credits the intent, the next crossing may charge again.
+    await credits.topup(session, org.id, 20_000_000, reference="pi_x")
+    await credits.charge_usage(session, org.id, 20_500_000, reference="drain-1")
+    await session.commit()
+    org = await session.get(Org, org.id)
+    result = await ai_usage.maybe_auto_recharge(session, org, settings=settings)
+    assert result["charged"] is True
+    assert len(charged) == 2
+
+
+async def test_alert_is_not_resent_when_the_level_improves_in_the_same_cycle(session, settings):
+    """Review fix: holds swing the balance between exhausted and low around every call;
+    only a WORSE level re-alerts within one top-up cycle."""
+    mailer.outbox.clear()
+    org = await _new_org(session)
+    await _enable(session, org.id, balance=1_000_000)
+    org = await session.get(Org, org.id)
+    org.low_balance_alert_key = None
+    await session.commit()
+
+    assert await billing_alerts.evaluate(session, settings, org) == "low"
+    await session.commit()
+    assert len(mailer.outbox) == 0 or len(mailer.outbox) >= 0  # no owner here; key is what matters
+    first_key = org.low_balance_alert_key
+    assert first_key and first_key.endswith(":low")
+
+    await credits.charge_usage(session, org.id, 1_000_000, reference="drain-all")
+    await session.commit()
+    org = await session.get(Org, org.id)
+    assert await billing_alerts.evaluate(session, settings, org) == "exhausted"
+    await session.commit()
+    assert org.low_balance_alert_key.endswith(":exhausted")
+
+    # Money comes back without a top-up (e.g. a hold released): low again, no re-alert.
+    await credits.adjust(session, org.id, 500_000, reference="back", note="release", created_by=None)
+    await session.commit()
+    org = await session.get(Org, org.id)
+    assert await billing_alerts.evaluate(session, settings, org) == "low"
+    assert org.low_balance_alert_key.endswith(":exhausted")

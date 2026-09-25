@@ -648,6 +648,9 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
     # always in whole $10 steps, enough to lift the balance back over that level.
     threshold = max(threshold, int(getattr(org, "warn_threshold_micros", 0) or 0))
     failures = int(getattr(org, "auto_recharge_failures", 0) or 0)
+    #: Monotonic attempt counter - the dedupe/idempotency key is built from it (never from
+    #: the hourly-recomputed threshold, and never from the resettable failure count).
+    attempts = int(auto.get("attempts") or 0)
     last_failure = auto.get("last_failure_at")
     if failures and last_failure:
         try:
@@ -663,6 +666,29 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
 
     if not stripe_client.is_configured(settings):
         return None
+
+    # A charge Stripe accepted (or is still processing) but whose webhook has not credited
+    # the balance yet blocks any new attempt - otherwise a late webhook = a second charge.
+    pending = auto.get("pending_intent")
+    if pending:
+        credited = (
+            await session.execute(
+                sa.select(CreditLedgerEntry.id).where(
+                    CreditLedgerEntry.org_id == org.id,
+                    CreditLedgerEntry.entry_type == "topup",
+                    CreditLedgerEntry.reference == pending,
+                )
+            )
+        ).scalar_one_or_none()
+        pending_at = auto.get("pending_at")
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(str(pending_at))
+        except ValueError:
+            age = timedelta(hours=AUTO_RECHARGE_PENDING_MAX_HOURS)
+        if credited is None and age < timedelta(hours=AUTO_RECHARGE_PENDING_MAX_HOURS):
+            return None
+        auto = {k: v for k, v in auto.items() if k not in ("pending_intent", "pending_at")}
+        org.credit_auto_recharge = auto
 
     balance = await credits.balance(session, org.id)
     if balance >= threshold:
@@ -682,7 +708,7 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
     ).scalar_one_or_none()
 
     dedupe_key = (
-        f"autorecharge:{org.id}:{last_topup_reference or 'none'}:{threshold}:{failures}"
+        f"autorecharge:{org.id}:{last_topup_reference or 'none'}:{attempts}"
     )
 
     # Same portable Python-side dedupe check check_balance_warnings uses: load
@@ -726,6 +752,7 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
         },
     )
     session.add(marker)
+    org.credit_auto_recharge = {**auto, "attempts": attempts + 1}
     await session.flush()
 
     try:
@@ -759,11 +786,17 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
         idempotency_key=dedupe_key,
     )
 
-    if result.get("status") == "succeeded":
+    status = result.get("status")
+    if status in ("succeeded", "processing", "requires_capture"):
         # Do NOT credit here. The Stripe webhook is the one place a top-up becomes
         # credit, and it is idempotent on the payment intent id. Crediting here too
-        # would double-credit the workspace.
+        # would double-credit the workspace. Until it lands, no new attempt is made.
         org.auto_recharge_failures = 0
+        org.credit_auto_recharge = {
+            **(org.credit_auto_recharge or {}),
+            "pending_intent": result.get("id", ""),
+            "pending_at": datetime.now(timezone.utc).isoformat(),
+        }
         return {
             "charged": True,
             "intent_id": result.get("id", ""),
@@ -780,6 +813,8 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
     return {"charged": False, "reason": reason}
 
 
+#: A charge accepted by Stripe but not yet credited blocks new attempts for this long.
+AUTO_RECHARGE_PENDING_MAX_HOURS = 3
 #: A declined auto-recharge is retried after this long; AUTO_RECHARGE_MAX_FAILURES in a
 #: row switches auto-recharge off (the org is then hard-stopped at $0 like any other).
 AUTO_RECHARGE_RETRY_AFTER_HOURS = 1

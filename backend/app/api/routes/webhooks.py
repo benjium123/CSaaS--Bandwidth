@@ -507,14 +507,18 @@ async def _handle_voice_webhook(
                 # P12: a number bound to an active call flow (org_numbers.call_flow_id) runs
                 # it through the carrier executor instead of the flat default below.
                 bound_flow = await routing_exec_svc.resolve_inbound_flow(session, call.our_e164)
-                if (call.extra or {}).get("refused") or not (
-                    await _tb.inbound_call_allowed(
+                extra = call.extra or {}
+                if not extra.get("refused") and not extra.get("credit_checked"):
+                    # Billing v2 hard stop, decided ONCE per call: a redelivered
+                    # call_initiated must never turn an allowed (maybe answered) call
+                    # into a refused one.
+                    if await _tb.inbound_call_allowed(
                         session, org_id, call.carrier or carrier_name
-                    )
-                ):
-                    # Billing v2 hard stop: reject an unfunded inbound call at once.
-                    if not (call.extra or {}).get("refused"):
+                    ):
+                        call.extra = {**extra, "credit_checked": True}
+                    else:
                         await _tb.refuse_inbound_call(session, call)
+                if (call.extra or {}).get("refused"):
                     commands = [Hangup()]
                 elif bound_flow is None:
                     commands = list(DEFAULT_INBOUND_COMMANDS)

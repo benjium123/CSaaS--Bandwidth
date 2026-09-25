@@ -99,13 +99,13 @@ class TelnyxBilling:
         if not 200 <= resp.status_code < 300:
             raise TelnyxBillingError(resp.status_code, resp.text)
         data = (resp.json() or {}).get("data") or []
+        # Shared account: only ever the row for EXACTLY this number.
+        if isinstance(data, dict):
+            data = [data]
         if isinstance(data, list):
             for item in data:
-                if isinstance(item, dict):
+                if isinstance(item, dict) and item.get("phone_number") == e164:
                     return item
-            return None
-        if isinstance(data, dict):
-            return data
         return None
 
     async def set_number_billing_group(self, number_id: str, group_id: str) -> bool:
@@ -200,14 +200,24 @@ async def ensure_billing_groups(session, settings, *, client=None) -> dict:
 
         by_org: dict = {}
         for number in numbers:
-            by_org.setdefault(number.org_id, []).append(number)
+            by_org.setdefault(number.org_id, []).append(number.id)
+        org_ids = [o.id for o in orgs]
 
-        for org in orgs:
-            active_numbers = by_org.get(org.id, [])
-            if not active_numbers:
+        for org_id in org_ids:
+            number_ids = by_org.get(org_id, [])
+            if not number_ids:
                 continue
 
             try:
+                # Reloaded per org: a rollback in an earlier iteration expires every
+                # loaded row, and touching an expired attribute here would lazy-load.
+                org = await session.get(Org, org_id)
+                if org is None:
+                    continue
+                set_org_context(session, org_id)
+                active_numbers = [
+                    n for n in [await session.get(OrgNumber, nid) for nid in number_ids] if n
+                ]
                 gid = org.telnyx_billing_group_id
                 if not gid:
                     target_name = group_name(org)
@@ -261,7 +271,7 @@ async def ensure_billing_groups(session, settings, *, client=None) -> dict:
                 await session.commit()
             except Exception:
                 counts["errors"] += 1
-                log.exception("telnyx_recon_org_failed", org_id=str(org.id))
+                log.exception("telnyx_recon_org_failed", org_id=str(org_id))
                 await session.rollback()
 
         return counts

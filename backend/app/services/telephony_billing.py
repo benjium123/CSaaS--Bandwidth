@@ -530,8 +530,9 @@ async def refuse_inbound_call(session: AsyncSession, call: Call) -> None:
         detail=call.contact_e164,
     )
     set_org_context(session, call.org_id)
+    # Not stamped billed here: bill_finished_calls closes it at no charge once it ends, and
+    # until then enforce_active_calls keeps retrying the hangup if the teardown failed.
     call.extra = {**(call.extra or {}), "refused": "no_credit"}
-    call.billed_at = _now()
 
 
 def _call_clock_start(call: Call) -> datetime | None:
@@ -621,6 +622,11 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
             call = await session.get(Call, call_id)
             if call is None or call.billed_at is not None:
                 continue
+            if (call.extra or {}).get("refused"):
+                # Refused for credit: never billed.
+                call.billed_at = _now()
+                await session.commit()
+                continue
             seconds = billable_seconds(call)
             minutes = spend._ceil_minutes(seconds)
             # The package allowance is denominated in whole MINUTES (plans.take takes integer
@@ -675,9 +681,11 @@ async def enforce_active_calls(
                     Call.direction == "inbound",
                 ),
                 Call.ended_at.is_(None),
+                Call.billed_at.is_(None),
                 Call.created_at >= moment - timedelta(hours=12),
                 _billable_org_filter(),
             )
+            .order_by(Call.created_at)
             .limit(BATCH)
             .execution_options(**{ALLOW_UNSCOPED_KEY: True})
         )
@@ -692,6 +700,12 @@ async def enforce_active_calls(
             if call is None or call.ended_at is not None or start is None:
                 continue
             if (call.extra or {}).get("refused"):
+                # A refused inbound call whose room teardown failed: retry the hangup.
+                try:
+                    await hangup(session, call)
+                except Exception:
+                    await session.rollback()
+                    log.warning("telephony_billing.refused_hangup_retry_failed", call_id=str(call_id))
                 continue
             per_minute = await unit_price(session, org_id, call.carrier, _call_metric(call.direction))
             if per_minute <= 0:
@@ -722,16 +736,17 @@ async def enforce_active_calls(
                 call = await session.get(Call, call_id)
                 if call is None or call.ended_at is not None:
                     continue
+                await hangup(session, call)
+                set_org_context(session, org_id)
                 audit_svc.record(
                     session,
                     org_id,
                     action="call.ended_out_of_credits",
                     target_type="call",
-                    target_id=str(call.id),
+                    target_id=str(call_id),
                     detail={"used_seconds": elapsed_seconds},
                 )
                 await session.commit()
-                await hangup(session, call)
                 cut += 1
         except Exception:
             await session.rollback()
