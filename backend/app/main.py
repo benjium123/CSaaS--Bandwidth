@@ -268,6 +268,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(account_routes.router)
     app.include_router(kyc_routes.router)
     app.include_router(ops_routes.router)
+    from app.api.routes import ops_console as ops_console_routes
+
+    app.include_router(ops_console_routes.router)
     app.include_router(sso_routes.router)
     app.include_router(saml_routes.router)
     app.include_router(enterprise_sso_routes.router)

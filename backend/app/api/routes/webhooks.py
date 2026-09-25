@@ -611,6 +611,32 @@ async def bandwidth_voice_amd(
     return await _handle_voice_webhook("bandwidth", request, session)
 
 
+async def _signalwire_placed_call(to: str, from_: str) -> bool:
+    """Is there an outbound call from `from_` to `to` that our app placed in the last five
+    minutes and that has not ended? One indexed lookup, own short session."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.db.session import get_sessionmaker
+    from app.models import Call
+
+    async with get_sessionmaker()() as session:
+        placed = (
+            await session.execute(
+                sa.select(Call.id)
+                .where(
+                    Call.direction == "outbound",
+                    Call.contact_e164 == to,
+                    Call.our_e164 == from_,
+                    Call.ended_at.is_(None),
+                    Call.created_at >= datetime.now(timezone.utc) - timedelta(minutes=5),
+                )
+                .limit(1)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalar_one_or_none()
+    return placed is not None
+
+
 # Literal path, declared BEFORE the parameterised /{carrier_name}/voice below: that route
 # would otherwise be the first match for "signalwire/sip-dial" and try to verify it as an
 # ordinary SignalWire carrier callback, which is not the question SignalWire is asking.
@@ -664,6 +690,13 @@ async def signalwire_sip_dial(request: Request) -> Response:
         # The numbers ARE logged: the caller id is our own org's number and a refused call
         # is undebuggable without the pair.
         log.warning("signalwire_sip_dial_bad_numbers", call_sid=call_sid, to=to, from_=from_)
+        return Response(content=b"", media_type="application/xml", status_code=403)
+
+    # Billing v2 overuse guard: only bridge a call OUR app just placed (start_room_call
+    # commits the Call row - after the credit gate and hold - before it dials). Anything
+    # else reaching SignalWire's domain app would be a call nobody paid for.
+    if not await _signalwire_placed_call(to, from_):
+        log.warning("signalwire_sip_dial_no_placed_call", call_sid=call_sid, to=to, from_=from_)
         return Response(content=b"", media_type="application/xml", status_code=403)
 
     log.info("signalwire_sip_dial", call_sid=call_sid, to=to, from_=from_)

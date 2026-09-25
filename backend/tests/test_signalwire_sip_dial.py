@@ -142,12 +142,32 @@ def test_verify_fails_closed_without_a_token() -> None:
 # --- the route ----------------------------------------------------------------------------
 
 
-def test_route_dials_a_signed_request(client: TestClient) -> None:
+def test_route_dials_a_signed_request(client: TestClient, monkeypatch) -> None:
+    from app.api.routes import webhooks
+
+    async def placed(to, from_):  # noqa: ANN001, ANN202
+        return True
+
+    monkeypatch.setattr(webhooks, "_signalwire_placed_call", placed)
     params = _fields()
     response = client.post(_sip_dial_path(), data=dict(params), headers=_signature(params))
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/xml")
     assert f"<Number>{TO}</Number>" in response.text
+
+
+def test_route_refuses_a_signed_call_our_app_did_not_place(client: TestClient, monkeypatch) -> None:
+    """Billing v2: a correctly signed INVITE with no matching outbound call is refused, so
+    nobody can use our SignalWire trunk without passing the credit gate."""
+    from app.api.routes import webhooks
+
+    async def placed(to, from_):  # noqa: ANN001, ANN202
+        return False
+
+    monkeypatch.setattr(webhooks, "_signalwire_placed_call", placed)
+    params = _fields()
+    response = client.post(_sip_dial_path(), data=dict(params), headers=_signature(params))
+    assert response.status_code == 403
 
 
 def test_route_refuses_an_unsigned_request(client: TestClient) -> None:
