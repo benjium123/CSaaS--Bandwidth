@@ -247,7 +247,8 @@ async def get_summary(
         "last_topup": last_topup_dict,
         "fallback": ai_usage.credit_fallback(ctx.org),
         "bundles": {
-            kind: await bundles_svc.units(ctx.session, ctx.org.id, kind) for kind in ("sms", "mms")
+            kind: await bundles_svc.units(ctx.session, ctx.org.id, kind)
+            for kind in ("sms", "mms", "voice")
         },
         "billing_state": ctx.org.billing_state,
         "warn_threshold_micros": int(ctx.org.warn_threshold_micros or 0),
@@ -392,7 +393,7 @@ async def create_topup(
 
 
 class BundleCheckoutIn(BaseModel):
-    kind: str = Field(pattern="^(sms|mms)$")
+    kind: str = Field(pattern="^(sms|mms|voice)$")
     qty: int = Field(ge=1, le=500)
 
 
@@ -405,14 +406,16 @@ async def get_bundles(
 
     out: dict = {"volume_min_qty": bundles_svc.VOLUME_MIN_QTY,
                  "volume_discount_bps": bundles_svc.VOLUME_DISCOUNT_BPS, "kinds": {}}
-    for kind in ("sms", "mms"):
+    for kind in ("sms", "mms", "voice"):
         out["kinds"][kind] = {
             "units": await bundles_svc.units(ctx.session, ctx.org.id, kind),
             "units_per_bundle": bundles_svc.UNITS_PER_BUNDLE[kind],
             "list_micros": await bundles_svc.bundle_list_price(ctx.session, kind),
             "volume_discount": kind in bundles_svc.VOLUME_DISCOUNT_KINDS,
             "volume_discount_bps": bundles_svc.VOLUME_DISCOUNT_BPS_BY_KIND.get(kind, 0),
-            "pay_as_you_go_micros": await telephony_billing_price(ctx, f"{kind}_out"),
+            "pay_as_you_go_micros": await telephony_billing_price(
+                ctx, "voice_min_out" if kind == "voice" else f"{kind}_out"
+            ),
         }
     return out
 
@@ -440,7 +443,11 @@ async def create_bundle_checkout(
         ctx.session, ctx.org.id, kind=payload.kind, qty=payload.qty
     )
     size = bundles_svc.UNITS_PER_BUNDLE[payload.kind]
-    name = f"{size:,} {payload.kind.upper()} bundle"
+    name = (
+        f"{size:,} call minutes bundle"
+        if payload.kind == "voice"
+        else f"{size:,} {payload.kind.upper()} bundle"
+    )
     if q["discount"] > 0:
         name += f" ({bundles_svc.VOLUME_DISCOUNT_BPS_BY_KIND[payload.kind] // 100}% volume discount)"
     checkout = await stripe_client.create_bundle_checkout_session(

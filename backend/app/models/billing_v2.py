@@ -23,9 +23,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base, TenantScoped, TimestampMixin
 from app.db.types import GUID, PortableJSON
 
-BUNDLE_KINDS: tuple[str, ...] = ("sms", "mms")
+BUNDLE_KINDS: tuple[str, ...] = ("sms", "mms", "voice")
 BUNDLE_ENTRY_TYPES: tuple[str, ...] = ("purchase", "usage", "adjustment", "refund")
-PAYMENT_KINDS: tuple[str, ...] = ("topup", "sms_bundle", "mms_bundle", "auto_recharge")
+PAYMENT_KINDS: tuple[str, ...] = (
+    "topup", "sms_bundle", "mms_bundle", "voice_bundle", "auto_recharge"
+)
 PAYMENT_STATES: tuple[str, ...] = ("pending", "paid", "failed", "refunded")
 REFUSAL_KINDS: tuple[str, ...] = ("sms", "mms", "call", "inbound_call", "number", "fax")
 

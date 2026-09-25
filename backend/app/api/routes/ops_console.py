@@ -173,7 +173,7 @@ async def console_adjust(org_id: uuid.UUID, payload: AdjustIn, op: Admin) -> dic
 
 
 class BundleGrantIn(BaseModel):
-    kind: str = Field(pattern="^(sms|mms)$")
+    kind: str = Field(pattern="^(sms|mms|voice)$")
     units: int = Field(ge=1, le=10_000_000)
     note: str = Field(min_length=3, max_length=255)
 

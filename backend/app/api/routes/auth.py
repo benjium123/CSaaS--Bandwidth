@@ -355,6 +355,9 @@ async def register(
         await defaults_svc.seed_org_defaults(session, org.id, owner_user_id=user.id)
         set_org_context(session, org.id)
         await kyc_svc.get_or_create_profile(session, org.id)
+        from app.services import billing_ops
+
+        await billing_ops.grant_welcome_credit(session, org.id)
     await session.commit()
     from app.services import email_verification
 

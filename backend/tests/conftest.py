@@ -98,6 +98,7 @@ def make_settings(**overrides) -> Settings:
         # call, so the suite opts out; tests/test_prepaid_telephony.py turns the gate on
         # explicitly per org.
         "telephony_prepaid_default": False,
+        "welcome_credit_micros": 0,
         # P42: no network in tests; pre-P42 tests register 10-character passwords.
         "hibp_enabled": False,
         "password_min_length": 10,

@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     #: what a NEW org starts as. The test suite sets it False so pre-flat-pricing tests
     #: keep sending and dialling from orgs with a zero balance.
     telephony_prepaid_default: bool = True
+    #: One-time starting credit (micros) every org receives: at creation, and via the hourly
+    #: billing sweep for orgs that predate it. 0 turns it off. The test suite sets 0 so
+    #: tests that start from an empty balance keep doing so.
+    welcome_credit_micros: int = 1_000_000
     #: Pay-as-you-go prepaid credits have REPLACED subscription plans as the money gate for
     #: telephony: the org's credit balance is now the only thing standing between an org and
     #: outbound texting, calling or a number order. This flag must therefore stay FALSE - with

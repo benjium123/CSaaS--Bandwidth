@@ -166,12 +166,12 @@ async def test_ensure_billing_groups(session, settings):
 
     org_a_db = await session.get(Org, org_a.id)
     org_b_db = await session.get(Org, org_b.id)
-    assert org_a_db.telnyx_billing_group_id == 'bg-1'
-    assert org_b_db.telnyx_billing_group_id == 'bg-2'
+    # Orgs are walked in id order (random uuids), so which one got bg-1 is arbitrary.
+    assert {org_a_db.telnyx_billing_group_id, org_b_db.telnyx_billing_group_id} == {'bg-1', 'bg-2'}
 
     set_org_context(session, org_a.id)
     number_a_db = await session.get(OrgNumber, number_a.id)
-    assert number_a_db.provisioning == {'telnyx_billing_group_id': 'bg-1'}
+    assert number_a_db.provisioning == {'telnyx_billing_group_id': org_a_db.telnyx_billing_group_id}
 
 
 @pytest.mark.asyncio

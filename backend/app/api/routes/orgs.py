@@ -118,6 +118,9 @@ async def create_org(
     # P41: every new workspace starts unverified; telephony waits for approval.
     set_org_context(session, org.id)
     await kyc_svc.get_or_create_profile(session, org.id)
+    from app.services import billing_ops
+
+    await billing_ops.grant_welcome_credit(session, org.id)
     await session.commit()
     return OrgOut(id=org.id, name=org.name, slug=org.slug)
 

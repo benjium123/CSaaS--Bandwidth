@@ -20,7 +20,9 @@ from app.services import bundles
 
 log = structlog.get_logger("payments")
 
-BUNDLE_METADATA_KINDS: dict[str, str] = {"sms_bundle": "sms", "mms_bundle": "mms"}
+BUNDLE_METADATA_KINDS: dict[str, str] = {
+    "sms_bundle": "sms", "mms_bundle": "mms", "voice_bundle": "voice"
+}
 #: Payments whose Stripe fee is looked up per sweeper pass.
 FEE_BATCH = 50
 

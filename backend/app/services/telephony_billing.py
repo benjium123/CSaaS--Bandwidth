@@ -60,21 +60,22 @@ BATCH = 500
 #: Flat, carrier-independent platform price per unit, in micros - the fallback when
 #: ``platform_prices`` (operator-editable, migration 0064) has no row for the metric.
 #: Billing v2: SMS $0.015/segment and MMS $0.035 in and out when no bundle covers them;
-#: calls $0.011/minute in and out, whole minutes rounded up; fax $0.10/page; number $15/mo.
+#: calls $0.012/minute in and out, whole minutes rounded up; fax $0.10/page; number $15/mo.
 PLATFORM_PRICE_MICROS: dict[str, int] = {
     "sms_out": 15_000,
     "sms_in": 15_000,
     "mms_out": 35_000,
     "mms_in": 35_000,
-    "voice_min_out": 11_000,
-    "voice_min_in": 11_000,
+    "voice_min_out": 12_000,
+    "voice_min_in": 12_000,
     "fax_page_out": 100_000,
     "fax_page_in": 100_000,
     "number_mrc": 15_000_000,
     "number_setup": 0,
-    #: Per bundle: 1,000 SMS / 100 MMS (services/bundles.UNITS_PER_BUNDLE).
-    "sms_bundle": 12_000_000,
+    #: Per bundle: 1,000 SMS / 100 MMS / 1,000 call minutes (services/bundles.UNITS_PER_BUNDLE).
+    "sms_bundle": 13_000_000,
     "mms_bundle": 3_000_000,
+    "voice_bundle": 10_000_000,
 }
 #: An inbound call is billed from arrival (LiveKit builds the room as soon as it rings),
 #: with this minimum even when nobody answers.
@@ -277,6 +278,16 @@ async def _bundle_covers(
     from app.services import bundles
 
     return await bundles.take(session, org_id, _bundle_kind(is_mms), units, reference=reference)
+
+
+#: Bundle kind holding prepaid call minutes (both directions).
+VOICE_BUNDLE_KIND = "voice"
+
+
+async def _voice_bundle_minutes(session: AsyncSession, org_id: uuid.UUID) -> int:
+    from app.services import bundles
+
+    return await bundles.units(session, org_id, VOICE_BUNDLE_KIND)
 
 
 async def sms_price(
@@ -494,7 +505,7 @@ async def require_call_credit(session: AsyncSession, org_id: uuid.UUID, call: Ca
     per_minute = await unit_price(session, org_id, call.carrier, "voice_min_out")
     current = await credits.balance(session, org_id)
     minimum = max(voice_price_micros(60, per_minute), 1)
-    if current < minimum:
+    if current < minimum and await _voice_bundle_minutes(session, org_id) < 1:
         await record_refusal(
             session,
             org_id,
@@ -511,12 +522,14 @@ async def require_call_credit(session: AsyncSession, org_id: uuid.UUID, call: Ca
 
 async def inbound_call_allowed(session: AsyncSession, org_id: uuid.UUID, carrier: str) -> bool:
     """Billing v2 hard stop: an inbound call is only taken when the balance covers at least
-    one inbound minute. True when not prepaid."""
+    one inbound minute, or a call-minute bundle has a minute left. True when not prepaid."""
     org = await _org(session, org_id)
     if org is None or not org.telephony_prepaid:
         return True
     per_minute = await unit_price(session, org_id, carrier, "voice_min_in")
-    return await credits.balance(session, org_id) >= max(per_minute, 1)
+    if await credits.balance(session, org_id) >= max(per_minute, 1):
+        return True
+    return await _voice_bundle_minutes(session, org_id) >= 1
 
 
 async def refuse_inbound_call(session: AsyncSession, call: Call) -> None:
@@ -638,6 +651,18 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
                 if org_row is not None
                 else 0
             )
+            # Then prepaid call-minute bundles, then the $ balance.
+            remaining_minutes = minutes - covered_minutes
+            if remaining_minutes > 0:
+                from app.services import bundles
+
+                covered_minutes += await bundles.take(
+                    session,
+                    org_id,
+                    VOICE_BUNDLE_KIND,
+                    remaining_minutes,
+                    reference=f"call:{call.id}:voice",
+                )
             uncovered_seconds = max(seconds - covered_minutes * 60, 0)
             per_minute = await unit_price(
                 session, org_id, call.carrier, _call_metric(call.direction)
@@ -714,7 +739,11 @@ async def enforce_active_calls(
             used_micros = voice_price_micros(elapsed_seconds, per_minute)
             headroom_micros = CUTOFF_HEADROOM_MINUTES * per_minute
             held, holds = await _held_for_call(session, org_id, call.id)
-            if used_micros + headroom_micros <= held:
+            # Unspent call-minute bundle minutes cover the call too (taken when it is
+            # billed). Shared by the org's concurrent calls, so this can overrun by a few
+            # minutes at most; the remainder is charged to the balance at billing.
+            bundle_cover = await _voice_bundle_minutes(session, org_id) * per_minute
+            if used_micros + headroom_micros <= held + bundle_cover:
                 continue
             try:
                 # Hold up to CALL_RESERVE_MINUTES more, or whatever whole minutes the

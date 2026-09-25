@@ -22,13 +22,14 @@ SEED = {
     "sms_in": (15_000, "SMS segment received (no bundle)"),
     "mms_out": (35_000, "MMS sent (no bundle)"),
     "mms_in": (35_000, "MMS received (no bundle)"),
-    "voice_min_out": (11_000, "Outbound call minute, from answer, whole minutes"),
-    "voice_min_in": (11_000, "Inbound call minute, from arrival, whole minutes, 1 min min"),
+    "voice_min_out": (12_000, "Outbound call minute, from answer, whole minutes"),
+    "voice_min_in": (12_000, "Inbound call minute, from arrival, whole minutes, 1 min min"),
     "fax_page_out": (100_000, "Fax page sent"),
     "fax_page_in": (100_000, "Fax page received"),
     "number_mrc": (15_000_000, "Phone number per month"),
-    "sms_bundle": (12_000_000, "1,000 SMS bundle; 5+ in one purchase = 20% off"),
-    "mms_bundle": (3_000_000, "100 MMS bundle ($0.03 each)"),
+    "sms_bundle": (13_000_000, "1,000 SMS bundle; 5+ in one purchase = 20% off"),
+    "mms_bundle": (3_000_000, "100 MMS bundle ($0.03 each); 5+ in one purchase = 10% off"),
+    "voice_bundle": (10_000_000, "1,000 call minutes bundle; 5+ in one purchase = 10% off"),
 }
 
 

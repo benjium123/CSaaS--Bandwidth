@@ -1,14 +1,15 @@
-"""Message bundles: prepaid SMS/MMS units, spent before the $ balance.
+"""Bundles: prepaid SMS/MMS units and call minutes, spent before the $ balance.
 
 The ONLY writer of bundle_ledger. Same discipline as services/credits.py: append-only, one
 row per change carrying balance_after_units, idempotent on (org, kind, entry_type,
 reference), serialised per org by the same advisory lock credits uses.
 
 Pricing (defaults, editable in platform_prices):
-- SMS bundle: 1,000 segments for $12. Buying VOLUME_MIN_QTY or more in ONE purchase takes
-  VOLUME_DISCOUNT_BPS off the whole purchase ($9.60 each at 5+).
+- SMS bundle: 1,000 segments for $13. Buying VOLUME_MIN_QTY or more in ONE purchase takes
+  20% off the whole purchase ($10.40 each at 5+).
 - MMS bundle: 100 MMS for $3 ($0.03 each; Telnyx worst case is $0.025). 5+ in one purchase
   takes 10% off ($2.70 each).
+- Call bundle: 1,000 minutes (in or out) for $10; 5+ in one purchase takes 10% off ($9 each).
 """
 
 from __future__ import annotations
@@ -26,10 +27,10 @@ from app.models.billing_v2 import BUNDLE_ENTRY_TYPES, BUNDLE_KINDS
 from app.services import credits
 
 #: Message units in one bundle, per kind.
-UNITS_PER_BUNDLE: dict[str, int] = {"sms": 1_000, "mms": 100}
+UNITS_PER_BUNDLE: dict[str, int] = {"sms": 1_000, "mms": 100, "voice": 1_000}
 VOLUME_MIN_QTY = 5
 #: Volume discount per bundle kind, in basis points, at VOLUME_MIN_QTY or more.
-VOLUME_DISCOUNT_BPS_BY_KIND: dict[str, int] = {"sms": 2_000, "mms": 1_000}
+VOLUME_DISCOUNT_BPS_BY_KIND: dict[str, int] = {"sms": 2_000, "mms": 1_000, "voice": 1_000}
 VOLUME_DISCOUNT_BPS = VOLUME_DISCOUNT_BPS_BY_KIND["sms"]
 #: Which bundle kinds get the volume discount.
 VOLUME_DISCOUNT_KINDS: frozenset[str] = frozenset(VOLUME_DISCOUNT_BPS_BY_KIND)

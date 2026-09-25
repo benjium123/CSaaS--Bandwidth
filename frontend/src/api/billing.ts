@@ -17,7 +17,7 @@ export const BILLING_BUNDLE_CHECKOUT_PATH = "/api/v1/billing/bundles/checkout";
 
 export type BalanceWarning = "low" | "critical" | "empty";
 
-export type BundleKind = "sms" | "mms";
+export type BundleKind = "sms" | "mms" | "voice";
 
 export interface BundleKindInfo {
   units: number;
@@ -32,7 +32,8 @@ export interface BundleKindInfo {
 export interface BundlesInfo {
   volume_min_qty: number;
   volume_discount_bps: number;
-  kinds: Record<BundleKind, BundleKindInfo>;
+  /** `voice` (call minutes) is absent on servers older than the call bundles. */
+  kinds: Record<"sms" | "mms", BundleKindInfo> & Partial<Record<"voice", BundleKindInfo>>;
 }
 
 export interface BundleCheckoutResult {
@@ -474,7 +475,7 @@ export function bundleQuote(
   kind: BundleKind,
   qty: number,
 ): { list: number; discount: number; paid: number; units: number; unitPaid: number } {
-  const kindInfo = info.kinds[kind];
+  const kindInfo = info.kinds[kind]!;
   const qualifiesForDiscount = kindInfo.volume_discount && qty >= info.volume_min_qty;
   const unitPaid = qualifiesForDiscount
     ? Math.floor(

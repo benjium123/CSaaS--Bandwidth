@@ -26,7 +26,7 @@ from app.repositories import orgs as orgs_repo
 from app.services import ai_usage, billing_alerts, credits, mailer, stripe_client, telephony_billing
 from app.voice_plane.service import handle_livekit_event
 
-MIN_OUT = 11_000  # $0.011 per minute, billed in whole minutes (billing v2)
+MIN_OUT = 12_000  # $0.012 per minute, billed in whole minutes (billing v2)
 
 
 def _now() -> datetime:
@@ -108,7 +108,7 @@ async def test_inbound_call_allowed_hard_stop(session):
     assert await telephony_billing.inbound_call_allowed(session, org.id, call.carrier) is True
 
     prepaid = await _new_org(session, "Prepaid Inbound")
-    await _enable(session, prepaid.id, balance=10_999)
+    await _enable(session, prepaid.id, balance=11_999)
     assert await telephony_billing.inbound_call_allowed(session, prepaid.id, "bandwidth") is False
 
     await credits.topup(session, prepaid.id, 1, reference="one-more-micro")
@@ -230,7 +230,7 @@ async def test_partial_funding_extends_whole_minutes_only(session):
     assert hung == []
     held, holds = await telephony_billing._held_for_call(session, org.id, call.id)
     assert holds == 1
-    assert held == 22_000  # 2 whole minutes at 11_000 micros/min
+    assert held == 24_000  # 2 whole minutes at 12_000 micros/min
 
 
 async def test_livekit_inbound_at_zero_balance_is_torn_down(session):

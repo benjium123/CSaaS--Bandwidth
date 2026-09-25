@@ -25,11 +25,11 @@ SMS_OUT = 15_000
 SMS_IN = 15_000
 MMS_OUT = 35_000
 MMS_IN = 35_000
-VOICE_MIN_OUT = 11_000
-VOICE_MIN_IN = 11_000
+VOICE_MIN_OUT = 12_000
+VOICE_MIN_IN = 12_000
 FAX_PAGE_OUT = 100_000
 NUMBER_MRC = 15_000_000
-VOICE_MIN = 11_000
+VOICE_MIN = 12_000
 
 WEBHOOK_URL = "/api/v1/webhooks/stripe"
 
@@ -115,8 +115,8 @@ async def test_unit_price_defaults(session):
     assert await telephony_billing.unit_price(session, org.id, "bandwidth", "sms_in") == 15_000
     assert await telephony_billing.unit_price(session, org.id, "bandwidth", "mms_out") == 35_000
     assert await telephony_billing.unit_price(session, org.id, "bandwidth", "mms_in") == 35_000
-    assert await telephony_billing.unit_price(session, org.id, "bandwidth", "voice_min_out") == 11_000
-    assert await telephony_billing.unit_price(session, org.id, "bandwidth", "voice_min_in") == 11_000
+    assert await telephony_billing.unit_price(session, org.id, "bandwidth", "voice_min_out") == 12_000
+    assert await telephony_billing.unit_price(session, org.id, "bandwidth", "voice_min_in") == 12_000
     assert await telephony_billing.unit_price(session, org.id, "bandwidth", "fax_page_out") == 100_000
     assert await telephony_billing.unit_price(session, org.id, "bandwidth", "number_mrc") == 15_000_000
 
@@ -137,9 +137,9 @@ async def test_platform_price_overrides_constant(session):
 
 
 def test_voice_price_micros_whole_minutes():
-    assert telephony_billing.voice_price_micros(61, 11_000) == 22_000
-    assert telephony_billing.voice_price_micros(60, 11_000) == 11_000
-    assert telephony_billing.voice_price_micros(0, 11_000) == 0
+    assert telephony_billing.voice_price_micros(61, 12_000) == 24_000
+    assert telephony_billing.voice_price_micros(60, 12_000) == 12_000
+    assert telephony_billing.voice_price_micros(0, 12_000) == 0
 
 
 def test_billable_seconds():
@@ -191,11 +191,11 @@ async def test_bill_finished_calls_inbound_uses_arrival_time(session):
     await session.commit()
 
     assert await telephony_billing.bill_finished_calls(session) == 1
-    assert await _balance(session, org.id) == 1_000_000 - 22_000
+    assert await _balance(session, org.id) == 1_000_000 - 24_000
 
     rows = await _usage(session, org.id)
     assert len(rows) == 1
-    assert -rows[0].amount_micros == 22_000
+    assert -rows[0].amount_micros == 24_000
 
 
 async def test_sms_refusal_records_billing_refusal(session):
@@ -426,7 +426,7 @@ async def test_webhook_bundle_purchase(client, session, monkeypatch):
     }
     event = _payment_intent_event(
         intent_id="pi_bundle_1",
-        amount_received=4800,
+        amount_received=5200,
         metadata=metadata,
         event_id="evt_bundle_1",
     )
@@ -450,9 +450,9 @@ async def test_webhook_bundle_purchase(client, session, monkeypatch):
 
     assert await bundles.units(session, org.id, "sms") == 5000
     assert payment.state == "paid"
-    assert payment.paid_micros == 48_000_000
-    assert payment.list_micros == 60_000_000
-    assert payment.discount_micros == 12_000_000
+    assert payment.paid_micros == 52_000_000
+    assert payment.list_micros == 65_000_000
+    assert payment.discount_micros == 13_000_000
     assert payment.units_credited == 5000
     assert payment.stripe_payment_intent_id == "pi_bundle_1"
     assert await credits.balance(session, org.id) == 0
@@ -460,7 +460,7 @@ async def test_webhook_bundle_purchase(client, session, monkeypatch):
     # Same payment intent, different event id: still idempotent.
     event2 = _payment_intent_event(
         intent_id="pi_bundle_1",
-        amount_received=4800,
+        amount_received=5200,
         metadata=metadata,
         event_id="evt_bundle_2",
     )
@@ -571,5 +571,5 @@ async def test_get_bundle_catalog(client, session):
     body = r.json()
     assert body["kinds"]["sms"]["units_per_bundle"] == 1000
     assert body["kinds"]["mms"]["units_per_bundle"] == 100
-    assert body["kinds"]["sms"]["list_micros"] == 12_000_000
+    assert body["kinds"]["sms"]["list_micros"] == 13_000_000
     assert body["kinds"]["mms"]["list_micros"] == 3_000_000

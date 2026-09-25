@@ -26,10 +26,11 @@ grep -q '^TELEPHONY_PREPAID_DEFAULT=' /opt/csaas/.env || echo 'TELEPHONY_PREPAID
 ```bash
 bash deploy/deploy.sh          # from C:/Users/omer_/csaas on main
 ```
-Migration 0065 switches ALL orgs to prepaid, billed from the migration instant. There is no
-launch credit: every org starts at its current balance ($0) and recharges itself (Settings ->
-Billing). Until it does, its outbound is refused and inbound calls are declined. To exempt an
-org, Ops -> Console -> org -> Prepaid off.
+Migration 0065 switches ALL orgs to prepaid, billed from the migration instant. Every org
+(existing ones at the first hourly billing tick after deploy, new ones at signup) gets a
+one-time $1 welcome credit (`WELCOME_CREDIT_MICROS`, default 1000000; 0 turns it off), then
+recharges itself (Settings -> Billing). At $0 with no bundle minutes, outbound is refused and
+inbound calls are declined. To exempt an org, Ops -> Console -> org -> Prepaid off.
 
 ## 4. Fax
 ```bash
@@ -49,9 +50,11 @@ ringlite.io in Resend), restart api. Without it, bell/popup alerts still work; e
 - `docker inspect csaas-agent-1 --format '{{.RestartCount}}'` stops climbing (call monitor
   moved to health port 8082).
 - `curl -s https://ringlite.io/status`
-- Ops -> Console loads; prices list shows SMS $0.015, MMS $0.035, call $0.011/min, fax $0.10.
-- Settings -> Billing shows the Message bundles card; buy 1 SMS bundle (+1,000 texts) and
-  5 bundles ($48, +5,000 texts, 20% discount recorded in Console -> Payments).
+- Ops -> Console loads; prices list shows SMS $0.015, MMS $0.035, call $0.012/min, fax $0.10,
+  SMS bundle $13, MMS bundle $3, call bundle $10.
+- Settings -> Billing shows the Bundles card (SMS, MMS, Call minutes); buy 1 SMS bundle
+  ($13, +1,000 texts) and 5 ($52, 20% off); 5 call bundles = $45 (10% off), +5,000 minutes.
+- Each org's ledger shows a $1 "Welcome credit" row after the first hourly tick.
 - api logs after the next hourly tick: `billing_thresholds_refreshed`, `telnyx_recon`.
 
 ## Rollback

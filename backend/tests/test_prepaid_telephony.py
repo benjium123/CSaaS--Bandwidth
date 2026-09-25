@@ -24,7 +24,7 @@ from tests.conftest import TEST_PLATFORM_OPS_TOKEN, auth_headers, make_org_with_
 SMS_OUT = 15_000  # $0.015 per segment, flat (billing v2, no bundle)
 SMS_IN = 15_000
 MMS_OUT = 35_000  # $0.035 per MMS (billing v2, no bundle)
-VOICE_MIN = 11_000  # $0.011 per minute, billed in WHOLE minutes (billing v2)
+VOICE_MIN = 12_000  # $0.012 per minute, billed in WHOLE minutes (billing v2)
 MIN_OUT = VOICE_MIN
 MIN_IN = VOICE_MIN
 NUMBER_MRC = 15_000_000  # $15.00 per number per month
@@ -297,7 +297,7 @@ async def test_finished_call_is_billed_once_releases_its_hold_and_never_retro_bi
         status="completed",
         answered_at=now - timedelta(minutes=3),
         ended_at=now - timedelta(minutes=1),
-        duration_seconds=121,  # 121s = 3 whole minutes x $0.011 = 33_000 micros
+        duration_seconds=121,  # 121s = 3 whole minutes x $0.012 = 36_000 micros
     )
     await telephony_billing.require_call_credit(session, org.id, call)
     session.add(call)
@@ -314,16 +314,16 @@ async def test_finished_call_is_billed_once_releases_its_hold_and_never_retro_bi
     await session.commit()
 
     assert await telephony_billing.bill_finished_calls(session) == 1
-    assert await _balance(session, org.id) == 1_000_000 - 33_000, (
+    assert await _balance(session, org.id) == 1_000_000 - 36_000, (
         "hold released, seconds charged"
     )
-    assert [(-row.amount_micros) for row in await _usage(session, org.id)] == [33_000]
+    assert [(-row.amount_micros) for row in await _usage(session, org.id)] == [36_000]
     set_org_context(session, org.id)
     assert (await session.get(Call, call.id)).billed_at is not None
     assert (await session.get(Call, old.id)).billed_at is None
 
     assert await telephony_billing.bill_finished_calls(session) == 0
-    assert await _balance(session, org.id) == 1_000_000 - 33_000
+    assert await _balance(session, org.id) == 1_000_000 - 36_000
 
 
 async def test_inbound_call_seconds_are_charged_without_a_gate(session):
@@ -345,7 +345,7 @@ async def test_inbound_call_seconds_are_charged_without_a_gate(session):
     await session.commit()
 
     assert await telephony_billing.bill_finished_calls(session) == 1
-    assert await _balance(session, org.id) == -11_000  # 60s from arrival at $0.011/min
+    assert await _balance(session, org.id) == -12_000  # 60s from arrival at $0.012/min
 
 
 async def test_running_outbound_call_is_hung_up_when_it_can_no_longer_be_funded(session):
@@ -665,11 +665,11 @@ async def test_flat_prices_are_exact_and_carrier_independent(session):
         assert await telephony_billing.unit_price(session, org.id, carrier, "mms_out") == 35_000
         assert (
             await telephony_billing.unit_price(session, org.id, carrier, "voice_min_out")
-            == 11_000
+            == 12_000
         )
         assert (
             await telephony_billing.unit_price(session, org.id, carrier, "voice_min_in")
-            == 11_000
+            == 12_000
         )
         assert (
             await telephony_billing.unit_price(session, org.id, carrier, "number_mrc")
@@ -698,7 +698,7 @@ async def test_number_price_is_exactly_fifteen_dollars_and_traffic_is_unchanged(
         )
         == 15_000
     )
-    assert telephony_billing.voice_price_micros(60, per_minute) == 11_000
+    assert telephony_billing.voice_price_micros(60, per_minute) == 12_000
 
 
 async def test_sms_price_is_exactly_ten_thousand_micros_per_segment(session):
@@ -722,11 +722,11 @@ async def test_sms_price_is_exactly_ten_thousand_micros_per_segment(session):
 
 def test_voice_price_micros_is_whole_minutes_rounded_up():
     # Billing v2: charge = ceil(seconds / 60) x per-minute price. 61s is two minutes.
-    cases = {0: 0, 1: 11_000, 30: 11_000, 59: 11_000, 60: 11_000, 61: 22_000, 3_600: 660_000}
+    cases = {0: 0, 1: 12_000, 30: 12_000, 59: 12_000, 60: 12_000, 61: 24_000, 3_600: 720_000}
     for seconds, expected in cases.items():
-        assert telephony_billing.voice_price_micros(seconds, 11_000) == expected
-    assert telephony_billing.voice_price_micros(None, 11_000) == 0
-    assert telephony_billing.voice_price_micros(-5, 11_000) == 0
+        assert telephony_billing.voice_price_micros(seconds, 12_000) == expected
+    assert telephony_billing.voice_price_micros(None, 12_000) == 0
+    assert telephony_billing.voice_price_micros(-5, 12_000) == 0
 
 
 async def test_explicit_provider_rate_price_overrides_the_flat_table(session):
@@ -782,7 +782,7 @@ async def test_unknown_carrier_traffic_is_charged_and_gated(session):
 # ==================================================================================
 @pytest.mark.parametrize(
     "duration_seconds, expected_micros",
-    [(0, 0), (1, 11_000), (30, 11_000), (60, 11_000), (61, 22_000), (125, 33_000)],
+    [(0, 0), (1, 12_000), (30, 12_000), (60, 12_000), (61, 24_000), (125, 36_000)],
 )
 async def test_finished_call_charges_whole_minutes(
     session, duration_seconds, expected_micros
@@ -834,7 +834,7 @@ async def test_outbound_dial_is_refused_one_micro_below_a_minute(session):
 
 async def test_outbound_dial_is_allowed_at_exactly_one_minute_of_credit(session):
     org = await _new_org(session)
-    await _enable(session, org.id, balance=VOICE_MIN)  # 11_000 micros
+    await _enable(session, org.id, balance=VOICE_MIN)  # 12_000 micros
     await telephony_billing.require_call_credit(session, org.id, _outbound_call(org.id))
     await session.commit()
     # The hold is capped at what the org actually has, so the whole balance is held.
@@ -858,8 +858,8 @@ async def test_a_ten_second_call_is_billed_one_whole_minute(session):
     await session.commit()
 
     assert await telephony_billing.bill_finished_calls(session) == 1
-    assert [-row.amount_micros for row in await _usage(session, org.id)] == [11_000]
-    assert await _balance(session, org.id) == 1_000_000 - 11_000
+    assert [-row.amount_micros for row in await _usage(session, org.id)] == [12_000]
+    assert await _balance(session, org.id) == 1_000_000 - 12_000
 
 
 async def test_outbound_sms_is_refused_one_micro_below_the_segment_price(session):

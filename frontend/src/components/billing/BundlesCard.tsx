@@ -13,9 +13,10 @@ import {
   type BundlesInfo,
 } from "@/api/billing";
 
-const KIND_COPY: Record<BundleKind, { label: string; noun: string }> = {
-  sms: { label: "Text messages (SMS)", noun: "texts" },
-  mms: { label: "Picture messages (MMS)", noun: "picture messages" },
+const KIND_COPY: Record<BundleKind, { label: string; noun: string; unit: string }> = {
+  sms: { label: "Text messages (SMS)", noun: "texts", unit: "each" },
+  mms: { label: "Picture messages (MMS)", noun: "picture messages", unit: "each" },
+  voice: { label: "Call minutes", noun: "call minutes (in or out)", unit: "per minute" },
 };
 
 const MAX_QTY = 500;
@@ -37,7 +38,7 @@ function BundleRow({ info, kind, canPay }: { info: BundlesInfo; kind: BundleKind
   const qty = clampQty(Number(qtyText));
 
   const copy = KIND_COPY[kind];
-  const kindInfo = info.kinds[kind];
+  const kindInfo = info.kinds[kind]!;
   const quote = bundleQuote(info, kind, qty);
   const discountPct = (kindInfo.volume_discount_bps ?? info.volume_discount_bps) / 100;
   const belowVolumeMin = kindInfo.volume_discount && qty < info.volume_min_qty;
@@ -75,7 +76,7 @@ function BundleRow({ info, kind, canPay }: { info: BundlesInfo; kind: BundleKind
       </p>
 
       <p className="text-xs text-muted-foreground">
-        Without a bundle: {formatUnitPrice(kindInfo.pay_as_you_go_micros)} each
+        Without a bundle: {formatUnitPrice(kindInfo.pay_as_you_go_micros)} {copy.unit}
       </p>
 
       <div className="mt-2 flex items-center gap-2">
@@ -174,7 +175,7 @@ export function BundlesCard() {
 
   return (
     <Card id="bundles">
-      <CardHeader title="Message bundles" />
+      <CardHeader title="Bundles" />
 
       {!canPay ? (
         <p className="mt-2 text-sm text-muted-foreground">
@@ -185,6 +186,7 @@ export function BundlesCard() {
       <div className="mt-4 space-y-4">
         <BundleRow info={info} kind="sms" canPay={canPay} />
         <BundleRow info={info} kind="mms" canPay={canPay} />
+        {info.kinds.voice ? <BundleRow info={info} kind="voice" canPay={canPay} /> : null}
       </div>
     </Card>
   );
