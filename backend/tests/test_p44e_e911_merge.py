@@ -15,7 +15,7 @@ from app.errors import PermissionDeniedError
 from app.models import OrgNumber
 from app.services import e911
 from tests.conftest import make_settings
-from tests.test_e911 import ADDRESS, _org_with_number, telnyx  # noqa: F401 - fixture
+from tests.test_e911 import ADDRESS, _org_with_number, app_with_dial_log, telnyx  # noqa: F401
 
 
 def _settings(**kw):
@@ -132,3 +132,21 @@ async def test_a_new_number_gets_its_own_grace_period(session):
     await session.commit()
     long_ago = (datetime.now(timezone.utc) - timedelta(days=60)).date().isoformat()
     await _gate(session, _settings(e911_enforced=True, e911_enforcement_start=long_ago), number)
+
+
+async def test_an_api_key_cannot_dial_911(app_with_dial_log, session):  # noqa: F811
+    from tests.conftest import auth_headers
+    from tests.test_bugfix_area5 import _api_key
+    from tests.test_e911 import _room_org
+
+    client, dials = app_with_dial_log
+    token, org, _ = await _room_org(session, client, "e911-api@example.com", "E911 API Org")
+    key = await _api_key(client, token, org["id"], ["calls:place"])
+    r = await client.post(
+        "/api/v1/calls",
+        json={"to": "911", "via": "carrier"},
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    # POST /calls needs a signed-in person; a program's key is refused before any dial.
+    assert r.status_code == 401, r.text
+    assert dials == []
