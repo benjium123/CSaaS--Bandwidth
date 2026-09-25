@@ -93,15 +93,12 @@ class Settings(BaseSettings):
     #: RETIRED: the old per-number $15/month price. Only purchases made on it still use it.
     stripe_number_price_id: str = "price_1UJHkZ744iNFjjqnkirIkrGn"
     #: Live workspace plans (services/plan_billing.py). Each plan includes as many users as
-    #: phone numbers; add-ons are $15/month per user and $5/month per number.
+    #: phone numbers; add-ons are $15/month per user ($12 on Business) and $5/month per number.
     stripe_plan_solo_price_id: str = "price_1UJgDb744iNFjjqnvYvbd3YV"  # $15, 1 user + 1 number
     stripe_plan_team_price_id: str = "price_1UJgDc744iNFjjqnQzOaPoqM"  # $45, 3 + 3
-    # PENDING: the live Business $130 price (10 + 10). Until it is set, Business checkout is
-    # refused by validate_price (the old $75 price no longer matches the plan).
-    stripe_plan_business_price_id: str = "price_1UJgDc744iNFjjqnOQeT3rtb"
+    stripe_plan_business_price_id: str = "price_1UJiBb744iNFjjqn2ZTTG1e1"  # $130, 10 + 10
     stripe_extra_user_price_id: str = "price_1UJgDc744iNFjjqnRz5Bqqpm"  # $15/month (Solo, Team)
-    # PENDING: the live Business extra-user price ($12/month).
-    stripe_business_extra_user_price_id: str = ""
+    stripe_business_extra_user_price_id: str = "price_1UJiBc744iNFjjqnjcjruFqz"  # $12/month
     stripe_extra_number_price_id: str = "price_1UJgDd744iNFjjqn9RTKz7AX"  # $5/month
     #: Live 10DLC campaign pass-through fees (prod_VJxPdkTbXGhw6k): $10/month standard,
     #: $2/month sole proprietor. See services/tendlc.py for the one-time fees.
