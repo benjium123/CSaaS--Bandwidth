@@ -12,8 +12,34 @@ export const BILLING_TOPUPS_PATH = "/api/v1/billing/topups";
 export const BILLING_AUTO_RECHARGE_PATH = "/api/v1/billing/auto-recharge";
 export const BILLING_RATES_PATH = "/api/v1/billing/rates";
 export const BILLING_PAYMENT_METHODS_PATH = "/api/v1/billing/payment-methods";
+export const BILLING_BUNDLES_PATH = "/api/v1/billing/bundles";
+export const BILLING_BUNDLE_CHECKOUT_PATH = "/api/v1/billing/bundles/checkout";
 
 export type BalanceWarning = "low" | "critical" | "empty";
+
+export type BundleKind = "sms" | "mms";
+
+export interface BundleKindInfo {
+  units: number;
+  units_per_bundle: number;
+  list_micros: number;
+  volume_discount: boolean;
+  pay_as_you_go_micros: number;
+}
+
+export interface BundlesInfo {
+  volume_min_qty: number;
+  volume_discount_bps: number;
+  kinds: Record<BundleKind, BundleKindInfo>;
+}
+
+export interface BundleCheckoutResult {
+  checkout_url: string;
+  list_micros: number;
+  discount_micros: number;
+  paid_micros: number;
+  units: number;
+}
 
 export interface AutoRecharge {
   threshold_micros: number;
@@ -39,6 +65,11 @@ export interface BillingSummary {
   last_topup: number | LastTopup | null;
   /** True when texting and outbound calling draw from this balance and stop when it is empty. */
   telephony_prepaid?: boolean;
+  /** Bundles currently owned, in whole units (texts / picture messages), not micros. */
+  bundles?: { sms: number; mms: number };
+  billing_state?: "ok" | "low" | "exhausted";
+  warn_threshold_micros?: number;
+  avg_daily_spend_micros?: number;
 }
 
 export interface LedgerEntry {
@@ -309,10 +340,25 @@ export async function addPaymentMethod(api: ApiClient): Promise<{ checkout_url: 
   });
 }
 
+export async function fetchBundles(api: ApiClient): Promise<BundlesInfo> {
+  return api.request<BundlesInfo>(BILLING_BUNDLES_PATH);
+}
+
+export async function createBundleCheckout(
+  api: ApiClient,
+  input: { kind: BundleKind; qty: number },
+): Promise<BundleCheckoutResult> {
+  return api.request<BundleCheckoutResult>(BILLING_BUNDLE_CHECKOUT_PATH, {
+    method: "POST",
+    json: input,
+  });
+}
+
 export const BILLING_SUMMARY_KEY = ["billing", "summary"] as const;
 export const BILLING_LEDGER_KEY = ["billing", "ledger"] as const;
 export const BILLING_RATES_KEY = ["billing", "rates"] as const;
 export const BILLING_PAYMENT_METHODS_KEY = ["billing", "payment-methods"] as const;
+export const BILLING_BUNDLES_KEY = ["billing", "bundles"] as const;
 
 export function useBillingSummary(api: ApiClient, enabled = true) {
   return useQuery({
@@ -394,6 +440,55 @@ export function useAddPaymentMethod(api: ApiClient) {
       void qc.invalidateQueries({ queryKey: ["billing"], exact: false });
     },
   });
+}
+
+export function useBundles(api: ApiClient, enabled = true) {
+  return useQuery({
+    queryKey: BILLING_BUNDLES_KEY,
+    queryFn: () => fetchBundles(api),
+    enabled,
+  });
+}
+
+export function useBundleCheckout(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { kind: BundleKind; qty: number }) => createBundleCheckout(api, input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["billing"], exact: false });
+    },
+  });
+}
+
+/**
+ * Pure price quote for buying `qty` bundles of `kind`, matching the server's own math
+ * exactly (POST /billing/bundles/checkout returns the same four numbers): the volume
+ * discount only applies at `volume_min_qty` or more, and the discounted per-unit price is
+ * floored twice - once to a whole micro, then again to a whole cent (a multiple of 10_000
+ * micros) - so this can never show a subtotal the server would round down from.
+ */
+export function bundleQuote(
+  info: BundlesInfo,
+  kind: BundleKind,
+  qty: number,
+): { list: number; discount: number; paid: number; units: number; unitPaid: number } {
+  const kindInfo = info.kinds[kind];
+  const qualifiesForDiscount = kindInfo.volume_discount && qty >= info.volume_min_qty;
+  const unitPaid = qualifiesForDiscount
+    ? Math.floor(
+        Math.floor((kindInfo.list_micros * (10_000 - info.volume_discount_bps)) / 10_000) /
+          10_000,
+      ) * 10_000
+    : kindInfo.list_micros;
+  const paid = unitPaid * qty;
+  const list = kindInfo.list_micros * qty;
+  return {
+    list,
+    discount: list - paid,
+    paid,
+    units: kindInfo.units_per_bundle * qty,
+    unitPaid,
+  };
 }
 
 export function usageLines(summary: UsageSummary | undefined): UsageMetricLine[] {

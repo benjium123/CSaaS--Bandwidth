@@ -1,14 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/primitives";
+import { Button, Card } from "@/components/ui/primitives";
 import { BANNER_PRIORITY, BannerSlot } from "@/components/shell/BannerSlot";
 import { isOwner, useAuth } from "@/auth/AuthContext";
-import {
-  PREPAID_EMPTY_COPY,
-  WARNING_COPY,
-  useBillingSummary,
-  type BalanceWarning,
-} from "@/api/billing";
+import { WARNING_COPY, useBillingSummary, type BalanceWarning } from "@/api/billing";
 
 const STORAGE_KEY = "csaas.billing.banner.dismissed";
 
@@ -53,14 +48,58 @@ export function LowBalanceBanner() {
 
   if (summaryQ.isLoading || summaryQ.isError || summaryQ.data == null) return null;
 
-  const warning = summaryQ.data.warning;
-  if (!warning) return null;
+  const warningOrNull = summaryQ.data.warning;
+  if (!warningOrNull) return null;
+  // Reassigned to a binding TS can prove non-null wherever it is captured below, including
+  // inside `dismiss` - narrowing a `const` from an early return does not survive into a
+  // nested function's closure.
+  const warning: BalanceWarning = warningOrNull;
   if (dismissed && WARNING_ORDER[warning] <= WARNING_ORDER[dismissed]) return null;
 
-  const copy =
-    warning === "empty" && summaryQ.data.telephony_prepaid
-      ? PREPAID_EMPTY_COPY
-      : WARNING_COPY[warning];
+  function dismiss() {
+    setDismissed(warning);
+    writeDismissedLevel(warning);
+  }
+
+  // Empty is worse than low/critical when the workspace's OWN texting and calling (not just
+  // the AI assistant) are prepaid off this balance: sending and receiving are both actually
+  // stopped, not just degraded, so this gets a modal that has to be dismissed on purpose
+  // rather than a slim banner that scrolls out of view with the inbox.
+  if (warning === "empty" && summaryQ.data.telephony_prepaid) {
+    return (
+      <div
+        role="presentation"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      >
+        <Card role="dialog" aria-modal="true" aria-labelledby="low-balance-modal-title" className="w-full max-w-md">
+          <h2 id="low-balance-modal-title" className="text-base font-semibold">
+            Your balance is empty
+          </h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Outgoing texts and calls are paused and incoming calls are being declined until you
+            add credit or buy a bundle.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={() => navigate("/settings/billing")}>
+              Add credit
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate("/settings/billing#bundles")}
+            >
+              Buy bundles
+            </Button>
+            <Button type="button" variant="ghost" onClick={dismiss}>
+              Not now
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  const copy = WARNING_COPY[warning];
 
   return (
     <BannerSlot priority={BANNER_PRIORITY.credits}>
@@ -87,10 +126,7 @@ export function LowBalanceBanner() {
             size="sm"
             variant="ghost"
             aria-label="Dismiss"
-            onClick={() => {
-              setDismissed(warning);
-              writeDismissedLevel(warning);
-            }}
+            onClick={dismiss}
           >
             Dismiss
           </Button>

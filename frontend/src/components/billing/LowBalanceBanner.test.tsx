@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LowBalanceBanner } from "./LowBalanceBanner";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
@@ -61,17 +61,37 @@ describe("LowBalanceBanner", () => {
     ).toBeInTheDocument();
   });
 
-  it("tells a prepaid workspace at empty that texting and calling are paused", async () => {
+  it("shows a modal, not the slim banner, for a prepaid workspace at empty", async () => {
     const client = makeBannerClient({
       "/api/v1/me/capabilities": CAPABILITIES,
       "/api/v1/billing/summary": { ...summary("empty"), telephony_prepaid: true },
     });
     renderWithProviders(<LowBalanceBanner />, client);
 
-    expect(await screen.findByText("You are out of credits")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Your balance is empty")).toBeInTheDocument();
     expect(
-      screen.getByText("Texting and outbound calling are paused until you add credits."),
+      within(dialog).getByText(
+        "Outgoing texts and calls are paused and incoming calls are being declined until you add credit or buy a bundle.",
+      ),
     ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Add credit" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Buy bundles" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Not now" })).toBeInTheDocument();
+  });
+
+  it("dismisses the empty-balance modal for this session on Not now", async () => {
+    const client = makeBannerClient({
+      "/api/v1/me/capabilities": CAPABILITIES,
+      "/api/v1/billing/summary": { ...summary("empty"), telephony_prepaid: true },
+    });
+    renderWithProviders(<LowBalanceBanner />, client);
+
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByRole("button", { name: "Not now" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(sessionStorage.getItem("csaas.billing.banner.dismissed")).toBe("empty");
   });
 
   it("keeps the assistant copy at empty when texting and calling are not prepaid", async () => {

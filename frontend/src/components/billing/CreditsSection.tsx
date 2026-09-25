@@ -1,4 +1,5 @@
 import { BalanceCard } from "./BalanceCard";
+import { BundlesCard } from "./BundlesCard";
 import { BillingLedger } from "./BillingLedger";
 import { PaymentMethods } from "./PaymentMethods";
 import { RateSheet } from "./RateSheet";
@@ -23,6 +24,7 @@ export function CreditsSection() {
   return (
     <div className="space-y-6">
       <BalanceCard />
+      <BundlesCard />
       <UsageTable />
       <RateSheet />
       <PaymentMethods />
