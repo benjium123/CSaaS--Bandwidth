@@ -162,6 +162,10 @@ def _construct_provider(name: str, src: Any, base: Settings) -> MessagingCarrier
             api_token=getattr(src, "signalwire_api_token").get_secret_value(),
             space_url=getattr(src, "signalwire_space_url", ""),
             webhook_url=base.signalwire_webhook_url,
+            # Per-org accounts store no signing key yet; the space-level one from the env
+            # verifies for the space the env credentials belong to. Another space's
+            # webhooks fail closed, which is the right default.
+            signing_key=base.signalwire_signing_key.get_secret_value(),
         )
         _wire_signalwire_voice(carrier, base.public_base_url)
         return carrier

@@ -349,7 +349,15 @@ async def send_message(
         # here they are lost entirely by the time the sweeper releases the message
         # (_dispatch_to_carrier's fallback to message.media would just find []).
         media=list(media_urls or []),
-        carrier=getattr(carrier, "name", CARRIER_DEFAULT),
+        # The row's carrier is what release_held_messages dispatches through, so it must
+        # be the carrier of the number the routing plan landed on - not the env primary.
+        # Otherwise a quiet-hours hold turned a Telnyx-number send into a Bandwidth send.
+        # Read defensively, same as the credit gate above: a plan without `primary`
+        # (test doubles, a future plan type) falls back to the carrier we were handed.
+        carrier=(
+            getattr(getattr(plan, "primary", None), "carrier_name", None)
+            or getattr(carrier, "name", CARRIER_DEFAULT)
+        ),
         segment_count_est=est.segments,
     )
 

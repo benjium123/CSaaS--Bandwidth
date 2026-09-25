@@ -220,7 +220,7 @@ async def entrypoint(ctx: JobContext) -> None:
 def main() -> None:
     name = resolve_monitor_agent_name()
     logger.info("call-monitor worker registering as agent_name=%s", name)
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name=name))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name=name, port=8082))
 
 
 if __name__ == "__main__":

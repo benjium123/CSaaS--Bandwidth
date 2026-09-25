@@ -37,6 +37,27 @@ CSAAS_REDIS_PASSWORD=whatever-your-.env-has envsubst '${CSAAS_REDIS_PASSWORD}' \
 3. **Outbound Voice Profile**: create one, attach the SIP Connection, allowed
    destinations US/CA.
 
+### 2b. Ports this box shares with the CRM's own LiveKit (2026-09-17)
+
+The VPS also runs rei-crm's **separate** LiveKit instance (the operator rejected sharing
+one server: the only public path here is `location /livekit/` on
+csaas.sabinepropertygroup.net, so sharing would have put CRM browser traffic on CSaaS's
+domain, cert and access logs, and a CSaaS restart would drop CRM calls). Their ranges sit
+directly above ours with **no slack**:
+
+| | CSaaS | rei-crm |
+|---|---|---|
+| signal / ICE-TCP | 7880 / 7881 | 7980 / 7981 |
+| WebRTC RTP (udp) | 50700-52699 | 52700-54699 |
+| SIP signaling (udp) | 5060 | 5070 |
+| SIP RTP (udp) | 10000-11999 | 12000-13999 |
+| redis | 6380 | its own |
+
+**Rule: if either side ever widens a range, it widens AWAY from the other** — CSaaS
+downward, the CRM upward. P38 already widened both CSaaS ranges once (500 -> 2000 ports);
+a third widening upward would land inside the CRM's range and break both products. Same
+for P37b: per-org trunks reuse this instance and claim no new ports.
+
 ### 3. Firewall (ufw)
 ```bash
 ufw allow 7881/tcp

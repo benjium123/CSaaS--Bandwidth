@@ -10,13 +10,37 @@ credential for no gain.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from urllib.parse import quote
 
 import httpx
+import structlog
 
 from app.errors import FeatureUnavailableError, ValidationFailedError
 from app.providers.numbers import AvailableNumber, NumberSearch, OrderResult, parse_cost_cents
+
+log = structlog.get_logger("carrier.telnyx.numbers")
+
+# CSaaS shares ONE Telnyx account (one account-wide API key) with the CRM, and Telnyx
+# enforces no boundary between them. So "CSaaS owns this number" is a convention we stamp at
+# order time, not an API fact - everything else on the account is somebody else's.
+OWNERSHIP_TAG_PREFIX = "csaas"
+
+
+def is_csaas_owned(number_row: object) -> bool:
+    """The ownership hard gate. Fails CLOSED: anything that is not a dict carrying a list of
+    tags with a matching string counts as NOT ours - so a CRM number can never be reported as
+    CSaaS-owned nor released by CSaaS."""
+    if not isinstance(number_row, dict):
+        return False
+    tags = number_row.get("tags")
+    if not isinstance(tags, list):
+        return False
+    return any(
+        isinstance(tag, str) and tag.strip().lower().startswith(OWNERSHIP_TAG_PREFIX)
+        for tag in tags
+    )
 
 
 def _capabilities(features: object) -> dict:
@@ -144,7 +168,7 @@ class TelnyxNumberProviderMixin:
         entries = data.get("phone_numbers") or []
         entry = entries[0] if entries and isinstance(entries[0], dict) else {}
         order_status = str(data.get("status") or "").lower()
-        return OrderResult(
+        result = OrderResult(
             e164=str(entry.get("phone_number") or e164),
             # 4.4: always store the ORDER id here (never the phone-number entry's own
             # id) - order_status polls this id, and release_number below always
@@ -156,6 +180,75 @@ class TelnyxNumberProviderMixin:
             status="active" if order_status == "success" else "pending",
             capabilities=_capabilities(entry.get("features")),
         )
+        # Ownership gate: stamp the number as ours before anyone can look it up on the
+        # shared account. _tag_as_csaas never raises, so a tagging failure cannot cost us an
+        # order the carrier already accepted.
+        await self._tag_as_csaas(result.e164)
+        return result
+
+    async def _tag_as_csaas(self, e164: str) -> bool:
+        """Tag a just-ordered number as CSaaS-owned. Never raises: the caller has a successful
+        order to report and must not lose it because tagging had trouble.
+
+        A just-ordered number is not immediately visible to a lookup, so the search retries."""
+        client = await self._get_client()
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        row: dict | None = None
+        for attempt in range(5):
+            try:
+                resp = await client.get(
+                    f"{self.base_url}/phone_numbers",
+                    params={"filter[phone_number]": e164},
+                    headers=headers,
+                )
+            except httpx.TransportError:
+                resp = None
+            if resp is not None and resp.status_code == 200:
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    payload = {}
+                data = (payload or {}).get("data") or []
+                # A list, checked: "never raises" has to survive a payload shaped like
+                # anything at all, and indexing a dict by 0 is a KeyError.
+                if isinstance(data, list) and data and isinstance(data[0], dict):
+                    row = data[0]
+                    break
+            # No point sleeping after the final attempt.
+            if attempt < 4:
+                await asyncio.sleep(2)
+
+        if row is None:
+            log.warning("telnyx_tag_failed", e164=e164, reason="not_visible")
+            return False
+
+        # Already ours - do not stack a second csaas tag on every re-order.
+        if is_csaas_owned(row):
+            return True
+
+        ref = str(row.get("id") or "")
+        if not ref:
+            log.warning("telnyx_tag_failed", e164=e164, reason="no_id")
+            return False
+
+        existing = row.get("tags")
+        tags = list(existing) if isinstance(existing, list) else []
+        tags.append("csaas")
+
+        try:
+            resp = await client.patch(
+                f"{self.base_url}/phone_numbers/{ref}",
+                json={"tags": tags},
+                headers=headers,
+            )
+        except httpx.TransportError:
+            log.warning("telnyx_tag_failed", e164=e164, reason="patch_transport")
+            return False
+        if resp.status_code not in (200, 201, 204):
+            log.warning("telnyx_tag_failed", e164=e164, status=resp.status_code)
+            return False
+        return True
 
     async def order_status(self, provider_ref: str) -> OrderStatusResult:
         """P18: Telnyx number orders are not always synchronous - a `number_orders`
@@ -193,7 +286,10 @@ class TelnyxNumberProviderMixin:
     async def lookup_owned_number(self, e164: str) -> bool | None:
         """1.1: does THIS Telnyx account currently own e164? None when the API could not
         be asked at all (transport error / non-200) - the caller treats that as
-        unverifiable, never as a silent "yes"."""
+        unverifiable, never as a silent "yes".
+
+        Ownership gate: the account is shared with the CRM, so "the account has it" is not
+        "CSaaS has it". Only a row tagged csaas* counts; anything else is not ours."""
         client = await self._get_client()
         headers = {"Authorization": f"Bearer {self.api_key}"}
         try:
@@ -207,7 +303,12 @@ class TelnyxNumberProviderMixin:
         if resp.status_code != 200:
             return None
         data = (resp.json() or {}).get("data") or []
-        return bool(data)
+        if isinstance(data, list) and data and is_csaas_owned(data[0]):
+            return True
+        # Rows came back and were not ours: a real (CRM) number we must not claim.
+        if data:
+            log.warning("telnyx_number_not_csaas_owned", e164=e164)
+        return False
 
     async def release_number(self, e164: str, provider_ref: str | None = None) -> None:
         # 4.4: provider_ref (when set) is the ORDER id, never the phone-number id the
@@ -227,6 +328,14 @@ class TelnyxNumberProviderMixin:
         data = (lookup.json() or {}).get("data") or []
         if not data or not isinstance(data[0], dict):
             raise ValidationFailedError(f"Telnyx does not report owning {e164}")
+        # Ownership gate: the account is SHARED with the CRM, so resolving an id is not
+        # permission to delete it. Refuse - fail closed - before the DELETE can leave.
+        if not is_csaas_owned(data[0]):
+            log.warning("telnyx_release_refused_not_csaas_owned", e164=e164)
+            raise ValidationFailedError(
+                f"{e164} is on the Telnyx account but is not tagged as CSaaS-owned; "
+                "refusing to release it"
+            )
         ref = str(data[0].get("id") or "")
 
         try:

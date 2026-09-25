@@ -82,9 +82,15 @@ class SignalWireMessagingCarrier(SignalWireVoiceMixin, SignalWireNumberProviderM
         space_url: str,
         webhook_url: str = "",
         client: httpx.AsyncClient | None = None,
+        signing_key: str = "",
     ) -> None:
         self.project_id = project_id
         self._api_token = api_token
+        # Webhooks are signed with the project's Signing Key, a different secret from the
+        # API token (SignalWire's own RequestValidator is constructed with the signing key).
+        # Empty falls back to the API token only so a pre-signing-key config keeps its old
+        # (failing-closed) behaviour rather than crashing at construction.
+        self._signing_key = signing_key or api_token
         # Accept "example.signalwire.com" or a full URL; normalise to a base.
         space = space_url.strip().rstrip("/")
         if not space.startswith("http"):
@@ -175,7 +181,7 @@ class SignalWireMessagingCarrier(SignalWireVoiceMixin, SignalWireNumberProviderM
         return None
 
     def verify_webhook(self, headers: Mapping[str, str], raw_body: bytes) -> bool:
-        return webhooks.verify(headers, self._api_token, self._webhook_url, raw_body)
+        return webhooks.verify(headers, self._signing_key, self._webhook_url, raw_body)
 
     def parse_webhook(self, raw_body: bytes) -> list[CarrierEvent]:
         return webhooks.parse(raw_body)

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import secrets
 import sys
 
@@ -42,19 +43,30 @@ BOX_SIP_HOST = "144.126.152.175:5060"
 OUTBOUND_SCRIPT = "csaas-livekit-outbound"
 INBOUND_SCRIPT = "csaas-livekit-inbound"
 SIP_USERNAME = "csaas-livekit"
+DOMAIN_APP_NAME = "csaas-livekit"
 LK_OUT, LK_IN, LK_RULE = "signalwire-out", "signalwire-in", "signalwire-in-individual"
 
 OUTBOUND_SWML = {
     "version": "1.0.0",
     "sections": {
         "main": [
+            # `answer` must come first: `connect` with answer_on_bridge on a
+            # SIP-originated leg was refused by SignalWire (480) every time;
+            # answer-then-connect worked every time. (Verified 2026-09-18/19.)
+            {"answer": {}},
             {
                 "connect": {
-                    "answer_on_bridge": True,
-                    "from": "${call.sip_data.sip_from_user}",
-                    "to": "${call.sip_data.sip_req_user}",
+                    # For a SIP-originated call, %{call.from} / %{call.to} are full
+                    # SIP URIs (sip:+1972...@<domain>), so connecting to them raw dials
+                    # back into our own domain application and loops; the .replace()
+                    # calls strip them down to E.164 first. SWML substitutes %{...} -
+                    # the documented "${...}" form is refused by SignalWire's edge with
+                    # a bare nginx 400 before the API even sees it, even JSON-escaped,
+                    # so %{...} is the only form that can be sent through the REST API.
+                    "from": "%{call.from.replace(/^sip:/i,'').replace(/@.*/,'')}",
+                    "to": "%{call.to.replace(/^sip:/i,'').replace(/@.*/,'')}",
                 }
-            }
+            },
         ]
     },
 }
@@ -96,7 +108,12 @@ async def main() -> int:
     if not (s.livekit_url and s.livekit_api_secret.get_secret_value()):
         print("LIVEKIT_* is not set", file=sys.stderr)
         return 2
-    sip_domain = space.replace(".signalwire.com", ".sip.signalwire.com")
+    # LiveKit's outbound trunk must dial a DOMAIN APPLICATION's domain, not the
+    # SIP-profile/endpoint domain: an INVITE to the endpoint/profile domain is
+    # answered "404 Domain unavailable" unless the endpoint has REGISTERed, and
+    # livekit-sip never registers as a SIP client. A domain application accepts
+    # unregistered digest-auth INVITEs, so that's the domain to use.
+    sip_domain = ""
 
     sw = httpx.AsyncClient(
         base_url=f"https://{space}",
@@ -116,6 +133,22 @@ async def main() -> int:
         return r.json() if r.content else {}
 
     try:
+        # ---- 0: domain application (LiveKit's outbound trunk dials this domain) ---------
+        domain_apps = {
+            x.get("name"): x
+            for x in _items(await sw_call("GET", "/api/relay/rest/domain_applications"))
+        }
+        domain_app = domain_apps.get(DOMAIN_APP_NAME)
+        if domain_app is None:
+            if plan.step(f"create domain application {DOMAIN_APP_NAME}"):
+                domain_app = await sw_call(
+                    "POST",
+                    "/api/relay/rest/domain_applications",
+                    {"name": DOMAIN_APP_NAME, "identifier": "csaas"},
+                )
+        if domain_app:
+            sip_domain = f"{domain_app['domain']}.dapp.signalwire.com"
+
         # ---- 1 + 2: SWML scripts ---------------------------------------------------------
         scripts = {
             (x.get("display_name") or x.get("name")): x
@@ -129,7 +162,7 @@ async def main() -> int:
                     await sw_call(
                         "PUT",
                         f"/api/fabric/resources/swml_scripts/{scripts[name]['id']}",
-                        {"name": name, "contents": contents},
+                        {"name": name, "contents": json.dumps(contents)},
                     )
             else:
                 script_ids[name] = None
@@ -137,9 +170,30 @@ async def main() -> int:
                     made = await sw_call(
                         "POST",
                         "/api/fabric/resources/swml_scripts",
-                        {"name": name, "contents": contents, "script_type": "calling"},
+                        {"name": name, "contents": json.dumps(contents), "script_type": "calling"},
                     )
                     script_ids[name] = made["id"]
+
+        # ---- 0b: domain app's calling handler -> the hosted outbound SWML script --------
+        # A domain application refuses `calling_handler_resource_id` (the resource-id
+        # form used for the SIP endpoint below) with "Call relay script url must be
+        # set", so the hosted relay-bin URL is the only form that works here.
+        if domain_app is not None and script_ids[OUTBOUND_SCRIPT]:
+            hosted = await sw_call("GET", f"/api/fabric/resources/{script_ids[OUTBOUND_SCRIPT]}")
+            hosted_url = (
+                (hosted.get("swml_script") or {}).get("request_url")
+                if isinstance(hosted, dict) else None
+            )
+            if hosted_url and (
+                domain_app.get("call_handler") != "relay_script"
+                or domain_app.get("call_relay_script_url") != hosted_url
+            ):
+                if plan.step(f"point {DOMAIN_APP_NAME}'s outbound calls at the hosted {OUTBOUND_SCRIPT}"):
+                    await sw_call(
+                        "PUT",
+                        f"/api/relay/rest/domain_applications/{domain_app['id']}",
+                        {"call_handler": "relay_script", "call_relay_script_url": hosted_url},
+                    )
 
         # ---- 5 (lookup first: the credential password is only known when we set it) -----
         async def lk_list(method: str) -> dict[str, dict]:

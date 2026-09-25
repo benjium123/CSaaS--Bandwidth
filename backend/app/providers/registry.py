@@ -193,6 +193,7 @@ def build_registry(settings) -> CarrierRegistry:  # noqa: ANN001
             api_token=settings.signalwire_api_token.get_secret_value(),
             space_url=settings.signalwire_space_url,
             webhook_url=settings.signalwire_webhook_url,
+            signing_key=settings.signalwire_signing_key.get_secret_value(),
         )
         _wire_signalwire_voice(carriers["signalwire"], settings.public_base_url)
 

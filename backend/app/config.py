@@ -334,6 +334,10 @@ class Settings(BaseSettings):
     signalwire_enabled: bool | None = None
     signalwire_project_id: str = ""
     signalwire_api_token: SecretStr = SecretStr("")
+    #: The project SIGNING KEY (dashboard -> API -> Signing Key), NOT the API token. SignalWire
+    #: signs its webhooks with this one; measured 2026-09-19: every inbound SMS bounced 401
+    #: while the verifier was keyed with the API token.
+    signalwire_signing_key: SecretStr = SecretStr("")
     #: e.g. "yourspace.signalwire.com"
     signalwire_space_url: str = ""
     #: The URL we REGISTERED with SignalWire. Twilio-compatible signatures cover the URL,
