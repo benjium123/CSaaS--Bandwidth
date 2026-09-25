@@ -83,13 +83,10 @@ def _risk_reason(risk: dict | None) -> str | None:
 
 async def refuse_risky_payment(session: AsyncSession, settings, intent: dict) -> bool:  # noqa: ANN001
     """Our stand-in for the Radar rules Stripe offers no API for: before a top-up, bundle or
-    auto-recharge payment becomes credit, HOLD it when the card's CVC check failed or
-    Radar's risk score is above RISK_SCORE_BLOCK - nothing is credited, the payment is
-    marked "held" and a payment_refund_needed security alert asks a person to refund it in
-    Stripe (refunds are never automatic). Returns True when held. Fails open (returns False)
-    when Stripe is not configured or cannot be read: Radar's own default blocking still
-    applies to the charge. Commits when it holds."""
-    from app.models import SecurityAlert
+    auto-recharge payment becomes credit, refund it (and credit nothing) when the card's CVC
+    check failed or Radar's risk score is above RISK_SCORE_BLOCK. Returns True when refused.
+    Fails open (returns False) when Stripe is not configured or cannot be read: Radar's
+    own default blocking still applies to the charge. Commits when it refuses."""
     from app.services import audit as audit_svc
     from app.services import stripe_client
 
@@ -105,7 +102,7 @@ async def refuse_risky_payment(session: AsyncSession, settings, intent: dict) ->
     except (TypeError, ValueError):
         return False
     existing = await _by_intent(session, intent_id)
-    if existing is not None and existing.state in ("held", "refunded"):
+    if existing is not None and existing.state == "refunded":
         return True  # a replay of a payment already refused
     if existing is not None and existing.state == "paid":
         return False  # already credited before this screen existed; leave it
@@ -117,9 +114,10 @@ async def refuse_risky_payment(session: AsyncSession, settings, intent: dict) ->
     if reason is None:
         return False
 
+    await stripe_client.refund_fraudulent(settings, intent_id, reason=reason)
     org = await session.get(Org, org_id)
     if org is None:
-        log.error("payments.risk_hold_unknown_org", intent_id=intent_id)
+        log.error("payments.risk_refund_unknown_org", intent_id=intent_id)
         return True
     set_org_context(session, org_id)
     amount = int(intent.get("amount_received") or 0) * 10_000
@@ -146,43 +144,29 @@ async def refuse_risky_payment(session: AsyncSession, settings, intent: dict) ->
             discount_micros=0,
         )
         session.add(row)
-    row.state = "held"
+    row.state = "refunded"
     row.stripe_payment_intent_id = intent_id
     row.paid_micros = amount
     row.credited_micros = 0
     row.units_credited = 0
     if metadata.get("source") == "auto_recharge":
-        # A refused auto-recharge would be retried (and held again, paying Stripe's fee)
+        # A refused auto-recharge would be retried (and refunded, and pay Stripe's fee)
         # every few hours: switch it off until the customer turns it back on.
         auto = dict(org.credit_auto_recharge or {})
         auto["enabled"] = False
         auto.pop("pending_intent", None)
         auto["last_failure"] = f"Refused for fraud risk: {reason}"
         org.credit_auto_recharge = auto
-    session.add(
-        SecurityAlert(
-            id=uuid.uuid4(),
-            kind="payment_refund_needed",
-            org_id=org_id,
-            detail={
-                "intent": intent_id,
-                "amount_micros": amount,
-                "kind": kind,
-                "reason": reason,
-                "action": "Refund this payment by hand in Stripe; nothing was credited.",
-            },
-        )
-    )
     audit_svc.record(
         session,
         org_id,
-        action="payment.held_risk",
+        action="payment.refused_risk",
         target_type="payment",
         target_id=intent_id,
         detail={"reason": reason, "amount_micros": amount, "kind": kind},
     )
     await session.commit()
-    log.error("payments.held_risk", org_id=str(org_id), intent_id=intent_id, reason=reason)
+    log.error("payments.refused_risk", org_id=str(org_id), intent_id=intent_id, reason=reason)
     return True
 
 

@@ -507,7 +507,7 @@ async def test_org_that_must_verify_waits_even_when_kyc_not_enforced(session):
 
 
 # ----------------------------------------------------------------------------------
-# Radar stand-in: risky credit/bundle payments are held for a manual refund, never credited
+# Radar stand-in: risky credit/bundle payments are refunded, never credited
 # ----------------------------------------------------------------------------------
 def _intent(org_id, *, kind="credit_topup", source=None, cents=2_000):
     metadata = {"org_id": str(org_id), "kind": kind}
@@ -521,7 +521,7 @@ def _intent(org_id, *, kind="credit_topup", source=None, cents=2_000):
 def _stub_stripe(monkeypatch, risk, *, configured=True):
     from app.services import stripe_client
 
-    calls = {"risk": 0}
+    calls = {"risk": 0, "refunds": []}
 
     async def charge_risk(_settings, _intent_id):
         calls["risk"] += 1
@@ -529,22 +529,13 @@ def _stub_stripe(monkeypatch, risk, *, configured=True):
             raise risk
         return risk
 
+    async def refund(_settings, intent_id, *, reason):
+        calls["refunds"].append((intent_id, reason))
+
     monkeypatch.setattr(stripe_client, "is_configured", lambda _s: configured)
     monkeypatch.setattr(stripe_client, "charge_risk", charge_risk)
-    assert not hasattr(stripe_client, "refund_fraudulent")  # refunds are made by hand
+    monkeypatch.setattr(stripe_client, "refund_fraudulent", refund)
     return calls
-
-
-async def _alerts(session, org_id):
-    from app.models import SecurityAlert
-
-    return (
-        await session.execute(
-            sa.select(SecurityAlert).where(
-                SecurityAlert.org_id == org_id, SecurityAlert.kind == "payment_refund_needed"
-            )
-        )
-    ).scalars().all()
 
 
 async def _payment_row(session, org_id, intent_id):
@@ -558,7 +549,7 @@ async def _payment_row(session, org_id, intent_id):
     ).scalar_one_or_none()
 
 
-async def test_failed_cvc_is_held_and_not_credited(session, monkeypatch):
+async def test_failed_cvc_is_refunded_and_not_credited(session, monkeypatch):
     from app.services import payments
 
     org = await _new_org(session)
@@ -566,14 +557,13 @@ async def test_failed_cvc_is_held_and_not_credited(session, monkeypatch):
     intent = _intent(org.id)
     org_id = org.id
     assert await payments.refuse_risky_payment(session, make_settings(), intent) is True
+    assert calls["refunds"] and calls["refunds"][0][0] == intent["id"]
     row = await _payment_row(session, org_id, intent["id"])
-    assert row.state == "held" and row.credited_micros == 0
+    assert row.state == "refunded" and row.credited_micros == 0
     assert await credits.balance(session, org_id) == 0
-    [alert] = await _alerts(session, org_id)
-    assert alert.detail["intent"] == intent["id"] and alert.status == "open"
 
 
-async def test_high_risk_score_bundle_is_held(session, monkeypatch):
+async def test_high_risk_score_bundle_is_refunded(session, monkeypatch):
     from app.services import payments
 
     org = await _new_org(session)
@@ -581,31 +571,31 @@ async def test_high_risk_score_bundle_is_held(session, monkeypatch):
     intent = _intent(org.id, kind="voice_bundle", cents=1_000)
     org_id = org.id
     assert await payments.refuse_risky_payment(session, make_settings(), intent) is True
+    assert len(calls["refunds"]) == 1
     assert await bundles.units(session, org_id, "voice") == 0
-    # A replayed webhook is recognised without asking Stripe again, and alerts only once.
+    # A replayed webhook is recognised without asking Stripe again.
     assert await payments.refuse_risky_payment(session, make_settings(), intent) is True
-    assert calls["risk"] == 1
-    assert len(await _alerts(session, org_id)) == 1
+    assert calls["risk"] == 1 and len(calls["refunds"]) == 1
 
 
 async def test_normal_payment_passes_the_screen(session, monkeypatch):
     from app.services import payments
 
     org = await _new_org(session)
-    _stub_stripe(monkeypatch, {"cvc_check": "pass", "risk_score": 75})
+    calls = _stub_stripe(monkeypatch, {"cvc_check": "pass", "risk_score": 75})
     assert await payments.refuse_risky_payment(session, make_settings(), _intent(org.id)) is False
-    assert await _alerts(session, org.id) == []
+    assert calls["refunds"] == []
 
 
 async def test_screen_fails_open_when_stripe_cannot_be_read(session, monkeypatch):
     from app.services import payments
 
     org = await _new_org(session)
-    _stub_stripe(monkeypatch, RuntimeError("stripe down"))
+    calls = _stub_stripe(monkeypatch, RuntimeError("stripe down"))
     assert await payments.refuse_risky_payment(session, make_settings(), _intent(org.id)) is False
     calls_off = _stub_stripe(monkeypatch, {"cvc_check": "fail"}, configured=False)
     assert await payments.refuse_risky_payment(session, make_settings(), _intent(org.id)) is False
-    assert calls_off["risk"] == 0
+    assert calls["refunds"] == [] and calls_off["refunds"] == []
 
 
 async def test_other_payment_kinds_are_not_screened(session, monkeypatch):
@@ -633,4 +623,4 @@ async def test_refused_auto_recharge_switches_auto_recharge_off(session, monkeyp
     assert refreshed.credit_auto_recharge["enabled"] is False
     assert "pending_intent" not in refreshed.credit_auto_recharge
     row = await _payment_row(session, org_id, intent["id"])
-    assert row.kind == "auto_recharge" and row.state == "held"
+    assert row.kind == "auto_recharge" and row.state == "refunded"

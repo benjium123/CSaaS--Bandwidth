@@ -219,6 +219,19 @@ async def charge_risk(settings, payment_intent_id: str) -> dict | None:
     }
 
 
+async def refund_fraudulent(settings, payment_intent_id: str, *, reason: str) -> None:
+    """Refund a whole payment as fraudulent (Stripe also feeds the card into Radar's block
+    lists). Idempotent per payment intent."""
+    stripe = _stripe(settings)
+    await _run_sync(
+        stripe.Refund.create,
+        payment_intent=payment_intent_id,
+        reason="fraudulent",
+        metadata={"kind": "risk_block", "why": reason[:200]},
+        idempotency_key=f"risk-refund-{payment_intent_id}",
+    )
+
+
 async def create_subscription_checkout_session(
     settings,
     *,
