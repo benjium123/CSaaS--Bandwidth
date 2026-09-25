@@ -149,3 +149,12 @@ def test_recharge_history_is_pruned_to_one_day():
         {"history": [{"at": old, "micros": 1}, {"at": new, "micros": 2}, "junk"]}
     )
     assert [e["micros"] for e in kept] == [2]
+
+
+async def test_an_org_listed_as_established_is_never_new(session):
+    from tests.conftest import make_settings
+
+    org = await _org(session, age_days=1)
+    assert await exposure.is_new(session, make_settings(fraud_exposure_enforced=True), org.id)
+    vouched = make_settings(fraud_exposure_enforced=True, fraud_established_org_ids=f" x, {org.id}")
+    assert not await exposure.is_new(session, vouched, org.id)

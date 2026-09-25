@@ -429,6 +429,9 @@ class Settings(BaseSettings):
     #: KycProfile.limits (max_concurrent_calls, daily_spend_micros).
     fraud_exposure_enforced: bool = True
     fraud_new_account_days: int = 30
+    #: Comma-separated org ids the operator vouches for (never "new", whatever their age) -
+    #: for workspaces with no KYC profile to carry limits.established.
+    fraud_established_org_ids: str = ""
     fraud_calls_per_number: int = 2
     fraud_calls_per_user: int = 2
     fraud_new_account_daily_spend_micros: int = 10_000_000

@@ -70,6 +70,9 @@ async def is_new(session: AsyncSession, settings: Settings, org_id: uuid.UUID) -
     # An operator can vouch for a workspace early (limits.established = true).
     if (await _limits(session, org_id)).get("established") is True:
         return False
+    vouched = str(getattr(settings, "fraud_established_org_ids", "") or "")
+    if str(org_id) in {part.strip() for part in vouched.split(",")}:
+        return False
     started = await account_started(session, org_id)
     days = int(getattr(settings, "fraud_new_account_days", 30))
     return started is None or _now() - started < timedelta(days=days)
