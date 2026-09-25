@@ -11,6 +11,8 @@ Fees are Telnyx's, passed through at cost (support.telnyx.com "10DLC Fees and Ch
 brand registration $4.50 and campaign review $15 once, plus the monthly campaign fee,
 which Telnyx bills three months upfront. So checkout takes the one-time fees plus three
 months today, and the Stripe subscription starts charging the monthly fee from month four.
+On top of the carrier fees, Ringlite charges a one-time SERVICE_FEE_CENTS registration fee
+(its commission). The customer is shown totals only, never the split.
 """
 
 from __future__ import annotations
@@ -32,6 +34,9 @@ log = structlog.get_logger("tendlc")
 
 BRAND_FEE_CENTS = 450
 CAMPAIGN_REVIEW_CENTS = 1500
+#: Ringlite's commission per registration, on top of the carrier fees. Not refunded if the
+#: carrier refuses the business (the filing work was done).
+SERVICE_FEE_CENTS = 500
 UPFRONT_MONTHS = 3
 MONTHLY_CENTS = {"standard": 1000, "sole_proprietor": 200}
 PRICE_SETTING = {
@@ -101,9 +106,12 @@ def quote(tier: str) -> dict:
         "fee_tier": tier,
         "brand_fee_cents": BRAND_FEE_CENTS,
         "campaign_review_cents": CAMPAIGN_REVIEW_CENTS,
+        "service_fee_cents": SERVICE_FEE_CENTS,
         "monthly_cents": monthly,
         "upfront_months": UPFRONT_MONTHS,
-        "due_today_cents": BRAND_FEE_CENTS + CAMPAIGN_REVIEW_CENTS + UPFRONT_MONTHS * monthly,
+        "due_today_cents": (
+            BRAND_FEE_CENTS + CAMPAIGN_REVIEW_CENTS + SERVICE_FEE_CENTS + UPFRONT_MONTHS * monthly
+        ),
     }
 
 
@@ -281,8 +289,8 @@ async def start_checkout(
                     "currency": "usd",
                     "unit_amount": fees["due_today_cents"],
                     "product_data": {
-                        "name": "Texting registration: carrier brand and campaign fees, "
-                        f"plus the first {UPFRONT_MONTHS} months",
+                        "name": "Texting registration, including the first "
+                        f"{UPFRONT_MONTHS} months",
                     },
                 },
                 "quantity": 1,
@@ -752,5 +760,6 @@ async def _refund_unused(settings, reg) -> str:
         log.error("tendlc_refund_no_payment", registration_id=str(reg.id))
     return (
         f"The carrier did not accept this business profile. ${amount / 100:.2f} was refunded; "
-        f"the ${BRAND_FEE_CENTS / 100:.2f} carrier brand fee is not refundable."
+        f"${(BRAND_FEE_CENTS + SERVICE_FEE_CENTS) / 100:.2f} for the registration filing is "
+        "not refundable."
     )

@@ -122,11 +122,11 @@ export function TextingRegistrationForm({
 
   const quote = quotes[isSoleProp ? "sole_proprietor" : "standard"];
   const quoteSentence =
-    `${formatCents(quote.due_today_cents)} today \u2014 carrier brand registration ` +
-    `${formatCents(quote.brand_fee_cents)} + campaign review ${formatCents(quote.campaign_review_cents)} + ` +
-    `first ${quote.upfront_months} months (${formatCents(quote.monthly_cents)}/month). ` +
+    // Totals only: the customer sees what they pay, not how it splits between the carrier
+    // fees and Ringlite's registration fee.
+    `${formatCents(quote.due_today_cents)} today (includes the first ${quote.upfront_months} months). ` +
     `Then ${formatCents(quote.monthly_cents)}/month from month four. ` +
-    `Carrier fees are passed through at cost and are not refundable once filed.`;
+    `Not refundable once filed.`;
 
   function handleBrandChange(value: string) {
     setBrandId(value);

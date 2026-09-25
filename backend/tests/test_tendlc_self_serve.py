@@ -238,7 +238,7 @@ async def test_checkout_charges_fees_plus_three_months_and_defers_the_monthly(se
     recurring, one_time = params["line_items"]
     assert recurring == {"price": _settings().stripe_tendlc_standard_price_id, "quantity": 1}
     # $4.50 brand + $15 review + 3 x $10 = $49.50 today, then $10/month from month four.
-    assert one_time["price_data"]["unit_amount"] == 4950
+    assert one_time["price_data"]["unit_amount"] == 5450  # 4.50 + 15 + 5 setup + 3 x 10
     assert params["subscription_data"]["trial_period_days"] == 90
     assert reg.stage == "checkout"
     assert reg.filing["sub_usecases"] == ["CUSTOMER_CARE", "MARKETING"]
@@ -251,7 +251,7 @@ async def test_sole_proprietor_pays_the_two_dollar_tier(session, stripe_stub):
     )
     params = stripe_stub.checkout.Session.create.call_args.kwargs
     assert params["line_items"][0]["price"] == _settings().stripe_tendlc_sole_prop_price_id
-    assert params["line_items"][1]["price_data"]["unit_amount"] == 450 + 1500 + 3 * 200
+    assert params["line_items"][1]["price_data"]["unit_amount"] == 450 + 1500 + 500 + 3 * 200
     assert reg.fee_tier == "sole_proprietor"
     assert campaign.use_case == "SOLE_PROPRIETOR"
 

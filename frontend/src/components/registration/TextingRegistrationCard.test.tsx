@@ -38,17 +38,19 @@ const QUOTES: { standard: TextingQuote; sole_proprietor: TextingQuote } = {
     fee_tier: "standard",
     brand_fee_cents: 450,
     campaign_review_cents: 1500,
+    service_fee_cents: 500,
     monthly_cents: 1000,
     upfront_months: 3,
-    due_today_cents: 4950,
+    due_today_cents: 5450,
   },
   sole_proprietor: {
     fee_tier: "sole_proprietor",
     brand_fee_cents: 450,
     campaign_review_cents: 1500,
+    service_fee_cents: 500,
     monthly_cents: 200,
     upfront_months: 3,
-    due_today_cents: 2550,
+    due_today_cents: 3050,
   },
 };
 
@@ -266,7 +268,7 @@ describe("TextingRegistrationCard checkout and pricing", () => {
     expect(screen.getByText("Sole proprietors can text from one number.")).toBeInTheDocument();
     expect(screen.getByText("Choose 1 to 5.")).toBeInTheDocument();
     expect(screen.getByTestId("texting-quote").textContent).toBe(
-      "$25.50 today \u2014 carrier brand registration $4.50 + campaign review $15.00 + first 3 months ($2.00/month). Then $2.00/month from month four. Carrier fees are passed through at cost and are not refundable once filed.",
+      "$30.50 today (includes the first 3 months). Then $2.00/month from month four. Not refundable once filed.",
     );
   });
 
