@@ -186,7 +186,8 @@ async def start_room_call(
     )
     # Prepaid hard gate: refuse (402) before any row, room or dial exists, and hold the
     # first minutes. The hold rides this function's commit below.
-    await telephony_access.require_telephony_allowed(session, org_id, "call")
+    await calls_svc.require_owned_caller_ids(session, org_id, [from_e164])
+    await telephony_access.require_telephony_allowed(session, org_id, "call", to_e164=to)
     await telephony_billing.require_call_credit(session, org_id, call)
     room = room_name_for_call(call.id)
     call.extra = {"via": "livekit", "room": room}
@@ -438,7 +439,7 @@ async def transfer_room_call(
     sip_identity = (leg.extra or {}).get("sip_identity") if leg is not None else None
     if room is None or leg is None or not sip_identity:
         raise ConflictError("This call has no active leg to transfer")
-    await telephony_access.require_telephony_allowed(session, call.org_id, "call")
+    await telephony_access.require_telephony_allowed(session, call.org_id, "call", to_e164=to)
 
     await api.transfer_sip_participant(room=room, identity=sip_identity, transfer_to=to)
 

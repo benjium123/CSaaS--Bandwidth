@@ -422,6 +422,9 @@ class Settings(BaseSettings):
     ai_guard_enabled: bool = True
     ai_guard_timeout_seconds: float = 20.0
     #: P43 traffic monitoring. Off = texts/calls are not screened and nothing is paused.
+    #: P44a: refuse calls/texts/faxes to blocked (IRSF, premium, satellite) numbers and to
+    #: anything outside the workspace's home country. Off only for local debugging.
+    destination_policy_enforced: bool = True
     monitor_enforced: bool = True
     #: The pre-send text check waits at most this long for the AI.
     monitor_text_ai_timeout_seconds: float = 6.0

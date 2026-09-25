@@ -121,6 +121,13 @@ async def send(
     if len(data) > MAX_BYTES:
         raise ValidationFailedError("A fax document can be at most 20 MB.")
     await _org_fax_number(session, org_id, from_e164)
+    # P44a: a fax is an outbound call - suspension, pause and the destination policy apply
+    # (this path used to check only the balance).
+    from app.services import telephony_access
+
+    await telephony_access.require_telephony_allowed(
+        session, org_id, "call", settings=settings, to_e164=to_e164
+    )
     pages = count_pages(data, content_type)
     price = await _price(session, org_id, "outbound") * pages
 

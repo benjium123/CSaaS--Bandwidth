@@ -54,6 +54,8 @@ REFUSAL_PUBLIC_TEXT = {
     "daily_limit_reached": "Not sent - today's texting limit for this account was reached.",
     "account_paused": "Not sent - calling and texting are paused while we review this account.",
     "subscription_required": "Not sent - choose a plan to start texting.",
+    "destination_blocked": "Not sent - this number is on our blocked-destination list.",
+    "destination_not_allowed": "Not sent - this account can only reach numbers in its own country.",
 }
 
 #: account types an org may declare. Anything else (including NULL) is treated as business.
@@ -209,6 +211,18 @@ def _raise_for(code: str) -> None:
         raise PermissionDeniedError(
             "Choose a plan to start calling and texting", code="subscription_required"
         )
+    if code == "destination_blocked":
+        raise PermissionDeniedError(
+            "This number can't be reached from Ringlite. Premium-rate, satellite and "
+            "high-fraud destinations are blocked.",
+            code="destination_blocked",
+        )
+    if code == "destination_not_allowed":
+        raise PermissionDeniedError(
+            "International calling and texting are turned off. This account can only reach "
+            "numbers in its own country (the contiguous US states, or the UK).",
+            code="destination_not_allowed",
+        )
     if code == "number_limit_reached":
         raise PermissionDeniedError(
             "This account holds the most numbers it is allowed. Ask support to raise the limit.",
@@ -217,18 +231,56 @@ def _raise_for(code: str) -> None:
     raise PermissionDeniedError("Telephony is not available for this account", code=code)
 
 
+async def destination_refusal(
+    session: AsyncSession,
+    settings: Settings,
+    org_id: uuid.UUID,
+    kind: str,
+    to_e164: str,
+) -> str | None:
+    """P44a: the destination half of the gate. Records every refusal (it survives the
+    caller's rollback on Postgres) so repeated attempts show up for the traffic monitor."""
+    from app.services import destination_policy, telephony_billing
+
+    code = await destination_policy.check(session, settings, org_id, to_e164)
+    if code is not None:
+        await telephony_billing.record_refusal(
+            session,
+            org_id,
+            kind=("sms" if kind.startswith("sms") else kind)[:16],
+            reason=code[:32],
+            detail=to_e164,
+        )
+    return code
+
+
 async def require_telephony_allowed(
-    session: AsyncSession, org_id: uuid.UUID, kind: Kind, *, settings: Settings | None = None
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    kind: Kind,
+    *,
+    settings: Settings | None = None,
+    to_e164: str | None = None,
 ) -> None:
     settings = settings or _settings_of(session)
     code = await refusal(session, settings, org_id, kind)
+    if code is None and to_e164:
+        code = await destination_refusal(session, settings, org_id, kind, to_e164)
     if code is not None:
         _raise_for(code)
 
 
 async def telephony_allowed(
-    session: AsyncSession, org_id: uuid.UUID, kind: Kind, *, settings: Settings | None = None
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    kind: Kind,
+    *,
+    settings: Settings | None = None,
+    to_e164: str | None = None,
 ) -> str | None:
     """Dispatch-time variant: returns the refusal code (None = allowed), never raises."""
     settings = settings or _settings_of(session)
-    return await refusal(session, settings, org_id, kind)
+    code = await refusal(session, settings, org_id, kind)
+    if code is None and to_e164:
+        code = await destination_refusal(session, settings, org_id, kind, to_e164)
+    return code

@@ -231,6 +231,34 @@ async def load_legs(session: AsyncSession, call_id: uuid.UUID) -> list[CallLeg]:
 # --------------------------------------------------------------------------------------
 # Outbound
 # --------------------------------------------------------------------------------------
+async def require_owned_caller_ids(
+    session: AsyncSession, org_id: uuid.UUID, e164s: list[str]
+) -> None:
+    """P44a: every caller ID a dial may present must be an active, unreleased number of
+    THIS org. The routes already check this; doing it here too means a future caller of
+    the service layer cannot spoof a number it does not own."""
+    wanted = {e for e in e164s if e}
+    if not wanted:
+        raise ValidationFailedError("A caller ID number is required")
+    from app.models import OrgNumber
+
+    owned = set(
+        (
+            await session.execute(
+                sa.select(OrgNumber.e164).where(
+                    OrgNumber.org_id == org_id,
+                    OrgNumber.e164.in_(wanted),
+                    OrgNumber.is_active.is_(True),
+                    OrgNumber.released_at.is_(None),
+                )
+            )
+        ).scalars()
+    )
+    missing = sorted(wanted - owned)
+    if missing:
+        raise ValidationFailedError(f"{missing[0]} is not an active number on this account")
+
+
 async def create_outbound_call(
     session: AsyncSession,
     registry,  # noqa: ANN001 - CarrierRegistry
@@ -307,9 +335,10 @@ async def create_outbound_call(
         status="created",
         reason="original",
     )
+    await require_owned_caller_ids(session, org_id, [pair[1] for pair in attempts])
     # Prepaid hard gate: refuse (402) before the rows or the dial exist, and hold the
     # first minutes (committed with the rows just below).
-    await telephony_access.require_telephony_allowed(session, org_id, "call")
+    await telephony_access.require_telephony_allowed(session, org_id, "call", to_e164=to)
     await telephony_billing.require_call_credit(session, org_id, call)
     # P43: monitored calls are recorded (announcement first) and reviewed by the safety AI.
     from app.services import monitor_calls
@@ -695,7 +724,7 @@ async def start_blind_transfer(
     if current is None:
         raise ConflictError("This call has no active leg to transfer")
     # P41: a transfer dials a new number - the same gate as any outbound call.
-    await telephony_access.require_telephony_allowed(session, call.org_id, "call")
+    await telephony_access.require_telephony_allowed(session, call.org_id, "call", to_e164=to)
 
     carrier_obj = registry.get(call.carrier) if registry is not None else None
     voice_carrier = as_voice_carrier(carrier_obj)

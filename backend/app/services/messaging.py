@@ -285,6 +285,10 @@ async def send_message(
     est = estimate(body)
     # P41: business verification / suspension / daily limits, before the credit gate.
     await telephony_access.require_telephony_allowed(session, org_id, "sms")
+    # P44a: blocked and out-of-country destinations.
+    dest_refused = await _destination_refusal(session, org_id, to_e164, from_e164)
+    if dest_refused is not None:
+        telephony_access._raise_for(dest_refused)
     # Prepaid hard gate: refuse before anything is written or sent. Priced on the
     # carrier the plan will try first (the dispatch-time re-check covers failover).
     await telephony_billing.require_sms_credit(
@@ -590,6 +594,39 @@ async def dispatch_with_failover(
     return last
 
 
+async def _destination_refusal(
+    session: AsyncSession, org_id: uuid.UUID, to_e164: str, from_e164: str
+) -> str | None:
+    """P44a destination gate for texts. A number outside the home country that has itself
+    texted this line may still get a reply (a STOP/HELP confirmation, or the customer
+    answering a real conversation): replies are bounded by what that number sends us, so
+    they cannot be pumped. Hard-blocked numbers are refused even then."""
+    from app.services import destination_policy
+
+    settings = telephony_access._settings_of(session)
+    code = await destination_policy.check(session, settings, org_id, to_e164)
+    if code == destination_policy.NOT_ALLOWED:
+        texted_in = (
+            await session.execute(
+                sa.select(Message.id)
+                .where(
+                    Message.org_id == org_id,
+                    Message.direction == "inbound",
+                    Message.from_e164 == to_e164,
+                    Message.to_e164 == from_e164,
+                )
+                .limit(1)
+            )
+        ).first()
+        if texted_in is not None:
+            return None
+    if code is not None:
+        await telephony_billing.record_refusal(
+            session, org_id, kind="sms", reason=code, detail=to_e164
+        )
+    return code
+
+
 async def _dispatch_to_carrier(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -609,6 +646,11 @@ async def _dispatch_to_carrier(
     # P41: verification / suspension re-checked at the moment of sending - an account
     # suspended while messages sat scheduled or held must not send them.
     refused = await telephony_access.telephony_allowed(session, org_id, "sms_dispatch")
+    if refused is None:
+        # P44a: scheduled, held and campaign texts never passed send_message's check.
+        refused = await _destination_refusal(
+            session, org_id, message.to_e164, message.from_e164
+        )
     if refused is not None:
         set_org_context(session, org_id)
         message = await session.get(Message, message.id)
