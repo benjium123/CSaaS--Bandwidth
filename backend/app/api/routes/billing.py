@@ -196,6 +196,19 @@ def _usage_range(
 # route is polled app-wide by the console, so the refusal has to stay a well-formed 403
 # carrying that one STABLE code - never a 401, never a 500, and never a bare "forbidden"
 # that the console cannot distinguish from a dead session.
+def _summary_warning(org, balance: int, last_topup) -> str | None:  # noqa: ANN001
+    """Billing v2: a prepaid org warns below max($5, a day's spend) and is 'empty' at $0;
+    others keep the old fraction-of-last-top-up rule."""
+    if org.telephony_prepaid:
+        from app.services import billing_alerts
+
+        state = billing_alerts.state_for(balance, int(org.warn_threshold_micros or 0))
+        return {"exhausted": "empty", "low": "low"}.get(state)
+    return credits.warning_level(
+        balance, int(last_topup.amount_micros) if last_topup is not None else 0
+    )
+
+
 @router.get("/summary")
 async def get_summary(
     ctx: Annotated[OrgContext, Depends(require_owner)],
@@ -227,10 +240,7 @@ async def get_summary(
         "balance_micros": balance,
         "reserved_micros": reserved,
         "available_micros": available,
-        "warning": credits.warning_level(
-            balance,
-            int(last_topup.amount_micros) if last_topup is not None else 0,
-        ),
+        "warning": _summary_warning(ctx.org, balance, last_topup),
         "auto_recharge": ctx.org.credit_auto_recharge,
         # True when texting/calling draw from this balance and stop when it is empty.
         "telephony_prepaid": bool(ctx.org.telephony_prepaid),
