@@ -917,7 +917,9 @@ function useNavCounts() {
   } as Record<string, number>;
 }
 
-export function OpsPage() {
+/** `account` and `notice` let the /admin entry put its sign-out, security link and passkey
+ *  reminder inside the Switchboard instead of wrapping it in a second page chrome. */
+export function OpsPage({ account, notice }: { account?: React.ReactNode; notice?: React.ReactNode } = {}) {
   const { me, orgId } = useAuth();
   const [params, setParams] = useSearchParams();
   const tab = TABS.some((t) => t.id === params.get("section")) ? params.get("section")! : "queue";
@@ -943,7 +945,16 @@ export function OpsPage() {
       </div>
     );
   }
-  return <Switchboard tab={tab} openOrg={openOrg} setOpenOrg={setOpenOrg} hasWorkspace={Boolean(orgId)} />;
+  return (
+    <Switchboard
+      tab={tab}
+      openOrg={openOrg}
+      setOpenOrg={setOpenOrg}
+      hasWorkspace={Boolean(orgId)}
+      account={account}
+      notice={notice}
+    />
+  );
 }
 
 function Switchboard({
@@ -951,11 +962,15 @@ function Switchboard({
   openOrg,
   setOpenOrg,
   hasWorkspace,
+  account,
+  notice,
 }: {
   tab: string;
   openOrg: string | null;
   setOpenOrg: (id: string | null) => void;
   hasWorkspace: boolean;
+  account?: React.ReactNode;
+  notice?: React.ReactNode;
 }) {
   const { me } = useAuth();
   const counts = useNavCounts();
@@ -996,10 +1011,12 @@ function Switchboard({
           <span>{me?.operator_role ?? "operator"}</span>
           <b title={me?.email}>{me?.email}</b>
           {hasWorkspace && <a href="/inbox">Back to your workspace</a>}
+          {account}
         </div>
       </aside>
 
       <main className="sb-main">
+        {notice}
         {openOrg ? (
           <ApplicationView orgId={openOrg} onBack={() => setOpenOrg(null)} />
         ) : (

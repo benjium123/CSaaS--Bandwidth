@@ -24,7 +24,10 @@ vi.mock('@/auth/AuthContext', () => ({
 }));
 
 vi.mock('@/pages/OpsPage', () => ({
-  OpsPage: () => null,
+  // The admin entry passes its sign-out, security link and passkey notice INTO the console.
+  OpsPage: ({ account, notice }: { account?: React.ReactNode; notice?: React.ReactNode }) => (
+    <div data-testid="ops-page">{notice}{account}</div>
+  ),
 }));
 
 vi.mock('@/components/security/StepUpDialog', () => ({

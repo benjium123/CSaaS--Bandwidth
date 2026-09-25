@@ -903,54 +903,34 @@ function AdminConsole() {
     logout();
   };
 
+  // The Switchboard is the whole page: no second header, no centred column around it.
   return (
-    <div className="console-surface is-light min-h-screen bg-background text-foreground">
-      <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
-          <div className="flex items-center gap-3">
-            <span
-              aria-hidden="true"
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-900 text-sm font-semibold text-white dark:bg-white dark:text-neutral-900"
-            >
-              R
-            </span>
-            <div className="leading-tight">
-              <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Ringlite</p>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">Platform administration</p>
+    <>
+      <OpsPage
+        notice={
+          me?.passkey_required && !me.has_passkey ? (
+            <div className="sb-warn mb-6">
+              <span>Passkey</span>
+              <span>
+                A passkey is required for privileged actions.{" "}
+                <Link to="/admin/security" className="underline">
+                  Add a passkey
+                </Link>
+              </span>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            {me?.email ? (
-              <span className="hidden text-sm text-neutral-600 sm:inline dark:text-neutral-400">{me.email}</span>
-            ) : null}
-          <Link to="/admin" className="text-sm font-semibold text-blue-700">Console</Link>
-                  <Link to="/admin/security" className="text-sm underline">
-        Security
-      </Link>
-<button
-              type="button"
-              onClick={handleSignOut}
-              disabled={signingOut}
-              className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200 dark:focus:ring-neutral-100 dark:focus:ring-offset-neutral-950"
-            >
-              {signingOut ? 'Signing out…' : 'Sign out'}
+          ) : null
+        }
+        account={
+          <div className="sb-account">
+            <Link to="/admin/security">Security</Link>
+            <button type="button" onClick={handleSignOut} disabled={signingOut}>
+              {signingOut ? "Signing out…" : "Sign out"}
             </button>
           </div>
-        </div>
-      </header>
-      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
-      {me?.passkey_required && !me.has_passkey && (
-        <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          A passkey is required for privileged actions.{" "}
-          <Link to="/admin/security" className="underline">
-            Add a passkey
-          </Link>
-        </div>
-      )}
-        <OpsPage />
-      </main>
+        }
+      />
       <StepUpDialog />
-    </div>
+    </>
   );
 }
 
