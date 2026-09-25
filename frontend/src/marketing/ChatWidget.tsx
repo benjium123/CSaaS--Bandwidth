@@ -296,10 +296,13 @@ export function ChatWidget() {
       return;
     }
 
-    const history = [...messages, { id: "pending", role: "visitor" as const, text }]
-      .filter(message => message.role === "visitor" || message.role === "assistant")
+    // Earlier turns only: the current question travels as `question`, not twice.
+    const earlier = messages.filter(message => message.role === "visitor" || message.role === "assistant");
+    const last = earlier[earlier.length - 1];
+    if (last && last.role === "visitor" && last.text === text) earlier.pop();
+    const history = earlier
       .slice(-10)
-      .map(message => ({ role: message.role as "visitor" | "assistant", text: message.text }));
+      .map(message => ({ role: message.role as "visitor" | "assistant", text: message.text.slice(0, 1000) }));
 
     busyRef.current = true;
     setTyping(true);
@@ -353,7 +356,8 @@ export function ChatWidget() {
           reason: reasonRef.current,
           transcript: messages
             .filter(message => message.role === "visitor" || message.role === "assistant")
-            .map(message => ({ role: message.role as "visitor" | "assistant", text: message.text })),
+            .slice(-40)
+            .map(message => ({ role: message.role as "visitor" | "assistant", text: message.text.slice(0, 1000) })),
         },
       });
       writeSession(LIVE_KEY, JSON.stringify({ chatId: res.chat_id, token: res.token }));

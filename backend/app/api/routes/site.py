@@ -53,6 +53,8 @@ STAFFED_HOURS = range(9, 18)  # 9:00-17:59
 
 HANDOFF_TOKEN = "HANDOFF"
 MAX_TRANSCRIPT = 40
+#: Paid assistant calls allowed per day across ALL visitors; past it the chat offers a person.
+ASK_GLOBAL_DAILY_MAX = 3000
 
 FIXED_FACTS = """- Ringlite is a business phone service: numbers, browser calling, business texting, one shared inbox.
 - Calls and texts reach the 48 contiguous US states only. No Canada, Alaska, Hawaii or international.
@@ -131,11 +133,23 @@ async def _ask_llm(settings: Settings, payload: AskIn) -> str:
         return (res.json()["choices"][0]["message"]["content"] or "").strip()
 
 
+async def _global_ask_budget_spent(settings: Settings) -> bool:
+    from app import rate_limit
+
+    key = "POST:site-chat-ask:global"
+    window = 86400
+    shared = await rate_limit._redis_allow(settings, key, ASK_GLOBAL_DAILY_MAX, window)
+    retry = shared if shared is not None else rate_limit._limiter.allow(key, ASK_GLOBAL_DAILY_MAX, window)
+    return bool(retry)
+
+
 @public_router.post("/site-chat/ask")
 async def site_chat_ask(
     payload: AskIn, request: Request, settings: Annotated[Settings, Depends(get_settings)]
 ) -> dict:
     await enforce_rate_limit(request, f"site-chat-ask:{_ip(request)}")
+    if await _global_ask_budget_spent(settings):
+        return {"answer": "I'm not sure about that one. A person from our team can help.", "handoff": True}
     try:
         answer = await _ask_llm(settings, payload)
     except Exception as exc:  # noqa: BLE001 - any provider failure becomes a handoff offer
@@ -146,7 +160,8 @@ async def site_chat_ask(
             "answer": "I'm not sure about that one. A person from our team can help.",
             "handoff": True,
         }
-    return {"answer": answer[:1200], "handoff": False}
+    # Capped at the Turn limit: the widget sends past answers back as history.
+    return {"answer": answer[:1000], "handoff": False}
 
 
 # --- handoff to a person --------------------------------------------------------------
@@ -189,8 +204,6 @@ async def site_chat_handoff(payload: HandoffIn, request: Request, session: Sessi
             kind="site_chat_handoff",
             detail={
                 "chat_id": str(chat.id),
-                "name": chat.name,
-                "email": chat.email,
                 "reason": chat.reason,
                 "page": chat.page,
                 "action": "A website visitor asked for a person. Answer in Ops -> Website.",
@@ -299,8 +312,6 @@ async def sales_lead(payload: LeadIn, request: Request, session: Session) -> dic
             kind="sales_lead",
             detail={
                 "lead_id": str(lead.id),
-                "name": lead.name,
-                "email": lead.email,
                 "team_size": lead.team_size,
                 "numbers_needed": lead.numbers_needed,
                 "action": "New Talk to sales enquiry. See Ops -> Website.",
