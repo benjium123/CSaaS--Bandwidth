@@ -88,6 +88,8 @@ async def live_outbound_calls(session: AsyncSession, org_id: uuid.UUID) -> int:
                     Call.direction == "outbound",
                     Call.status.not_in(TERMINAL_CALL_STATUSES),
                     Call.created_at >= _now() - LIVE_CALL_WINDOW,
+                    # A 911/933 call never uses up a slot another call needs.
+                    sa.or_(Call.tag.is_(None), Call.tag != "emergency"),
                 )
                 .execution_options(**{ALLOW_UNSCOPED_KEY: True})
             )
