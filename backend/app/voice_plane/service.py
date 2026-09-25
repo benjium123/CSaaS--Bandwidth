@@ -674,7 +674,9 @@ async def _create_inbound_room_call(
     return call, leg, True
 
 
-async def handle_livekit_event(session: AsyncSession, bus: EventBus, event: dict) -> None:
+async def handle_livekit_event(
+    session: AsyncSession, bus: EventBus, event: dict, api: LiveKitApi | None = None
+) -> None:
     """Apply one LiveKit webhook event: resolve the call/leg it belongs to, ledger it
     exactly once, walk P5's monotonic leg/call state machine, then publish over the bus.
 
@@ -724,6 +726,17 @@ async def handle_livekit_event(session: AsyncSession, bus: EventBus, event: dict
         session, org_id=call.org_id, call=call, leg=leg, event=event, room=room, identity=identity
     )
     if not is_new_event:
+        return
+
+    if created_inbound and not await telephony_billing.inbound_call_allowed(
+        session, call.org_id, call.carrier
+    ):
+        # Billing v2 hard stop: no credit, no inbound call. The caller hears at most a ring
+        # before the room is torn down; the call is marked so it is never billed.
+        await telephony_billing.refuse_inbound_call(session, call)
+        await session.commit()
+        log.info("livekit_inbound_refused_no_credit", call_id=str(call.id), room=room)
+        await hangup_room_call(session, api, bus, call)
         return
 
     if created_inbound:

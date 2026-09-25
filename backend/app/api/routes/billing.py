@@ -409,7 +409,8 @@ async def get_bundles(
 async def telephony_billing_price(ctx: OrgContext, metric: str) -> int:
     from app.services import telephony_billing
 
-    return await telephony_billing.platform_price(ctx.session, metric)
+    # unit_price honours a per-org rate override; the carrier does not change flat prices.
+    return await telephony_billing.unit_price(ctx.session, ctx.org.id, "telnyx", metric)
 
 
 @router.post("/bundles/checkout")
@@ -529,8 +530,8 @@ async def patch_auto_recharge(
             )
         if payload.threshold_micros <= 0 or payload.amount_micros <= 0:
             raise ValidationFailedError("Threshold and amount must be positive.")
-        if payload.amount_micros < 5_000_000:
-            raise ValidationFailedError("Auto-recharge amount must be at least $5.")
+        if payload.amount_micros < 10_000_000 or payload.amount_micros % 10_000_000:
+            raise ValidationFailedError("Auto-recharge amount must be a multiple of $10.")
 
         pm = (
             await ctx.session.execute(
@@ -554,6 +555,10 @@ async def patch_auto_recharge(
                 "payment_method_id": str(payload.payment_method_id),
             }
         )
+        # Re-enabling (e.g. after a new card) starts the decline count over.
+        for key in ("last_failure_at", "last_failure", "disabled_reason"):
+            current.pop(key, None)
+        ctx.org.auto_recharge_failures = 0
         ctx.org.credit_auto_recharge = current
     else:
         # Keep the dict drops only the recharge keys. The assistant fallback key

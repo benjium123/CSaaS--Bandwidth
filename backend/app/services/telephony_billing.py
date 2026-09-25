@@ -188,6 +188,9 @@ async def record_refusal(
             from app.db.session import get_sessionmaker
 
             async with get_sessionmaker()() as own:
+                # Never wait long on a pool or a lock for a counter row.
+                await own.execute(sa.text("SET LOCAL lock_timeout = '2s'"))
+                await own.execute(sa.text("SET LOCAL statement_timeout = '5s'"))
                 set_org_context(own, org_id)
                 own.add(BillingRefusal(**row))
                 await own.commit()
@@ -352,6 +355,10 @@ async def charge_sms(session: AsyncSession, org_id: uuid.UUID, message: Message)
     org = await _org(session, org_id)
     if org is None or not org.telephony_prepaid:
         return
+    set_org_context(session, org_id)
+    if await credits._existing(session, org_id, "usage", f"sms:{message.id}") is not None:
+        # Already charged in $ - a replay must not now spend bundle units as well.
+        return
     outbound = message.direction == "outbound"
     segments = message.segment_count_carrier or message.segment_count_est
     units = _sms_units(segments, is_mms=_is_mms(message))
@@ -479,12 +486,8 @@ async def require_call_credit(session: AsyncSession, org_id: uuid.UUID, call: Ca
     """At an outbound dial: refuse unless at least ONE MINUTE of talk time is covered, then
     hold up to CALL_RESERVE_MINUTES. No-op when not prepaid. Does not commit.
 
-    The floor is a minute, not the one second that per-second BILLING would make the
-    smallest chargeable unit, and that is deliberate: the product rule is a hard stop. A
-    call that connects on a second's worth of credit and is hung up by the sweeper a moment
-    later is a worse experience than a clean refusal, and it bills the customer for a call
-    they could not use. Billing itself stays per-second - a 10-second call costs 834 micros,
-    not a minute's 5_000.
+    The floor is one minute: billing is in whole minutes (billing v2), so a dial that
+    cannot pay for its first minute is refused cleanly rather than cut a moment later.
     """
     if not await is_prepaid(session, org_id):
         return
@@ -504,6 +507,38 @@ async def require_call_credit(session: AsyncSession, org_id: uuid.UUID, call: Ca
     hold = min(per_minute * CALL_RESERVE_MINUTES, current)
     if hold > 0:
         await credits.reserve(session, org_id, hold, reference=call_hold_reference(call.id))
+
+
+async def inbound_call_allowed(session: AsyncSession, org_id: uuid.UUID, carrier: str) -> bool:
+    """Billing v2 hard stop: an inbound call is only taken when the balance covers at least
+    one inbound minute. True when not prepaid."""
+    org = await _org(session, org_id)
+    if org is None or not org.telephony_prepaid:
+        return True
+    per_minute = await unit_price(session, org_id, carrier, "voice_min_in")
+    return await credits.balance(session, org_id) >= max(per_minute, 1)
+
+
+async def refuse_inbound_call(session: AsyncSession, call: Call) -> None:
+    """Record the refusal and mark the call so it is never billed. Does not commit."""
+    current = await credits.balance(session, call.org_id)
+    await record_refusal(
+        session,
+        call.org_id,
+        kind="inbound_call",
+        balance_micros=current,
+        detail=call.contact_e164,
+    )
+    set_org_context(session, call.org_id)
+    call.extra = {**(call.extra or {}), "refused": "no_credit"}
+    call.billed_at = _now()
+
+
+def _call_clock_start(call: Call) -> datetime | None:
+    """Outbound calls cost from answer; inbound from arrival."""
+    if call.direction == "outbound":
+        return call.answered_at
+    return call.created_at
 
 
 async def _hold_rows(
@@ -626,18 +661,21 @@ async def enforce_active_calls(
     hangup: Any,
     now: datetime | None = None,
 ) -> int:
-    """Keep each running OUTBOUND call's hold ahead of the seconds it has used. When the
-    balance cannot extend it, hang the call up via ``hangup(session, call)``. Inbound calls
-    are never cut off (they are charged at the end instead). Returns calls cut off."""
+    """Keep each running call's hold ahead of the minutes it has used - outbound from
+    answer, inbound (billing v2) from arrival. When the balance can no longer cover the
+    next minute, hang the call up via ``hangup(session, call)``. Returns calls cut off."""
     moment = now or _now()
     rows = (
         await session.execute(
             sa.select(Call.id, Call.org_id)
             .join(Org, Org.id == Call.org_id)
             .where(
-                Call.direction == "outbound",
-                Call.answered_at.is_not(None),
+                sa.or_(
+                    sa.and_(Call.direction == "outbound", Call.answered_at.is_not(None)),
+                    Call.direction == "inbound",
+                ),
                 Call.ended_at.is_(None),
+                Call.created_at >= moment - timedelta(hours=12),
                 _billable_org_filter(),
             )
             .limit(BATCH)
@@ -650,22 +688,31 @@ async def enforce_active_calls(
         try:
             set_org_context(session, org_id)
             call = await session.get(Call, call_id)
-            if call is None or call.ended_at is not None or call.answered_at is None:
+            start = _call_clock_start(call) if call is not None else None
+            if call is None or call.ended_at is not None or start is None:
                 continue
-            per_minute = await unit_price(session, org_id, call.carrier, "voice_min_out")
+            if (call.extra or {}).get("refused"):
+                continue
+            per_minute = await unit_price(session, org_id, call.carrier, _call_metric(call.direction))
             if per_minute <= 0:
                 continue
-            elapsed_seconds = max(int((moment - _as_utc(call.answered_at)).total_seconds()), 0)
+            elapsed_seconds = max(int((moment - _as_utc(start)).total_seconds()), 0)
             used_micros = voice_price_micros(elapsed_seconds, per_minute)
             headroom_micros = CUTOFF_HEADROOM_MINUTES * per_minute
             held, holds = await _held_for_call(session, org_id, call.id)
             if used_micros + headroom_micros <= held:
                 continue
             try:
+                # Hold up to CALL_RESERVE_MINUTES more, or whatever whole minutes the
+                # balance still covers; less than one minute left = the call ends.
+                available = await credits.balance(session, org_id)
+                extend = min(per_minute * CALL_RESERVE_MINUTES, (available // per_minute) * per_minute)
+                if extend < per_minute:
+                    raise InsufficientCreditsError()
                 await credits.reserve(
                     session,
                     org_id,
-                    per_minute * CALL_RESERVE_MINUTES,
+                    extend,
                     reference=call_hold_reference(call.id, holds),
                 )
                 await session.commit()

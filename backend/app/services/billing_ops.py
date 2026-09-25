@@ -20,4 +20,13 @@ async def hourly(settings) -> dict:  # noqa: ANN001
                 results["stripe_fees_filled"] = await payments.fee_tick(session, settings)
         except Exception:
             log.exception("billing_ops.fee_tick_failed")
+    try:
+        from app.services import billing_alerts
+
+        async with get_sessionmaker()() as session:
+            results["billing_thresholds_refreshed"] = await billing_alerts.refresh_thresholds(
+                session
+            )
+    except Exception:
+        log.exception("billing_ops.thresholds_failed")
     return results

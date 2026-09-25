@@ -319,7 +319,7 @@ async def test_auto_recharge_requires_a_payment_method_that_belongs_to_the_works
         json={
             "enabled": True,
             "threshold_micros": 5_000_000,
-            "amount_micros": 25_000_000,
+            "amount_micros": 30_000_000,
             "payment_method_id": str(pm_b_id),
         },
         headers=auth_headers(token_a, org_a["id"]),

@@ -98,6 +98,13 @@ async def handle_bundle_intent(session: AsyncSession, intent: dict) -> bool:
         row = await _by_intent(session, intent_id)
     paid = amount_received * 10_000
     units = bundles.UNITS_PER_BUNDLE[kind] * qty
+    if row is not None and row.paid_micros and row.paid_micros != paid:
+        log.error(
+            "bundle_intent_amount_mismatch",
+            intent_id=intent_id,
+            expected_micros=row.paid_micros,
+            received_micros=paid,
+        )
     if row is None:
         # Paid for a checkout we have no row for (row lost or created elsewhere): record it
         # from what Stripe says, list price from today's price list.

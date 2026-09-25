@@ -1799,7 +1799,10 @@ async def test_telnyx_order_attaches_the_voice_connection_when_configured(connec
     sent = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        sent.update(json.loads(request.content))
+        # Only the order POST is under test; the ownership gate's csaas tagging calls
+        # (GET/PATCH /phone_numbers) are answered but not recorded.
+        if request.url.path.endswith("/number_orders"):
+            sent.update(json.loads(request.content))
         return httpx.Response(
             200,
             json={

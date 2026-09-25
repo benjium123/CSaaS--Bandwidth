@@ -34,6 +34,7 @@ from app.services import credentials as credential_svc
 from app.services import messaging as svc
 from app.services import routing_exec as routing_exec_svc
 from app.services import subscriptions as subscriptions_svc
+from app.services import telephony_billing as _tb
 from app.services import supervisor as supervisor_svc
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
@@ -506,7 +507,16 @@ async def _handle_voice_webhook(
                 # P12: a number bound to an active call flow (org_numbers.call_flow_id) runs
                 # it through the carrier executor instead of the flat default below.
                 bound_flow = await routing_exec_svc.resolve_inbound_flow(session, call.our_e164)
-                if bound_flow is None:
+                if (call.extra or {}).get("refused") or not (
+                    await _tb.inbound_call_allowed(
+                        session, org_id, call.carrier or carrier_name
+                    )
+                ):
+                    # Billing v2 hard stop: reject an unfunded inbound call at once.
+                    if not (call.extra or {}).get("refused"):
+                        await _tb.refuse_inbound_call(session, call)
+                    commands = [Hangup()]
+                elif bound_flow is None:
                     commands = list(DEFAULT_INBOUND_COMMANDS)
                 else:
                     commands = await routing_exec_svc.start_carrier_flow(
@@ -700,7 +710,9 @@ async def livekit_webhook(
 
     bus = request.app.state.event_bus
     try:
-        await voice_service.handle_livekit_event(session, bus, event)
+        await voice_service.handle_livekit_event(
+            session, bus, event, api=getattr(request.app.state, "livekit", None)
+        )
     except Exception:
         # F4's LiveKit sibling: one bad event must never fail the ack - LiveKit has no
         # documented retry contract to lean on here, so swallowing (not 500ing) is the

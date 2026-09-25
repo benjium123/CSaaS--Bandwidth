@@ -517,7 +517,15 @@ async def credits_tick(
             )
             level = warning["level"] if warning else None
 
-            if org_row is not None and level is not None:
+            # Billing v2: org billing state + the low-balance email/popup (once per level
+            # per top-up cycle).
+            state = "ok"
+            if org_row is not None and settings is not None:
+                from app.services import billing_alerts
+
+                state = await billing_alerts.evaluate(session, settings, org_row)
+
+            if org_row is not None and (level is not None or state != "ok"):
                 # Try the saved card BEFORE stopping the machine: a workspace with
                 # auto-recharge on should be topped up, not paused.
                 await maybe_auto_recharge(session, org_row, settings=settings)
@@ -636,8 +644,18 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
         return None
     if threshold <= 0 or amount <= 0:
         return None
-    if amount < 5_000_000:
-        return None
+    # Billing v2: recharge below the org's warning level (max($5, a day's spend)) too, and
+    # always in whole $10 steps, enough to lift the balance back over that level.
+    threshold = max(threshold, int(getattr(org, "warn_threshold_micros", 0) or 0))
+    failures = int(getattr(org, "auto_recharge_failures", 0) or 0)
+    last_failure = auto.get("last_failure_at")
+    if failures and last_failure:
+        try:
+            since = datetime.now(timezone.utc) - datetime.fromisoformat(str(last_failure))
+        except ValueError:
+            since = timedelta(hours=AUTO_RECHARGE_RETRY_AFTER_HOURS)
+        if since < timedelta(hours=AUTO_RECHARGE_RETRY_AFTER_HOURS):
+            return None
 
     # Import lazily to keep the module graph clean and to avoid requiring the
     # optional stripe dependency just to import ai_usage.
@@ -649,6 +667,7 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
     balance = await credits.balance(session, org.id)
     if balance >= threshold:
         return None
+    amount = recharge_amount(amount, threshold - balance)
 
     last_topup_reference = (
         await session.execute(
@@ -663,7 +682,7 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
     ).scalar_one_or_none()
 
     dedupe_key = (
-        f"autorecharge:{org.id}:{last_topup_reference or 'none'}:{threshold}"
+        f"autorecharge:{org.id}:{last_topup_reference or 'none'}:{threshold}:{failures}"
     )
 
     # Same portable Python-side dedupe check check_balance_warnings uses: load
@@ -744,6 +763,7 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
         # Do NOT credit here. The Stripe webhook is the one place a top-up becomes
         # credit, and it is idempotent on the payment intent id. Crediting here too
         # would double-credit the workspace.
+        org.auto_recharge_failures = 0
         return {
             "charged": True,
             "intent_id": result.get("id", ""),
@@ -756,7 +776,58 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
         org_id=str(org.id),
         reason=reason,
     )
+    await _record_auto_recharge_failure(session, org, settings, reason, amount)
     return {"charged": False, "reason": reason}
+
+
+#: A declined auto-recharge is retried after this long; AUTO_RECHARGE_MAX_FAILURES in a
+#: row switches auto-recharge off (the org is then hard-stopped at $0 like any other).
+AUTO_RECHARGE_RETRY_AFTER_HOURS = 1
+AUTO_RECHARGE_MAX_FAILURES = 3
+AUTO_RECHARGE_STEP_MICROS = 10_000_000
+
+
+def recharge_amount(configured_micros: int, shortfall_micros: int) -> int:
+    """At least the configured amount and at least the shortfall, rounded UP to a whole
+    $10 step, never under $10."""
+    want = max(int(configured_micros), int(shortfall_micros), AUTO_RECHARGE_STEP_MICROS)
+    step = AUTO_RECHARGE_STEP_MICROS
+    return ((want + step - 1) // step) * step
+
+
+async def _record_auto_recharge_failure(session, org, settings, reason: str, amount: int) -> None:  # noqa: ANN001
+    from app.services import billing_alerts
+
+    failures = int(getattr(org, "auto_recharge_failures", 0) or 0) + 1
+    org.auto_recharge_failures = failures
+    auto = dict(org.credit_auto_recharge or {})
+    auto["last_failure_at"] = datetime.now(timezone.utc).isoformat()
+    auto["last_failure"] = reason
+    disabled = failures >= AUTO_RECHARGE_MAX_FAILURES
+    if disabled:
+        auto["enabled"] = False
+        auto["disabled_reason"] = f"{failures} declined charges in a row"
+    org.credit_auto_recharge = auto
+    if settings is None:
+        return
+    money = f"${amount / 1_000_000:,.2f}"
+    if disabled:
+        subject = "Auto-recharge turned off after repeated declines"
+        body = (
+            f"We tried to charge {money} to your saved card {failures} times and it was "
+            f"declined ({reason}). Auto-recharge is now off. Update your card and add credit "
+            "to keep calling and texting."
+        )
+    else:
+        subject = "Auto-recharge was declined"
+        body = (
+            f"We could not charge {money} to your saved card ({reason}). We will try again "
+            "in an hour. Update your card to avoid interruption."
+        )
+    await billing_alerts.notify_owners(
+        session, settings, org, subject, body,
+        dedupe_key=f"autorecharge-fail:{auto['last_failure_at']}",
+    )
 
 
 async def usage_summary(

@@ -1,0 +1,201 @@
+"""Billing v2 low-balance alerts and org billing state (money-owned).
+
+- warn threshold = max($5, average daily spend over the last 7 days), refreshed hourly.
+- billing_state: ``exhausted`` at or below $0, ``low`` below the threshold, else ``ok``.
+- Crossing into low/exhausted alerts every owner/admin ONCE per level per top-up cycle:
+  a bell notification (kind ``low_balance``, which the app turns into a popup) and an email.
+  A top-up re-arms it (the dedupe key carries the last top-up reference).
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import sqlalchemy as sa
+import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
+from app.models import CreditLedgerEntry, Org, OrgMembership, Role, User
+from app.services import credits
+
+log = structlog.get_logger("billing_alerts")
+
+MIN_WARN_THRESHOLD_MICROS = 5_000_000
+AVG_WINDOW_DAYS = 7
+ALERT_ROLES = ("owner", "admin")
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def state_for(balance_micros: int, threshold_micros: int) -> str:
+    if balance_micros <= 0:
+        return "exhausted"
+    if balance_micros < max(threshold_micros, MIN_WARN_THRESHOLD_MICROS):
+        return "low"
+    return "ok"
+
+
+async def avg_daily_spend(
+    session: AsyncSession, org_id: uuid.UUID, *, now: datetime | None = None
+) -> int:
+    """Usage debits over the last AVG_WINDOW_DAYS days / AVG_WINDOW_DAYS, in micros."""
+    since = (now or _now()) - timedelta(days=AVG_WINDOW_DAYS)
+    set_org_context(session, org_id)
+    total = (
+        await session.execute(
+            sa.select(sa.func.coalesce(sa.func.sum(-CreditLedgerEntry.amount_micros), 0)).where(
+                CreditLedgerEntry.entry_type == "usage",
+                CreditLedgerEntry.created_at >= since,
+            )
+        )
+    ).scalar_one()
+    return max(int(total), 0) // AVG_WINDOW_DAYS
+
+
+async def refresh_thresholds(session: AsyncSession, *, now: datetime | None = None) -> int:
+    """Hourly: recompute avg spend + warn threshold for every prepaid org. One commit per
+    org."""
+    org_ids = (
+        await session.execute(
+            sa.select(Org.id).where(Org.telephony_prepaid.is_(True))
+        )
+    ).scalars().all()
+    done = 0
+    for org_id in org_ids:
+        try:
+            avg = await avg_daily_spend(session, org_id, now=now)
+            org = await session.get(Org, org_id)
+            if org is None:
+                continue
+            org.avg_daily_spend_micros = avg
+            org.warn_threshold_micros = max(MIN_WARN_THRESHOLD_MICROS, avg)
+            await session.commit()
+            done += 1
+        except Exception:
+            await session.rollback()
+            log.exception("billing_alerts.refresh_failed", org_id=str(org_id))
+    return done
+
+
+async def _recipients(session: AsyncSession, org_id: uuid.UUID) -> list[tuple[uuid.UUID, str]]:
+    rows = (
+        await session.execute(
+            sa.select(User.id, User.email)
+            .join(OrgMembership, OrgMembership.user_id == User.id)
+            .join(Role, Role.id == OrgMembership.role_id)
+            .where(OrgMembership.org_id == org_id, Role.name.in_(ALERT_ROLES))
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    seen: dict[uuid.UUID, str] = {}
+    for uid, email in rows:
+        seen[uid] = email or ""
+    return list(seen.items())
+
+
+async def _last_topup_ref(session: AsyncSession, org_id: uuid.UUID) -> str:
+    set_org_context(session, org_id)
+    ref = (
+        await session.execute(
+            sa.select(CreditLedgerEntry.reference)
+            .where(CreditLedgerEntry.entry_type == "topup")
+            .order_by(CreditLedgerEntry.seq.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return str(ref or "none")
+
+
+def _money(micros: int) -> str:
+    return f"${micros / 1_000_000:,.2f}"
+
+
+async def evaluate(session: AsyncSession, settings, org: Org) -> str:  # noqa: ANN001
+    """Set org.billing_state and send the crossing alert if due. Does not commit.
+    Returns the state. Orgs that are not prepaid are always ``ok`` and never alerted."""
+    if not org.telephony_prepaid:
+        if org.billing_state != "ok":
+            org.billing_state = "ok"
+            org.billing_state_changed_at = _now()
+        return "ok"
+    balance = await credits.balance(session, org.id)
+    state = state_for(balance, int(org.warn_threshold_micros or 0))
+    if state != org.billing_state:
+        org.billing_state = state
+        org.billing_state_changed_at = _now()
+    if state == "ok":
+        return state
+
+    key = f"lowbal:{await _last_topup_ref(session, org.id)}:{state}"[:128]
+    if org.low_balance_alert_key == key:
+        return state
+    org.low_balance_alert_key = key
+
+    from app.services import mailer, notifications
+
+    if state == "exhausted":
+        subject = "Your balance is empty - calling and texting are paused"
+        body = (
+            f"Your {settings.app_name} balance is {_money(balance)}. Outgoing texts, calls "
+            "and faxes are paused and incoming calls are being declined until you add "
+            "credit or buy a bundle."
+        )
+    else:
+        subject = "Your balance is running low"
+        body = (
+            f"Your {settings.app_name} balance is {_money(balance)}, below your warning "
+            f"level of {_money(max(int(org.warn_threshold_micros or 0), MIN_WARN_THRESHOLD_MICROS))} "
+            "(about a day of your usage). Add credit or turn on auto-recharge so your "
+            "numbers keep working."
+        )
+    base = (getattr(settings, "public_web_url", "") or "").rstrip("/")
+    link = f"\n\nAdd credit: {base}/settings/billing" if base else ""
+    recipients = await _recipients(session, org.id)
+    set_org_context(session, org.id)
+    for user_id, _email in recipients:
+        try:
+            await notifications.create(
+                session,
+                org.id,
+                user_id=user_id,
+                kind="low_balance",
+                body=subject,
+                dedupe_key=key,
+            )
+        except Exception:
+            log.exception("billing_alerts.notification_failed", org_id=str(org.id))
+    emails = [e for _u, e in recipients if e]
+    if emails:
+        try:
+            await mailer.send(settings, emails, f"{settings.app_name}: {subject}", body + link)
+        except Exception:
+            log.exception("billing_alerts.email_failed", org_id=str(org.id))
+    log.info("billing_alerts.sent", org_id=str(org.id), state=state, recipients=len(recipients))
+    return state
+
+
+async def notify_owners(session: AsyncSession, settings, org: Org, subject: str, body: str,  # noqa: ANN001
+                        *, dedupe_key: str) -> None:
+    """One-off billing notice (auto-recharge declined / disabled). Does not commit."""
+    from app.services import mailer, notifications
+
+    recipients = await _recipients(session, org.id)
+    set_org_context(session, org.id)
+    for user_id, _email in recipients:
+        try:
+            await notifications.create(
+                session, org.id, user_id=user_id, kind="low_balance", body=subject,
+                dedupe_key=dedupe_key[:128],
+            )
+        except Exception:
+            log.exception("billing_alerts.notification_failed", org_id=str(org.id))
+    emails = [e for _u, e in recipients if e]
+    if emails:
+        try:
+            await mailer.send(settings, emails, f"{settings.app_name}: {subject}", body)
+        except Exception:
+            log.exception("billing_alerts.email_failed", org_id=str(org.id))
