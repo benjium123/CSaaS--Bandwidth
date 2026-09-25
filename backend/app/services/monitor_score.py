@@ -51,6 +51,10 @@ WEIGHTS: dict[str, int] = {
     "volume_spike": 10,
     "carrier_spam_flag": 15,
     "public_report": 20,
+    # P44b fraud signals
+    "blocked_destination": 15,
+    "spend_spike": 20,
+    "short_call_burst": 15,
 }
 LEVEL_ORDER = {"normal": 0, "watch": 1, "restricted": 2, "paused": 3}
 #: Signals outsiders can create (anyone can file a report or text back "scam"). On their own

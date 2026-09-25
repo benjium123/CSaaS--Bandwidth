@@ -695,6 +695,16 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
         return None
     amount = recharge_amount(amount, threshold - balance)
 
+    # P44b: no auto-recharge while the workspace is new, and a daily count/amount cap.
+    from app.services import exposure
+
+    capped = await exposure.auto_recharge_refusal(session, settings, org, amount)
+    if capped is not None:
+        if capped != "new_account":
+            await exposure.alert_auto_recharge_cap(session, org.id, capped)
+        logger.info("auto_recharge_capped", org_id=str(org.id), reason=capped)
+        return None
+
     last_topup_reference = (
         await session.execute(
             sa.select(CreditLedgerEntry.reference)
@@ -792,10 +802,15 @@ async def maybe_auto_recharge(session, org, *, settings) -> dict | None:
         # credit, and it is idempotent on the payment intent id. Crediting here too
         # would double-credit the workspace. Until it lands, no new attempt is made.
         org.auto_recharge_failures = 0
+        current = org.credit_auto_recharge or {}
         org.credit_auto_recharge = {
-            **(org.credit_auto_recharge or {}),
+            **current,
             "pending_intent": result.get("id", ""),
             "pending_at": datetime.now(timezone.utc).isoformat(),
+            "history": [
+                *exposure.recharges_in_last_day(current),
+                {"at": datetime.now(timezone.utc).isoformat(), "micros": int(amount)},
+            ],
         }
         return {
             "charged": True,

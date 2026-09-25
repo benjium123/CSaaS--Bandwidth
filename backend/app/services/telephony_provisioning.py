@@ -155,7 +155,7 @@ class TelnyxManagedClient:
                 "webhook_url": webhook_url,
                 "webhook_failover_url": failover_url,
                 "webhook_api_version": "2",
-                "whitelisted_destinations": ["US", "CA"],
+                "whitelisted_destinations": ["US"],  # P44a: home country only (US lower 48 enforced in-app)
             },
         )
 

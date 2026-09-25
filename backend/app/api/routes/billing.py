@@ -367,6 +367,10 @@ async def create_topup(
         )
 
     settings = request.app.state.settings
+    # P44c: card-testing velocity and the new-account daily purchase cap.
+    from app.services import card_risk
+
+    await card_risk.check_checkout(ctx.session, settings, ctx.org.id, amount)
     success_url, cancel_url = _checkout_urls(settings)
     checkout = await stripe_client.create_checkout_session(
         settings,
@@ -439,6 +443,15 @@ async def create_bundle_checkout(
     settings = request.app.state.settings
     success_url, cancel_url = _checkout_urls(settings)
     success_url = success_url.replace("topup=done", "bundle=done")
+    from app.services import bundles as _bundles
+    from app.services import card_risk
+
+    await card_risk.check_checkout(
+        ctx.session,
+        settings,
+        ctx.org.id,
+        (await _bundles.quote(ctx.session, payload.kind, payload.qty))["paid"],
+    )
     row, q = await payments_svc.start_bundle_payment(
         ctx.session, ctx.org.id, kind=payload.kind, qty=payload.qty
     )
@@ -793,6 +806,24 @@ async def add_payment_method(
             raise PermissionDeniedError(
                 "This card cannot be used. Contact support.", code="payment_method_refused"
             )
+
+    # P44c: card issued abroad, card testing (many new cards), same card on another org.
+    from app.services import card_risk
+
+    try:
+        await card_risk.check_new_card(
+            ctx.session,
+            ctx.org.id,
+            fingerprint=fingerprint,
+            card_country=attached.get("country"),
+        )
+    except PermissionDeniedError:
+        await ctx.session.commit()  # keep the operator alert
+        try:
+            await stripe_client.detach_payment_method(settings, payment_method_id=attached["id"])
+        except Exception:  # noqa: BLE001 - refusing the card matters more
+            pass
+        raise
 
     pm = PaymentMethod(
         id=uuid.uuid4(),

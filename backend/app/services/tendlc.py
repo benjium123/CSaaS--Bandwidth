@@ -300,6 +300,7 @@ async def start_checkout(
         # month four - the same schedule Telnyx bills us on.
         "subscription_data": {"trial_period_days": 30 * UPFRONT_MONTHS, "metadata": metadata},
         "metadata": metadata,
+        "payment_method_options": stripe_client.THREE_DS_OPTIONS,
         "success_url": f"{base}/settings/messaging?texting=paid",
         "cancel_url": f"{base}/settings/messaging",
         "idempotency_key": f"tendlc-{reg.id}",

@@ -188,6 +188,9 @@ async def start_room_call(
     # first minutes. The hold rides this function's commit below.
     await calls_svc.require_owned_caller_ids(session, org_id, [from_e164])
     await telephony_access.require_telephony_allowed(session, org_id, "call", to_e164=to)
+    from app.services import exposure
+
+    await exposure.require_call_slot(session, settings, org_id)
     await telephony_billing.require_call_credit(session, org_id, call)
     room = room_name_for_call(call.id)
     call.extra = {"via": "livekit", "room": room}

@@ -662,8 +662,100 @@ async def behaviour_tick(
             {"message_id": str(reply.id)},
         ):
             counts["signals"] += 1
+    counts["signals"] += await _fraud_signals(session, settings, now)
     await session.commit()
     return counts
+
+
+async def _fraud_signals(session: AsyncSession, settings: Settings, now: datetime) -> int:
+    """P44b: IRSF probing, spend spikes and short-call bursts. Returns signals added."""
+    from app.models import BillingRefusal, CreditLedgerEntry
+    from app.services import billing_alerts
+
+    added = 0
+    day_ago = now - timedelta(hours=24)
+    # 1. Repeated attempts at blocked or foreign destinations: someone probing for IRSF.
+    refused = (
+        await session.execute(
+            sa.select(BillingRefusal.org_id, sa.func.count(BillingRefusal.id))
+            .where(
+                BillingRefusal.reason.in_(("destination_blocked", "destination_not_allowed")),
+                BillingRefusal.created_at >= day_ago,
+            )
+            .group_by(BillingRefusal.org_id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    for org_id, n in refused:
+        if int(n or 0) >= 3 and await _signal_once_a_day(
+            session,
+            settings,
+            org_id,
+            "blocked_destination",
+            f"{int(n)} attempts in 24h to reach blocked or out-of-country numbers",
+            {"attempts": int(n)},
+        ):
+            added += 1
+    # 2. Today's spend >= 5x the 14-day daily average (and at least $10).
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    spenders = (
+        await session.execute(
+            sa.select(
+                CreditLedgerEntry.org_id,
+                sa.func.coalesce(sa.func.sum(-CreditLedgerEntry.amount_micros), 0),
+            )
+            .where(
+                CreditLedgerEntry.entry_type == "usage",
+                CreditLedgerEntry.created_at >= midnight,
+            )
+            .group_by(CreditLedgerEntry.org_id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    for org_id, today in spenders:
+        today = int(today or 0)
+        if today < 10_000_000:
+            continue
+        avg = await billing_alerts.avg_daily_spend(session, org_id, now=midnight)
+        if today >= 5 * max(avg, 1) and await _signal_once_a_day(
+            session,
+            settings,
+            org_id,
+            "spend_spike",
+            f"${today / 1e6:.2f} spent today vs ${avg / 1e6:.2f}/day average",
+            {"today_micros": today, "avg_micros": avg},
+        ):
+            added += 1
+    # 3. A burst of very short calls into one exchange (NPA-NXX) in the last hour: the
+    #    shape of traffic pumping to a high-cost rural carrier.
+    hour_ago = now - timedelta(hours=1)
+    short = (
+        await session.execute(
+            sa.select(Call.org_id, Call.contact_e164)
+            .where(
+                Call.direction == "outbound",
+                Call.created_at >= hour_ago,
+                Call.status == "completed",
+                Call.duration_seconds < 10,
+            )
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    buckets: dict[tuple[uuid.UUID, str], int] = {}
+    for org_id, contact in short:
+        key = (org_id, (contact or "")[:8])  # +1 NPA NXX
+        buckets[key] = buckets.get(key, 0) + 1
+    for (org_id, exchange), n in buckets.items():
+        if n >= 20 and await _signal_once_a_day(
+            session,
+            settings,
+            org_id,
+            "short_call_burst",
+            f"{n} calls under 10 seconds to {exchange}xxxx in the last hour",
+            {"exchange": exchange, "calls": n},
+        ):
+            added += 1
+    return added
 
 
 async def _declared_daily(session: AsyncSession, org_id: uuid.UUID, key: str) -> int | None:

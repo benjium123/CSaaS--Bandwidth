@@ -570,6 +570,18 @@ async def dialer_tick(
             coefficient = await _predictive_coefficient(session, campaign.id)
             lines = max(1, round(lines * coefficient))
         lines = min(lines, remaining)
+        # P44b: never claim more rows than the workspace has free call slots - the dial
+        # itself would be refused (concurrent_call_limit) and the row wasted.
+        from app.services import exposure, telephony_access
+
+        cap_settings = settings or telephony_access._settings_of(session)
+        if getattr(cap_settings, "fraud_exposure_enforced", True):
+            free = await exposure.max_concurrent_calls(
+                session, cap_settings, campaign.org_id
+            ) - await exposure.live_outbound_calls(session, campaign.org_id)
+            lines = min(lines, max(free, 0))
+            if lines <= 0:
+                continue
 
         rows = await _claim_due_rows(session, campaign.id, moment, lines)
         if not rows:

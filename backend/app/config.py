@@ -425,6 +425,19 @@ class Settings(BaseSettings):
     #: P44a: refuse calls/texts/faxes to blocked (IRSF, premium, satellite) numbers and to
     #: anything outside the workspace's home country. Off only for local debugging.
     destination_policy_enforced: bool = True
+    #: P44b exposure caps (services/exposure.py). Operators raise one workspace through
+    #: KycProfile.limits (max_concurrent_calls, daily_spend_micros).
+    fraud_exposure_enforced: bool = True
+    fraud_new_account_days: int = 30
+    fraud_default_concurrent_calls: int = 5
+    fraud_new_account_daily_spend_micros: int = 25_000_000
+    fraud_daily_spend_micros: int = 250_000_000
+    #: Auto-recharge: none while the workspace is new, then at most this many charges and
+    #: this much money per 24 hours.
+    fraud_auto_recharge_max_per_day: int = 3
+    fraud_auto_recharge_max_micros_per_day: int = 300_000_000
+    #: P44c: top-ups + bundle purchases a NEW workspace may start per UTC day.
+    fraud_new_account_daily_purchase_micros: int = 100_000_000
     monitor_enforced: bool = True
     #: The pre-send text check waits at most this long for the AI.
     monitor_text_ai_timeout_seconds: float = 6.0

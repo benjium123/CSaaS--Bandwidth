@@ -54,6 +54,7 @@ REFUSAL_PUBLIC_TEXT = {
     "daily_limit_reached": "Not sent - today's texting limit for this account was reached.",
     "account_paused": "Not sent - calling and texting are paused while we review this account.",
     "subscription_required": "Not sent - choose a plan to start texting.",
+    "daily_spend_reached": "Not sent - this account reached today's spending limit.",
     "destination_blocked": "Not sent - this number is on our blocked-destination list.",
     "destination_not_allowed": "Not sent - this account can only reach numbers in its own country.",
 }
@@ -105,6 +106,12 @@ async def refusal(
     monitored = await monitor_score.refusal(session, settings, org_id, kind)
     if monitored is not None:
         return monitored
+    # P44b: concurrency and daily-spend ceilings apply to every workspace.
+    from app.services import exposure
+
+    capped = await exposure.refusal(session, settings, org_id, kind)
+    if capped is not None:
+        return capped
     # Business verification. Unchanged for every business org: the block below is what it
     # always was, nested under the flag it was already guarded by, so the subscription
     # check can run after it rather than being skipped by its early return. Individual
@@ -210,6 +217,18 @@ def _raise_for(code: str) -> None:
         # plan" are different actions and the console must not conflate them.
         raise PermissionDeniedError(
             "Choose a plan to start calling and texting", code="subscription_required"
+        )
+    if code == "concurrent_call_limit":
+        raise PermissionDeniedError(
+            "This account already has the most calls it may run at once. Wait for one to "
+            "finish, or ask support to raise the limit.",
+            code="concurrent_call_limit",
+        )
+    if code == "daily_spend_reached":
+        raise PermissionDeniedError(
+            "This account reached today's spending limit. It resets at midnight UTC, or ask "
+            "support to raise it.",
+            code="daily_spend_reached",
         )
     if code == "destination_blocked":
         raise PermissionDeniedError(

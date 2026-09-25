@@ -84,6 +84,12 @@ async def _run_sync(func, *args, **kwargs):
     return _plain(result)
 
 
+#: P44c: ask for 3D Secure on every Checkout payment the card supports it for. An
+#: authenticated payment shifts fraud-chargeback liability to the card issuer, and a thief
+#: holding only the card number cannot pass the bank's challenge.
+THREE_DS_OPTIONS: dict[str, Any] = {"card": {"request_three_d_secure": "any"}}
+
+
 async def create_checkout_session(
     settings,
     *,
@@ -119,6 +125,7 @@ async def create_checkout_session(
         # The webhook reads the PAYMENT INTENT's metadata, so it must be set here too.
         "metadata": metadata,
         "payment_intent_data": {"metadata": metadata},
+        "payment_method_options": THREE_DS_OPTIONS,
     }
     if customer_email:
         params["customer_email"] = customer_email
@@ -169,6 +176,7 @@ async def create_bundle_checkout_session(
         # Same trap as the top-up: the webhook reads the PaymentIntent's metadata.
         "metadata": metadata,
         "payment_intent_data": {"metadata": metadata},
+        "payment_method_options": THREE_DS_OPTIONS,
     }
     if customer_email:
         params["customer_email"] = customer_email
@@ -228,6 +236,7 @@ async def create_subscription_checkout_session(
         # to an org. Same trap as payment_intent_data above.
         "metadata": metadata,
         "subscription_data": {"metadata": metadata},
+        "payment_method_options": THREE_DS_OPTIONS,
     }
     # Never both: Stripe rejects a session that names a customer and an email.
     if customer_id:
@@ -393,7 +402,27 @@ async def attach_payment_method(
         "brand": card.get("brand", ""),
         "last4": card.get("last4", ""),
         "fingerprint": card.get("fingerprint"),
+        "country": card.get("country"),
     }
+
+
+async def retrieve_intent_with_charge(settings, payment_intent_id: str) -> dict:
+    """P44c: the PaymentIntent (with its metadata) and its latest charge, as plain dicts."""
+    stripe = _stripe(settings)
+    return await _run_sync(
+        stripe.PaymentIntent.retrieve, payment_intent_id, expand=["latest_charge"]
+    )
+
+
+async def refund_intent(settings, payment_intent_id: str, *, idempotency_key: str) -> dict:
+    """P44c: refund a payment in full (an early fraud warning was raised on it)."""
+    stripe = _stripe(settings)
+    return await _run_sync(
+        stripe.Refund.create,
+        payment_intent=payment_intent_id,
+        reason="fraudulent",
+        idempotency_key=idempotency_key,
+    )
 
 
 async def detach_payment_method(

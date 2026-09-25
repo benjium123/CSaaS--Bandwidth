@@ -147,6 +147,7 @@ async def create(session, settings, org_id, numbers):
         stripe.checkout.Session.create,
         mode="subscription",
         payment_method_types=["card"],
+        payment_method_options=stripe_client.THREE_DS_OPTIONS,
         line_items=[{"price": settings.stripe_number_price_id, "quantity": len(normalized)}],
         metadata=metadata,
         subscription_data={"metadata": metadata},

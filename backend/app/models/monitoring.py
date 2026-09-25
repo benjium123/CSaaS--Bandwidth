@@ -42,6 +42,10 @@ SIGNAL_KINDS: tuple[str, ...] = (
     "volume_spike",
     "carrier_spam_flag",
     "public_report",
+    # P44b
+    "blocked_destination",
+    "spend_spike",
+    "short_call_burst",
 )
 
 

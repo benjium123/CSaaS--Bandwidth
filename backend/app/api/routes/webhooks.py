@@ -909,6 +909,15 @@ async def stripe_webhook(
         await session.commit()
         return Response(status_code=204)
 
+    from app.services import card_risk
+
+    if event_type in card_risk.HANDLED_EVENT_TYPES:
+        # P44c: early fraud warnings and chargebacks. Replay-safe through the StripeEvent
+        # ledger above and the per-reference ledger guards inside.
+        await card_risk.handle_stripe_event(session, request.app.state.settings, event)
+        await session.commit()
+        return Response(status_code=204)
+
     if event_type != "payment_intent.succeeded":
         if event_id:
             await session.commit()

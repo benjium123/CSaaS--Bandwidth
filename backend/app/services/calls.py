@@ -339,6 +339,9 @@ async def create_outbound_call(
     # Prepaid hard gate: refuse (402) before the rows or the dial exist, and hold the
     # first minutes (committed with the rows just below).
     await telephony_access.require_telephony_allowed(session, org_id, "call", to_e164=to)
+    from app.services import exposure
+
+    await exposure.require_call_slot(session, telephony_access._settings_of(session), org_id)
     await telephony_billing.require_call_credit(session, org_id, call)
     # P43: monitored calls are recorded (announcement first) and reviewed by the safety AI.
     from app.services import monitor_calls

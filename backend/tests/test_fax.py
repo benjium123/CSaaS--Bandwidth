@@ -31,6 +31,15 @@ def _fax_settings(**overrides):
     )
 
 
+async def _fax_org(session):
+    """P44a: fax passes the telephony gate now; these orgs are pre-verified, like the
+    ones the call tests use (a NEW org requires business verification before it can fax)."""
+    org = await _new_org(session)
+    org.kyc_required = False
+    await session.commit()
+    return org
+
+
 def _pdf2() -> bytes:
     w = PdfWriter()
     w.add_blank_page(612, 792)
@@ -80,7 +89,7 @@ def test_count_pages_rejects_garbage():
 # send
 # ==================================================================================
 async def test_send_happy_path_holds_money_and_reaches_the_carrier(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     await _enable(session, org.id, balance=1_000_000)
     await _fax_number(session, org.id)
     store = InMemoryObjectStore()
@@ -123,7 +132,7 @@ async def test_send_happy_path_holds_money_and_reaches_the_carrier(session):
 
 
 async def test_send_refused_on_low_balance_and_persists_nothing(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     await _enable(session, org.id, balance=150_000)  # < 200_000 for 2 pages
     await _fax_number(session, org.id)
     store = InMemoryObjectStore()
@@ -153,7 +162,7 @@ async def test_send_refused_on_low_balance_and_persists_nothing(session):
 
 
 async def test_send_refused_when_number_is_not_in_fax_mode(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     await _enable(session, org.id, balance=1_000_000)
     await _fax_number(session, org.id, fax_mode=False)
     store = InMemoryObjectStore()
@@ -179,7 +188,7 @@ async def test_send_refused_when_number_is_not_in_fax_mode(session):
 
 
 async def test_send_rejected_by_carrier_releases_the_hold(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     await _enable(session, org.id, balance=1_000_000)
     await _fax_number(session, org.id)
     store = InMemoryObjectStore()
@@ -237,7 +246,7 @@ async def _send_ok(session, org, store, settings, *, fax_id: str = "tx-fax-1") -
 
 
 async def test_webhook_delivered_charges_once_and_releases_the_hold(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     await _enable(session, org.id, balance=1_000_000)
     store = InMemoryObjectStore()
     settings = _fax_settings()
@@ -279,7 +288,7 @@ async def test_webhook_delivered_charges_once_and_releases_the_hold(session):
 
 
 async def test_webhook_failed_releases_the_hold_and_charges_nothing(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     await _enable(session, org.id, balance=1_000_000)
     store = InMemoryObjectStore()
     settings = _fax_settings()
@@ -311,7 +320,7 @@ async def test_webhook_failed_releases_the_hold_and_charges_nothing(session):
 # webhook: inbound
 # ==================================================================================
 async def test_webhook_received_stores_media_and_charges_inbound(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     await _enable(session, org.id, balance=0)
     await _fax_number(session, org.id)
     store = InMemoryObjectStore()
@@ -353,7 +362,7 @@ async def test_webhook_received_stores_media_and_charges_inbound(session):
 
 
 async def test_webhook_received_for_unknown_number_persists_nothing(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     await _enable(session, org.id, balance=0)
     # No OrgNumber at all for +12145550150.
     store = InMemoryObjectStore()
@@ -392,7 +401,7 @@ async def test_webhook_received_for_unknown_number_persists_nothing(session):
 # set_fax_mode
 # ==================================================================================
 async def test_set_fax_mode_enable_switches_connection_and_remembers_voice(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     number = await _fax_number(session, org.id, fax_mode=False)
     settings = _fax_settings()
     patches: list[tuple[str, dict]] = []
@@ -424,7 +433,7 @@ async def test_set_fax_mode_enable_switches_connection_and_remembers_voice(sessi
 
 
 async def test_set_fax_mode_disable_restores_the_saved_voice_connection(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     number = await _fax_number(session, org.id, fax_mode=True)
     number.provisioning = {"fax_mode": True, "voice_connection_before_fax": "voice-conn-1"}
     await session.commit()
@@ -455,7 +464,7 @@ async def test_set_fax_mode_disable_restores_the_saved_voice_connection(session)
 
 
 async def test_set_fax_mode_refuses_a_number_not_csaas_owned(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     number = await _fax_number(session, org.id, fax_mode=False)
     settings = _fax_settings()
     patched = False
@@ -488,7 +497,7 @@ async def test_set_fax_mode_refuses_a_number_not_csaas_owned(session):
 # Not-prepaid org
 # ==================================================================================
 async def test_not_prepaid_org_is_never_reserved_or_charged(session):
-    org = await _new_org(session)
+    org = await _fax_org(session)
     org.telephony_prepaid = False  # gate off (model default is on since migration 0055)
     await session.commit()
     await _fax_number(session, org.id)
