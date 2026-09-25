@@ -36,8 +36,11 @@ async def _kyc_cleared(session, org_id) -> bool:  # noqa: ANN001
     org = await session.get(Org, org_id)
     if org is None:
         return False
+    # Same settings source as telephony_access._settings_of: the session-bound ones first.
+    bound = session.info.get("settings")
+    settings = bound if bound is not None else get_active_settings()
     must_verify = (
-        bool(getattr(get_active_settings(), "kyc_enforced", False))
+        bool(getattr(settings, "kyc_enforced", False))
         or bool(getattr(org, "kyc_required", False))
         or org.account_type == "individual"
     )

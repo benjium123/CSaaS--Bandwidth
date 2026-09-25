@@ -375,6 +375,11 @@ async def make_org_with_number(
         profile.status = "approved"
         profile.decided_by = owner.id
         profile.decided_at = datetime.now(timezone.utc)
+        await setup_session.flush()
+        # Approval is what grants the welcome credit (kyc.approve); mirror it here.
+        from app.services import billing_ops
+
+        await billing_ops.grant_welcome_credit(setup_session, workspace.id)
         await setup_session.commit()
     r = await client.post(
         "/api/v1/numbers", json={"e164": e164}, headers=auth_headers(token, org["id"])
