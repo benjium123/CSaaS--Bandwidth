@@ -459,4 +459,5 @@ from app.models.billing_v2 import (  # noqa: E402
     BillingRefusal,
     BundleLedgerEntry,
     PlatformPrice,
+    TelnyxCostDaily,
 )

@@ -15,7 +15,7 @@ payments as the customer paid them, and refused-for-credit attempts.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -95,4 +95,27 @@ class BillingRefusal(Base, TenantScoped):
     price_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
     balance_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
     detail: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+
+class TelnyxCostDaily(Base):
+    """Telnyx's own billed cost per org per day (nightly detail-records reconciliation).
+    org_id NULL = traffic on the shared account that matched none of our numbers (the CRM's,
+    or a released number) - kept for the account total, never shown per org."""
+
+    __tablename__ = "telnyx_cost_daily"
+    __table_args__ = (
+        sa.Index("ix_telnyx_cost_daily_date", "period_date"),
+        sa.Index("ix_telnyx_cost_daily_org_date", "org_id", "period_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("orgs.id", ondelete="SET NULL"), nullable=True
+    )
+    period_date: Mapped[date] = mapped_column(sa.Date, nullable=False)
+    record_type: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    direction: Mapped[str] = mapped_column(sa.String(8), nullable=False, default="")
+    quantity: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    cost_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)

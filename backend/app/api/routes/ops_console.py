@@ -12,7 +12,7 @@ from typing import Annotated
 
 import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from app.auth.deps import OperatorContext, require_operator
@@ -220,3 +220,43 @@ async def console_prepaid(org_id: uuid.UUID, payload: PrepaidIn, op: Admin) -> d
     _audit(op, org_id, "billing.console_prepaid", {"enabled": payload.enabled})
     await op.session.commit()
     return {"prepaid": bool(org.telephony_prepaid)}
+
+
+@router.get("/telnyx")
+async def console_telnyx(op: Reviewer, request: Request) -> dict:
+    """Telnyx account float (shared with the CRM) and the last reconciled days."""
+    from app.models import TelnyxCostDaily
+    from app.services import telnyx_recon
+
+    settings = request.app.state.settings
+    balance = None
+    key = await telnyx_recon.api_key(op.session, settings)
+    if key:
+        billing = telnyx_recon.TelnyxBilling(key)
+        try:
+            balance = await billing.balance()
+        except Exception:
+            log.warning("console_telnyx_balance_failed")
+        finally:
+            await billing.aclose()
+    rows = (
+        await op.session.execute(
+            sa.select(
+                TelnyxCostDaily.period_date,
+                sa.func.sum(TelnyxCostDaily.cost_micros),
+                sa.func.sum(
+                    sa.case((TelnyxCostDaily.org_id.is_(None), TelnyxCostDaily.cost_micros), else_=0)
+                ),
+            )
+            .group_by(TelnyxCostDaily.period_date)
+            .order_by(TelnyxCostDaily.period_date.desc())
+            .limit(31)
+        )
+    ).all()
+    return {
+        "balance": balance,
+        "days": [
+            {"date": d.isoformat(), "cost_micros": int(c or 0), "unattributed_micros": int(u or 0)}
+            for d, c, u in rows
+        ],
+    }

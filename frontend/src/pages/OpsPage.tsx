@@ -6,6 +6,7 @@ import { MonitoringTab } from "@/components/ops/MonitoringTab";
 import { CustomerAccountsTab } from "@/components/ops/CustomerAccountsTab";
 import { AccountsTab } from "@/components/ops/AccountsTab";
 import { BillingTab } from "@/components/ops/BillingTab";
+import { ConsoleTab } from "@/components/ops/ConsoleTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAuthedBlob } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
@@ -737,6 +738,7 @@ function UsersTab() {
 }
 
 const TABS = [
+  { id: "console", label: "Console" },
   { id: "customers", label: "All accounts" },
   { id: "queue", label: "Review queue" },
   { id: "alerts", label: "Security alerts" },
@@ -798,6 +800,7 @@ export function OpsPage() {
       ) : (
         <>
           <section key={tab} aria-label={TABS.find(item => item.id === tab)?.label}>
+            {tab === "console" && <ConsoleTab />}
             {tab === "customers" && <CustomerAccountsTab />}
             {tab === "queue" && <QueueTab onOpen={setOpenOrg} />}
             {tab === "alerts" && <AlertsTab />}

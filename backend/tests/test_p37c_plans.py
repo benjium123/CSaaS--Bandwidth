@@ -351,7 +351,7 @@ def test_overage_rate_with_no_plan_is_none():
 # ======================================================================================
 # Allowance-first, credits-second: the whole point of selling a package
 # ======================================================================================
-SMS_OUT_MICROS = 10_000  # flat platform price: $0.01 per segment, carrier-independent
+SMS_OUT_MICROS = 15_000  # flat platform price: $0.015 per segment (billing v2), carrier-independent
 #                          (telephony_billing.PLATFORM_PRICE_MICROS["sms_out"])
 
 

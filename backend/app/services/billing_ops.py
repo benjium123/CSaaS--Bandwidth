@@ -3,11 +3,15 @@ and swallows its own failure, so one broken job never stops the others."""
 
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
+
 import structlog
 
 from app.db.session import get_sessionmaker
 
 log = structlog.get_logger("billing_ops")
+#: UTC date the nightly Telnyx reconciliation last ran for (one process runs the sweeper).
+_recon_done_for: date | None = None
 
 
 async def hourly(settings) -> dict:  # noqa: ANN001
@@ -20,6 +24,17 @@ async def hourly(settings) -> dict:  # noqa: ANN001
                 results["stripe_fees_filled"] = await payments.fee_tick(session, settings)
         except Exception:
             log.exception("billing_ops.fee_tick_failed")
+    # Nightly Telnyx reconciliation: once per UTC day, after 03:00 (carriers finalise late).
+    global _recon_done_for  # noqa: PLW0603
+    now = datetime.now(timezone.utc)
+    if now.hour >= 3 and _recon_done_for != now.date():
+        _recon_done_for = now.date()
+        try:
+            from app.services import telnyx_recon
+
+            results["telnyx_recon"] = await telnyx_recon.nightly(settings)
+        except Exception:
+            log.exception("billing_ops.telnyx_recon_failed")
     try:
         from app.services import billing_alerts
 
