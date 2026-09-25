@@ -1,5 +1,5 @@
 import { isOwner, useAuth } from "@/auth/AuthContext";
-import { dollars, useAddPlanUsers, useWorkspacePlan } from "@/api/plan";
+import { dollars, monthsPerBill, useAddPlanUsers, useWorkspacePlan } from "@/api/plan";
 import { Button, mutationErrorMessage } from "@/components/ui/primitives";
 
 /**
@@ -11,9 +11,12 @@ export function BuySeatPanel({ onBought, onClose }: { onBought: () => void; onCl
   const owner = isOwner(me, orgId);
   const plan = useWorkspacePlan(api, owner);
   const add = useAddPlanUsers(api);
-  const userCents = plan.data?.extra_user_cents ?? 1500;
-  const numberCents = plan.data?.extra_number_cents ?? 500;
   const current = plan.data?.plan;
+  // Per bill: a yearly plan buys add-ons by the year.
+  const months = monthsPerBill(current?.interval, plan.data);
+  const per = months > 1 ? "year" : "month";
+  const userCents = (plan.data?.extra_user_cents ?? 1500) * months;
+  const numberCents = (plan.data?.extra_number_cents ?? 500) * months;
   const freeNumbers = plan.data?.numbers.limit != null ? Math.max(plan.data.numbers.limit - plan.data.numbers.in_use, 0) : 0;
 
   return (
@@ -40,10 +43,10 @@ export function BuySeatPanel({ onBought, onClose }: { onBought: () => void; onCl
               All {plan.data!.users.limit} users on your {current.name} plan are in use
             </p>
             <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
-              Add another user for {dollars(userCents)}/month, charged now for the rest of this month.
+              Add another user for {dollars(userCents)}/{per}, charged now for the rest of this {per}.
               {freeNumbers > 0
                 ? ` Your plan still has ${freeNumbers} free number${freeNumbers === 1 ? "" : "s"} to give them.`
-                : ` A number for them is ${dollars(numberCents)}/month more.`}
+                : ` A number for them is ${dollars(numberCents)}/${per} more.`}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -55,7 +58,7 @@ export function BuySeatPanel({ onBought, onClose }: { onBought: () => void; onCl
                 add.mutate({ count: 1, accept_cents: userCents }, { onSuccess: () => onBought() })
               }
             >
-              {add.isPending ? "Adding…" : `Add a user for ${dollars(userCents)}/month`}
+              {add.isPending ? "Adding…" : `Add a user for ${dollars(userCents)}/${per}`}
             </Button>
             <Button type="button" variant="outline" className="rounded-full px-5" onClick={onClose}>
               Cancel

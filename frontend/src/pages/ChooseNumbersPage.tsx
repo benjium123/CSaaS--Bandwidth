@@ -6,8 +6,8 @@ import { EmergencyAddressChoice, draftToInput, isAddressChoiceReady, isAddressDr
 import type { AddressChoice } from "@/components/numbers/EmergencyAddressForm";
 import { mutationErrorMessage } from "@/components/ui/primitives";
 import { JourneyShell } from "@/components/journey/JourneyShell";
-import { dollars, planSaving, useWorkspacePlan } from "@/api/plan";
-import type { PlanCode } from "@/api/plan";
+import { dollars, monthsPerBill, planSaving, useWorkspacePlan } from "@/api/plan";
+import type { BillingInterval, PlanCode } from "@/api/plan";
 
 type Purchase = { id: string; state: string; checkout_url?: string; detail?: string; numbers: { e164: string; state: string }[] };
 
@@ -27,18 +27,28 @@ export function ChooseNumbersPage() {
   const [acknowledged, setAcknowledged] = useState(false);
   const addresses = useEmergencyAddresses(api);
   const workspacePlan = useWorkspacePlan(api);
-  const [planCode, setPlanCode] = useState<PlanCode>("solo");
+  const [planCode, setPlanCode] = useState<PlanCode>(() => {
+    const asked = new URLSearchParams(window.location.search).get("plan");
+    return asked === "team" || asked === "business" ? asked : "solo";
+  });
+  const [billing, setBilling] = useState<BillingInterval>(() =>
+    new URLSearchParams(window.location.search).get("billing") === "year" ? "year" : "month");
   const current = workspacePlan.data?.plan ?? null;
   const catalog = workspacePlan.data?.catalog ?? [];
   const chosen = catalog.find(p => p.code === planCode);
-  const numberCents = workspacePlan.data?.extra_number_cents ?? 500;
+  const yearlyOk = !!workspacePlan.data?.yearly_available;
+  // On a plan, its interval; otherwise the buyer's choice (monthly until yearly is on sale).
+  const interval: BillingInterval = current ? current.interval ?? "month" : yearlyOk ? billing : "month";
+  const months = monthsPerBill(interval, workspacePlan.data);
+  const per = interval === "year" ? "year" : "month";
+  const numberCents = (workspacePlan.data?.extra_number_cents ?? 500) * months;
   // Numbers the plan still includes for free; beyond them each is a $5/month add-on.
   const freeSlots = current
     ? Math.max((workspacePlan.data?.numbers.limit ?? 0) - (workspacePlan.data?.numbers.in_use ?? 0), 0)
     : chosen?.numbers ?? 0;
   const paidNumbers = Math.max(selected.length - freeSlots, 0);
   const increaseCents = paidNumbers * numberCents;
-  const monthlyCents = (current ? current.monthly_total_cents : chosen?.price_cents ?? 0) + increaseCents;
+  const monthlyCents = (current ? current.period_total_cents ?? current.monthly_total_cents : (chosen?.price_cents ?? 0) * months) + increaseCents;
   const e911Ready = addresses.isSuccess && acknowledged && isAddressChoiceReady(addressChoice);
   const purchaseId = new URLSearchParams(window.location.search).get("purchase");
   const requestedNext = new URLSearchParams(window.location.search).get("next");
@@ -92,7 +102,7 @@ export function ChooseNumbersPage() {
       const body: Record<string, unknown> = { numbers: purchase?.numbers.map(n => n.e164) ?? selected, acknowledge_e911: acknowledged };
       // First purchase: the plan comes with it. On a plan: echo the add-on price shown.
       if (current) body.accept_charge_cents = increaseCents;
-      else body.plan_code = planCode;
+      else { body.plan_code = planCode; body.billing_interval = interval; }
       if (addressChoice?.kind === "existing") body.emergency_address_id = addressChoice.id;
       else if (addressChoice?.kind === "new" && isAddressDraftValid(addressChoice.draft)) body.emergency_address = draftToInput(addressChoice.draft);
       const result = await api.request<Purchase>("/api/v1/billing/number-checkout", { method: "POST", json: body });
@@ -125,14 +135,18 @@ export function ChooseNumbersPage() {
     {!purchaseId && <div className="rj-choose">
       <div className="rj-stack" style={{ marginTop: 0 }}>
         {!current && <section className="rj-card rj-in" aria-labelledby="plan-heading" style={{ "--i": 0 } as React.CSSProperties}>
-          <div className="rj-card-head"><span className="rj-num" data-done>1</span><div><h2 id="plan-heading">Choose your plan</h2><p className="rj-card-sub">Add users ({dollars(catalog.find(p => p.code === planCode)?.extra_user_cents ?? workspacePlan.data?.extra_user_cents ?? 1500)}/month) and numbers ({dollars(numberCents)}/month) any time.</p></div></div>
+          <div className="rj-card-head"><span className="rj-num" data-done>1</span><div><h2 id="plan-heading">Choose your plan</h2><p className="rj-card-sub">Add users ({dollars((catalog.find(p => p.code === planCode)?.extra_user_cents ?? workspacePlan.data?.extra_user_cents ?? 1500) * months)}/{per}) and numbers ({dollars(numberCents)}/{per}) any time.</p></div></div>
+          {yearlyOk && <div className="rj-billing" role="radiogroup" aria-label="Billing">
+            <label data-on={billing === "month" || undefined}><input type="radio" name="billing" checked={billing === "month"} onChange={() => setBilling("month")} />Monthly</label>
+            <label data-on={billing === "year" || undefined}><input type="radio" name="billing" checked={billing === "year"} onChange={() => setBilling("year")} />Yearly <em>2 months free</em></label>
+          </div>}
           {workspacePlan.isPending ? <p className="rj-note">Loading plans…</p> : workspacePlan.isError ? <p role="alert" className="rj-error">{mutationErrorMessage(workspacePlan.error)}</p> :
             <div className="rj-plans" role="radiogroup" aria-label="Plan">{catalog.map(p => {
               const saving = planSaving(p, workspacePlan.data?.extra_user_cents, numberCents);
               return <label key={p.code} className="rj-plan" data-on={p.code === planCode || undefined}>
                 <input type="radio" name="plan" value={p.code} checked={p.code === planCode} onChange={() => setPlanCode(p.code)} />
                 <span className="rj-plan-name">{p.name}{saving > 0 && <em>Save {dollars(saving)}</em>}</span>
-                <span className="rj-plan-price">{dollars(p.price_cents)}<small>/month</small></span>
+                <span className="rj-plan-price">{dollars(p.price_cents * months)}<small>/{per}</small></span>
                 <span className="rj-plan-facts">{p.users} user{p.users > 1 ? "s" : ""} · {p.numbers} number{p.numbers > 1 ? "s" : ""}<br />{p.minutes > 0 ? `${p.minutes.toLocaleString()} call minutes/month, shared` : "Calls pay as you go"}</span>
               </label>;
             })}</div>}
@@ -149,7 +163,7 @@ export function ChooseNumbersPage() {
           <div className="rj-numbers">{available.data?.map(number => <label key={number.e164} className="rj-number" data-on={selected.includes(number.e164) || undefined}>
             <input type="checkbox" checked={selected.includes(number.e164)} onChange={() => setSelected(old => old.includes(number.e164) ? old.filter(n => n !== number.e164) : old.length < 20 ? [...old, number.e164] : old)} />
             <span className="rj-number-main"><b>{number.e164}</b><small>{number.locality} {number.region}</small></span>
-            <span className="rj-number-price">{(selected.includes(number.e164) ? selected.indexOf(number.e164) : selected.length) < freeSlots ? "Included" : `+${dollars(numberCents)}/mo`}</span>
+            <span className="rj-number-price">{(selected.includes(number.e164) ? selected.indexOf(number.e164) : selected.length) < freeSlots ? "Included" : `+${dollars(numberCents)}/${interval === "year" ? "yr" : "mo"}`}</span>
           </label>)}</div>
         </section>
         <section aria-labelledby="e911-heading" className="rj-card rj-in" style={{ "--i": 2 } as React.CSSProperties}>
@@ -168,8 +182,8 @@ export function ChooseNumbersPage() {
             : chosen && <div><span>{chosen.name}: {chosen.users} user{chosen.users > 1 ? "s" : ""} + {chosen.numbers} number{chosen.numbers > 1 ? "s" : ""}</span><span>{dollars(chosen.price_cents)}</span></div>}
           {selected.map((n, i) => <div key={n}><span>{n}{i < freeSlots ? " · included" : ` · ${dollars(numberCents)}`}</span><button type="button" className="rj-ghost" onClick={() => setSelected(old => old.filter(x => x !== n))}>Remove</button></div>)}
         </div>
-        <div className="rj-total"><p className="rj-note" style={{ margin: 0 }}>{current ? (increaseCents ? `Adds ${dollars(increaseCents)}/month, charged now (prorated)` : "Included in your plan, no extra charge") : paidNumbers ? `Includes ${paidNumbers} extra number${paidNumbers > 1 ? "s" : ""} at ${dollars(numberCents)}` : "Monthly total"}</p><p className="rj-total-amount">{dollars(monthlyCents)}<span> / month</span></p></div>
-        <button type="button" className="rj-btn" data-block="true" disabled={!selected.length || pending || !e911Ready || workspacePlan.isPending} onClick={() => void checkout()}>{pending ? (current ? "Adding numbers…" : "Opening checkout…") : current ? (increaseCents ? `Pay ${dollars(increaseCents)}/month and add` : "Add numbers") : "Continue to payment"}</button>
+        <div className="rj-total"><p className="rj-note" style={{ margin: 0 }}>{current ? (increaseCents ? `Adds ${dollars(increaseCents)}/${per}, charged now (prorated)` : "Included in your plan, no extra charge") : paidNumbers ? `Includes ${paidNumbers} extra number${paidNumbers > 1 ? "s" : ""} at ${dollars(numberCents)}` : interval === "year" ? "Yearly total" : "Monthly total"}</p><p className="rj-total-amount">{dollars(monthlyCents)}<span> / {per}</span></p></div>
+        <button type="button" className="rj-btn" data-block="true" disabled={!selected.length || pending || !e911Ready || workspacePlan.isPending} onClick={() => void checkout()}>{pending ? (current ? "Adding numbers…" : "Opening checkout…") : current ? (increaseCents ? `Pay ${dollars(increaseCents)}/${per} and add` : "Add numbers") : "Continue to payment"}</button>
         <p className="rj-note" style={{ marginTop: 14 }}>{current ? "Charged to the card on your plan." : "Secure payment with Stripe."} Number availability is confirmed when provisioned. Calls beyond your plan minutes, and texts, use prepaid credit.</p>
         {selected.length > 0 && !e911Ready && <p className="rj-note">Add where these numbers will be used and confirm the 911 notice to continue.</p>}
       </aside>

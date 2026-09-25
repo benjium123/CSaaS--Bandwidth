@@ -36,7 +36,7 @@ export function PlanCard() {
     <Card>
       <CardHeader
         title={`${plan.name} plan`}
-        description={`${dollars(plan.monthly_total_cents)} a month${plan.renews_at ? `, renews ${new Date(plan.renews_at).toLocaleDateString()}` : ""}${plan.status === "past_due" ? " - payment overdue, update your card" : ""}`}
+        description={`${plan.interval === "year" ? `${dollars(plan.period_total_cents ?? plan.monthly_total_cents * 10)} a year` : `${dollars(plan.monthly_total_cents)} a month`}${plan.renews_at ? `, renews ${new Date(plan.renews_at).toLocaleDateString()}` : ""}${plan.status === "past_due" ? " - payment overdue, update your card" : ""}`}
       />
       <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
         <div>
@@ -67,7 +67,7 @@ export function PlanCard() {
                 <p className="mt-2 text-xs font-medium text-[hsl(var(--cx-live))]">Your plan</p>
               ) : (
                 <Button type="button" variant="outline" size="sm" className="mt-2 rounded-full" onClick={() => setConfirming(p)}>
-                  Switch · {dollars(p.monthly_total_cents_if_switched)}/mo
+                  Switch · {dollars(p.total_cents_if_switched ?? p.monthly_total_cents_if_switched)}/{plan.interval === "year" ? "yr" : "mo"}
                 </Button>
               )}
             </div>
@@ -78,8 +78,8 @@ export function PlanCard() {
       {confirming && (
         <div role="region" aria-label="Confirm plan change" className="mt-4 space-y-2 rounded-xl border border-[hsl(var(--cx-line))] p-3">
           <p className="text-sm">
-            Move to <b>{confirming.name}</b>: your bill becomes <b>{dollars(confirming.monthly_total_cents_if_switched)}/month</b>, keeping
-            everyone and every number you have now. The difference for the rest of this month is charged or credited today.
+            Move to <b>{confirming.name}</b>: your bill becomes <b>{dollars(confirming.total_cents_if_switched ?? confirming.monthly_total_cents_if_switched)}/{plan.interval === "year" ? "year" : "month"}</b>, keeping
+            everyone and every number you have now. The difference for the rest of this {plan.interval === "year" ? "year" : "month"} is charged or credited today.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -88,7 +88,7 @@ export function PlanCard() {
               className="rounded-full"
               disabled={change.isPending}
               onClick={() => change.mutate(
-                { plan_code: confirming.code, accept_cents: confirming.monthly_total_cents_if_switched },
+                { plan_code: confirming.code, accept_cents: confirming.total_cents_if_switched ?? confirming.monthly_total_cents_if_switched },
                 { onSuccess: () => setConfirming(null) },
               )}
             >

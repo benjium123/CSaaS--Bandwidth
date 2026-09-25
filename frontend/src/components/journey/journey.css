@@ -185,6 +185,11 @@
 .rj .rj-search .rj-btn { flex: 1 1 120px; width: auto; }
 
 /* ---- plan picker (choose-numbers, first purchase) ---- */
+.rj-billing { display: inline-flex; gap: 4px; padding: 4px; margin: 0 0 14px; border: 1px solid var(--rj-line); border-radius: 999px; }
+.rj-billing label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; font-size: 13px; cursor: pointer; }
+.rj-billing input { position: absolute; opacity: 0; pointer-events: none; }
+.rj-billing label[data-on] { background: var(--rj-blue); color: #fff; }
+.rj-billing em { font-style: normal; font-size: 11px; opacity: 0.85; }
 .rj-plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .rj-plan {
   position: relative; display: flex; flex-direction: column; gap: 6px; padding: 16px 16px 15px;

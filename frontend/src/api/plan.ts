@@ -15,7 +15,18 @@ export interface CatalogPlan {
   price_cents: number;
   minutes: number;
   extra_user_cents?: number;
+  max_users?: number | null;
+  yearly_price_cents?: number;
   monthly_total_cents_if_switched: number;
+  /** Per billing period of the current plan: what a plan change must accept. */
+  total_cents_if_switched?: number;
+}
+
+export type BillingInterval = "month" | "year";
+
+/** Months charged per bill: 1 monthly, 10 on a yearly plan (two months free). */
+export function monthsPerBill(interval: BillingInterval | undefined, data?: { months_billed_per_year?: number }) {
+  return interval === "year" ? data?.months_billed_per_year ?? 10 : 1;
 }
 
 export interface WorkspacePlan {
@@ -25,6 +36,8 @@ export interface WorkspacePlan {
     status: string;
     price_cents: number;
     monthly_total_cents: number;
+    interval?: BillingInterval;
+    period_total_cents?: number;
     renews_at: string | null;
     cancel_at_period_end: boolean;
   };
@@ -34,6 +47,8 @@ export interface WorkspacePlan {
   extra_user_cents: number;
   extra_number_cents: number;
   minutes_per_user?: number;
+  yearly_available?: boolean;
+  months_billed_per_year?: number;
   catalog: CatalogPlan[];
 }
 

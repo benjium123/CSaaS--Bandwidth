@@ -87,6 +87,7 @@ describe("E911 at number checkout", () => {
 
     await waitFor(() => expect(checkoutBody(client)).toEqual({
       plan_code: "solo",
+      billing_interval: "month",
       numbers: ["+12125550101"],
       acknowledge_e911: true,
       emergency_address: {
@@ -142,6 +143,7 @@ describe("E911 at number checkout", () => {
 
     await waitFor(() => expect(checkoutBody(client)).toEqual({
       plan_code: "solo",
+      billing_interval: "month",
       numbers: ["+12125550101"],
       acknowledge_e911: true,
       emergency_address_id: "addr-1",
