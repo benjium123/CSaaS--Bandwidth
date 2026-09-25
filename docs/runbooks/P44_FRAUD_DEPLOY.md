@@ -1,6 +1,8 @@
 # P44 fraud prevention: deploy checklist (operator)
 
-Branch `p44-fraud` sits on top of `b1-billing-v2`. Deploy billing v2 first.
+Branch `p44-merge` = P44 merged onto main `f969363` (billing v2 + Hamza's E911, both live).
+The E911 base (tables, checkout consent, 911 dialing) is Hamza's; P44e adds SignalWire
+registration, auto-registration of numbers without an address, and the call gate.
 
 ## Before deploy
 1. **Mark the live workspace as established**, or it counts as a new account for 30 days
@@ -14,11 +16,12 @@ Branch `p44-fraud` sits on top of `b1-billing-v2`. Deploy billing v2 first.
    and existing numbers get `E911_GRACE_DAYS` (7) more. A number bought later gets 7 days
    from its purchase. After that, calls from a number without an active 911 address are
    refused. **Until one E911 activation has been checked live on a Telnyx number and a
-   SignalWire number, set `E911_ENFORCED=0`.** The carrier payloads follow the docs and
-   have not been exercised against a live account yet.
+   SignalWire number, set `E911_ENFORCED=0`.** The Telnyx path is Hamza's (live); the
+   SignalWire payloads follow the docs and have not been exercised against a live account.
 
 ## Deploy
-- Migrations `0068_e911` and `0069_porting` (additive only).
+- Migrations `0069_porting` and `0070_e911_signalwire` (additive only; `0068_e911` is
+  already live from Hamza's deploy).
 - `python deploy/fraud_carrier_limits.py show`, then `apply`. This sets the Telnyx
   outbound voice profile to US-only, the maximum destination rate, the daily spend limit
   and the concurrency limit, plus the messaging-profile whitelist. It only touches objects
