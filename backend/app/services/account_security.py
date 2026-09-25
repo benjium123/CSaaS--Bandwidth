@@ -19,8 +19,8 @@ from app.models import (
     User,
     UserPasskey,
 )
+from app.services import email_code, mailer, session_cache
 from app.services import identity as identity_svc
-from app.services import mailer, session_cache
 
 
 def _now() -> datetime:
@@ -72,7 +72,7 @@ async def mark_revoked(settings: Settings, ids: list[uuid.UUID]) -> None:
 
 
 async def clear_second_factors(session: AsyncSession, user: User) -> dict:
-    """Remove the authenticator app, every passkey and every recovery code."""
+    """Remove the authenticator app, email codes, every passkey and every recovery code."""
     passkeys = await session.execute(sa.delete(UserPasskey).where(UserPasskey.user_id == user.id))
     await session.execute(sa.delete(RecoveryCode).where(RecoveryCode.user_id == user.id))
     had_totp = bool(user.totp_enabled)
@@ -80,6 +80,8 @@ async def clear_second_factors(session: AsyncSession, user: User) -> dict:
     user.totp_secret = None
     user.totp_last_used_step = None
     user.has_passkey = False
+    user.email_2fa_enabled = False
+    email_code.clear(user)
     return {"totp_removed": had_totp, "passkeys_removed": passkeys.rowcount or 0}
 
 

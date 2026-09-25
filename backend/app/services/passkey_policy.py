@@ -1,4 +1,9 @@
-"""P42: owners, admins, billing members and platform operators must sign in with a passkey.
+"""P42: platform operators must sign in with a passkey.
+
+Customer owners, admins and billing staff are NOT held to this: they choose their second
+factor (email code, authenticator app or passkey), per the product owner. Only the operator
+console (auth/deps.py require_operator) calls ``enforce``, always with ``org=None``. The
+rules below are what apply there; the org-role wording is historical.
 
 Passkeys cannot be phished: they only answer for our real domain. An authenticator code can
 be typed into a fake login page, which is exactly how privileged accounts get taken over.

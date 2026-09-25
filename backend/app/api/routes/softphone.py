@@ -221,7 +221,6 @@ async def _ws_org_policy_allows(
     from datetime import datetime, timedelta, timezone
 
     from app.net import client_ip
-    from app.services import passkey_policy
 
     def aware(value):
         return value if value is None or value.tzinfo is not None else value.replace(
@@ -265,11 +264,6 @@ async def _ws_org_policy_allows(
         return False
     if identity_svc.two_factor_required(org, user):
         return False
-    if settings.require_passkey_for_privileged and passkey_policy.is_privileged_role(role):
-        if not passkey_policy.session_satisfies(session_row, org):
-            until = passkey_policy.grace_until(settings, user)
-            if until is None or now >= until:
-                return False
     return True
 
 

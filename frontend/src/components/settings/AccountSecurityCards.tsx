@@ -51,7 +51,7 @@ export function RecoveryCodesCard() {
   const status = useQuery({
     queryKey: ["auth", "recovery-codes"],
     queryFn: () => api.request<{ remaining: number }>("/api/v1/auth/recovery-codes"),
-    enabled: Boolean(me?.totp_enabled || me?.has_passkey),
+    enabled: Boolean(me?.totp_enabled || me?.has_passkey || me?.email_2fa_enabled),
   });
   const generate = useMutation({
     mutationFn: () => api.request<{ codes: string[] }>("/api/v1/auth/recovery-codes", { method: "POST" }),
@@ -61,7 +61,7 @@ export function RecoveryCodesCard() {
     },
   });
 
-  if (!me?.totp_enabled && !me?.has_passkey) return null;
+  if (!me?.totp_enabled && !me?.has_passkey && !me?.email_2fa_enabled) return null;
 
   return (
     <div className="space-y-3">
@@ -105,6 +105,8 @@ const ACTIVITY_LABELS: Record<string, string> = {
   "password.reset": "Password reset",
   "totp.enabled": "Authenticator app added",
   "totp.disabled": "Authenticator app removed",
+  "email_2fa.enabled": "Email codes turned on",
+  "email_2fa.disabled": "Email codes turned off",
   "passkey.added": "Passkey added",
   "passkey.removed": "Passkey removed",
   "recovery_codes.generated": "Recovery codes generated",
@@ -221,6 +223,64 @@ export function SessionPolicyCard() {
       </label>
       {save.isSuccess && <p className="text-sm text-[hsl(var(--cx-live))]">Saved.</p>}
       {save.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(save.error)}</p>}
+    </div>
+  );
+}
+
+/** Email codes as a second factor: a six-digit code sent to the account address. */
+export function EmailCodesCard() {
+  const { api, me, refreshMe } = useAuth();
+  const [password, setPassword] = React.useState("");
+  const [sent, setSent] = React.useState(false);
+  const [code, setCode] = React.useState("");
+  const on = Boolean(me?.email_2fa_enabled);
+  const act = useMutation({
+    mutationFn: async (step: "send" | "activate" | "disable") => {
+      if (step === "send") {
+        await api.request("/api/v1/auth/2fa/email/enrol/send", { method: "POST", json: { password } });
+        setSent(true);
+      } else if (step === "activate") {
+        await api.request("/api/v1/auth/2fa/email/enrol/activate", { method: "POST", json: { code } });
+      } else {
+        await api.request("/api/v1/auth/2fa/email/disable", { method: "POST", json: { password } });
+      }
+    },
+    onSuccess: async (_data, step) => {
+      if (step === "send") return;
+      setPassword("");
+      setCode("");
+      setSent(false);
+      await refreshMe();
+    },
+  });
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-sm font-medium">Email codes {on ? <span className="text-[hsl(var(--cx-live))]">· On</span> : null}</p>
+        <p className="text-xs text-muted-foreground">
+          {on
+            ? `Signing in asks for a six-digit code sent to ${me?.email ?? "your email"}.`
+            : "Get a six-digit code by email when you sign in. Simple, but a passkey or an authenticator app is stronger: anyone who can read your email could also get the code."}
+        </p>
+      </div>
+      {!sent ? (
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+          <Input aria-label="Password for email codes" type="password" autoComplete="current-password" placeholder="Your password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Button type="button" variant={on ? "outline" : "default"} disabled={!password || act.isPending} onClick={() => act.mutate(on ? "disable" : "send")}>
+            {on ? "Turn off email codes" : "Send me a code"}
+          </Button>
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+          <Input aria-label="Email code" inputMode="numeric" autoComplete="one-time-code" placeholder="Six-digit code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} />
+          <Button type="button" disabled={code.length !== 6 || act.isPending} onClick={() => act.mutate("activate")}>
+            Turn on email codes
+          </Button>
+        </div>
+      )}
+      {sent && <p className="text-xs text-muted-foreground">We sent a code to {me?.email}. It works for 10 minutes.</p>}
+      {act.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(act.error)}</p>}
     </div>
   );
 }

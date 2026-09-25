@@ -12,6 +12,13 @@ membership the user has, so being an agent in one workspace does not cancel bein
 another - privileged in ANY org counts, and one admin membership obliges a factor for the whole
 account.
 
+ONLY ONCE THE WORKSPACE IS APPROVED. A brand-new owner is confirming their email and filling
+in verification; there is nothing to protect yet and a factor at that stage only adds friction.
+A privileged role counts from the moment platform review approves that workspace (and keeps
+counting through re-verification, suspension or an info request after that - approval sets
+``next_reverification_at``, which is what "was ever approved" reads). A workspace that is not
+subject to review at all (``kyc_required = false``) counts at once, as before.
+
 Platform operators (``platform_operators`` rows) are ALSO obliged to hold a second factor,
 regardless of the org-role policy and regardless of the ``require_2fa_privileged_users``
 config flag. An operator can be orgless (a reviewer with no customer workspace), so the
@@ -27,13 +34,51 @@ so we recompute instead of remembering.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import uuid
+from collections.abc import Iterable, Sequence
 
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.models import Role, User
+from app.db.base import ALLOW_UNSCOPED_KEY
+from app.models import Org, Role, User
+from app.models.kyc import KycProfile
 from app.models.rbac import is_privileged_permissions
+
+#: A profile in one of these has been approved; so has any with next_reverification_at set.
+_APPROVED_STATUSES = ("approved", "reverification_due", "suspended")
+
+
+async def approved_org_ids(session: AsyncSession, orgs: Iterable[Org]) -> set[uuid.UUID]:
+    """The workspaces among ``orgs`` whose privileged roles oblige a second factor."""
+    orgs = list(orgs)
+    counted = {org.id for org in orgs if not org.kyc_required}
+    reviewed = [org.id for org in orgs if org.kyc_required]
+    if reviewed:
+        # JUSTIFIED allow_unscoped: the answer spans every workspace this account belongs to.
+        rows = await session.execute(
+            sa.select(KycProfile.org_id)
+            .where(
+                KycProfile.org_id.in_(reviewed),
+                sa.or_(
+                    KycProfile.status.in_(_APPROVED_STATUSES),
+                    KycProfile.next_reverification_at.is_not(None),
+                ),
+            )
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+        counted.update(rows.scalars().all())
+    return counted
+
+
+def required_from_memberships(
+    settings: Settings,
+    memberships: Sequence[tuple[Org, Role]],
+    approved: set[uuid.UUID],
+) -> bool:
+    """``required_from_roles`` over only the memberships in approved workspaces."""
+    return required_from_roles(settings, [role for org, role in memberships if org.id in approved])
 
 
 def required_from_roles(settings: Settings, roles: Iterable[Role]) -> bool:
@@ -73,7 +118,10 @@ async def requires_second_factor(
     from app.repositories.orgs import list_memberships_for_user
 
     memberships = await list_memberships_for_user(session, user.id)
-    return required_from_roles(settings, [role for _org, role in memberships])
+    if not required_from_roles(settings, [role for _org, role in memberships]):
+        return False  # no privileged role anywhere: skip the approval lookup
+    approved = await approved_org_ids(session, [org for org, _role in memberships])
+    return required_from_memberships(settings, memberships, approved)
 
 
 async def must_enrol(session: AsyncSession, settings: Settings, user: User) -> bool:

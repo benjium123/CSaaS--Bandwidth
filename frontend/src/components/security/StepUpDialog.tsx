@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { getPasskeyAssertion, passkeysSupported } from "@/lib/webauthn";
+import { EmailCodeStep } from "@/components/security/EmailCodeStep";
 import {
   AuthAlert,
   AuthButton,
@@ -200,7 +201,7 @@ export function StepUpDialog() {
               {/* recent_2fa is satisfied for a few minutes on this session, so one proof
                   covers the run of admin work someone is usually in the middle of. */}
               <p className="text-sm leading-relaxed text-muted-foreground">
-                To {what}, confirm with your passkey or authenticator app.
+                To {what}, confirm it is you.
               </p>
               {me?.has_passkey && passkeysSupported() && (
                 <AuthButton type="button" tone="key" block onClick={confirmWithPasskey} disabled={busy}>
@@ -229,10 +230,25 @@ export function StepUpDialog() {
                   </AuthButton>
                 </div>
               )}
+              {me?.email_2fa_enabled && (
+                <EmailCodeStep
+                  email={me.email}
+                  sendLabel="Email me a code"
+                  verifyLabel="Confirm"
+                  send={() => api.request("/api/v1/auth/2fa/email/step-up/send", { method: "POST" })}
+                  verify={async (value) => {
+                    await api.request("/api/v1/auth/2fa/email/step-up", {
+                      method: "POST",
+                      json: { code: value },
+                    });
+                    setDone(true);
+                  }}
+                />
+              )}
               {/* Audit: a passkey-only person on a browser without WebAuthn used to get this
                   dialog with NO button and no explanation - a dead end they could not leave.
                   Say what happened and give them a way out. */}
-              {me && !me.totp_enabled && !(me.has_passkey && passkeysSupported()) && (
+              {me && !me.totp_enabled && !me.email_2fa_enabled && !(me.has_passkey && passkeysSupported()) && (
                 <>
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {me?.has_passkey

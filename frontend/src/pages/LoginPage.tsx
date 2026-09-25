@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { rememberPendingForRecovery } from "@/pages/RecoverAccountPage";
 import { passkeysSupported } from "@/lib/webauthn";
+import { EmailCodeStep } from "@/components/security/EmailCodeStep";
 import {
   AuthAlert,
   AuthButton,
@@ -41,7 +42,9 @@ import {
 const PASSKEY_NOTE_ID = "login-passkey-unsupported";
 
 export function LoginPage() {
-  const { login, verify2fa, verifyPasskey, recoverWithCode } = useAuth();
+  const { login, verify2fa, verifyPasskey, recoverWithCode, sendLoginEmailCode, verifyEmailCode } =
+    useAuth();
+  const [factor, setFactor] = React.useState<"totp" | "email">("totp");
   const navigate = useNavigate();
   const [useRecoveryCode, setUseRecoveryCode] = React.useState(false);
   const [email, setEmail] = React.useState("");
@@ -70,6 +73,7 @@ export function LoginPage() {
     if (res.kind === "needs_2fa") {
       setPendingToken(res.pendingToken);
       setMethods(res.methods);
+      setFactor(res.methods.includes("totp") ? "totp" : "email");
       return;
     }
     if (res.kind === "error") {
@@ -99,7 +103,10 @@ export function LoginPage() {
   }
 
   const secondStep = Boolean(pendingToken);
-  const totpAllowed = !secondStep || methods.includes("totp") || useRecoveryCode;
+  const emailOffered = secondStep && methods.includes("email") && !useRecoveryCode;
+  const emailMode = emailOffered && (factor === "email" || !methods.includes("totp"));
+  const totpAllowed =
+    !secondStep || useRecoveryCode || (methods.includes("totp") && !emailMode);
   const passkeyOffered = secondStep && methods.includes("passkey") && !useRecoveryCode;
   // The button stays visible when the browser has no WebAuthn - hiding the only named
   // route would be more confusing than explaining why it cannot be taken - but it is
@@ -113,7 +120,7 @@ export function LoginPage() {
   const passkeyUnsupported = passkeyOffered && !passkeysSupported();
   // The remaining silence: the server named no factor this screen can exercise at all -
   // reachable with an empty `methods` list - which used to render a form with nothing on it.
-  const noMethodOffered = secondStep && !totpAllowed && !passkeyOffered;
+  const noMethodOffered = secondStep && !totpAllowed && !passkeyOffered && !emailOffered;
 
   return (
     <AuthSurface>
@@ -215,12 +222,37 @@ export function LoginPage() {
               </AuthNotice>
             ) : null}
 
-            {passkeyUsable && totpAllowed ? (
+            {passkeyUsable && (totpAllowed || emailMode) ? (
               <div className="flex items-center gap-3">
                 <hr className="ex-hairline flex-1" />
                 <span className="ex-label">or</span>
                 <hr className="ex-hairline flex-1 rotate-180" />
               </div>
+            ) : null}
+
+            {emailMode && pendingToken ? (
+              <EmailCodeStep
+                autoSend={!methods.includes("totp") && !methods.includes("passkey")}
+                send={() => sendLoginEmailCode(pendingToken)}
+                verify={async (value) => {
+                  const res = await verifyEmailCode(pendingToken, value);
+                  if (res.kind === "error") throw new Error(res.message);
+                }}
+              />
+            ) : null}
+
+            {emailOffered && methods.includes("totp") ? (
+              <button
+                type="button"
+                className="ex-link"
+                onClick={() => {
+                  setFactor(emailMode ? "totp" : "email");
+                  setCode("");
+                  setError(null);
+                }}
+              >
+                {emailMode ? "Use my authenticator app instead" : "Email me a code instead"}
+              </button>
             ) : null}
 
             {totpAllowed && (

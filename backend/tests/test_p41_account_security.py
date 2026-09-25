@@ -18,7 +18,7 @@ from cryptography.fernet import Fernet
 
 from app.models import LoginDevice, SecurityAlert, User, WebauthnChallenge
 from app.models import Session as IdentitySession
-from tests.conftest import auth_headers, create_org, make_settings
+from tests.conftest import approve_workspaces, auth_headers, create_org, make_settings
 
 PASSWORD = "correct-horse-battery"
 DEVICE_A = "device-a-0123456789abcdef"
@@ -89,6 +89,8 @@ async def _register(client, email: str) -> str:
         "/api/v1/auth/register", json={"email": email, "password": PASSWORD, "full_name": "X"}
     )
     assert r.status_code == 201, r.text
+    # An owner is only obliged to hold a factor once their workspace is approved.
+    await approve_workspaces(email)
     r = await client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": PASSWORD},

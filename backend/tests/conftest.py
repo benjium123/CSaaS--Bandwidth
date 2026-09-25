@@ -471,3 +471,42 @@ async def confirm_registered_email(client, email):
     ).group(1)
     response = await client.post("/api/v1/auth/confirm-email", json={"token": token})
     assert response.status_code == 200, response.text
+
+
+async def approve_workspaces(email: str) -> None:
+    """Mark every workspace ``email`` belongs to as approved by platform review.
+
+    A privileged role only obliges a second factor once its workspace is approved
+    (services/second_factor.py), so tests about the 2FA gate itself start from here.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    import sqlalchemy as sa
+
+    from app.db.base import set_org_context
+    from app.db.session import get_sessionmaker
+    from app.models import OrgMembership, User
+    from app.services import kyc
+
+    async with get_sessionmaker()() as s:
+        user = (
+            await s.execute(
+                sa.select(User)
+                .where(sa.func.lower(User.email) == email.lower())
+                .execution_options(allow_unscoped=True)
+            )
+        ).scalar_one()
+        org_ids = (
+            await s.execute(
+                sa.select(OrgMembership.org_id)
+                .where(OrgMembership.user_id == user.id)
+                .execution_options(allow_unscoped=True)
+            )
+        ).scalars().all()
+        for org_id in org_ids:
+            set_org_context(s, org_id)
+            profile = await kyc.get_or_create_profile(s, org_id)
+            profile.status = "approved"
+            profile.next_reverification_at = datetime.now(timezone.utc) + timedelta(days=365)
+            await s.flush()  # writes are checked against the org context current at flush
+        await s.commit()

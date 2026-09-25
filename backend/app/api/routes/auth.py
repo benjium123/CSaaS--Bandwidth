@@ -136,7 +136,7 @@ class TokenOut(BaseModel):
     # When 2FA is enabled the password step alone is NOT a login.
     requires_2fa: bool = False
     pending_token: str | None = None
-    #: P41: which second factors the pending login accepts ("totp", "passkey").
+    #: P41: which second factors the pending login accepts ("totp", "passkey", "email").
     methods: list[str] = []
     #: P41: signed in, but must add an authenticator app or passkey before anything else.
     requires_2fa_enrollment: bool = False
@@ -165,6 +165,7 @@ class MeOut(BaseModel):
     email: str
     full_name: str
     totp_enabled: bool = False
+    email_2fa_enabled: bool = False
     email_verification_required: bool = False
     email_confirmation_sent: bool = False
     has_passkey: bool = False
@@ -370,6 +371,7 @@ async def register(
             email_confirmation_sent=user.email_verification_sent_at is not None,
             full_name=user.full_name,
             totp_enabled=user.totp_enabled,
+            email_2fa_enabled=user.email_2fa_enabled,
             permissions=[],
             memberships=[],
         )
@@ -384,6 +386,7 @@ async def register(
         email_confirmation_sent=user.email_verification_sent_at is not None,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
+        email_2fa_enabled=user.email_2fa_enabled,
         permissions=sorted(PERMISSIONS),
         memberships=[
             MembershipOut(
@@ -547,8 +550,10 @@ async def me(
     # P41: computed here, from the roles this user holds RIGHT NOW, so promoting an agent to
     # admin flips it on at once. Reuses `rows` rather than re-querying, and is read before the
     # loop below starts switching org context.
-    second_factor_required = not user.has_second_factor and second_factor.required_from_roles(
-        request.app.state.settings, [role for _org, role in rows]
+    second_factor_required = not user.has_second_factor and second_factor.required_from_memberships(
+        request.app.state.settings,
+        rows,
+        await second_factor.approved_org_ids(session, [org for org, _role in rows]),
     )
     permissions: list[str] = []
     if x_org_id:
@@ -613,12 +618,15 @@ async def me(
         email_confirmation_sent=user.email_verification_sent_at is not None,
         full_name=user.full_name,
         totp_enabled=user.totp_enabled,
+        email_2fa_enabled=user.email_2fa_enabled,
         has_passkey=user.has_passkey,
         is_platform_operator=operator is not None,
         operator_role=operator.role if operator is not None else None,
         second_factor_required=second_factor_required,
+        # Only platform operators are held to passkey sign-in (services/passkey_policy.py).
         passkey_required=bool(
             request.app.state.settings.require_passkey_for_privileged
+            and operator is not None
             and user.passkey_required_since is not None
         ),
         passkey_grace_until=passkey_policy.grace_until(request.app.state.settings, user),

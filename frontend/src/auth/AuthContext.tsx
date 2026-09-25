@@ -106,6 +106,8 @@ export type Me = {
   totp_enabled?: boolean;
   /** P41 */
   has_passkey?: boolean;
+  /** A code emailed to the account address counts as the second factor. */
+  email_2fa_enabled?: boolean;
   is_platform_operator?: boolean;
   /** P43: "reviewer" | "admin" for platform operators. */
   operator_role?: string | null;
@@ -148,6 +150,9 @@ type AuthValue = {
   login(email: string, password: string): Promise<LoginResult>;
   verify2fa(pendingToken: string, code: string): Promise<LoginResult>;
   verifyPasskey(pendingToken: string): Promise<LoginResult>;
+  /** Email a sign-in code for a pending login (throws on failure). */
+  sendLoginEmailCode(pendingToken: string): Promise<void>;
+  verifyEmailCode(pendingToken: string, code: string): Promise<LoginResult>;
   recoverWithCode(pendingToken: string, code: string): Promise<LoginResult>;
   refreshMe(): Promise<Me | null>;
   completeSso(accessToken: string | null, orgId: string): Promise<LoginResult>;
@@ -264,6 +269,33 @@ export function AuthProvider({
           method: "POST",
           json: { pending_token: pendingToken, code },
         });
+        if (res.access_token) api.setAuth({ token: res.access_token });
+        await loadMe();
+        return { kind: "ok" };
+      } catch (err) {
+        return loginError(err);
+      }
+    },
+    [api, loadMe],
+  );
+
+  const sendLoginEmailCode = React.useCallback(
+    async (pendingToken: string): Promise<void> => {
+      await api.request("/api/v1/auth/2fa/email/login/send", {
+        method: "POST",
+        json: { pending_token: pendingToken },
+      });
+    },
+    [api],
+  );
+
+  const verifyEmailCode = React.useCallback(
+    async (pendingToken: string, code: string): Promise<LoginResult> => {
+      try {
+        const res = await api.request<{ access_token: string | null }>(
+          "/api/v1/auth/2fa/email/login/verify",
+          { method: "POST", json: { pending_token: pendingToken, code } },
+        );
         if (res.access_token) api.setAuth({ token: res.access_token });
         await loadMe();
         return { kind: "ok" };
@@ -449,6 +481,8 @@ export function AuthProvider({
     login,
     verify2fa,
     verifyPasskey,
+    sendLoginEmailCode,
+    verifyEmailCode,
     refreshMe: loadMe,
     recoverWithCode,
     completeSso,

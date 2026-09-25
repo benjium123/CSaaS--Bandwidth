@@ -156,4 +156,6 @@ def second_factor_methods(user: User) -> list[str]:
         methods.append("totp")
     if user.has_passkey:
         methods.append("passkey")
+    if user.email_2fa_enabled:
+        methods.append("email")
     return methods

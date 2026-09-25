@@ -40,7 +40,13 @@ from app.errors import ConfigurationError
 from app.models import OrgMembership, Role, User
 from app.models.rbac import SYSTEM_ROLES, is_privileged_permissions
 from app.services import second_factor
-from tests.conftest import auth_headers, create_org, make_settings, register_and_login
+from tests.conftest import (
+    approve_workspaces,
+    auth_headers,
+    create_org,
+    make_settings,
+    register_and_login,
+)
 
 pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
 
@@ -103,6 +109,7 @@ async def _owner_with_org(sf_client: httpx.AsyncClient, session, email: str, org
     token = await register_and_login(sf_client, email)
     await _give_factor(session, email)
     org = await create_org(sf_client, token, org_name)
+    await approve_workspaces(email)  # privileged roles only count in approved workspaces
     return token, org, auth_headers(token, org["id"])
 
 
@@ -219,15 +226,24 @@ async def _enroll_and_activate(
 # ==================================================================================
 # HTTP tests - the gate itself
 # ==================================================================================
-async def test_owner_without_a_factor_is_required_and_gated(sf_client):
-    """A self-serve owner (privileged from the moment they register) must be told by
-    ``/auth/me`` that it needs a factor, and must be refused by a non-exempt endpoint.
+async def test_owner_is_asked_for_a_factor_only_once_approved(sf_client):
+    """A self-serve owner is NOT asked for a factor while confirming email and filling in
+    verification - there is nothing to protect yet. The moment platform review approves the
+    workspace, ``/auth/me`` says a factor is needed and a non-exempt endpoint refuses them.
 
-    If this failed one way the product could be used with a password alone; if it failed
-    the other way the console would never be told to send the new owner to enrolment.
+    If the first half failed, every signup would hit 2FA enrolment before they could even
+    apply; if the second half failed, an approved workspace could run on a password alone.
     """
-    token = await register_and_login(sf_client, "gated-owner@example.com")
+    email = "gated-owner@example.com"
+    token = await register_and_login(sf_client, email)
 
+    me = await _me(sf_client, token)
+    assert me["second_factor_required"] is False
+    org_id = _membership_org_id(me["memberships"][0])
+    r = await sf_client.get("/api/v1/contacts", headers=auth_headers(token, org_id))
+    assert r.status_code == 200, r.text
+
+    await approve_workspaces(email)
     me = await _me(sf_client, token)
     assert me["second_factor_required"] is True
     assert len(me["memberships"]) == 1, me["memberships"]

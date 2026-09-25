@@ -2,6 +2,7 @@ import * as React from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { PasskeysCard } from "@/components/settings/PasskeysCard";
 import { TotpEnrolment } from "@/components/security/TotpEnrolment";
+import { EmailCodeStep } from "@/components/security/EmailCodeStep";
 import {
   AuthAlert,
   AuthButton,
@@ -13,7 +14,11 @@ import {
 } from "@/components/auth/AuthShell";
 
 /**
- * P41: every account must have an authenticator app or a passkey. Until it does, the API
+ * Owners and admins of an APPROVED workspace (and platform operators) must hold a second
+ * factor: an email code, a passkey or an authenticator app. Nobody sees this while signing up
+ * or waiting for review - see backend services/second_factor.py.
+ *
+ * P41 (original note): until it does, Until it does, the API
  * refuses everything except these enrolment calls, so this screen replaces the whole app.
  *
  * Because it is a wall rather than a page, it has to be the most helpful screen in the
@@ -24,6 +29,7 @@ import {
 export function SecureAccountPage() {
   const { api, me, refreshMe, logout } = useAuth();
   const [password, setPassword] = React.useState("");
+  const [emailPassword, setEmailPassword] = React.useState("");
   const [enroll, setEnroll] = React.useState<{ secret: string; uri: string } | null>(null);
   const [code, setCode] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
@@ -62,14 +68,15 @@ export function SecureAccountPage() {
   return (
     <AuthSurface>
       <AuthPlate
-        eyebrow="Required · Second factor"
+        eyebrow="One last step · Two-step verification"
         title="Secure your account"
         lede={
           <>
-            Every account needs a second way to prove it is you
-            {me && me.email ? <> — this one signs in as {me.email}</> : null}. Add a passkey, or
-            an authenticator app. Afterwards, create recovery codes in Settings, Team, Security
-            so a lost phone never locks you out.
+            {me?.is_platform_operator
+              ? "Operator accounts can see every customer, so signing in takes one more check"
+              : "Your account can now place calls and hold phone numbers, so signing in takes one more check"}
+            {me && me.email ? <> for {me.email}</> : null}. Pick whichever suits you. You can add
+            another later in Settings, Security.
           </>
         }
         footer={
@@ -81,7 +88,47 @@ export function SecureAccountPage() {
         <div className="space-y-5">
           <section className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <span className="ex-label">Option A · Recommended</span>
+              <span className="ex-label">Option A · Simplest</span>
+              <span className="text-xs text-muted-foreground">Code by email</span>
+            </div>
+            <div className="space-y-3">
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Each time you sign in we email you a six-digit code.
+              </p>
+              <Field label="Your password" hint="So nobody at an unattended screen can change how you sign in.">
+                <AuthInput
+                  aria-label="Your password for email codes"
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="Confirm your password"
+                  value={emailPassword}
+                  onChange={(e) => setEmailPassword(e.target.value)}
+                />
+              </Field>
+              <EmailCodeStep
+                email={me?.email}
+                disabled={!emailPassword}
+                verifyLabel="Turn on email codes"
+                send={() =>
+                  api.request("/api/v1/auth/2fa/email/enrol/send", {
+                    method: "POST",
+                    json: { password: emailPassword },
+                  })
+                }
+                verify={async (value) => {
+                  await api.request("/api/v1/auth/2fa/email/enrol/activate", {
+                    method: "POST",
+                    json: { code: value },
+                  });
+                  await refreshMe();
+                }}
+              />
+            </div>
+          </section>
+
+          <section className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="ex-label">Option B · Most secure</span>
               <Lamp state="live">Cannot be phished</Lamp>
             </div>
             <PasskeysCard onAdded={() => void refreshMe()} />
@@ -89,7 +136,7 @@ export function SecureAccountPage() {
 
           <section className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <span className="ex-label">Option B</span>
+              <span className="ex-label">Option C</span>
               <span className="text-xs text-muted-foreground">Authenticator app</span>
             </div>
 

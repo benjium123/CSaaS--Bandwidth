@@ -1,4 +1,8 @@
-"""P42 slice 4: passkeys required for owners, admins, billing and operators."""
+"""P42 slice 4, narrowed: passkeys are required for platform operators only.
+
+Customer owners, admins and billing staff pick their own second factor (email code,
+authenticator app or passkey) - the product owner's call.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +15,7 @@ import httpx
 import pytest
 import sqlalchemy as sa
 
-from app.models import Org, User
-from app.models import Session as IdentitySession
+from app.models import User
 from tests.conftest import auth_headers, create_org, make_settings, register_and_login
 
 
@@ -65,39 +68,47 @@ async def _age_grace(session, email: str, days: int) -> None:
     await session.commit()
 
 
-async def test_owner_needs_a_passkey_session_after_grace(pclient, session):
+async def test_customer_owner_is_not_held_to_passkeys(pclient, session):
+    """Customer owners choose their own second factor; the passkey mandate is operators only.
+
+    If this failed, every customer would be locked out of their own workspace two weeks after
+    signing up unless they owned a passkey - making email codes and authenticator apps moot.
+    """
     token = await register_and_login(pclient, "owner@pk.example")
     org = await create_org(pclient, token, "PK Co")
     h = auth_headers(token, org["id"])
-
-    # Inside the grace period a password session still works (and starts the clock).
     assert (await pclient.get("/api/v1/orgs/current", headers=h)).status_code == 200
+    await _age_grace(session, "owner@pk.example", 60)
+    r = await pclient.get("/api/v1/orgs/current", headers=h)
+    assert r.status_code == 200, r.text
+    me = (await pclient.get("/api/v1/auth/me", headers=h)).json()
+    assert me["passkey_required"] is False
+
+
+async def test_operator_needs_a_passkey_session_after_grace(pclient, session):
+    """Platform operators (super admins) still must sign in with a passkey after the grace."""
+    from app.models import PlatformOperator
+    from tests.conftest import mark_recent_2fa
+
+    email = "op@pk.example"
+    token = await register_and_login(pclient, email)
+    user = (await session.execute(sa.select(User).where(User.email == email))).scalar_one()
+    user.totp_enabled = True
+    session.add(PlatformOperator(id=uuid.uuid4(), user_id=user.id, role="admin", is_active=True))
+    await session.commit()
+    await mark_recent_2fa(session, email)
+    h = auth_headers(token)
+
+    # Inside the grace period a non-passkey session works (and starts the clock).
+    r = await pclient.get("/api/v1/ops/queue", headers=h)
+    assert r.status_code == 200, r.text
     me = (await pclient.get("/api/v1/auth/me", headers=h)).json()
     assert me["passkey_required"] is True and me["passkey_grace_until"]
 
-    await _age_grace(session, "owner@pk.example", 15)
-    r = await pclient.get("/api/v1/orgs/current", headers=h)
-    assert r.status_code == 403
+    await _age_grace(session, email, 15)
+    r = await pclient.get("/api/v1/ops/queue", headers=h)
+    assert r.status_code == 403, r.text
     assert r.json()["error"]["code"] == "passkey_required"
-    # Enrolment routes stay reachable so the person can fix it.
-    opts = await pclient.post("/api/v1/auth/passkeys/register/options", headers=h)
-    assert opts.status_code == 200
-    r = await pclient.post(
-        "/api/v1/auth/passkeys/register",
-        json={"challenge_id": opts.json()["challenge_id"], "credential": {"id": _cred("pk-owner")}},
-        headers=h,
-    )
-    assert r.status_code == 201, r.text
-    # Registering alone is not enough - the SESSION must be a passkey session.
-    assert (await pclient.get("/api/v1/orgs/current", headers=h)).status_code == 403
-    opts = await pclient.post("/api/v1/auth/passkeys/step-up/options", headers=h)
-    r = await pclient.post(
-        "/api/v1/auth/passkeys/step-up/verify",
-        json={"challenge_id": opts.json()["challenge_id"], "credential": {"id": _cred("pk-owner")}},
-        headers=h,
-    )
-    assert r.status_code == 200, r.text
-    assert (await pclient.get("/api/v1/orgs/current", headers=h)).status_code == 200
 
 
 async def test_agents_are_not_affected(pclient, session):
@@ -121,28 +132,6 @@ async def test_agents_are_not_affected(pclient, session):
     await session.commit()
     r = await pclient.get("/api/v1/contacts", headers=auth_headers(agent_token, org["id"]))
     assert r.status_code == 200, r.text
-
-
-async def test_trusted_idp_sso_session_counts(pclient, session):
-    token = await register_and_login(pclient, "sso@pk.example")
-    org = await create_org(pclient, token, "SSO Co")
-    h = auth_headers(token, org["id"])
-    await pclient.get("/api/v1/orgs/current", headers=h)
-    await _age_grace(session, "sso@pk.example", 30)
-    row = (
-        await session.execute(
-            sa.select(IdentitySession).order_by(IdentitySession.created_at.desc()).limit(1)
-        )
-    ).scalar_one()
-    row.auth_method = "sso"
-    # P43: only an SSO sign-in to THIS workspace can count its identity provider's MFA.
-    row.org_id = uuid.UUID(org["id"])
-    await session.commit()
-    assert (await pclient.get("/api/v1/orgs/current", headers=h)).status_code == 403
-    org_row = await session.get(Org, uuid.UUID(org["id"]))
-    org_row.trust_idp_mfa = True
-    await session.commit()
-    assert (await pclient.get("/api/v1/orgs/current", headers=h)).status_code == 200
 
 
 def test_p25_policy_counts_passkeys():

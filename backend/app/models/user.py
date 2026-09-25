@@ -49,6 +49,21 @@ class User(Base, TimestampMixin):
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )
 
+    #: A one-time code emailed to the account address, as a second factor. Only a hash of
+    #: the live code is kept, bound to the purpose it was sent for (enrol / login / step_up)
+    #: and dead after EMAIL_CODE_TTL or MAX_ATTEMPTS wrong tries (services/email_code.py).
+    email_2fa_enabled: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    email_code_hash: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
+    email_code_purpose: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
+    email_code_expires_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    email_code_attempts: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+
     #: P42: after an identity recovery, sensitive (step-up) actions stay blocked until this
     #: time - a stolen account recovered by an attacker cannot immediately be emptied.
     step_up_blocked_until: Mapped[datetime | None] = mapped_column(
@@ -65,7 +80,7 @@ class User(Base, TimestampMixin):
 
     @property
     def has_second_factor(self) -> bool:
-        return bool(self.totp_enabled or self.has_passkey)
+        return bool(self.totp_enabled or self.has_passkey or self.email_2fa_enabled)
 
     # P31: {mention, assignment, new_inbound, missed_call, sla_breach, digest: bool}; NULL =
     # every toggle on (models/push.py::DEFAULT_NOTIFICATION_PREFS).

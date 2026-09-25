@@ -161,7 +161,7 @@ async def _finish_user(
         session, settings, user
     ):
         raise PermissionDeniedError(
-            "Set up an authenticator app or a passkey to continue",
+            "Set up two-step verification to continue",
             code="two_factor_required",
         )
     return user
@@ -313,16 +313,9 @@ async def get_current_org(
 
         set_org_context(session, org.id)
         ctx = OrgContext(org=org, membership=membership, role=role, session=session)
-        from app.services import passkey_policy
-
-        await passkey_policy.enforce(
-            request,
-            session,
-            request.app.state.settings,
-            user,
-            org=org,
-            privileged=passkey_policy.is_privileged_role(role),
-        )
+        # No passkey mandate here: customer owners and admins may use any second factor
+        # (email code, authenticator app or passkey). Only platform operators must sign in
+        # with a passkey - see require_operator below and services/passkey_policy.py.
         set_org_context(session, org.id)
 
     # P25 IP allowlist: an org that sets ip_allowlist opts into a network restriction for

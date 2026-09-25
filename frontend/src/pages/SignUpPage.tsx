@@ -66,7 +66,7 @@ export function SignUpPage() {
           </Link>
         }
       >
-        <StepRail steps={["Account", "Secure it", "Verify identity"]} active={0} />
+        <StepRail steps={["Account", "Confirm email", "Verify identity"]} active={0} />
         <div className="space-y-4">
           <AuthNotice>Texting unlocks after you register a company and receive approval for a 10DLC campaign.</AuthNotice>
           <Field label="Email" hint="Personal and work email addresses are welcome.">

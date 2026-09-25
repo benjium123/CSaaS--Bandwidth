@@ -22,6 +22,8 @@ ACCOUNT_AUDIT_ACTIONS: tuple[str, ...] = (
     "password.reset",
     "totp.enabled",
     "totp.disabled",
+    "email_2fa.enabled",
+    "email_2fa.disabled",
     "passkey.added",
     "passkey.removed",
     "recovery_codes.generated",

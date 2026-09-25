@@ -36,7 +36,14 @@ from app.errors import (
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
-from app.services import account_security, lockout, login_flow, second_factor, session_tokens
+from app.services import (
+    account_security,
+    email_code,
+    lockout,
+    login_flow,
+    second_factor,
+    session_tokens,
+)
 
 router = APIRouter(prefix="/api/v1/auth/2fa", tags=["auth"])
 
@@ -268,3 +275,199 @@ async def disable(
         "The authenticator app was removed from your account.",
     )
     return {"totp_enabled": False}
+
+
+# ---------------------------------------------------------------------------------------
+# Email codes: the same second factor, delivered to the account's (confirmed) address.
+# ---------------------------------------------------------------------------------------
+class PendingIn(BaseModel):
+    pending_token: str
+
+
+class EmailCodeIn(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+
+
+class PendingCodeIn(PendingIn):
+    code: str = Field(min_length=6, max_length=6)
+
+
+async def _pending_email_user(
+    settings: Settings, session: AsyncSession, pending_token: str
+) -> User:
+    user_id = decode_pending_2fa_token(pending_token, settings.jwt_secret.get_secret_value())
+    user = await users_repo.get_by_id(session, user_id)
+    if user is None or not user.email_2fa_enabled:
+        raise UnauthenticatedError("Invalid verification session")
+    return user
+
+
+@router.post("/email/enrol/send")
+async def email_enrol_send(
+    payload: PasswordIn,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await enforce_rate_limit(request, f"email-code:{user.id}")
+    if not verify_password(payload.password, user.hashed_password):
+        raise UnauthenticatedError("Incorrect password")
+    if user.email_2fa_enabled:
+        raise ValidationFailedError("Email codes are already on")
+    if user.email_verification_required:
+        raise ValidationFailedError("Confirm your email address first")
+    # Like adding an authenticator app: someone who already holds a factor proves it first.
+    if user.has_second_factor:
+        await check_step_up(request, session, user, kind="recent_2fa", action="email_2fa_change")
+    await email_code.issue(request.app.state.settings, user, "enrol")
+    await session.commit()
+    return {"sent": True}
+
+
+@router.post("/email/enrol/activate")
+async def email_enrol_activate(
+    payload: EmailCodeIn,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"email-code-check:{user.id}")
+    try:
+        email_code.check(settings, user, "enrol", payload.code)
+    except UnauthenticatedError:
+        await session.commit()  # the miss counts toward the attempt cap
+        raise
+    had_factor = bool(user.has_second_factor)
+    user.email_2fa_enabled = True
+    row = await current_identity_session(request, session)
+    if row is not None and not had_factor:
+        row.second_factor_at = datetime.now(timezone.utc)
+    account_security.audit(session, user.id, "email_2fa.enabled", request=request)
+    await session.commit()
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "Email codes turned on",
+        "Signing in to your account now asks for a code sent to this address.",
+    )
+    return {"email_2fa_enabled": True}
+
+
+@router.post("/email/login/send")
+async def email_login_send(
+    payload: PendingIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"email-code:{payload.pending_token}")
+    user = await _pending_email_user(settings, session, payload.pending_token)
+    await lockout.ensure_not_locked(session, user)
+    await email_code.issue(settings, user, "login")
+    await session.commit()
+    return {"sent": True}
+
+
+@router.post("/email/login/verify")
+async def email_login_verify(
+    payload: PendingCodeIn,
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """Exchange a pending-2FA token + emailed code for a session (see ``verify``)."""
+    settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"email-code-check:{payload.pending_token}")
+    user = await _pending_email_user(settings, session, payload.pending_token)
+    await lockout.ensure_not_locked(session, user)
+    try:
+        email_code.check(settings, user, "login", payload.code)
+    except UnauthenticatedError as exc:
+        await lockout.fail(session, settings, request, user, outcome="bad_2fa", error=exc)
+        raise
+    token = await login_flow.complete_login(
+        session,
+        settings,
+        request,
+        user,
+        second_factor=True,
+        response=response,
+        auth_method="password_email",
+    )
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@router.post("/email/step-up/send")
+async def email_step_up_send(
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await enforce_rate_limit(request, f"email-code:{user.id}")
+    if not user.email_2fa_enabled:
+        raise ValidationFailedError("Email codes are not on")
+    await email_code.issue(request.app.state.settings, user, "step_up")
+    await session.commit()
+    return {"sent": True}
+
+
+@router.post("/email/step-up")
+async def email_step_up(
+    payload: EmailCodeIn,
+    request: Request,
+    response: Response,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"email-code-check:{user.id}")
+    if not user.email_2fa_enabled:
+        raise ValidationFailedError("Email codes are not on")
+    row = await current_identity_session(request, session)
+    if row is None:
+        raise UnauthenticatedError("Sign in again to continue")
+    await lockout.ensure_not_locked(session, user)
+    try:
+        email_code.check(settings, user, "step_up", payload.code)
+    except UnauthenticatedError as exc:
+        await lockout.fail(session, settings, request, user, outcome="bad_2fa", error=exc)
+        raise
+    row.second_factor_at = datetime.now(timezone.utc)
+    session_tokens.rotate(response, settings, row)
+    await session.commit()
+    return {"ok": True}
+
+
+@router.post("/email/disable")
+async def email_disable(
+    payload: PasswordIn,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    if not verify_password(payload.password, user.hashed_password):
+        raise UnauthenticatedError("Incorrect password")
+    settings: Settings = request.app.state.settings
+    if not user.email_2fa_enabled:
+        raise ValidationFailedError("Email codes are not on")
+    await check_step_up(request, session, user, kind="recent_2fa", action="email_2fa_change")
+    if not (user.totp_enabled or user.has_passkey) and await second_factor.requires_second_factor(
+        session, settings, user
+    ):
+        raise ValidationFailedError(
+            "Admins and owners must keep a second factor. Add an authenticator app or a "
+            "passkey before turning off email codes.",
+            code="last_second_factor",
+        )
+    user.email_2fa_enabled = False
+    email_code.clear(user)
+    account_security.audit(session, user.id, "email_2fa.disabled", request=request)
+    await session.commit()
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "Email codes turned off",
+        "Signing in to your account no longer asks for a code sent by email.",
+    )
+    return {"email_2fa_enabled": False}
