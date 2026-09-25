@@ -1,4 +1,9 @@
-"""Stripe-paid Telnyx number carts. Payment is verified server-side before ordering."""
+"""Stripe-paid Telnyx number carts. Payment is verified server-side before ordering.
+
+On workspace plans (services/plan_billing.py) the first cart is bought together with a plan
+in one Stripe Checkout; later carts are free while the plan still includes numbers, and add
+$5/month add-on numbers to the plan subscription beyond that. Carts on the retired
+$15-per-number price keep their own subscription and the legacy paths below."""
 
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -51,18 +56,35 @@ async def require_carrier_funds(settings, count: int) -> None:
 
 
 def public(purchase):
+    live = sum(n.get("state") not in ("released", "refunded") for n in purchase.numbers)
     return {
         "id": str(purchase.id),
         "state": purchase.state,
         "numbers": purchase.numbers,
-        "monthly_total_cents": 1500 * sum(n.get("state") != "released" for n in purchase.numbers),
+        "plan_code": purchase.plan_code,
+        # Only meaningful on the retired per-number price; a plan is billed as a whole.
+        "monthly_total_cents": None if purchase.plan_code else 1500 * live,
         "detail": purchase.detail,
         "checkout_url": purchase.checkout_url if purchase.state == "checkout" else None,
     }
 
 
-async def create(session, settings, org_id, numbers, *, emergency_address_id=None):
+async def create(
+    session,
+    settings,
+    org_id,
+    numbers,
+    *,
+    emergency_address_id=None,
+    plan_code=None,
+    accept_charge_cents=None,
+):
+    """Start buying ``numbers``. Without a plan, ``plan_code`` is required and a Stripe
+    Checkout for plan + add-on numbers is opened. With one, the numbers are free while the
+    plan has room and cost $5/month each beyond it (charged now, after the buyer confirmed
+    ``accept_charge_cents``); the cart comes back already ``paid``."""
     from app.api.routes.numbers import to_e164
+    from app.services import plan_billing
 
     normalized = [to_e164(n) for n in numbers]
     if len(set(normalized)) != len(normalized):
@@ -75,17 +97,16 @@ async def create(session, settings, org_id, numbers, *, emergency_address_id=Non
     stripe = stripe_client._stripe(settings)
     if not settings.stripe_webhook_secret.get_secret_value():
         raise FeatureUnavailableError("Checkout is being configured. Please try again shortly.")
-    price = await stripe_client._run_sync(stripe.Price.retrieve, settings.stripe_number_price_id)
-    if (
-        price.get("unit_amount") != 1500
-        or price.get("currency") != "usd"
-        or price.get("recurring", {}).get("interval") != "month"
-        or price.get("recurring", {}).get("interval_count") != 1
-        or price.get("transform_quantity")
-        or price.get("recurring", {}).get("usage_type", "licensed") != "licensed"
-        or not price.get("active")
-    ):
-        raise FeatureUnavailableError("The phone-number price needs administrator attention.")
+    await plan_billing.ensure_catalog(session, settings)
+    ent = await plan_billing.entitlement(session, org_id)
+    if ent is None:
+        if plan_code not in plan_billing.PLANS:
+            raise ValidationFailedError(
+                "Choose a plan to buy your first numbers.", code="plan_required"
+            )
+        await plan_billing.validate_checkout_prices(settings, stripe, plan_code, len(normalized))
+    else:
+        plan_code = ent.spec.code
     await require_carrier_funds(settings, len(normalized))
     from app.models import Org
 
@@ -113,7 +134,10 @@ async def create(session, settings, org_id, numbers, *, emergency_address_id=Non
             )
             if remote.get("status") == "expired":
                 existing.state = "expired"
-            elif [n["e164"] for n in existing.numbers] == normalized:
+            elif (
+                [n["e164"] for n in existing.numbers] == normalized
+                and existing.plan_code == plan_code
+            ):
                 return existing
             else:
                 raise ConflictError(
@@ -129,6 +153,27 @@ async def create(session, settings, org_id, numbers, *, emergency_address_id=Non
         )
     ).first():
         raise ConflictError("One of those numbers is no longer available. Search again.")
+    if ent is not None:
+        # Room on the plan first; this charges the card for add-on numbers (or raises the
+        # price the buyer must confirm) before anything is ordered.
+        ent = await plan_billing.reserve_numbers(
+            session, settings, org_id, len(normalized), accept_charge_cents
+        )
+        purchase = NumberPurchase(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            numbers=[{"e164": n, "state": "selected"} for n in normalized],
+            state="paid",
+            plan_code=plan_code,
+            subscription_id=ent.subscription.stripe_subscription_id,
+            subscription_status=ent.subscription.status,
+        )
+        if emergency_address_id is not None:
+            purchase.emergency_address_id = emergency_address_id
+            purchase.e911_acknowledged_at = datetime.now(timezone.utc)
+        session.add(purchase)
+        await session.commit()
+        return purchase
     purchase = (
         existing
         if existing and existing.state == "checkout"
@@ -139,24 +184,35 @@ async def create(session, settings, org_id, numbers, *, emergency_address_id=Non
             state="checkout",
         )
     )
+    purchase.plan_code = plan_code
     if emergency_address_id is not None:
         purchase.emergency_address_id = emergency_address_id
         purchase.e911_acknowledged_at = datetime.now(timezone.utc)
     session.add(purchase)
     await session.commit()
-    metadata = {"kind": "number_purchase", "purchase_id": str(purchase.id), "org_id": str(org_id)}
+    metadata = {
+        "kind": "number_purchase",
+        "purchase_id": str(purchase.id),
+        "org_id": str(org_id),
+        "plan_code": plan_code,
+    }
+    plan_metadata = {
+        "kind": plan_billing.SUBSCRIPTION_KIND,
+        "org_id": str(org_id),
+        "plan_code": plan_code,
+    }
     base = settings.public_web_url.rstrip("/")
     checkout = await stripe_client._run_sync(
         stripe.checkout.Session.create,
         mode="subscription",
         payment_method_types=["card"],
         payment_method_options=stripe_client.THREE_DS_OPTIONS,
-        line_items=[{"price": settings.stripe_number_price_id, "quantity": len(normalized)}],
+        line_items=plan_billing.checkout_line_items(settings, plan_code, len(normalized)),
         metadata=metadata,
-        subscription_data={"metadata": metadata},
+        subscription_data={"metadata": plan_metadata},
         success_url=f"{base}/choose-numbers?purchase={purchase.id}",
         cancel_url=f"{base}/choose-numbers?purchase={purchase.id}&cancelled=1",
-        idempotency_key=f"number-purchase-{purchase.id}",
+        idempotency_key=f"number-purchase-{purchase.id}-{plan_code}",
     )
     purchase.checkout_id = checkout["id"]
     purchase.checkout_url = checkout["url"]
@@ -200,29 +256,44 @@ async def fulfill(session, request, purchase):
         return purchase
     if purchase.state in ("complete", "needs_attention", "provisioning", "expired"):
         return purchase
-    if not purchase.checkout_id:
-        return purchase
-    checkout = await stripe_client._run_sync(stripe.checkout.Session.retrieve, purchase.checkout_id)
-    if checkout.get("payment_status") != "paid" or checkout.get("status") != "complete":
-        return purchase
-    if checkout.get("metadata", {}).get("purchase_id") != str(purchase.id):
-        raise ValidationFailedError("Payment does not match this purchase")
-    subscription = await stripe_client._run_sync(
-        stripe.Subscription.retrieve, checkout["subscription"]
-    )
-    items = subscription.get("items", {}).get("data", [])
-    if subscription.get("status") != "active":
-        raise ValidationFailedError(
-            "Your subscription is not active. Contact support to review this payment."
+    if purchase.state == "paid" and not purchase.checkout_id:
+        # Paid through the workspace plan already (plan_billing.reserve_numbers).
+        pass
+    else:
+        if not purchase.checkout_id:
+            return purchase
+        checkout = await stripe_client._run_sync(
+            stripe.checkout.Session.retrieve, purchase.checkout_id
         )
-    if (
-        len(items) != 1
-        or items[0].get("price", {}).get("id") != settings.stripe_number_price_id
-        or items[0].get("quantity") != len(purchase.numbers)
-    ):
-        raise ValidationFailedError("Subscription does not match the selected numbers")
-    purchase.subscription_id = subscription["id"]
-    purchase.subscription_status = subscription["status"]
+        if checkout.get("payment_status") != "paid" or checkout.get("status") != "complete":
+            return purchase
+        if checkout.get("metadata", {}).get("purchase_id") != str(purchase.id):
+            raise ValidationFailedError("Payment does not match this purchase")
+        subscription = await stripe_client._run_sync(
+            stripe.Subscription.retrieve, checkout["subscription"]
+        )
+        items = subscription.get("items", {}).get("data", [])
+        if subscription.get("status") != "active":
+            raise ValidationFailedError(
+                "Your subscription is not active. Contact support to review this payment."
+            )
+        if purchase.plan_code:
+            from app.services import plan_billing
+
+            plan_billing.verify_checkout_subscription(
+                settings, subscription, purchase.plan_code, len(purchase.numbers)
+            )
+            await plan_billing.upsert_from_stripe(
+                session, settings, subscription, purchase.org_id
+            )
+        elif (
+            len(items) != 1
+            or items[0].get("price", {}).get("id") != settings.stripe_number_price_id
+            or items[0].get("quantity") != len(purchase.numbers)
+        ):
+            raise ValidationFailedError("Subscription does not match the selected numbers")
+        purchase.subscription_id = subscription["id"]
+        purchase.subscription_status = subscription["status"]
     purchase.state = "provisioning"
     from app.models import Org
 
@@ -290,7 +361,10 @@ async def _record_number(session, request, purchase, index, carrier, result):
         purchase.org_id,
         carrier,
         result,
-        provisioning={"number_purchase_id": str(purchase.id), "billing": "stripe_subscription"},
+        provisioning={
+            "number_purchase_id": str(purchase.id),
+            "billing": "workspace_plan" if purchase.plan_code else "stripe_subscription",
+        },
     )
     await session.refresh(purchase, ["subscription_status"])
     number.is_active = number.is_active and is_entitled(purchase.subscription_status)
@@ -424,6 +498,11 @@ async def refund_unprovisioned(session, settings, purchase_id):
     purchase = await _locked(session, purchase_id)
     if purchase.state not in ("needs_attention", "provisioning") or not purchase.subscription_id:
         raise ConflictError(f"This purchase is {purchase.state}; there is nothing to refund.")
+    if purchase.plan_code:
+        raise ConflictError(
+            "This number was bought on a workspace plan. Release the unprovisioned numbers "
+            "and refund any add-on charge from the workspace's Stripe subscription."
+        )
     dropped = [
         n["e164"]
         for n in purchase.numbers
@@ -562,6 +641,14 @@ async def sync_released_number(session, settings, number):
         {**entry, "state": "released"} if entry.get("number_id") == str(number.id) else entry
         for entry in purchase.numbers
     ]
+    if purchase.plan_code:
+        # The plan keeps its included numbers; only an add-on number nobody needs any more
+        # stops being billed (from the next invoice - no refund for this month).
+        from app.services import plan_billing
+
+        await session.commit()
+        await plan_billing.trim_unused(session, settings, number.org_id, users=False)
+        return
     rows = (
         await session.execute(sa.select(OrgNumber).where(OrgNumber.org_id == number.org_id))
     ).scalars()

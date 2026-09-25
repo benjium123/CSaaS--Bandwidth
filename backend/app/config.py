@@ -90,8 +90,15 @@ class Settings(BaseSettings):
     #: would charge USD-derived numbers in another currency. Refused at boot unless someone
     #: deliberately accepts that with the flag below.
     stripe_price_currency: str = "usd"
-    #: Live "Ringlite phone number" price (prod_VJvbJOHANqLMKJ): $15/month per number.
+    #: RETIRED: the old per-number $15/month price. Only purchases made on it still use it.
     stripe_number_price_id: str = "price_1UJHkZ744iNFjjqnkirIkrGn"
+    #: Live workspace plans (services/plan_billing.py). Each plan includes as many users as
+    #: phone numbers; add-ons are $15/month per user and $5/month per number.
+    stripe_plan_solo_price_id: str = "price_1UJgDb744iNFjjqnvYvbd3YV"  # $15, 1 user + 1 number
+    stripe_plan_team_price_id: str = "price_1UJgDc744iNFjjqnQzOaPoqM"  # $45, 3 + 3
+    stripe_plan_business_price_id: str = "price_1UJgDc744iNFjjqnOQeT3rtb"  # $75, 5 + 5
+    stripe_extra_user_price_id: str = "price_1UJgDc744iNFjjqnRz5Bqqpm"  # $15/month
+    stripe_extra_number_price_id: str = "price_1UJgDd744iNFjjqn9RTKz7AX"  # $5/month
     #: Live 10DLC campaign pass-through fees (prod_VJxPdkTbXGhw6k): $10/month standard,
     #: $2/month sole proprietor. See services/tendlc.py for the one-time fees.
     stripe_tendlc_standard_price_id: str = "price_1UJJUY744iNFjjqnhOjPZHaj"

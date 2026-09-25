@@ -13,19 +13,32 @@ from app.services import number_purchases, stripe_client
 from tests.conftest import make_settings
 
 
+#: What each live price charges, per services/plan_billing.py.
+_CENTS = {
+    make_settings().stripe_plan_solo_price_id: 1500,
+    make_settings().stripe_plan_team_price_id: 4500,
+    make_settings().stripe_plan_business_price_id: 7500,
+    make_settings().stripe_extra_user_price_id: 1500,
+    make_settings().stripe_extra_number_price_id: 500,
+}
+#: Tests set a price id here to make Stripe report a different amount for it.
+_OVERRIDE: dict[str, int] = {}
+
+
+def _price(price_id):
+    return {
+        "active": True,
+        "unit_amount": _OVERRIDE.get(price_id, _CENTS.get(price_id, 1500)),
+        "currency": "usd",
+        "recurring": {"interval": "month", "interval_count": 1},
+    }
+
+
 @pytest.fixture
 def stripe_mock(monkeypatch):
+    _OVERRIDE.clear()
     stripe = SimpleNamespace(
-        Price=SimpleNamespace(
-            retrieve=Mock(
-                return_value={
-                    "active": True,
-                    "unit_amount": 1500,
-                    "currency": "usd",
-                    "recurring": {"interval": "month", "interval_count": 1},
-                }
-            )
-        ),
+        Price=SimpleNamespace(retrieve=Mock(side_effect=_price)),
         checkout=SimpleNamespace(
             Session=SimpleNamespace(
                 create=Mock(
@@ -54,13 +67,13 @@ async def test_quantity_checkout_and_retry_reuses_session(session, stripe_mock):
     org = await approved_org(session)
     settings = make_settings(stripe_webhook_secret="whsec_test")
     numbers = ["+12125550101", "+12125550102", "+12125550103"]
-    purchase = await number_purchases.create(session, settings, org.id, numbers)
+    purchase = await number_purchases.create(session, settings, org.id, numbers, plan_code="team")
     assert stripe_mock.checkout.Session.create.call_args.kwargs["line_items"] == [
-        {"price": settings.stripe_number_price_id, "quantity": 3}
+        {"price": settings.stripe_plan_team_price_id, "quantity": 1}
     ]
-    assert number_purchases.public(purchase)["monthly_total_cents"] == 4500
+    assert number_purchases.public(purchase)["plan_code"] == "team"
     stripe_mock.checkout.Session.retrieve.return_value = {"status": "open"}
-    again = await number_purchases.create(session, settings, org.id, numbers)
+    again = await number_purchases.create(session, settings, org.id, numbers, plan_code="team")
     assert again.id == purchase.id
     assert stripe_mock.checkout.Session.create.call_count == 1
 
@@ -68,7 +81,9 @@ async def test_quantity_checkout_and_retry_reuses_session(session, stripe_mock):
 async def test_payment_required_then_fulfillment_is_idempotent(session, stripe_mock, monkeypatch):
     org = await approved_org(session)
     settings = make_settings(stripe_webhook_secret="whsec_test")
-    purchase = await number_purchases.create(session, settings, org.id, ["+12125550101"])
+    purchase = await number_purchases.create(
+        session, settings, org.id, ["+12125550101"], plan_code="solo"
+    )
     carrier = SimpleNamespace(
         name="telnyx",
         order_number=AsyncMock(
@@ -98,7 +113,12 @@ async def test_payment_required_then_fulfillment_is_idempotent(session, stripe_m
     stripe_mock.Subscription.retrieve.return_value = {
         "id": "sub_test",
         "status": "active",
-        "items": {"data": [{"price": {"id": settings.stripe_number_price_id}, "quantity": 1}]},
+        "items": {
+            "data": [
+                {"id": "si_plan", "price": {"id": settings.stripe_plan_solo_price_id}, "quantity": 1}
+            ]
+        },
+        "metadata": {"kind": "workspace_plan", "org_id": str(org.id)},
     }
     result = await number_purchases.fulfill(session, request, purchase)
     assert result.state == "complete", result.detail
@@ -112,10 +132,14 @@ async def test_wrong_price_is_refused(session, stripe_mock):
     from app.errors import FeatureUnavailableError
 
     org = await approved_org(session)
-    stripe_mock.Price.retrieve.return_value["unit_amount"] = 2000
+    _OVERRIDE[make_settings().stripe_plan_solo_price_id] = 2000
     with pytest.raises(FeatureUnavailableError):
         await number_purchases.create(
-            session, make_settings(stripe_webhook_secret="test"), org.id, ["+12125550101"]
+            session,
+            make_settings(stripe_webhook_secret="test"),
+            org.id,
+            ["+12125550101"],
+            plan_code="solo",
         )
     stripe_mock.checkout.Session.create.assert_not_called()
 
@@ -181,11 +205,11 @@ async def test_checkout_is_refused_when_telnyx_cannot_fund_the_numbers(
     numbers = ["+12125550111", "+12125550112"]
     if refused:
         with pytest.raises(FeatureUnavailableError) as exc:
-            await number_purchases.create(session, settings, org.id, numbers)
+            await number_purchases.create(session, settings, org.id, numbers, plan_code="team")
         assert exc.value.code == "numbers_temporarily_unavailable"
         stripe_mock.checkout.Session.create.assert_not_called()
     else:
-        await number_purchases.create(session, settings, org.id, numbers)
+        await number_purchases.create(session, settings, org.id, numbers, plan_code="team")
         stripe_mock.checkout.Session.create.assert_called_once()
 
 

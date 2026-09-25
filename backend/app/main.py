@@ -229,6 +229,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             value = getattr(exc, extra, None)
             if isinstance(value, str):
                 body[extra] = value
+        # Workspace plans: the price the person must confirm (services/plan_billing.py).
+        quote = getattr(exc, "quote", None)
+        if isinstance(quote, dict):
+            body["quote"] = quote
         return JSONResponse(
             status_code=exc.http_status,
             content={"error": body},

@@ -1,7 +1,7 @@
 /**
  * Step 1 of the Add teammate drawer: which number will the new teammate hold?
  *
- * One person = one number, $15/month each, so reusing a number the workspace ALREADY
+ * Each person holds their own number (plans include some; more are $5/month), so reusing one the workspace ALREADY
  * pays for is the default path and buying is the fallback. `mode` is local, but the
  * chosen number is lifted to the drawer through `onChange`, so a pick from the other
  * mode can never survive a switch.
@@ -170,7 +170,7 @@ export function AddTeammateNumberStep({
       <ConsoleEmpty>
         Each teammate gets their own number. Every number here is already in use, so{" "}
         <a href="/choose-numbers?next=%2Fteam%3Fadd%3D1" className="font-medium underline">
-          buy a number for them ($15/month)
+          get a number for them (free if your plan has one left, otherwise $5/month)
         </a>{" "}
         and you will come straight back here to create their login.
       </ConsoleEmpty>

@@ -1,3 +1,4 @@
+import { PlanCard } from "./PlanCard";
 import { BalanceCard } from "./BalanceCard";
 import { BundlesCard } from "./BundlesCard";
 import { BillingLedger } from "./BillingLedger";
@@ -20,9 +21,11 @@ import { Collapsible } from "@/components/ui/primitives";
  * PlatformBillingOps is deliberately NOT here - it belongs to /settings/developers
  * (PlatformPage), the operator surface, and must never sit next to a customer's balance.
  */
+
 export function CreditsSection() {
   return (
     <div className="space-y-6">
+      <PlanCard />
       <BalanceCard />
       <BundlesCard />
       <UsageTable />

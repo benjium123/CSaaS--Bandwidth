@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
+import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -593,6 +594,17 @@ async def remove_member(
     )
     await ctx.session.commit()
     await account_security.mark_revoked(request.app.state.settings, revoked)
+    # A paid add-on user nobody fills any more stops being billed from the next invoice.
+    # Removing the person must not fail because Stripe did; Billing can trim it later.
+    from app.services import plan_billing
+
+    try:
+        await plan_billing.trim_unused(
+            ctx.session, request.app.state.settings, ctx.org.id, numbers=False
+        )
+    except Exception:
+        await ctx.session.rollback()
+        structlog.get_logger("orgs").exception("plan_trim_after_member_removal_failed")
     return Response(status_code=204)
 
 

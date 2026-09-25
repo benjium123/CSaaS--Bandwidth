@@ -343,9 +343,13 @@ async def _voice_bundle_cover(
     exclude_call_id: uuid.UUID | None = None,
     moment: datetime | None = None,
 ) -> int:
-    """Bundle minutes still free for ONE call: the bundle minus what the org's other unbilled
-    calls have used (the pool is shared)."""
+    """Free minutes still available for ONE call: the plan's pooled minutes (200 per user
+    on a workspace plan) plus call-minute bundles, minus what the org's other unbilled calls
+    have used (the pool is shared). bill_finished_calls spends them in that order."""
     bundle = await _voice_bundle_minutes(session, org_id)
+    org = await _org(session, org_id)
+    if org is not None:
+        bundle += await _plan_headroom(session, org, VOICE_ALLOWANCE_METRIC)
     if bundle <= 0:
         return 0
     used = await _minutes_in_flight(
@@ -966,11 +970,16 @@ async def _charge_rental_period(
     number.rental_paid_through = _next_month(period_start)
 
 
+#: Numbers Stripe bills (a workspace plan or the retired per-number price): never also
+#: charged rental from prepaid credits.
+STRIPE_BILLED = ("stripe_subscription", "workspace_plan")
+
+
 async def charge_new_number(
     session: AsyncSession, org_id: uuid.UUID, number: OrgNumber, *, today: date | None = None
 ) -> None:
     """At order: charge setup (once) and the first month. Does not commit."""
-    if (number.provisioning or {}).get("billing") == "stripe_subscription":
+    if (number.provisioning or {}).get("billing") in STRIPE_BILLED:
         return
     org = await _org(session, org_id)
     if org is None or not org.telephony_prepaid:
@@ -1051,7 +1060,7 @@ async def renew_number_rentals(session: AsyncSession, *, today: date | None = No
             number = await session.get(OrgNumber, number_id)
             if (
                 number is None
-                or (number.provisioning or {}).get("billing") == "stripe_subscription"
+                or (number.provisioning or {}).get("billing") in STRIPE_BILLED
             ):
                 continue
             org_row = await _org(session, org_id)

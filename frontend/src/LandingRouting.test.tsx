@@ -17,9 +17,11 @@ describe("Public landing routes", () => {
     open("/");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Small ring.");
     expect(screen.getByRole("link", { name: "Get started" })).toHaveAttribute("href", "/signbox");
-    fireEvent.click(screen.getByRole("button", { name: "Add a number" }));
-    expect(screen.getByRole("status", { name: "Number quantity" })).toHaveTextContent("4");
-    expect(screen.getByText("$60", { exact: false })).toBeInTheDocument();
+    // Four people: Team (3 users + 3 numbers, $45) plus one $15 user and one $5 number.
+    fireEvent.click(screen.getByRole("button", { name: "Add a person" }));
+    expect(screen.getByRole("status", { name: "People" })).toHaveTextContent("4");
+    expect(screen.getByText("Team plan + add-ons")).toBeInTheDocument();
+    expect(screen.getByText("$65", { exact: false })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Messages" }));
     expect(screen.getByText("Texting after messaging registration approval")).toBeInTheDocument();
   });

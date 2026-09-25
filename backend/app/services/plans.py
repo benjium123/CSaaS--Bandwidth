@@ -98,6 +98,23 @@ def _included(plan: Plan) -> dict[str, int]:
     return seeded
 
 
+async def _seeded(session: AsyncSession, org_id: uuid.UUID, plan: Plan) -> dict[str, int]:
+    """``_included`` plus per-user allowances: a workspace plan gives
+    ``voice_minutes_per_user`` for every user it pays for (services/plan_billing.py)."""
+    seeded = _included(plan)
+    raw = plan.included if isinstance(plan.included, dict) else {}
+    try:
+        per_user = max(int(raw.get("voice_minutes_per_user", 0)), 0)
+    except (TypeError, ValueError):
+        per_user = 0
+    if per_user:
+        from app.services import plan_billing
+
+        ent = await plan_billing.entitlement(session, org_id)
+        seeded["voice_minutes"] = per_user * (ent.users if ent is not None else 0)
+    return seeded
+
+
 async def _allowances(
     session: AsyncSession, org_id: uuid.UUID, period_start: date
 ) -> dict[str, PlanAllowance]:
@@ -125,7 +142,7 @@ async def ensure_period(
     if org is None or plan is None:
         return {}
     period_start, _period_end = period_for(org.plan_started_at, today or _today())
-    seeded = _included(plan)
+    seeded = await _seeded(session, org_id, plan)
 
     rows = await _allowances(session, org_id, period_start)
     for _attempt in range(2):
@@ -217,7 +234,7 @@ async def remaining(
     row = (await _allowances(session, org_id, period_start)).get(metric)
     if row is None:
         # Nothing taken yet this period, so the whole allowance is still there.
-        return _included(plan)[metric]
+        return (await _seeded(session, org_id, plan))[metric]
     return max(int(row.included_units) - int(row.used_units), 0)
 
 
@@ -280,7 +297,7 @@ async def usage(
 
     period_start, period_end = period_for(org.plan_started_at, today or _today())
     rows = await _allowances(session, org_id, period_start)
-    seeded = _included(plan)
+    seeded = await _seeded(session, org_id, plan)
     metrics: dict[str, dict[str, int]] = {}
     for metric in ALLOWANCE_METRICS:
         row = rows.get(metric)

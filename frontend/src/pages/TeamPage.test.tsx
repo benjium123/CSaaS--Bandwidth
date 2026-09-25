@@ -277,25 +277,49 @@ describe("TeamPage", () => {
 });
 
 describe("TeamPage seats", () => {
+  const OWNER: Me = {
+    ...ME_WITH_ROLES_WRITE,
+    memberships: [
+      { ...ME_WITH_ROLES_WRITE.memberships[0], permissions: ["members:invite", "members:read"] },
+    ],
+  };
   const stubs = (seats: unknown) =>
     makeStubClient({
+      "/api/v1/auth/me": OWNER,
+      "/api/v1/me/capabilities": {
+        permissions: ["members:invite", "members:read"],
+        org: { has_provider: true, has_number: true, member_count: 2, registration_state: "approved" },
+      },
       "/api/v1/orgs/current/members": MEMBERS,
       "/api/v1/orgs/current/invites": INVITES,
       "/api/v1/orgs/current/seats": seats,
+      "/api/v1/billing/plan": {
+        plan: { code: "team", name: "Team", status: "active", price_cents: 4500, monthly_total_cents: 4500, renews_at: null, cancel_at_period_end: false },
+        users: { limit: 2, in_use: 2, included: 3, extra: 0 },
+        numbers: { limit: 3, in_use: 3, included: 3, extra: 0 },
+        extra_user_cents: 1500, extra_number_cents: 500, minutes_per_user: 200, catalog: [],
+      },
+      "/api/v1/billing/plan/users": { plan: null, users: { limit: 3, in_use: 2 }, numbers: { limit: 3, in_use: 3 }, extra_user_cents: 1500, extra_number_cents: 500, minutes_per_user: 200, catalog: [] },
     });
 
-  it("shows seats used against paid numbers and links to buying one when full", async () => {
-    renderWithProviders(
-      <TeamPage />,
-      stubs({ enforced: true, limit: 2, members: 1, pending_invites: 1, available: 0 }),
-    );
+  it("when every user on the plan is taken, the owner buys one at $15 after seeing the price", async () => {
+    const client = stubs({ enforced: true, limit: 2, members: 1, pending_invites: 1, available: 0 });
+    renderWithProviders(<TeamPage />, client);
     const usage = await screen.findByTestId("seat-usage");
-    expect(usage.textContent?.trim()).toBe(
-      "2 of 2 user seats used. Each phone number adds one user. Buy a number to add someone",
-    );
-    expect(screen.getByRole("link", { name: "Buy a number to add someone" })).toHaveAttribute(
-      "href",
-      "/choose-numbers",
+    expect(usage.textContent?.trim()).toBe("2 of 2 user seats used on your plan. Add a user");
+
+    await userEvent.click(screen.getByRole("button", { name: "Add teammate" }));
+    const panel = await screen.findByRole("region", { name: "Add a user" });
+    expect(panel).toHaveTextContent("All 2 users on your Team plan are in use");
+    expect(panel).toHaveTextContent("A number for them is $5/month more.");
+    expect(client.calls.some(c => c.path === "/api/v1/billing/plan/users")).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Add a user for $15/month" }));
+    await waitFor(() =>
+      expect(client.calls.find(c => c.path === "/api/v1/billing/plan/users")?.init.json).toEqual({
+        count: 1,
+        accept_cents: 1500,
+      }),
     );
   });
 
@@ -305,7 +329,7 @@ describe("TeamPage seats", () => {
       stubs({ enforced: true, limit: 3, members: 1, pending_invites: 1, available: 1 }),
     );
     expect((await screen.findByTestId("seat-usage")).textContent).toContain("2 of 3 user seats");
-    expect(screen.queryByRole("link", { name: /buy a number/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add a user" })).toBeNull();
   });
 
   it("shows nothing about seats for a workspace that is not seat-limited", async () => {

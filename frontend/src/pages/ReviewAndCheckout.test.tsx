@@ -36,7 +36,7 @@ describe("Review and paid number setup", () => {
     expect(await screen.findByRole("button", { name: /Ada/ })).toBeInTheDocument();
   });
 
-  it("shows $45 monthly for three selected phone numbers", async () => {
+  it("three numbers on Team are $45 a month, all included, and the plan is sent with the checkout", async () => {
     const numbers = ["+12125550101", "+12125550102", "+12125550103"].map(e164 => ({ e164, locality: "New York", region: "NY" }));
     const client = makeStubClient({
       "/api/v1/auth/me": me,
@@ -44,13 +44,26 @@ describe("Review and paid number setup", () => {
       "/api/v1/numbers/available?carrier=telnyx&area_code=212&limit=20": numbers,
       "/api/v1/numbers/emergency-addresses": { addresses: [], notice: "911 notice text" },
       "/api/v1/billing/number-checkout": { id: "purchase-1", state: "checkout", numbers: [] },
+      "/api/v1/billing/plan": {
+        plan: null, users: { limit: null, in_use: 1 }, numbers: { limit: null, in_use: 0 },
+        extra_user_cents: 1500, extra_number_cents: 500, minutes_per_user: 200,
+        catalog: [
+          { code: "solo", name: "Solo", users: 1, numbers: 1, price_cents: 1500, minutes: 200, monthly_total_cents_if_switched: 1500 },
+          { code: "team", name: "Team", users: 3, numbers: 3, price_cents: 4500, minutes: 600, monthly_total_cents_if_switched: 4500 },
+        ],
+      },
     });
     renderWithProviders(<ChooseNumbersPage />, client);
     await userEvent.type(screen.getByLabelText("Area code"), "212");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
     for (const box of await screen.findAllByRole("checkbox", { name: /\+1212555010/ })) await userEvent.click(box);
-    expect(screen.getByText("3 numbers × $15/month")).toBeInTheDocument();
-    expect(screen.getByText("$45")).toBeInTheDocument();
+    // On Solo the 2nd and 3rd numbers are $5 add-ons: $25. Team includes all three: $45.
+    expect(screen.getByText("Includes 2 extra numbers at $5")).toBeInTheDocument();
+    expect(screen.getByText("$25")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("radio", { name: /Team/ }));
+    expect(screen.getByText("Monthly total")).toBeInTheDocument();
+    expect(screen.getByText("Team: 3 users + 3 numbers")).toBeInTheDocument();
+    expect(screen.getAllByText("$45").length).toBeGreaterThan(0);
     await userEvent.type(await screen.findByLabelText("Business or person at this location"), "Ada Studio");
     await userEvent.type(screen.getByLabelText("Street address"), "1 Main St");
     await userEvent.type(screen.getByLabelText("City"), "New York");
@@ -58,6 +71,6 @@ describe("Review and paid number setup", () => {
     await userEvent.type(screen.getByLabelText("ZIP code"), "10001");
     await userEvent.click(screen.getByRole("checkbox", { name: "I understand how 911 works with these numbers" }));
     await userEvent.click(screen.getByRole("button", { name: "Continue to payment" }));
-    await waitFor(() => expect(client.calls.some(c => c.path === "/api/v1/billing/number-checkout" && (c.init.json as { numbers: string[]; acknowledge_e911?: boolean })?.numbers.length === 3 && (c.init.json as { acknowledge_e911?: boolean })?.acknowledge_e911 === true)).toBe(true));
+    await waitFor(() => expect(client.calls.some(c => c.path === "/api/v1/billing/number-checkout" && (c.init.json as { numbers: string[]; acknowledge_e911?: boolean })?.numbers.length === 3 && (c.init.json as { acknowledge_e911?: boolean })?.acknowledge_e911 === true && (c.init.json as { plan_code?: string })?.plan_code === "team")).toBe(true));
   });
 });

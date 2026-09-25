@@ -10,7 +10,15 @@ const numbers = [{ e164: "+12125550101", locality: "New York", region: "NY" }];
 
 const savedAddress = { id: "addr-1", name: "HQ", street_address: "1 Main St", extended_address: null, locality: "Dallas", administrative_area: "TX", postal_code: "75201", country_code: "US", label: "1 Main St, Dallas, TX 75201" };
 
+const catalog = [
+  { code: "solo", name: "Solo", users: 1, numbers: 1, price_cents: 1500, minutes: 200, monthly_total_cents_if_switched: 1500 },
+  { code: "team", name: "Team", users: 3, numbers: 3, price_cents: 4500, minutes: 600, monthly_total_cents_if_switched: 4500 },
+  { code: "business", name: "Business", users: 5, numbers: 5, price_cents: 7500, minutes: 1000, monthly_total_cents_if_switched: 7500 },
+];
+const noPlan = { plan: null, users: { limit: null, in_use: 1 }, numbers: { limit: null, in_use: 0 }, extra_user_cents: 1500, extra_number_cents: 500, minutes_per_user: 200, catalog };
+
 const baseRoutes = {
+  "/api/v1/billing/plan": noPlan,
   "/api/v1/auth/me": me,
   "/api/v1/billing/number-purchases/current": null,
   "/api/v1/numbers/available?carrier=telnyx&area_code=212&limit=20": numbers,
@@ -78,6 +86,7 @@ describe("E911 at number checkout", () => {
     await userEvent.click(checkoutButton());
 
     await waitFor(() => expect(checkoutBody(client)).toEqual({
+      plan_code: "solo",
       numbers: ["+12125550101"],
       acknowledge_e911: true,
       emergency_address: {
@@ -132,6 +141,7 @@ describe("E911 at number checkout", () => {
     await userEvent.click(checkoutButton());
 
     await waitFor(() => expect(checkoutBody(client)).toEqual({
+      plan_code: "solo",
       numbers: ["+12125550101"],
       acknowledge_e911: true,
       emergency_address_id: "addr-1",

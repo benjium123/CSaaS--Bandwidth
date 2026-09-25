@@ -284,7 +284,7 @@ export function NumbersPage() {
               Some numbers have no 911 address. Emergency calls from them cannot be located.
             </div>
           )}
-          {paidCheckout ? <div className="rounded-2xl border border-blue-200 bg-blue-50 p-6"><h2 className="text-lg font-semibold text-blue-900">Grow your team, one number at a time</h2><p className="my-3 text-blue-800">$15 per phone number per month.</p><Link to="/choose-numbers" className="inline-block rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white">Choose phone numbers</Link></div> : <form className={cn(PANEL, "flex gap-3 p-3.5")} onSubmit={add}>
+          {paidCheckout ? <div className="rounded-2xl border border-blue-200 bg-blue-50 p-6"><h2 className="text-lg font-semibold text-blue-900">Add phone numbers</h2><p className="my-3 text-blue-800">Your plan includes numbers; each one beyond it is $5 per month.</p><Link to="/choose-numbers" className="inline-block rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white">Choose phone numbers</Link></div> : <form className={cn(PANEL, "flex gap-3 p-3.5")} onSubmit={add}>
             <Input
               aria-label="Phone number"
               placeholder="+12145550100"

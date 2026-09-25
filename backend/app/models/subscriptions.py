@@ -85,3 +85,11 @@ class Subscription(Base, TenantScoped, TimestampMixin):
     cancel_at_period_end: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )
+    #: Workspace plans (services/plan_billing.py): paid add-ons on top of what the plan
+    #: includes, mirrored from the subscription item quantities on every Stripe event.
+    extra_users: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    extra_numbers: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )

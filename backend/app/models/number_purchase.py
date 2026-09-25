@@ -17,7 +17,11 @@ class NumberPurchase(Base, TenantScoped, TimestampMixin):
     state: Mapped[str] = mapped_column(sa.String(32), default="checkout", nullable=False)
     checkout_id: Mapped[str | None] = mapped_column(sa.String(255), unique=True)
     checkout_url: Mapped[str | None] = mapped_column(sa.Text())
-    subscription_id: Mapped[str | None] = mapped_column(sa.String(255), unique=True)
+    #: Not unique: on a workspace plan every purchase shares the workspace's one subscription.
+    subscription_id: Mapped[str | None] = mapped_column(sa.String(255), index=True)
+    #: The workspace plan this cart was bought on (services/plan_billing.py); None for the
+    #: retired per-number price.
+    plan_code: Mapped[str | None] = mapped_column(sa.String(32))
     subscription_status: Mapped[str | None] = mapped_column(sa.String(32))
     detail: Mapped[str | None] = mapped_column(sa.Text())
     #: Where these numbers' 911 calls are sent (E911 registered location).

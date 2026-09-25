@@ -81,6 +81,18 @@ class ConflictError(CsaasError):
     message = "Conflict"
 
 
+class PriceConfirmationRequiredError(ConflictError):
+    """A change that costs more money was asked for without echoing the price the person
+    was shown. ``quote`` is the fresh price, returned so the screen can ask again."""
+
+    code = "price_confirmation_required"
+    message = "Confirm the new price to continue."
+
+    def __init__(self, quote: dict, message: str | None = None) -> None:
+        super().__init__(message)
+        self.quote = quote
+
+
 class RateLimitExceededError(CsaasError):
     """C7: raised by app/rate_limit.py so a 429 uses the SAME ``{"error": {...}}``
     envelope every other error already does, instead of FastAPI's bare

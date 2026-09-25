@@ -29,8 +29,8 @@ from app.errors import (
 )
 from app.models import Call, CreditLedgerEntry, PaymentMethod, Plan
 from app.services import ai_usage, credits, stripe_client
-from app.services import bundles as bundles_svc
 from app.services import audit as audit_svc
+from app.services import bundles as bundles_svc
 from app.services import plans as plans_svc
 from app.services import spend as spend_svc
 
@@ -45,6 +45,70 @@ class NumberCheckoutIn(BaseModel):
     emergency_address: dict | None = None
     #: The buyer read how 911 over VoIP differs from a landline (47 CFR 9.11(a)(5)).
     acknowledge_e911: bool = False
+    #: First purchase only: the workspace plan to buy with these numbers.
+    plan_code: str | None = None
+    #: The monthly increase the buyer was shown for add-on numbers beyond the plan.
+    accept_charge_cents: int | None = None
+
+
+class PlanUsersIn(BaseModel):
+    count: int = Field(ge=1, le=50)
+    accept_cents: int | None = None
+
+
+class PlanChangeIn(BaseModel):
+    plan_code: str
+    accept_cents: int | None = None
+
+
+@router.get("/plan")
+async def workspace_plan(
+    request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    """The workspace plan, users and numbers in use, minutes, and what each plan costs."""
+    from app.services import plan_billing
+
+    await plan_billing.ensure_catalog(ctx.session, request.app.state.settings)
+    return await plan_billing.summary(ctx.session, request.app.state.settings, ctx.org.id)
+
+
+@router.post("/plan/users")
+async def add_plan_users(
+    payload: PlanUsersIn, request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    """Buy add-on users at $15/month each; charged now, prorated."""
+    from app.services import plan_billing
+
+    settings = request.app.state.settings
+    await plan_billing.add_users(
+        ctx.session, settings, ctx.org.id, payload.count, payload.accept_cents
+    )
+    return await plan_billing.summary(ctx.session, settings, ctx.org.id)
+
+
+@router.post("/plan/change")
+async def change_workspace_plan(
+    payload: PlanChangeIn, request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    from app.services import plan_billing
+
+    settings = request.app.state.settings
+    await plan_billing.change_plan(
+        ctx.session, settings, ctx.org.id, payload.plan_code, payload.accept_cents
+    )
+    return await plan_billing.summary(ctx.session, settings, ctx.org.id)
+
+
+@router.post("/plan/trim")
+async def trim_workspace_plan(
+    request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    """Stop paying for add-on users and numbers nobody is using."""
+    from app.services import plan_billing
+
+    settings = request.app.state.settings
+    await plan_billing.trim_unused(ctx.session, settings, ctx.org.id)
+    return await plan_billing.summary(ctx.session, settings, ctx.org.id)
 
 
 @router.get("/number-purchases/current")
@@ -135,7 +199,12 @@ async def number_checkout(
         ctx.org.id,
         payload.numbers,
         emergency_address_id=address.id,
+        plan_code=payload.plan_code,
+        accept_charge_cents=payload.accept_charge_cents,
     )
+    if purchase.state == "paid":
+        # Covered by the workspace plan: nothing to check out, order the numbers now.
+        purchase = await number_purchases.fulfill(ctx.session, request, purchase)
     return number_purchases.public(purchase)
 
 

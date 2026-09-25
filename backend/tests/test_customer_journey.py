@@ -11,6 +11,7 @@ a paying customer walks turns this red.
 
 from __future__ import annotations
 
+import copy
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -22,7 +23,7 @@ from app.db.base import set_org_context
 from app.models import OrgNumber
 from app.providers.numbers import OrderResult
 from app.services import e911, number_purchases, stripe_client, telephony_access
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, make_settings
 from tests.test_individual_kyc_api import _accept_agreement, _verify_owner
 from tests.test_p41_kyc import _make_operator, _write_sanctions
 from tests.test_p41_kyc import kyc_app as kyc_app  # noqa: F401 - fixture
@@ -54,16 +55,48 @@ def outside_world(monkeypatch):
     """Stripe says paid; Telnyx sells the numbers and registers E911."""
     purchase_ids: dict = {}
 
+    prices = make_settings()
+    cents = {
+        prices.stripe_plan_solo_price_id: 1500,
+        prices.stripe_extra_user_price_id: 1500,
+        prices.stripe_extra_number_price_id: 500,
+    }
+    # Solo ($15, 1 user + 1 number) + one $5 add-on number: the two numbers bought below.
+    sub = {
+        "id": "sub_journey",
+        "status": "active",
+        "customer": "cus_journey",
+        "metadata": {"kind": "workspace_plan"},
+        "items": {
+            "data": [
+                {"id": "si_plan", "price": {"id": prices.stripe_plan_solo_price_id}, "quantity": 1},
+                {"id": "si_num", "price": {"id": prices.stripe_extra_number_price_id}, "quantity": 1},
+            ]
+        },
+    }
+
+    def modify(_sid, items=None, **_kwargs):
+        for change in items or []:
+            if "id" in change:
+                item = next(i for i in sub["items"]["data"] if i["id"] == change["id"])
+                item["quantity"] = change.get("quantity", item["quantity"])
+            else:
+                sub["items"]["data"].append(
+                    {"id": "si_new", "price": {"id": change["price"]}, "quantity": change["quantity"]}
+                )
+        return copy.deepcopy(sub)
+
     def checkout_create(**params):
         purchase_ids["current"] = params["metadata"]["purchase_id"]
+        purchase_ids["line_items"] = params["line_items"]
         return {"id": "cs_journey", "url": "https://checkout.stripe.test/cs_journey"}
 
     stripe = SimpleNamespace(
         Price=SimpleNamespace(
             retrieve=Mock(
-                return_value={
+                side_effect=lambda price_id: {
                     "active": True,
-                    "unit_amount": 1500,
+                    "unit_amount": cents[price_id],
                     "currency": "usd",
                     "recurring": {"interval": "month", "interval_count": 1},
                 }
@@ -83,15 +116,8 @@ def outside_world(monkeypatch):
             )
         ),
         Subscription=SimpleNamespace(
-            retrieve=Mock(
-                return_value={
-                    "id": "sub_journey",
-                    "status": "active",
-                    "items": {
-                        "data": [{"price": {"id": "price_1UJHkZ744iNFjjqnkirIkrGn"}, "quantity": 2}]
-                    },
-                }
-            )
+            retrieve=Mock(side_effect=lambda _id: copy.deepcopy(sub)),
+            modify=Mock(side_effect=modify),
         ),
     )
     monkeypatch.setattr(stripe_client, "_stripe", lambda settings: stripe)
@@ -130,7 +156,7 @@ def outside_world(monkeypatch):
     monkeypatch.setattr(
         "app.providers.registry_org.prime_org_registry", AsyncMock(return_value=registry)
     )
-    return SimpleNamespace(stripe=stripe, carrier=carrier)
+    return SimpleNamespace(stripe=stripe, carrier=carrier, purchase_ids=purchase_ids)
 
 
 async def _step(client, h) -> str:
@@ -190,7 +216,12 @@ async def test_sign_up_to_a_working_inbox(
     assert r.status_code == 200, r.text
     assert await _step(client, h) == "awaiting_review"
 
-    checkout = {"numbers": NUMBERS, "acknowledge_e911": True, "emergency_address": ADDRESS}
+    checkout = {
+        "numbers": NUMBERS,
+        "acknowledge_e911": True,
+        "emergency_address": ADDRESS,
+        "plan_code": "solo",
+    }
     early_buy = await client.post("/api/v1/billing/number-checkout", json=checkout, headers=h)
     assert early_buy.status_code == 422
     assert "approved" in early_buy.json()["error"]["message"]
@@ -207,7 +238,11 @@ async def test_sign_up_to_a_working_inbox(
     r = await client.post("/api/v1/billing/number-checkout", json=checkout, headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["checkout_url"] == "https://checkout.stripe.test/cs_journey"
-    assert r.json()["monthly_total_cents"] == 3000
+    # Solo includes one number; the second is a $5/month add-on.
+    assert outside_world.purchase_ids["line_items"] == [
+        {"price": make_settings().stripe_plan_solo_price_id, "quantity": 1},
+        {"price": make_settings().stripe_extra_number_price_id, "quantity": 1},
+    ]
     purchase_id = r.json()["id"]
     r = await client.post(f"/api/v1/billing/number-purchases/{purchase_id}/complete", headers=h)
     assert r.status_code == 200, r.text
@@ -218,7 +253,28 @@ async def test_sign_up_to_a_working_inbox(
     assert sorted(n["e164"] for n in numbers) == NUMBERS
     assert {n["emergency_status"] for n in numbers} == {"provisioning"}
 
-    # 5. Two numbers = two people: the owner and one teammate, on the second number.
+    plan = (await client.get("/api/v1/billing/plan", headers=h)).json()
+    assert plan["plan"]["code"] == "solo" and plan["plan"]["monthly_total_cents"] == 2000
+    assert (plan["users"]["limit"], plan["numbers"]["limit"]) == (1, 2)
+    assert plan["minutes"] == {"included": 200, "remaining": 200}
+
+    # 5. Solo is one user - the owner. A teammate needs a $15/month add-on user first.
+    full = await client.post(
+        "/api/v1/orgs/current/members",
+        json={"email": "bob@journey-example.com", "password": PASSWORD, "role_name": "agent"},
+        headers=h,
+    )
+    assert full.json()["error"]["code"] == "seat_limit_reached"
+    unconfirmed = await client.post("/api/v1/billing/plan/users", json={"count": 1}, headers=h)
+    assert unconfirmed.status_code == 409
+    assert unconfirmed.json()["error"]["quote"]["monthly_increase_cents"] == 1500
+    r = await client.post(
+        "/api/v1/billing/plan/users", json={"count": 1, "accept_cents": 1500}, headers=h
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["users"]["limit"] == 2 and r.json()["plan"]["monthly_total_cents"] == 3500
+    assert r.json()["minutes"]["included"] == 400
+
     inboxes = (await client.get("/api/v1/inboxes", headers=h)).json()
     assert sorted(i["e164"] for i in inboxes) == NUMBERS  # the owner sees every number
     second = next(i for i in inboxes if i["e164"] == NUMBERS[1])

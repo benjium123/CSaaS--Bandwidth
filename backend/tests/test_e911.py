@@ -383,6 +383,7 @@ async def test_purchase_records_the_address_and_when_limits_were_acknowledged(se
             org.id,
             ["+12125550133"],
             emergency_address_id=address.id,
+            plan_code="solo",
         )
     finally:
         stripe_client._stripe = orig

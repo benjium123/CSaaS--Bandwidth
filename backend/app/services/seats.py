@@ -1,4 +1,8 @@
-"""User seats follow paid phone numbers: one paid, unreleased number buys one user.
+"""User seats come from the workspace plan: the users it includes plus paid add-on users
+(services/plan_billing.py). The owner occupies a seat like anyone else.
+
+Before workspace plans, seats followed paid phone numbers (one paid, unreleased number bought
+one user). That still applies to a workspace holding such a purchase and no plan:
 
 The owner occupies a seat like anyone else, so a workspace that bought three numbers holds
 three people. The seat count is read from the SAME source Stripe bills from - the entries of
@@ -102,6 +106,11 @@ async def usage(session: AsyncSession, org_id: uuid.UUID, *, lock: bool = False)
     ).scalar_one()
     if not org.number_subscription_required:
         return SeatUsage(False, None, int(members), int(pending))
+    from app.services import plan_billing
+
+    ent = await plan_billing.entitlement(session, org_id)
+    if ent is not None:
+        return SeatUsage(True, ent.users, int(members), int(pending))
     return SeatUsage(True, await paid_numbers(session, org_id), int(members), int(pending))
 
 
@@ -121,9 +130,9 @@ async def require_seat(
         return
     if seats.limit:
         message = (
-            f"All {seats.limit} user seats are in use. Each phone number you buy adds one "
-            "user - buy another number to add someone."
+            f"All {seats.limit} users on your plan are in use. Add a user for $15/month "
+            "from Team, or move to a bigger plan."
         )
     else:
-        message = "Buy a phone number to add users. Each number you buy adds one user."
+        message = "Choose a plan to add users. Every plan comes with users and numbers."
     raise PermissionDeniedError(message, code="seat_limit_reached")

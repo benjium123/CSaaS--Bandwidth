@@ -34,8 +34,8 @@ from app.services import credentials as credential_svc
 from app.services import messaging as svc
 from app.services import routing_exec as routing_exec_svc
 from app.services import subscriptions as subscriptions_svc
-from app.services import telephony_billing as _tb
 from app.services import supervisor as supervisor_svc
+from app.services import telephony_billing as _tb
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import verify_webhook as livekit_verify_webhook
 
@@ -896,6 +896,13 @@ async def stripe_webhook(
     from app.services import number_purchases, tendlc
 
     if await tendlc.handle_event(session, event):
+        return Response(status_code=204)
+
+    from app.services import plan_billing
+
+    # Workspace plan subscriptions (Solo/Team/Business + add-ons) before the legacy
+    # per-number carts: their subscription metadata says workspace_plan.
+    if await plan_billing.handle_event(session, request, event):
         return Response(status_code=204)
 
     if await number_purchases.handle_event(session, request, event):

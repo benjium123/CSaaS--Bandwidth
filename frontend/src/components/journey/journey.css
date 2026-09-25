@@ -183,3 +183,30 @@
 .rj-search { flex-wrap: wrap; }
 .rj-search input { flex: 1 1 180px; min-width: 0; }
 .rj .rj-search .rj-btn { flex: 1 1 120px; width: auto; }
+
+/* ---- plan picker (choose-numbers, first purchase) ---- */
+.rj-plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.rj-plan {
+  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 16px 16px 15px;
+  border: 1px solid var(--rj-line); border-radius: 14px; cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, transform 0.15s;
+}
+.rj-plan:hover { border-color: color-mix(in srgb, var(--rj-blue) 55%, var(--rj-line)); }
+.rj-plan[data-on] { border-color: var(--rj-blue); background: color-mix(in srgb, var(--rj-blue) 8%, var(--rj-bg)); box-shadow: 0 0 0 1px var(--rj-blue) inset; }
+.rj-plan input { position: absolute; top: 16px; right: 16px; margin: 0 !important; accent-color: var(--rj-blue); }
+.rj-plan-name { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-right: 22px; font-family: "Archivo Variable", sans-serif; font-weight: 740; font-size: 17px; letter-spacing: -0.02em; }
+.rj-plan-name em {
+  font-style: normal; font-family: "Martian Mono Variable", monospace; font-size: 10px; font-weight: 500;
+  letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 7px; border-radius: 999px;
+  color: var(--rj-live); background: color-mix(in srgb, var(--rj-live) 14%, transparent);
+}
+.rj-plan-price { font-family: "Archivo Variable", sans-serif; font-weight: 800; font-size: 30px; letter-spacing: -0.04em; line-height: 1.05; }
+.rj-plan-price small { font-family: "Onest Variable", sans-serif; font-weight: 500; font-size: 13px; letter-spacing: 0; color: var(--rj-mute); margin-left: 3px; }
+.rj-plan-facts { font-size: 13px; line-height: 1.55; color: var(--rj-soft); }
+@media (max-width: 640px) {
+  .rj-plans { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .rj-plan { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline; }
+  .rj-plan-name { grid-column: 1; }
+  .rj-plan-price { grid-column: 2; grid-row: 1 / span 2; font-size: 26px; text-align: right; padding-right: 26px; }
+  .rj-plan-facts { grid-column: 1; }
+}

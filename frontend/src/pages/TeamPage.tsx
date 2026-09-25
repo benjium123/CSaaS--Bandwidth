@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/consoleChrome";
 import { Button, Input, Pill, Select, Spinner, type PillTone } from "@/components/ui/primitives";
 import { AddTeammateDrawer } from "@/components/team/AddTeammateDrawer";
+import { BuySeatPanel } from "@/components/team/BuySeatPanel";
 import { RoleMatrix } from "@/components/team/RoleMatrix";
 import {
   MemberNumbersCell,
@@ -126,6 +127,7 @@ export function TeamPage() {
 
   /** Whether the Add-teammate drawer is open. */
   // Back from buying a teammate's number (/team?add=1): open the drawer straight away.
+  const [buySeatOpen, setBuySeatOpen] = React.useState(false);
   const [addOpen, setAddOpen] = React.useState(
     () => new URLSearchParams(window.location.search).get("add") === "1",
   );
@@ -281,11 +283,16 @@ export function TeamPage() {
                 {seatLimit !== null && seats && (
                   <p className="text-[13px] text-muted-foreground" data-testid="seat-usage">
                     {seats.members + seats.pending_invites} of {seatLimit} user{" "}
-                    {seatLimit === 1 ? "seat" : "seats"} used. Each phone number adds one user.{" "}
-                    {seats.available === 0 && (
-                      <a href="/choose-numbers" className="font-medium text-primary underline">
-                        Buy a number to add someone
-                      </a>
+                    {seatLimit === 1 ? "seat" : "seats"} used on your plan.{" "}
+                    {seats.available === 0 && canInvite && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto p-0 font-medium text-primary underline hover:bg-transparent"
+                        onClick={() => setBuySeatOpen(true)}
+                      >
+                        Add a user
+                      </Button>
                     )}
                   </p>
                 )}
@@ -296,7 +303,7 @@ export function TeamPage() {
                   className="rounded-full px-5"
                   onClick={() =>
                     seatLimit !== null && seats?.available === 0
-                      ? window.location.assign("/choose-numbers?next=%2Fteam%3Fadd%3D1")
+                      ? setBuySeatOpen(true)
                       : setAddOpen(true)
                   }
                 >
@@ -304,6 +311,17 @@ export function TeamPage() {
                 </Button>
               )}
             </div>
+
+            {buySeatOpen && (
+              <BuySeatPanel
+                onClose={() => setBuySeatOpen(false)}
+                onBought={() => {
+                  setBuySeatOpen(false);
+                  void refetchSeats();
+                  setAddOpen(true);
+                }}
+              />
+            )}
 
             {membersLoading ? (
               <Spinner />
