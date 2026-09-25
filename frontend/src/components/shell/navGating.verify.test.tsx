@@ -76,6 +76,7 @@ const ORG_SUMMARY = {
   has_number: true,
   member_count: 2,
   registration_state: "approved",
+  onboarding_step: "ready",
 };
 
 /** The REAL shape /api/v1/auth/me returns: permissions at the top level, memberships
