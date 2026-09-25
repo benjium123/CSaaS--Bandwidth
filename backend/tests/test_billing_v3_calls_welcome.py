@@ -358,6 +358,8 @@ async def test_zero_balance_with_only_sms_units_stays_exhausted(session, setting
 async def test_welcome_credit_waits_for_kyc_approval(session):
     config.set_active_settings(make_settings(welcome_credit_micros=1_000_000))
     org = await _new_org(session, "Unverified")
+    org.kyc_required = True
+    await session.commit()
     set_org_context(session, org.id)
     profile = KycProfile(id=uuid.uuid4(), org_id=org.id, status="draft")
     session.add(profile)
@@ -378,6 +380,8 @@ async def test_welcome_credit_waits_for_kyc_approval(session):
 async def test_no_kyc_profile_gets_no_welcome_credit(session):
     config.set_active_settings(make_settings(welcome_credit_micros=1_000_000))
     org = await _new_org(session, "No profile")
+    org.kyc_required = True
+    await session.commit()
     await billing_ops.grant_welcome_credit(session, org.id)
     await session.commit()
     assert await credits.balance(session, org.id) == 0
@@ -438,8 +442,8 @@ async def test_call_whose_room_is_gone_is_closed(session):
     session.add(call)
     await session.commit()
 
-    async def hangup(_session, c):
-        raise RuntimeError("room already gone")
+    async def hangup(_session, c):  # pragma: no cover - a lost hang-up is never torn down
+        raise AssertionError("hung up a call on a room-gone answer")
 
     async def gone(_session, c):
         return False
@@ -479,3 +483,24 @@ async def test_live_or_unknown_room_is_left_alone(session):
 def test_billable_seconds_never_exceeds_the_cap():
     call = Call(direction="outbound", duration_seconds=20 * 3600)
     assert telephony_billing.billable_seconds(call) == telephony_billing.MAX_CALL_SECONDS
+
+
+async def test_org_exempt_from_kyc_gets_welcome_credit(session):
+    config.set_active_settings(make_settings(welcome_credit_micros=1_000_000, kyc_enforced=False))
+    org = await _new_org(session, "Exempt")
+    org.kyc_required = False
+    org.account_type = "business"
+    await session.commit()
+    await billing_ops.grant_welcome_credit(session, org.id)
+    await session.commit()
+    assert await credits.balance(session, org.id) == 1_000_000
+
+
+async def test_org_that_must_verify_waits_even_when_kyc_not_enforced(session):
+    config.set_active_settings(make_settings(welcome_credit_micros=1_000_000, kyc_enforced=False))
+    org = await _new_org(session, "Must verify")
+    org.kyc_required = True
+    await session.commit()
+    await billing_ops.grant_welcome_credit(session, org.id)
+    await session.commit()
+    assert await credits.balance(session, org.id) == 0

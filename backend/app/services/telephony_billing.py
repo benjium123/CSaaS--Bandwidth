@@ -756,19 +756,30 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
 
 
 async def _close_call(
-    session: AsyncSession, call: Call, *, hangup: Any, reason: str, elapsed_seconds: int
+    session: AsyncSession,
+    call: Call,
+    *,
+    hangup: Any,
+    reason: str,
+    elapsed_seconds: int,
+    tear_down: bool = True,
 ) -> None:
-    """End a call that is running too long or whose hang-up was lost. Tries the normal
-    hang-up first (it also ends a call that really is still up); if that fails or leaves the
-    call open, walks every leg to "hungup" so the call ends, is billed and leaves the pool."""
+    """End a call that is running too long or whose hang-up was lost. With ``tear_down`` it
+    tries the normal hang-up first (that also ends a call that really is still up); then,
+    if the call is still open, walks every leg to "hungup" so it ends, is billed and leaves
+    the pool. A lost-hang-up close passes tear_down=False: it only records the end, so a
+    wrong "room gone" answer can never drop a live customer call."""
     from app.services import calls as calls_svc
 
     org_id, call_id = call.org_id, call.id
-    try:
-        await hangup(session, call)
-    except Exception:
-        await session.rollback()
-        log.warning("telephony_billing.close_hangup_failed", call_id=str(call_id), reason=reason)
+    if tear_down:
+        try:
+            await hangup(session, call)
+        except Exception:
+            await session.rollback()
+            log.warning(
+                "telephony_billing.close_hangup_failed", call_id=str(call_id), reason=reason
+            )
     set_org_context(session, org_id)
     call = await session.get(Call, call_id, populate_existing=True)
     if call is None:
@@ -864,7 +875,12 @@ async def enforce_active_calls(
                 and await is_live(session, call) is False
             ):
                 await _close_call(
-                    session, call, hangup=hangup, reason="stale", elapsed_seconds=elapsed_seconds
+                    session,
+                    call,
+                    hangup=hangup,
+                    reason="stale",
+                    elapsed_seconds=elapsed_seconds,
+                    tear_down=False,
                 )
                 continue
             per_minute = await unit_price(session, org_id, call.carrier, _call_metric(call.direction))

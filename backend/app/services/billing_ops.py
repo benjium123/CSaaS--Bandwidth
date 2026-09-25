@@ -23,14 +23,26 @@ def _welcome_amount() -> int:
 
 
 async def _kyc_cleared(session, org_id) -> bool:  # noqa: ANN001
-    """The welcome credit waits for an approved business/identity check, so a throwaway
-    signup cannot collect it."""
+    """The welcome credit follows the same verification rule as calling
+    (telephony_access): an org that must verify gets it only once approved, so a throwaway
+    signup cannot collect it; an org exempt from verification gets it straight away."""
     import sqlalchemy as sa
 
+    from app.config import get_active_settings
     from app.db.base import set_org_context
-    from app.models import KYC_TELEPHONY_STATUSES, KycProfile
+    from app.models import KYC_TELEPHONY_STATUSES, KycProfile, Org
 
     set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    if org is None:
+        return False
+    must_verify = (
+        bool(getattr(get_active_settings(), "kyc_enforced", False))
+        or bool(getattr(org, "kyc_required", False))
+        or org.account_type == "individual"
+    )
+    if not must_verify:
+        return True
     status = (
         await session.execute(sa.select(KycProfile.status).where(KycProfile.org_id == org_id))
     ).scalar_one_or_none()
