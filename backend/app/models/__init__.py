@@ -465,3 +465,4 @@ from app.models.billing_v2 import (  # noqa: E402
 )
 from app.models.fax import Fax, FaxEvent  # noqa: E402
 from app.models.porting import PortRequest  # noqa: E402
+from app.models.site import SiteChat, SiteChatMessage, SiteLead  # noqa: E402

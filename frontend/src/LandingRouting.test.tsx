@@ -17,12 +17,18 @@ describe("Public landing routes", () => {
     open("/");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Small ring.");
     expect(screen.getByRole("link", { name: "Get started" })).toHaveAttribute("href", "/signbox");
-    fireEvent.click(screen.getByRole("button", { name: "Add a number" }));
-    expect(screen.getByRole("status", { name: "Number quantity" })).toHaveTextContent("4");
-    expect(screen.getByText("$60", { exact: false })).toBeInTheDocument();
+    expect(screen.getAllByText("MOST POPULAR").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: /Compare plans/ })).toHaveAttribute("href", "/pricing");
     fireEvent.click(screen.getByRole("button", { name: "Messages" }));
     expect(screen.getByText("Texting after messaging registration approval")).toBeInTheDocument();
   });
+  it.each(["/pricing", "/faq", "/trust", "/legal/911", "/product/calling", "/solutions/real-estate", "/compare/quo", "/sales"])(
+    "renders the public page %s without signing in", path => {
+      open(path);
+      expect(screen.getAllByRole("heading", { level: 1 }).length).toBe(1);
+      expect(screen.getAllByRole("link", { name: /Get started/ }).length).toBeGreaterThan(0);
+    },
+  );
   it.each(["/signbox", "/signup"])("opens signup from %s", async path => {
     auth.ready = true;
     open(path);

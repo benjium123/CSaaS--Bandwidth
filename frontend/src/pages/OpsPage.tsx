@@ -12,6 +12,7 @@ import { AccountsTab } from "@/components/ops/AccountsTab";
 import { BillingTab } from "@/components/ops/BillingTab";
 import { ConsoleTab } from "@/components/ops/ConsoleTab";
 import { PortReviewTab } from "@/components/ops/PortReviewTab";
+import { WebsiteTab } from "@/components/ops/WebsiteTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAuthedBlob } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
@@ -867,6 +868,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { id: "purchases", label: "Number purchases", title: "Number purchases", lede: "Paid orders that did not finish provisioning." },
       { id: "alerts", label: "Security alerts", title: "Security alerts", lede: "Sign-ins and actions the system flagged." },
       { id: "ports", label: "Ports & grants", title: "Ports & grants", lede: "Number ports waiting for review, and credit grants waiting for a second operator." },
+      { id: "website", label: "Website", title: "Website chats & sales", lede: "Visitors who asked the chat for a person, and Talk to sales enquiries." },
     ],
   },
   {
@@ -1039,6 +1041,7 @@ function Switchboard({
               {tab === "purchases" && <PurchasesTab />}
               {tab === "texting" && <TextingRegistrationsTab />}
               {tab === "ports" && <PortReviewTab />}
+              {tab === "website" && <WebsiteTab />}
               {tab === "accounts" && <AccountsTab />}
               {tab === "users" && <UsersTab />}
             </section>

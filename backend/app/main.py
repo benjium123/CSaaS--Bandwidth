@@ -48,6 +48,7 @@ from app.api.routes import routing as routing_routes
 from app.api.routes import saml as saml_routes
 from app.api.routes import scheduling as scheduling_routes
 from app.api.routes import scim as scim_routes
+from app.api.routes import site as site_routes
 from app.api.routes import softphone as softphone_routes
 from app.api.routes import spend as spend_routes
 from app.api.routes import sso as sso_routes
@@ -284,6 +285,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(scim_routes.router)
     app.include_router(monitoring_routes.customer_router)
     app.include_router(monitoring_routes.public_router)
+    app.include_router(site_routes.public_router)
+    app.include_router(site_routes.ops_router)
     app.include_router(monitoring_routes.ops_router)
     app.include_router(number_routes.router)
     app.include_router(telephony_routes.router)
