@@ -53,7 +53,7 @@ log = structlog.get_logger("plan_billing")
 
 _UNSCOPED = {ALLOW_UNSCOPED_KEY: True}
 
-EXTRA_USER_CENTS = 1500
+EXTRA_USER_CENTS = 1500  # Solo and Team; Business sets its own on PlanSpec
 EXTRA_NUMBER_CENTS = 500
 MINUTES_PER_USER = 200
 #: Stripe metadata kind on the subscription itself (the checkout session says number_purchase).
@@ -68,12 +68,17 @@ class PlanSpec:
     numbers: int
     price_cents: int
     setting: str
+    extra_user_cents: int = EXTRA_USER_CENTS
+    extra_user_setting: str = "stripe_extra_user_price_id"
 
 
 PLANS: dict[str, PlanSpec] = {
-    "solo": PlanSpec("solo", "Solo", 1, 1, 1500, "stripe_plan_solo_price_id"),
+    "solo": PlanSpec("solo", "Starter", 1, 1, 1500, "stripe_plan_solo_price_id"),
     "team": PlanSpec("team", "Team", 3, 3, 4500, "stripe_plan_team_price_id"),
-    "business": PlanSpec("business", "Business", 5, 5, 7500, "stripe_plan_business_price_id"),
+    "business": PlanSpec(
+        "business", "Business", 10, 10, 13000, "stripe_plan_business_price_id",
+        extra_user_cents=1200, extra_user_setting="stripe_business_extra_user_price_id",
+    ),
 }
 
 
@@ -82,7 +87,12 @@ def plan_price_id(settings: Settings, code: str) -> str:
 
 
 def monthly_cents(spec: PlanSpec, extra_users: int, extra_numbers: int) -> int:
-    return spec.price_cents + extra_users * EXTRA_USER_CENTS + extra_numbers * EXTRA_NUMBER_CENTS
+    return spec.price_cents + extra_users * spec.extra_user_cents + extra_numbers * EXTRA_NUMBER_CENTS
+
+
+def extra_user_price_id(settings: Settings, code: str) -> str:
+    """The add-on user price for a plan: Business has its own, the others share one."""
+    return getattr(settings, PLANS[code].extra_user_setting)
 
 
 # ------------------------------------------------------------------------------------
@@ -229,14 +239,16 @@ class ParsedItems:
     extra_users_item_id: str | None
     extra_numbers: int
     extra_numbers_item_id: str | None
+    extra_users_price_id: str | None = None
 
 
 def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
     """Read plan and add-on quantities off a Stripe subscription. Anything unexpected on it
     (an unknown price, two plans, a plan quantity other than 1) is refused, not guessed."""
     by_price = {plan_price_id(settings, code): code for code in PLANS}
-    plan_code = plan_item = users_item = numbers_item = None
+    plan_code = plan_item = users_item = numbers_item = users_price = None
     extra_users = extra_numbers = 0
+    user_prices = {extra_user_price_id(settings, code) for code in PLANS} - {""}
     for item in (subscription.get("items") or {}).get("data", []):
         price_id = (item.get("price") or {}).get("id")
         quantity = int(item.get("quantity") or 0)
@@ -244,15 +256,17 @@ def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
             if plan_code is not None or quantity != 1:
                 raise ValidationFailedError("Subscription does not match a Ringlite plan")
             plan_code, plan_item = by_price[price_id], item.get("id")
-        elif price_id == settings.stripe_extra_user_price_id:
-            extra_users, users_item = quantity, item.get("id")
+        elif price_id in user_prices:
+            extra_users, users_item, users_price = quantity, item.get("id"), price_id
         elif price_id == settings.stripe_extra_number_price_id:
             extra_numbers, numbers_item = quantity, item.get("id")
         else:
             raise ValidationFailedError("Subscription has an item that is not a Ringlite plan")
     if plan_code is None:
         raise ValidationFailedError("Subscription does not include a Ringlite plan")
-    return ParsedItems(plan_code, plan_item, extra_users, users_item, extra_numbers, numbers_item)
+    return ParsedItems(
+        plan_code, plan_item, extra_users, users_item, extra_numbers, numbers_item, users_price
+    )
 
 
 def checkout_line_items(settings: Settings, code: str, numbers: int) -> list[dict]:
@@ -439,13 +453,24 @@ async def _apply(
             stripe, plan_price_id(settings, plan_code), PLANS[plan_code].price_cents
         )
         items.append({"id": parsed.plan_item_id, "price": plan_price_id(settings, plan_code)})
+    target = plan_code or parsed.plan_code
+    user_price = extra_user_price_id(settings, target)
+    if parsed.extra_users_item_id and parsed.extra_users_price_id != user_price:
+        # A plan switch moves existing add-on users to the new plan's user price.
+        await validate_price(stripe, user_price, PLANS[target].extra_user_cents)
+        keep = parsed.extra_users if extra_users is None else extra_users
+        if keep > 0:
+            items.append({"id": parsed.extra_users_item_id, "price": user_price, "quantity": keep})
+        else:
+            items.append({"id": parsed.extra_users_item_id, "deleted": True})
+        extra_users = None  # handled
     for wanted, current, item_id, price_id, cents in (
         (
             extra_users,
             parsed.extra_users,
             parsed.extra_users_item_id,
-            settings.stripe_extra_user_price_id,
-            EXTRA_USER_CENTS,
+            user_price,
+            PLANS[target].extra_user_cents,
         ),
         (
             extra_numbers,
@@ -505,11 +530,11 @@ async def add_users(
     count: int,
     accept_cents: int | None,
 ) -> Entitlement:
-    """Buy ``count`` more users at $15/month each, charged now (prorated)."""
+    """Buy ``count`` more users at the plan's add-on price each, charged now (prorated)."""
     if not 1 <= count <= 50:
         raise ValidationFailedError("Add between 1 and 50 users at a time")
     ent = await require_entitlement(session, org_id)
-    increase = count * EXTRA_USER_CENTS
+    increase = count * ent.spec.extra_user_cents
     _require_accepted(accept_cents, increase, {"users": ent.users + count})
     return await _apply(
         session,
@@ -633,6 +658,7 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
                 "users": spec.users,
                 "numbers": spec.numbers,
                 "price_cents": spec.price_cents,
+                "extra_user_cents": spec.extra_user_cents,
                 "minutes": MINUTES_PER_USER * spec.users,
                 "monthly_total_cents_if_switched": monthly_cents(spec, extra_u, extra_n),
             }
@@ -650,6 +676,7 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
         return out
     voice = await plans.remaining(session, org_id, "voice_minutes")
     out.update(
+        extra_user_cents=ent.spec.extra_user_cents,
         plan={
             "code": ent.spec.code,
             "name": ent.spec.name,

@@ -14,6 +14,7 @@ export interface CatalogPlan {
   numbers: number;
   price_cents: number;
   minutes: number;
+  extra_user_cents?: number;
   monthly_total_cents_if_switched: number;
 }
 

@@ -125,7 +125,7 @@ export function ChooseNumbersPage() {
     {!purchaseId && <div className="rj-choose">
       <div className="rj-stack" style={{ marginTop: 0 }}>
         {!current && <section className="rj-card rj-in" aria-labelledby="plan-heading" style={{ "--i": 0 } as React.CSSProperties}>
-          <div className="rj-card-head"><span className="rj-num" data-done>1</span><div><h2 id="plan-heading">Choose your plan</h2><p className="rj-card-sub">Add users ({dollars(workspacePlan.data?.extra_user_cents ?? 1500)}/month) and numbers ({dollars(numberCents)}/month) any time.</p></div></div>
+          <div className="rj-card-head"><span className="rj-num" data-done>1</span><div><h2 id="plan-heading">Choose your plan</h2><p className="rj-card-sub">Add users ({dollars(catalog.find(p => p.code === planCode)?.extra_user_cents ?? workspacePlan.data?.extra_user_cents ?? 1500)}/month) and numbers ({dollars(numberCents)}/month) any time.</p></div></div>
           {workspacePlan.isPending ? <p className="rj-note">Loading plans…</p> : workspacePlan.isError ? <p role="alert" className="rj-error">{mutationErrorMessage(workspacePlan.error)}</p> :
             <div className="rj-plans" role="radiogroup" aria-label="Plan">{catalog.map(p => {
               const saving = planSaving(p, workspacePlan.data?.extra_user_cents, numberCents);

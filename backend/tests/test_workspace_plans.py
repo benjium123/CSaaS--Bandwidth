@@ -25,12 +25,15 @@ from app.providers.numbers import OrderResult
 from app.services import number_purchases, plan_billing, seats, stripe_client
 from tests.conftest import make_settings
 
-SETTINGS = make_settings(stripe_webhook_secret="whsec_test")
+SETTINGS = make_settings(
+    stripe_webhook_secret="whsec_test", stripe_business_extra_user_price_id="price_test_business_user"
+)
 CENTS = {
     SETTINGS.stripe_plan_solo_price_id: 1500,
     SETTINGS.stripe_plan_team_price_id: 4500,
-    SETTINGS.stripe_plan_business_price_id: 7500,
+    SETTINGS.stripe_plan_business_price_id: 13000,
     SETTINGS.stripe_extra_user_price_id: 1500,
+    SETTINGS.stripe_business_extra_user_price_id: 1200,
     SETTINGS.stripe_extra_number_price_id: 500,
 }
 
@@ -343,6 +346,43 @@ async def test_moving_up_to_team_absorbs_add_ons_and_needs_the_new_total_confirm
     assert stripe.monthly_cents(sid) == 4500
 
 
+
+async def test_business_add_on_users_are_12_dollars_and_move_to_that_price_on_upgrade(
+    session, stripe
+):
+    org = await _org(session)
+    # Team + 8 add-on users = 11 people at $45 + 8 x $15 = $165; Business covers 10 of them.
+    sid = await _on_plan(session, stripe, org, "team", [(SETTINGS.stripe_extra_user_price_id, 8)])
+    assert stripe.monthly_cents(sid) == 16500
+    from app.models import OrgMembership, Role, User
+
+    role = Role(id=uuid.uuid4(), org_id=org.id, name="agent", permissions=[])
+    session.add(role)
+    for i in range(11):
+        user = User(id=uuid.uuid4(), email=f"b{i}@plan.test", hashed_password="x", full_name="B")
+        session.add(user)
+        await session.flush()
+        session.add(OrgMembership(id=uuid.uuid4(), org_id=org.id, user_id=user.id, role_id=role.id))
+    await session.commit()
+
+    ent = await plan_billing.change_plan(session, SETTINGS, org.id, "business", 13000 + 1200)
+    assert (ent.spec.code, ent.extra_users) == ("business", 1)
+    users_item = [
+        i for i in stripe.subs[sid]["items"]["data"]
+        if i["price"]["id"] == SETTINGS.stripe_business_extra_user_price_id
+    ]
+    assert [i["quantity"] for i in users_item] == [1]
+    assert stripe.monthly_cents(sid) == 14200
+
+    with pytest.raises(PriceConfirmationRequiredError) as exc:
+        await plan_billing.add_users(session, SETTINGS, org.id, 1, None)
+    assert exc.value.quote["monthly_increase_cents"] == 1200
+    await plan_billing.add_users(session, SETTINGS, org.id, 1, 1200)
+    assert stripe.monthly_cents(sid) == 15400
+    summary = await plan_billing.summary(session, SETTINGS, org.id)
+    assert summary["extra_user_cents"] == 1200
+
+
 # ------------------------------------------------------------------------ minutes
 async def test_every_user_adds_200_pooled_minutes_and_they_admit_calls_without_credit(
     session, stripe
@@ -433,7 +473,7 @@ async def test_the_catalogue_matches_the_prices_sold(session, stripe):
     } == {
         "solo": (15_000_000, 1),
         "team": (45_000_000, 3),
-        "business": (75_000_000, 5),
+        "business": (130_000_000, 10),
     }
 
 
