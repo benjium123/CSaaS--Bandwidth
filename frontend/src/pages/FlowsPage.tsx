@@ -29,6 +29,7 @@ import {
 import { SectionLabel, SurfaceCard } from "@/components/ui/consoleChrome";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { MobileBack, paneClasses } from "@/components/shell/MobileBack";
 
 /* ---------------------------------------------------------------------------------------
  * Node draft shapes (plan DR-2). The wire shape is the flow_engine.py graph: a flat
@@ -283,11 +284,12 @@ export function FlowsPage() {
     return [...map.values()];
   }, [flows]);
 
+  const panes = paneClasses(creatingNew || !!selectedName);
   return (
-    <div className="grid h-full grid-cols-[minmax(280px,340px)_1fr] bg-[hsl(var(--cx-base))]">
+    <div className="grid h-full grid-cols-1 md:grid-cols-[minmax(280px,340px)_1fr] bg-[hsl(var(--cx-base))]">
       {/* The reference's nav rail: `--cx-surface`, a `--cx-line` hairline, 16/12 padding
           and 12px list rows. Nothing in here is square. */}
-      <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] p-3">
+      <aside className={`${panes.list} min-h-0 flex-col gap-4 overflow-y-auto border-r border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-surface))] p-3`}>
         <div>
           <div className="flex items-center justify-between gap-2 px-2 pb-3 pt-2">
             <div className="min-w-0">
@@ -365,7 +367,9 @@ export function FlowsPage() {
         <BindNumberSection api={api} flows={flows ?? []} />
       </aside>
 
-      <section className="min-h-0 overflow-y-auto p-6 sm:p-8">
+      <section className={`${panes.detail} min-h-0 overflow-y-auto`}>
+        <MobileBack label="All flows" onBack={() => { setCreatingNew(false); setSelectedName(null); }} />
+        <div className="p-4 sm:p-8">
         {creatingNew ? (
           <FlowEditor
             api={api}
@@ -385,6 +389,7 @@ export function FlowsPage() {
             description="Choose a flow from the list, or use New flow to create one."
           />
         )}
+        </div>
       </section>
     </div>
   );

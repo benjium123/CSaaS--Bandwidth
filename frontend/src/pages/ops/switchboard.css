@@ -335,7 +335,7 @@
   .sb-dock { position: static; order: -1; }
 }
 @media (max-width: 860px) {
-  .sb { grid-template-columns: minmax(0, 1fr); }
+  .sb { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; align-content: start; }
   .sb-rail { position: sticky; z-index: 30; height: auto; flex-direction: row; align-items: center; gap: 14px; padding: 12px 14px; border-right: 0; border-bottom: 1px solid var(--sb-line); overflow-x: auto; }
   .sb-brand-sub, .sb-group-label { display: none; }
   .sb-operator { margin-top: 0; padding: 4px 8px; flex: none; }
@@ -345,6 +345,11 @@
   .sb-nav > div { display: contents; }
   .sb-nav a { white-space: nowrap; }
   .sb-nav a[aria-current="page"]::before { left: 10px; right: 10px; top: auto; bottom: -1px; width: auto; height: 2px; border-radius: 2px; }
+  /* phones: brand and account on one row, the tabs on their own swipeable row below */
+  .sb-rail { flex-wrap: wrap; align-content: flex-start; overflow: visible; row-gap: 10px; top: 0; }
+  .sb-brand { margin-right: auto; }
+  .sb-nav { order: 3; flex: 1 0 100%; overflow-x: auto; margin: 0 -14px; padding: 0 14px 2px; scrollbar-width: none; }
+  .sb-nav::-webkit-scrollbar { display: none; }
   .sb-main { padding: 24px 16px 60px; }
   .sb-ticket { grid-template-columns: minmax(0, 1fr) auto; }
   .sb-ticket-signals { grid-column: 1 / -1; order: 3; }

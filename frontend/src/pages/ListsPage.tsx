@@ -20,6 +20,7 @@ import {
   SectionLabel,
 } from "@/components/ui/consoleChrome";
 import { cn } from "@/lib/utils";
+import { MobileBack, paneClasses } from "@/components/shell/MobileBack";
 
 /** Canonical fields the import pipeline understands (plan DR-8/DR-9/DR-14). Mirrors
  * FIELD_SYNONYMS in backend/app/services/list_parsing.py. */
@@ -107,9 +108,10 @@ export function ListsPage() {
     }
   }
 
+  const panes = paneClasses(!!preview || !!selectedId);
   return (
-    <div className="grid h-full grid-cols-[minmax(300px,380px)_1fr] bg-[hsl(var(--cx-base))]">
-      <aside className="flex min-h-0 flex-col border-r border-[hsl(var(--cx-line))]">
+    <div className="grid h-full grid-cols-1 md:grid-cols-[minmax(300px,380px)_1fr] bg-[hsl(var(--cx-base))]">
+      <aside className={`${panes.list} min-h-0 flex-col border-r border-[hsl(var(--cx-line))]`}>
         <div className="space-y-[12px] border-b border-[hsl(var(--cx-line))] p-[14px]">
           <PageHeader title="Lists" description="Import a file, map its columns, read the report." />
           <div className="space-y-[6px] rounded-[12px] border border-dashed border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[12px] py-[11px]">
@@ -177,7 +179,8 @@ export function ListsPage() {
         </div>
       </aside>
 
-      <section className="min-h-0 overflow-y-auto">
+      <section className={`${panes.detail} min-h-0 overflow-y-auto`}>
+        <MobileBack label="All lists" onBack={() => { setPreview(null); setSelectedId(null); }} />
         {preview ? (
           <MappingPanel
             api={api}

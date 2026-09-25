@@ -31,6 +31,7 @@ import { Badge, Button, Input, Spinner, pillToneClass } from "@/components/ui/pr
 import { PhoneNumberMenu } from "@/components/ui/PhoneNumberMenu";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { MobileBack, paneClasses } from "@/components/shell/MobileBack";
 
 const STATUS_FILTERS = [
   { key: "", label: "All" },
@@ -126,9 +127,10 @@ export function CallsPage() {
     }
   }
 
+  const panes = paneClasses(!!selectedId);
   return (
-    <div className="grid h-full grid-cols-[minmax(340px,440px)_1fr]">
-      <aside className="flex min-h-0 flex-col border-r border-[hsl(var(--cx-line))]">
+    <div className="grid h-full grid-cols-1 md:grid-cols-[minmax(340px,440px)_1fr]">
+      <aside className={`${panes.list} min-h-0 flex-col border-r border-[hsl(var(--cx-line))]`}>
         <div className="space-y-[14px] border-b border-[hsl(var(--cx-line))] p-[18px]">
           <PageHeader title="Calls" />
           <SurfaceCard className="space-y-[11px]">
@@ -286,7 +288,8 @@ export function CallsPage() {
         </div>
       </aside>
 
-      <section className="min-h-0 overflow-y-auto">
+      <section className={`${panes.detail} min-h-0 overflow-y-auto`}>
+        <MobileBack label="All calls" onBack={() => setSelectedId(null)} />
         {detail ? (
           <CallDetailPanel api={api} call={detail} />
         ) : (

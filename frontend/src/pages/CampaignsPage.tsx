@@ -26,6 +26,7 @@ import {
 import { Badge, Button, Input, Select, Spinner, pillToneClass } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { MobileBack, paneClasses } from "@/components/shell/MobileBack";
 
 /** P23b: one place that turns a wire channel into the words a customer reads. `ai_calls`
  * is "AI calls" on screen - the type list, the campaign list's subtitle and the detail
@@ -77,9 +78,10 @@ export function CampaignsPage() {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [creating, setCreating] = React.useState(false);
 
+  const panes = paneClasses(creating || !!selectedId);
   return (
-    <div className="grid h-full grid-cols-[minmax(300px,380px)_1fr]">
-      <aside className="flex min-h-0 flex-col border-r border-[hsl(var(--cx-line))]">
+    <div className="grid h-full grid-cols-1 md:grid-cols-[minmax(300px,380px)_1fr]">
+      <aside className={`${panes.list} min-h-0 flex-col border-r border-[hsl(var(--cx-line))]`}>
         <div className="border-b border-[hsl(var(--cx-line))] p-[18px]">
           {/* P27: the "Contact lists" button is gone. Lists are contacts, so they live on
               the Contacts page's Lists tab now - a second door into the same room was the
@@ -143,7 +145,8 @@ export function CampaignsPage() {
         </div>
       </aside>
 
-      <section className="min-h-0 overflow-y-auto">
+      <section className={`${panes.detail} min-h-0 overflow-y-auto`}>
+        <MobileBack label="All campaigns" onBack={() => { setCreating(false); setSelectedId(null); }} />
         {creating ? (
           <CampaignForm
             api={api}
