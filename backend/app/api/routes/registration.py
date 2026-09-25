@@ -519,7 +519,7 @@ async def texting_registration(
     reg = await tendlc.current(ctx.session, ctx.org.id)
     return {
         "registration": await _texting_out(ctx, reg) if reg else None,
-        "quotes": {tier: tendlc.quote(tier) for tier in tendlc.MONTHLY_CENTS},
+        "quotes": {tier: tendlc.customer_quote(tier) for tier in tendlc.MONTHLY_CENTS},
     }
 
 

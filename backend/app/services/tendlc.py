@@ -115,6 +115,15 @@ def quote(tier: str) -> dict:
     }
 
 
+def customer_quote(tier: str) -> dict:
+    """What the customer is shown: totals only, never the carrier / Ringlite split."""
+    q = quote(tier)
+    return {
+        key: q[key]
+        for key in ("fee_tier", "monthly_cents", "upfront_months", "due_today_cents")
+    }
+
+
 def tier_for(brand: Brand) -> str:
     return (
         "sole_proprietor" if (brand.entity_type or "").upper() == "SOLE_PROPRIETOR" else "standard"
@@ -132,7 +141,7 @@ def public(reg: TenDlcRegistration, brand: Brand | None, campaign: Campaign | No
         "checkout_url": reg.checkout_url if reg.stage == "checkout" else None,
         "otp_sent_at": reg.otp_sent_at.isoformat() if reg.otp_sent_at else None,
         "detail": reg.detail,
-        **quote(reg.fee_tier),
+        **customer_quote(reg.fee_tier),
     }
 
 

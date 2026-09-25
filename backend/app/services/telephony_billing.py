@@ -290,6 +290,61 @@ async def _voice_bundle_minutes(session: AsyncSession, org_id: uuid.UUID) -> int
     return await bundles.units(session, org_id, VOICE_BUNDLE_KIND)
 
 
+async def _minutes_in_flight(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    exclude_call_id: uuid.UUID | None,
+    moment: datetime,
+) -> int:
+    """Whole minutes the org's other not-yet-billed calls have already used. Bundle minutes
+    are only taken when a call is billed, so without this every concurrent call would count
+    the WHOLE bundle as its own cover."""
+    set_org_context(session, org_id)
+    calls = (
+        await session.execute(
+            sa.select(Call).where(
+                Call.org_id == org_id,
+                Call.billed_at.is_(None),
+                Call.created_at >= moment - timedelta(hours=12),
+            )
+        )
+    ).scalars().all()
+    total = 0
+    for other in calls:
+        if other.id == exclude_call_id or (other.extra or {}).get("refused"):
+            continue
+        if other.ended_at is not None:
+            seconds = billable_seconds(other)
+        else:
+            start = _call_clock_start(other)
+            if start is None:
+                continue
+            seconds = max(int((moment - _as_utc(start)).total_seconds()), 0)
+            if other.direction != "outbound":
+                seconds = max(seconds, INBOUND_MIN_SECONDS)
+        total += spend._ceil_minutes(seconds)
+    return total
+
+
+async def _voice_bundle_cover(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    exclude_call_id: uuid.UUID | None = None,
+    moment: datetime | None = None,
+) -> int:
+    """Bundle minutes still free for ONE call: the bundle minus what the org's other unbilled
+    calls have used (the pool is shared)."""
+    bundle = await _voice_bundle_minutes(session, org_id)
+    if bundle <= 0:
+        return 0
+    used = await _minutes_in_flight(
+        session, org_id, exclude_call_id=exclude_call_id, moment=moment or _now()
+    )
+    return max(bundle - used, 0)
+
+
 async def sms_price(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -505,7 +560,12 @@ async def require_call_credit(session: AsyncSession, org_id: uuid.UUID, call: Ca
     per_minute = await unit_price(session, org_id, call.carrier, "voice_min_out")
     current = await credits.balance(session, org_id)
     minimum = max(voice_price_micros(60, per_minute), 1)
-    if current < minimum and await _voice_bundle_minutes(session, org_id) < 1:
+    # Bundle minutes admit the call only when more than the cut-off headroom is free, so
+    # enforce_active_calls does not end it moments after it connects.
+    if current < minimum and (
+        await _voice_bundle_cover(session, org_id, exclude_call_id=call.id)
+        <= CUTOFF_HEADROOM_MINUTES
+    ):
         await record_refusal(
             session,
             org_id,
@@ -529,7 +589,7 @@ async def inbound_call_allowed(session: AsyncSession, org_id: uuid.UUID, carrier
     per_minute = await unit_price(session, org_id, carrier, "voice_min_in")
     if await credits.balance(session, org_id) >= max(per_minute, 1):
         return True
-    return await _voice_bundle_minutes(session, org_id) >= 1
+    return await _voice_bundle_cover(session, org_id) > CUTOFF_HEADROOM_MINUTES
 
 
 async def refuse_inbound_call(session: AsyncSession, call: Call) -> None:
@@ -740,9 +800,14 @@ async def enforce_active_calls(
             headroom_micros = CUTOFF_HEADROOM_MINUTES * per_minute
             held, holds = await _held_for_call(session, org_id, call.id)
             # Unspent call-minute bundle minutes cover the call too (taken when it is
-            # billed). Shared by the org's concurrent calls, so this can overrun by a few
-            # minutes at most; the remainder is charged to the balance at billing.
-            bundle_cover = await _voice_bundle_minutes(session, org_id) * per_minute
+            # billed). The pool is shared: minutes the org's other unbilled calls have
+            # already used are not this call's cover.
+            bundle_cover = (
+                await _voice_bundle_cover(
+                    session, org_id, exclude_call_id=call.id, moment=moment
+                )
+                * per_minute
+            )
             if used_micros + headroom_micros <= held + bundle_cover:
                 continue
             try:

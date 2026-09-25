@@ -256,8 +256,9 @@ export type TextingFeeTier = "standard" | "sole_proprietor";
 
 export interface TextingQuote {
   fee_tier: TextingFeeTier;
-  brand_fee_cents: number;
-  campaign_review_cents: number;
+  /** Not sent to customers any more (totals only); kept optional for older servers. */
+  brand_fee_cents?: number;
+  campaign_review_cents?: number;
   /** Ringlite's one-time setup fee on top of the carrier fees (absent on older servers). */
   service_fee_cents?: number;
   monthly_cents: number;

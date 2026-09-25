@@ -110,6 +110,15 @@ async def _last_topup_ref(session: AsyncSession, org_id: uuid.UUID) -> str:
     return str(ref or "none")
 
 
+async def _has_bundle_units(session: AsyncSession, org_id) -> bool:  # noqa: ANN001
+    from app.services import bundles
+
+    for kind in bundles.UNITS_PER_BUNDLE:
+        if await bundles.units(session, org_id, kind) > 0:
+            return True
+    return False
+
+
 def _money(micros: int) -> str:
     return f"${micros / 1_000_000:,.2f}"
 
@@ -128,6 +137,10 @@ async def evaluate(session: AsyncSession, settings, org: Org) -> str:  # noqa: A
         session, org.id
     )
     state = state_for(balance, int(org.warn_threshold_micros or 0))
+    if state == "exhausted" and await _has_bundle_units(session, org.id):
+        # $0 but prepaid bundle units left: service is not paused (bundles are spent before
+        # the balance), so this is "low", not "exhausted" - never tell them calls are declined.
+        state = "low"
     if state != org.billing_state:
         org.billing_state = state
         org.billing_state_changed_at = _now()

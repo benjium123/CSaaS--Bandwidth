@@ -235,3 +235,99 @@ async def test_welcome_credit_off_when_zero(session):
     await session.commit()
     assert await billing_ops.grant_missing_welcome_credits(session) == 0
     assert await credits.balance(session, org.id) == 0
+
+
+# ----------------------------------------------------------------------------------
+# Review fixes: the bundle is ONE shared pool across concurrent calls
+# ----------------------------------------------------------------------------------
+async def test_concurrent_calls_cannot_each_count_the_whole_bundle(session):
+    org = await _new_org(session)
+    await _enable(session, org.id)
+    await _give_minutes(session, org.id, 10)
+    now = _now()
+    set_org_context(session, org.id)
+    for _ in range(20):
+        session.add(
+            _call(org.id, status="in_progress", answered_at=now - timedelta(minutes=8))
+        )
+    await session.commit()
+
+    hung: list = []
+
+    async def hangup(_session, c):
+        hung.append(c.id)
+
+    # 20 calls x 8 minutes = 160 minutes against a 10-minute pool and $0: all are cut.
+    assert await telephony_billing.enforce_active_calls(session, hangup=hangup) == 20
+    assert len(hung) == 20
+
+
+async def test_two_calls_share_a_big_bundle_without_being_cut(session):
+    org = await _new_org(session)
+    await _enable(session, org.id)
+    await _give_minutes(session, org.id, 100)
+    now = _now()
+    set_org_context(session, org.id)
+    for _ in range(2):
+        session.add(
+            _call(org.id, status="in_progress", answered_at=now - timedelta(minutes=3))
+        )
+    await session.commit()
+
+    async def hangup(_session, c):  # pragma: no cover - must not be called
+        raise AssertionError("cut a covered call")
+
+    assert await telephony_billing.enforce_active_calls(session, hangup=hangup) == 0
+
+
+async def test_admission_needs_more_than_the_cutoff_headroom(session):
+    org = await _new_org(session)
+    await _enable(session, org.id)
+    await _give_minutes(session, org.id, 1)
+    # One free minute would be cut at the first tick, so the call is not taken.
+    assert await telephony_billing.inbound_call_allowed(session, org.id, "bandwidth") is False
+    call = _call(org.id)
+    set_org_context(session, org.id)
+    session.add(call)
+    await session.commit()
+    import pytest
+
+    with pytest.raises(telephony_billing.TelephonyCreditsError):
+        await telephony_billing.require_call_credit(session, org.id, call)
+
+
+async def test_minutes_used_by_other_live_calls_reduce_admission(session):
+    org = await _new_org(session)
+    await _enable(session, org.id)
+    await _give_minutes(session, org.id, 10)
+    now = _now()
+    set_org_context(session, org.id)
+    session.add(_call(org.id, status="in_progress", answered_at=now - timedelta(minutes=9)))
+    await session.commit()
+    # 10 minutes minus 9 already used by the live call = 1 free: not enough for a new call.
+    assert await telephony_billing.inbound_call_allowed(session, org.id, "bandwidth") is False
+
+
+# ----------------------------------------------------------------------------------
+# Review fixes: alerts and the 10DLC customer quote
+# ----------------------------------------------------------------------------------
+async def test_zero_balance_with_bundle_units_is_low_not_exhausted(session, settings):
+    from app.services import billing_alerts
+
+    org = await _new_org(session)
+    await _enable(session, org.id)
+    assert await billing_alerts.evaluate(session, settings, org) == "exhausted"
+    await _give_minutes(session, org.id, 50)
+    assert await billing_alerts.evaluate(session, settings, org) == "low"
+
+
+def test_tendlc_customer_quote_shows_totals_only():
+    from app.services import tendlc
+
+    q = tendlc.customer_quote("standard")
+    assert q == {
+        "fee_tier": "standard",
+        "monthly_cents": 1000,
+        "upfront_months": 3,
+        "due_today_cents": 450 + 1500 + 500 + 3 * 1000,
+    }
