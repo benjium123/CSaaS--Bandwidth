@@ -28,7 +28,9 @@ BUNDLE_ENTRY_TYPES: tuple[str, ...] = ("purchase", "usage", "adjustment", "refun
 PAYMENT_KINDS: tuple[str, ...] = (
     "topup", "sms_bundle", "mms_bundle", "voice_bundle", "auto_recharge"
 )
-PAYMENT_STATES: tuple[str, ...] = ("pending", "paid", "failed", "refunded")
+#: held = paid but refused by the risk screen: nothing credited, waiting for a person to
+#: refund it in Stripe (refunds are always made by hand).
+PAYMENT_STATES: tuple[str, ...] = ("pending", "paid", "failed", "refunded", "held")
 REFUSAL_KINDS: tuple[str, ...] = ("sms", "mms", "call", "inbound_call", "number", "fax")
 
 
