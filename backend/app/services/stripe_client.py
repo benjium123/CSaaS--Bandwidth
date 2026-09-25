@@ -127,6 +127,71 @@ async def create_checkout_session(
     return {"id": session_obj["id"], "url": session_obj["url"]}
 
 
+async def create_bundle_checkout_session(
+    settings,
+    *,
+    org,
+    kind: str,
+    qty: int,
+    unit_amount_micros: int,
+    product_name: str,
+    payment_id: str,
+    success_url: str,
+    cancel_url: str,
+    customer_email: str | None = None,
+) -> dict:
+    """Checkout Session for `qty` message bundles at an already-discounted unit price.
+
+    The quantity is fixed (not adjustable on Stripe's page) because the discount was
+    decided server-side for exactly this quantity.
+    """
+    stripe = _stripe(settings)
+    metadata = {
+        "org_id": str(org.id),
+        "kind": f"{kind}_bundle",
+        "qty": str(int(qty)),
+        "payment_id": payment_id,
+    }
+    params: dict[str, Any] = {
+        "mode": "payment",
+        "line_items": [
+            {
+                "price_data": {
+                    "currency": settings.stripe_price_currency,
+                    "product_data": {"name": product_name},
+                    "unit_amount": int(unit_amount_micros) // 10_000,
+                },
+                "quantity": int(qty),
+            }
+        ],
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        # Same trap as the top-up: the webhook reads the PaymentIntent's metadata.
+        "metadata": metadata,
+        "payment_intent_data": {"metadata": metadata},
+    }
+    if customer_email:
+        params["customer_email"] = customer_email
+    session_obj = await _run_sync(stripe.checkout.Session.create, **params)
+    return {"id": session_obj["id"], "url": session_obj["url"]}
+
+
+async def payment_fee_micros(settings, payment_intent_id: str) -> int | None:
+    """Stripe's processing fee for a succeeded PaymentIntent, or None when not settled yet."""
+    stripe = _stripe(settings)
+    intent = await _run_sync(
+        stripe.PaymentIntent.retrieve,
+        payment_intent_id,
+        expand=["latest_charge.balance_transaction"],
+    )
+    charge = intent.get("latest_charge") if isinstance(intent, dict) else None
+    if isinstance(charge, dict):
+        bt = charge.get("balance_transaction")
+        if isinstance(bt, dict) and bt.get("fee") is not None:
+            return int(bt["fee"]) * 10_000
+    return None
+
+
 async def create_subscription_checkout_session(
     settings,
     *,
@@ -198,7 +263,7 @@ async def charge_off_session(
 
     stripe = _stripe(settings)
     cents = amount_micros // 10_000
-    metadata = {"org_id": str(org.id), "kind": "credit_topup"}
+    metadata = {"org_id": str(org.id), "kind": "credit_topup", "source": "auto_recharge"}
 
     params = {
         "amount": cents,

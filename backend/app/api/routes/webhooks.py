@@ -867,6 +867,10 @@ async def stripe_webhook(
 
     intent = event.get("data", {}).get("object", {})
     metadata = intent.get("metadata") or {}
+    from app.services import payments as payments_svc
+
+    if await payments_svc.handle_bundle_intent(session, intent):
+        return Response(status_code=204)
     if metadata.get("kind") != "credit_topup":
         log.warning(
             "stripe_webhook_unexpected_intent",
@@ -911,6 +915,13 @@ async def stripe_webhook(
         amount_micros=amount_received * 10_000,
         reference=intent_id,
         note="Card payment",
+    )
+    await payments_svc.record_topup_paid(
+        session,
+        org_id,
+        intent_id=intent_id,
+        amount_micros=amount_received * 10_000,
+        kind="auto_recharge" if metadata.get("source") == "auto_recharge" else "topup",
     )
     await session.commit()
 

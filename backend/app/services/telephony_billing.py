@@ -57,20 +57,28 @@ BILLING_LOOKBACK = timedelta(days=7)
 #: Rows handled per sweeper pass, per job.
 BATCH = 500
 
-#: Flat, carrier-independent platform price per unit, in micros. Set by the operator:
-#: SMS $0.01/segment, voice $0.005/minute (billed by the second), number $15.00/month.
-#: Customer price no longer derives from carrier cost - the same metric costs the same
-#: whichever carrier carries it, and an unrated/unknown carrier is now priced, not free.
+#: Flat, carrier-independent platform price per unit, in micros - the fallback when
+#: ``platform_prices`` (operator-editable, migration 0064) has no row for the metric.
+#: Billing v2: SMS $0.015/segment and MMS $0.035 in and out when no bundle covers them;
+#: calls $0.011/minute in and out, whole minutes rounded up; fax $0.10/page; number $15/mo.
 PLATFORM_PRICE_MICROS: dict[str, int] = {
-    "sms_out": 10_000,
-    "sms_in": 10_000,
-    "mms_out": 10_000,
-    "mms_in": 10_000,
-    "voice_min_out": 5_000,
-    "voice_min_in": 5_000,
+    "sms_out": 15_000,
+    "sms_in": 15_000,
+    "mms_out": 35_000,
+    "mms_in": 35_000,
+    "voice_min_out": 11_000,
+    "voice_min_in": 11_000,
+    "fax_page_out": 100_000,
+    "fax_page_in": 100_000,
     "number_mrc": 15_000_000,
     "number_setup": 0,
+    #: Per bundle: 1,000 SMS / 100 MMS (services/bundles.UNITS_PER_BUNDLE).
+    "sms_bundle": 12_000_000,
+    "mms_bundle": 3_000_000,
 }
+#: An inbound call is billed from arrival (LiveKit builds the room as soon as it rings),
+#: with this minimum even when nobody answers.
+INBOUND_MIN_SECONDS = 60
 
 
 class TelephonyCreditsError(InsufficientCreditsError):
@@ -106,6 +114,17 @@ async def is_prepaid(session: AsyncSession, org_id: uuid.UUID) -> bool:
     return bool(org is not None and org.telephony_prepaid)
 
 
+async def platform_price(session: AsyncSession, metric: str) -> int:
+    """The operator's list price for `metric`: the ``platform_prices`` row, else the
+    constant. Raises KeyError for a metric in neither."""
+    from app.models import PlatformPrice
+
+    row = await session.get(PlatformPrice, metric)
+    if row is not None:
+        return int(row.price_micros)
+    return PLATFORM_PRICE_MICROS[metric]
+
+
 async def unit_price(session: AsyncSession, org_id: uuid.UUID, provider: str, metric: str) -> int:
     """Customer price in micros for one unit of `metric` on `provider`.
 
@@ -127,16 +146,72 @@ async def unit_price(session: AsyncSession, org_id: uuid.UUID, provider: str, me
     if row is not None and row.price_micros is not None:
         return int(row.price_micros)
     if metric in PLATFORM_PRICE_MICROS:
-        return PLATFORM_PRICE_MICROS[metric]
+        return await platform_price(session, metric)
     cost, _is_override, is_known = await spend.resolve_rate(session, provider, metric)
     if not is_known:
         return 0
     return _price_from_cost(cost)
 
 
-async def _require_balance(session: AsyncSession, org_id: uuid.UUID, price: int) -> None:
+async def record_refusal(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    kind: str,
+    price_micros: int = 0,
+    balance_micros: int = 0,
+    detail: str | None = None,
+    reason: str = "no_credit",
+) -> None:
+    """Count one attempt the credit gate stopped. Never raises.
+
+    The caller is about to raise and roll back, so on Postgres the row is written through
+    its OWN short session and survives. On SQLite (tests: one pinned connection) a second
+    session would commit the caller's half-done work, so the row joins the caller's session
+    instead - best effort there.
+    """
+    from app.models import BillingRefusal
+
+    row = dict(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        kind=kind,
+        reason=reason,
+        price_micros=int(price_micros),
+        balance_micros=int(balance_micros),
+        detail=str(detail)[:255] if detail else None,
+        created_at=_now(),
+    )
+    try:
+        bind = session.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            from app.db.session import get_sessionmaker
+
+            async with get_sessionmaker()() as own:
+                set_org_context(own, org_id)
+                own.add(BillingRefusal(**row))
+                await own.commit()
+        else:
+            set_org_context(session, org_id)
+            session.add(BillingRefusal(**row))
+    except Exception:
+        log.exception("telephony_billing.record_refusal_failed", org_id=str(org_id), kind=kind)
+
+
+async def _require_balance(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    price: int,
+    *,
+    kind: str = "sms",
+    detail: str | None = None,
+) -> None:
     # At least one micro: an empty (or negative) balance refuses even a zero-priced action.
-    if await credits.balance(session, org_id) < max(int(price), 1):
+    current = await credits.balance(session, org_id)
+    if current < max(int(price), 1):
+        await record_refusal(
+            session, org_id, kind=kind, price_micros=price, balance_micros=current, detail=detail
+        )
         raise TelephonyCreditsError()
 
 
@@ -180,6 +255,27 @@ def _is_mms(message: Message) -> bool:
     return bool(message.media)
 
 
+def _bundle_kind(is_mms: bool) -> str:
+    return "mms" if is_mms else "sms"
+
+
+async def _bundle_headroom(session: AsyncSession, org_id: uuid.UUID, is_mms: bool) -> int:
+    from app.services import bundles
+
+    return await bundles.units(session, org_id, _bundle_kind(is_mms))
+
+
+async def _bundle_covers(
+    session: AsyncSession, org_id: uuid.UUID, is_mms: bool, units: int, *, reference: str
+) -> int:
+    """Spend bundle units (after the plan allowance, before the $ balance)."""
+    if units <= 0:
+        return 0
+    from app.services import bundles
+
+    return await bundles.take(session, org_id, _bundle_kind(is_mms), units, reference=reference)
+
+
 async def sms_price(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -217,12 +313,15 @@ async def require_sms_credit(
         return
     units = _sms_units(segments, is_mms=is_mms)
     uncovered = max(units - await _plan_headroom(session, org, SMS_ALLOWANCE_METRIC), 0)
+    uncovered = max(uncovered - await _bundle_headroom(session, org_id, is_mms), 0)
     if uncovered <= 0:
         return
     price = await sms_price(
         session, org_id, carrier=carrier, segments=segments, is_mms=is_mms, units=uncovered
     )
-    await _require_balance(session, org_id, price)
+    await _require_balance(
+        session, org_id, price, kind="mms" if is_mms else "sms", detail=f"{units} unit(s)"
+    )
 
 
 async def can_send_sms(session: AsyncSession, org_id: uuid.UUID, message: Message) -> bool:
@@ -233,6 +332,7 @@ async def can_send_sms(session: AsyncSession, org_id: uuid.UUID, message: Messag
         return True
     units = _sms_units(message.segment_count_est, is_mms=_is_mms(message))
     uncovered = max(units - await _plan_headroom(session, org, SMS_ALLOWANCE_METRIC), 0)
+    uncovered = max(uncovered - await _bundle_headroom(session, org_id, _is_mms(message)), 0)
     if uncovered <= 0:
         return True
     price = await sms_price(
@@ -259,6 +359,9 @@ async def charge_sms(session: AsyncSession, org_id: uuid.UUID, message: Message)
     # this same transaction, so a send that rolls back does not silently eat the customer's
     # included texts.
     billable = units - await _plan_covers(session, org, SMS_ALLOWANCE_METRIC, units)
+    billable -= await _bundle_covers(
+        session, org_id, _is_mms(message), billable, reference=f"sms:{message.id}"
+    )
     if billable <= 0:
         return
     price = await sms_price(
@@ -316,6 +419,9 @@ async def charge_segment_correction(
     # covered text go unmetered.
     extra = carrier_count - estimated
     billable = extra - await _plan_covers(session, org, SMS_ALLOWANCE_METRIC, extra)
+    billable -= await _bundle_covers(
+        session, org_id, False, billable, reference=f"sms:{message.id}:segments"
+    )
     if billable <= 0:
         return
     per_segment = await unit_price(session, org_id, message.carrier, "sms_out")
@@ -334,14 +440,29 @@ async def charge_segment_correction(
 # Calls
 # ------------------------------------------------------------------------------------
 def voice_price_micros(duration_seconds: int | None, price_per_minute_micros: int) -> int:
-    """Per-second voice charge, rounded UP to the whole micro. Integer arithmetic only.
-
-    charge = ceil(seconds * price_per_minute / 60). A 0-second (or None) call charges 0.
-    """
+    """Voice charge in WHOLE minutes, rounded up (billing v2): 61s = 2 minutes.
+    A 0-second (or None) call charges 0. Integer arithmetic only."""
     seconds = int(duration_seconds or 0)
     if seconds <= 0 or price_per_minute_micros <= 0:
         return 0
-    return (seconds * int(price_per_minute_micros) + 59) // 60
+    return ((seconds + 59) // 60) * int(price_per_minute_micros)
+
+
+def billable_seconds(call: Call) -> int:
+    """Seconds a finished call is billed for.
+
+    Outbound: from answer to hang-up (``duration_seconds``); never answered = 0.
+    Inbound: from ARRIVAL (``created_at`` - the room exists from the first ring) to the
+    end, at least INBOUND_MIN_SECONDS even when nobody answered.
+    """
+    if call.direction == "outbound":
+        return max(int(call.duration_seconds or 0), 0)
+    start = call.created_at
+    end = call.ended_at
+    if start is None or end is None:
+        return max(int(call.duration_seconds or 0), INBOUND_MIN_SECONDS)
+    elapsed = int((_as_utc(end) - _as_utc(start)).total_seconds())
+    return max(elapsed, INBOUND_MIN_SECONDS)
 
 
 def call_hold_reference(call_id: uuid.UUID, n: int = 0) -> str:
@@ -371,6 +492,14 @@ async def require_call_credit(session: AsyncSession, org_id: uuid.UUID, call: Ca
     current = await credits.balance(session, org_id)
     minimum = max(voice_price_micros(60, per_minute), 1)
     if current < minimum:
+        await record_refusal(
+            session,
+            org_id,
+            kind="call",
+            price_micros=minimum,
+            balance_micros=current,
+            detail=getattr(call, "to_e164", None),
+        )
         raise TelephonyCreditsError()
     hold = min(per_minute * CALL_RESERVE_MINUTES, current)
     if hold > 0:
@@ -457,22 +586,22 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
             call = await session.get(Call, call_id)
             if call is None or call.billed_at is not None:
                 continue
-            seconds = max(int(call.duration_seconds or 0), 0)
+            seconds = billable_seconds(call)
             minutes = spend._ceil_minutes(seconds)
             # The package allowance is denominated in whole MINUTES (plans.take takes integer
-            # minute units), so it absorbs that many whole minutes of the call; every second
-            # beyond the covered minutes is then billed per second at the per-minute price.
+            # minute units), so it absorbs that many whole minutes of the call; the rest is
+            # billed in whole minutes at the per-minute price.
             org_row = await _org(session, org_id)
             covered_minutes = (
                 await _plan_covers(session, org_row, VOICE_ALLOWANCE_METRIC, minutes)
                 if org_row is not None
                 else 0
             )
-            billable_seconds = max(seconds - covered_minutes * 60, 0)
+            uncovered_seconds = max(seconds - covered_minutes * 60, 0)
             per_minute = await unit_price(
                 session, org_id, call.carrier, _call_metric(call.direction)
             )
-            price = voice_price_micros(billable_seconds, per_minute)
+            price = voice_price_micros(uncovered_seconds, per_minute)
             if price > 0:
                 await credits.charge_usage(
                     session,
@@ -573,7 +702,7 @@ async def require_number_credit(session: AsyncSession, org_id: uuid.UUID, carrie
     price = await unit_price(session, org_id, carrier, "number_mrc") + await unit_price(
         session, org_id, carrier, "number_setup"
     )
-    await _require_balance(session, org_id, price)
+    await _require_balance(session, org_id, price, kind="number", detail=carrier)
 
 
 async def _charge_rental_period(

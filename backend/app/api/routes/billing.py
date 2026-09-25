@@ -29,6 +29,7 @@ from app.errors import (
 )
 from app.models import Call, CreditLedgerEntry, PaymentMethod, Plan
 from app.services import ai_usage, credits, stripe_client
+from app.services import bundles as bundles_svc
 from app.services import audit as audit_svc
 from app.services import plans as plans_svc
 from app.services import spend as spend_svc
@@ -235,6 +236,12 @@ async def get_summary(
         "telephony_prepaid": bool(ctx.org.telephony_prepaid),
         "last_topup": last_topup_dict,
         "fallback": ai_usage.credit_fallback(ctx.org),
+        "bundles": {
+            kind: await bundles_svc.units(ctx.session, ctx.org.id, kind) for kind in ("sms", "mms")
+        },
+        "billing_state": ctx.org.billing_state,
+        "warn_threshold_micros": int(ctx.org.warn_threshold_micros or 0),
+        "avg_daily_spend_micros": int(ctx.org.avg_daily_spend_micros or 0),
     }
 
 
@@ -372,6 +379,89 @@ async def create_topup(
     await ctx.session.commit()
 
     return {"checkout_url": checkout["url"]}
+
+
+class BundleCheckoutIn(BaseModel):
+    kind: str = Field(pattern="^(sms|mms)$")
+    qty: int = Field(ge=1, le=500)
+
+
+@router.get("/bundles")
+async def get_bundles(
+    ctx: Annotated[OrgContext, Depends(require_permission("org:billing"))],
+) -> dict:
+    """Units left, and the price list with the volume rule, for the Bundles card."""
+    from app.services import bundles as bundles_svc
+
+    out: dict = {"volume_min_qty": bundles_svc.VOLUME_MIN_QTY,
+                 "volume_discount_bps": bundles_svc.VOLUME_DISCOUNT_BPS, "kinds": {}}
+    for kind in ("sms", "mms"):
+        out["kinds"][kind] = {
+            "units": await bundles_svc.units(ctx.session, ctx.org.id, kind),
+            "units_per_bundle": bundles_svc.UNITS_PER_BUNDLE[kind],
+            "list_micros": await bundles_svc.bundle_list_price(ctx.session, kind),
+            "volume_discount": kind in bundles_svc.VOLUME_DISCOUNT_KINDS,
+            "pay_as_you_go_micros": await telephony_billing_price(ctx, f"{kind}_out"),
+        }
+    return out
+
+
+async def telephony_billing_price(ctx: OrgContext, metric: str) -> int:
+    from app.services import telephony_billing
+
+    return await telephony_billing.platform_price(ctx.session, metric)
+
+
+@router.post("/bundles/checkout")
+async def create_bundle_checkout(
+    payload: BundleCheckoutIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:billing"))],
+    request: Request,
+) -> dict:
+    from app.services import bundles as bundles_svc
+    from app.services import payments as payments_svc
+
+    settings = request.app.state.settings
+    success_url, cancel_url = _checkout_urls(settings)
+    success_url = success_url.replace("topup=done", "bundle=done")
+    row, q = await payments_svc.start_bundle_payment(
+        ctx.session, ctx.org.id, kind=payload.kind, qty=payload.qty
+    )
+    size = bundles_svc.UNITS_PER_BUNDLE[payload.kind]
+    name = f"{size:,} {payload.kind.upper()} bundle"
+    if q["discount"] > 0:
+        name += f" ({bundles_svc.VOLUME_DISCOUNT_BPS // 100}% volume discount)"
+    checkout = await stripe_client.create_bundle_checkout_session(
+        settings,
+        org=ctx.org,
+        kind=payload.kind,
+        qty=payload.qty,
+        unit_amount_micros=q["unit_paid"],
+        product_name=name,
+        payment_id=str(row.id),
+        success_url=success_url,
+        cancel_url=cancel_url,
+    )
+    row.stripe_checkout_id = checkout["id"]
+    actor_user, actor_key = _actor(ctx)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="billing.bundle_checkout_started",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=actor_user,
+        actor_api_key_id=actor_key,
+        detail={"kind": payload.kind, "qty": payload.qty, "paid_micros": q["paid"]},
+    )
+    await ctx.session.commit()
+    return {
+        "checkout_url": checkout["url"],
+        "list_micros": q["list"],
+        "discount_micros": q["discount"],
+        "paid_micros": q["paid"],
+        "units": q["units"],
+    }
 
 
 @router.post("/subscription/checkout")

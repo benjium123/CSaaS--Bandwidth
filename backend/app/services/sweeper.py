@@ -598,6 +598,14 @@ async def _run_once_locked(app) -> dict[str, int]:
             results["spend_orgs_rolled_up"] = spend_orgs
         except Exception:
             log.exception("sweeper_spend_rollup_failed")
+        # Billing v2 hourly jobs (Stripe fees, org billing state, console rollup). Each
+        # job isolates its own failures.
+        try:
+            from app.services import billing_ops
+
+            results.update(await billing_ops.hourly(app.state.settings))
+        except Exception:
+            log.exception("sweeper_billing_hourly_failed")
 
     # P14 DR-7: derived per-number reputation monitoring, one audit row per breach per
     # (org, number, UTC day) - same per-org-commit discipline as usage_tick above. Gated

@@ -124,5 +124,28 @@ class Org(Base, TimestampMixin):
         GUID(), sa.ForeignKey("orgs.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Billing v2 (migration 0064). billing_state: ok | low | exhausted, recomputed by the
+    # credits tick; warn_threshold = max($5, average daily spend over 7 days).
+    billing_state: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="ok", server_default="ok"
+    )
+    billing_state_changed_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    avg_daily_spend_micros: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=0, server_default="0"
+    )
+    warn_threshold_micros: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=5_000_000, server_default="5000000"
+    )
+    #: Dedupe key of the last low-balance alert sent (one alert per level per top-up).
+    low_balance_alert_key: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
+    #: Consecutive declined auto-recharges; 3 switches auto-recharge off.
+    auto_recharge_failures: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    #: Telnyx billing group for this org's csaas-tagged numbers (cost grouping only).
+    telnyx_billing_group_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+
     def __repr__(self) -> str:
         return f"<Org {self.slug}>"

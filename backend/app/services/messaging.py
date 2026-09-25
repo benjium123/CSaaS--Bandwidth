@@ -667,6 +667,12 @@ async def _dispatch_to_carrier(
         message = await session.get(Message, message.id)
         message.moderation_state = "allowed"
     if not await telephony_billing.can_send_sms(session, org_id, message):
+        await telephony_billing.record_refusal(
+            session,
+            org_id,
+            kind="mms" if message.media else "sms",
+            detail=f"dispatch {message.id}",
+        )
         set_org_context(session, org_id)
         message = await session.get(Message, message.id)
         message.last_carrier_error = None
