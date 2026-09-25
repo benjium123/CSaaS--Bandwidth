@@ -96,6 +96,7 @@ class NumberOut(BaseModel):
     emergency_address_id: uuid.UUID | None = None
     e911_status: str = "none"
     e911_error: str | None = None
+    port_locked: bool = False
 
 
 def _audit_number(ctx: OrgContext, action: str, number: OrgNumber) -> None:
@@ -460,6 +461,7 @@ async def _out(
         emergency_address_id=n.emergency_address_id,
         e911_status=n.e911_status or "none",
         e911_error=n.e911_error,
+        port_locked=bool(getattr(n, "port_locked", False)),
     )
 
 

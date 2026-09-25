@@ -56,6 +56,8 @@ import {
 import { formatPhone } from "@/lib/format";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { cn } from "@/lib/utils";
+import { EmergencyAddressPanel } from "@/components/numbers/EmergencyAddressPanel";
+import { PortingPanel } from "@/components/numbers/PortingPanel";
 
 /* ── The console's list shape, from docs/design/console-reference.html ──────────────────
  * The reference has no dense table: rows sit on a recessed fill, breathe, and carry a
@@ -340,6 +342,9 @@ export function NumbersPage() {
       </Section>
 
       {!paidCheckout && <OrderNumberSection api={api} campaigns={campaigns ?? []} onOrdered={() => setError(null)} />}
+
+      <EmergencyAddressPanel api={api} />
+      <PortingPanel api={api} numbers={numbers ?? []} />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { CustomerAccountsTab } from "@/components/ops/CustomerAccountsTab";
 import { AccountsTab } from "@/components/ops/AccountsTab";
 import { BillingTab } from "@/components/ops/BillingTab";
 import { ConsoleTab } from "@/components/ops/ConsoleTab";
+import { PortReviewTab } from "@/components/ops/PortReviewTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAuthedBlob } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
@@ -746,6 +747,7 @@ const TABS = [
   { id: "monitoring", label: "Monitoring" },
   { id: "billing", label: "Billing" },
   { id: "purchases", label: "Number purchases" },
+  { id: "ports", label: "Ports & grants" },
   { id: "accounts", label: "Workspaces" },
   { id: "users", label: "Users" },
 ];
@@ -808,6 +810,7 @@ export function OpsPage() {
             {tab === "monitoring" && <MonitoringTab />}
             {tab === "billing" && <BillingTab />}
             {tab === "purchases" && <PurchasesTab />}
+            {tab === "ports" && <PortReviewTab />}
             {tab === "accounts" && <AccountsTab />}
             {tab === "users" && <UsersTab />}
           </section>
