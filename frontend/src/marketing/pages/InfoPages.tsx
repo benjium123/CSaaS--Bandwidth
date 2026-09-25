@@ -119,7 +119,7 @@ export function SalesPage() {
           <ul>
             {PLANS.map(item => (
               <li key={item.code}>
-                <strong>{item.name}</strong> {money(item.pricePerNumber.yearly)}/number, billed yearly
+                <strong>{item.name}</strong> {item.price !== null ? `${money(item.price)}/month` : "custom pricing"}
               </li>
             ))}
           </ul>

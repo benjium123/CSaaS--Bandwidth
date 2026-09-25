@@ -21,7 +21,7 @@ export function ComparePage() {
   if (!competitor) return <Navigate to="/" replace />;
   const c = competitor;
 
-  const r = recommend(5, 2, "yearly");
+  const r = recommend(5, 2);
   const seat = COMPETITOR_SEAT_PRICES.find(e => firstWord(e.name) === firstWord(c.name));
 
   return (
@@ -40,20 +40,20 @@ export function ComparePage() {
       </section>
 
       <section className="ms-costcard rl-wrap rl-reveal">
-        <h2>A team of 5 sharing 2 numbers</h2>
+        <h2>A team of 5 with 2 phone numbers</h2>
         <div className="ms-cost-grid">
           <p className="ms-cost-line">
             <span className="rl-mono">Ringlite</span>
-            {money(r.monthly)}/mo on {r.plan.name}
+            {money(r.monthly ?? 0)}/mo on {r.plan.name} + usage
           </p>
           {seat ? (
             <p className="ms-cost-line">
               <span className="rl-mono">{c.name}</span>
-              {money(Math.max(5, seat.minSeats) * seat.yearly)}/mo on {seat.name}
+              {money(Math.max(5, seat.minSeats) * seat.monthly)}/mo on {seat.name}
             </p>
           ) : null}
         </div>
-        <p className="ms-footnote">Yearly list prices, {COMPETITORS_CHECKED}.</p>
+        <p className="ms-footnote">Monthly list prices, {COMPETITORS_CHECKED}. Ringlite calls and texts are pay as you go.</p>
       </section>
 
       <section className="rl-wrap rl-reveal">

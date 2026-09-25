@@ -1,35 +1,32 @@
 /**
- * /pricing — the conversion page: plan cards, a live calculator that compares Ringlite's
- * per-line price with per-seat competitors, the full plan comparison, the rate card and the
- * fair-use rules. Every price, allowance and limit comes from @/marketing/pricing.config.
+ * /pricing — the conversion page: plan cards, a calculator that finds the cheapest plan for a
+ * team and compares it with per-seat competitors, the full plan comparison, the rate card and
+ * the fair-use rules. Every price and limit comes from @/marketing/pricing.config.
  */
 import * as React from "react";
 import { Link } from "react-router-dom";
 import { Check } from "lucide-react";
 import { CtaBand, FaqList, SitePage } from "@/marketing/SiteChrome";
 import {
+  CALLS_PER_NUMBER,
   COMPETITORS_CHECKED,
   COMPETITOR_SEAT_PRICES,
   COVERAGE,
+  CUSTOM_FROM_USERS,
   DAILY_OUTBOUND_PER_NUMBER,
   PLANS,
   RATES,
-  YEARLY_SAVING_LABEL,
+  addOnLine,
   cents,
   money,
+  packageLine,
   recommend,
-  startingPrice,
 } from "@/marketing/pricing.config";
-import type { Billing, Plan } from "@/marketing/pricing.config";
 
-/** Slider bounds: the calculator tops out at the largest plan's user count and 20 lines. */
-const MAX_USERS = PLANS[PLANS.length - 1].users.max;
-const MAX_NUMBERS = 20;
+const MAX_USERS = 60;
+const MAX_NUMBERS = 40;
 
-/**
- * Every feature string any plan lists, in plan order, without the "Everything in …" roll-ups
- * (those are expanded into the rows underneath them).
- */
+/** Every feature string any plan lists, without the "Everything in ..." roll-ups. */
 const COMPARED_FEATURES = Array.from(new Set(PLANS.flatMap(plan => plan.features))).filter(
   feature => !feature.startsWith("Everything in"),
 );
@@ -42,62 +39,36 @@ function hasFeature(planIndex: number, feature: string): boolean {
   return sources.some(source => source.features.includes(feature));
 }
 
-function usersSummary(plan: Plan): string {
-  const included = `${plan.users.included} ${plan.users.included === 1 ? "user" : "users"} included`;
-  const upTo = plan.users.max > plan.users.included ? `, up to ${plan.users.max}` : "";
-  const extra = plan.extraUserPrice !== null ? ` · extra ${money(plan.extraUserPrice)}/user` : "";
-  return `${included}${upTo}${extra}`;
-}
-
-function allowanceSummary(plan: Plan): string {
-  if (!plan.perNumberAllowance) {
-    return `Pay as you go · ${cents(RATES.minute)}/min · ${cents(RATES.text)}/text`;
-  }
-  const { minutes, texts } = plan.perNumberAllowance;
-  return `${minutes.toLocaleString()} min + ${texts.toLocaleString()} texts per number, pooled`;
-}
-
-function callsAtOnceByPlan(): string {
-  return PLANS.map(plan => `${plan.callsPerNumber} on ${plan.name}`).join(", ");
-}
+const USAGE_LINE = `Calls ${cents(RATES.minute)}/min · texts ${cents(RATES.text)} · pay as you go`;
 
 export function PricingPage() {
-  const [billing, setBilling] = React.useState<Billing>("yearly");
   const [users, setUsers] = React.useState(5);
-  const [numbers, setNumbers] = React.useState(2);
+  const [numbers, setNumbers] = React.useState(3);
 
-  const q = recommend(users, numbers, billing);
-  const price = q.plan.pricePerNumber[billing];
+  const q = recommend(users, numbers);
   const barRows = [
-    { label: `Ringlite (${q.plan.name})`, value: q.monthly, isUs: true },
+    ...(q.monthly !== null ? [{ label: `Ringlite ${q.plan.name}`, value: q.monthly, isUs: true }] : []),
     ...COMPETITOR_SEAT_PRICES.map(competitor => ({
       label: competitor.name,
-      value: Math.max(users, competitor.minSeats) * competitor[billing],
+      value: Math.max(users, competitor.minSeats) * competitor.monthly,
       isUs: false,
     })),
   ];
   const barMax = Math.max(...barRows.map(row => row.value), 1);
 
   return (
-    <SitePage title="Pricing" description="Plans priced per phone number with your team included.">
+    <SitePage title="Pricing" description="Simple monthly plans with your team and phone numbers included.">
       <section className="ms-page-hero rl-wrap">
-        <p className="rl-eyebrow"><span /> PRICING · PER LINE, NOT PER PERSON</p>
-        <h1 className="ms-h1">Pay for your lines. <span>Bring your team.</span></h1>
+        <p className="rl-eyebrow"><span /> PRICING</p>
+        <h1 className="ms-h1">Your team and your numbers. <span>One simple price.</span></h1>
         <p className="ms-lede">
-          Every plan includes your team, and every number you add brings its pooled minutes and texts
-          with it. You pay for the lines you use, not for the people who answer them.
+          Every plan includes users and phone numbers, and you can add more of either any time. Calls
+          and texts are pay as you go at {cents(RATES.minute)} a minute and {cents(RATES.text)} a text,
+          with no "unlimited" small print.
         </p>
-        <div className="ms-seg" role="group" aria-label="Billing period">
-          <button type="button" aria-pressed={billing === "monthly"} onClick={() => setBilling("monthly")}>
-            Monthly
-          </button>
-          <button type="button" aria-pressed={billing === "yearly"} onClick={() => setBilling("yearly")}>
-            Yearly <small>{YEARLY_SAVING_LABEL}</small>
-          </button>
-        </div>
       </section>
 
-      <div className="ms-plans rl-wrap">
+      <div className="ms-plans ms-plans-4 rl-wrap">
         {PLANS.map(plan => (
           <article key={plan.code} className={"ms-plan" + (plan.highlight ? " is-highlight" : "")}>
             <div className="ms-plan-tag">
@@ -106,20 +77,19 @@ export function PricingPage() {
             </div>
             <p className="ms-tagline">{plan.tagline}</p>
             <div className="ms-price">
-              <strong>{money(plan.pricePerNumber[billing])}</strong>
-              <span>per number<br />per month</span>
+              {plan.price !== null ? (
+                <>
+                  <strong>{money(plan.price)}</strong>
+                  <span>per month</span>
+                </>
+              ) : (
+                <strong className="ms-price-custom">Let's talk</strong>
+              )}
             </div>
-            {plan.numbers.min > 1 && (
-              <p className="ms-starts">
-                Starts at {money(startingPrice(plan, billing))}/mo with {plan.numbers.min} numbers
-              </p>
-            )}
             <ul className="ms-includes">
-              <li>{usersSummary(plan)}</li>
-              <li>{allowanceSummary(plan)}</li>
-              <li>
-                {plan.callsPerNumber} {plan.callsPerNumber === 1 ? "call" : "calls"} at once per number
-              </li>
+              <li>{packageLine(plan)}</li>
+              {addOnLine(plan) && <li>{addOnLine(plan)}</li>}
+              <li>{plan.price !== null ? USAGE_LINE : "Volume rates on calls and texts"}</li>
             </ul>
             <ul className="ms-features">
               {plan.features.map(feature => (
@@ -141,49 +111,54 @@ export function PricingPage() {
         <div className="ms-calc-grid">
           <div className="ms-calc-inputs">
             <label htmlFor="calc-users">
-              People <output htmlFor="calc-users">{users}</output>
+              <span>People <output htmlFor="calc-users">{users}</output></span>
+              <input
+                id="calc-users"
+                type="range"
+                min={1}
+                max={MAX_USERS}
+                value={users}
+                onChange={event => setUsers(Number(event.target.value))}
+              />
             </label>
-            <input
-              id="calc-users"
-              type="range"
-              min={1}
-              max={MAX_USERS}
-              value={users}
-              onChange={event => setUsers(Number(event.target.value))}
-            />
             <label htmlFor="calc-numbers">
-              Phone numbers <output htmlFor="calc-numbers">{numbers}</output>
+              <span>Phone numbers <output htmlFor="calc-numbers">{numbers}</output></span>
+              <input
+                id="calc-numbers"
+                type="range"
+                min={1}
+                max={MAX_NUMBERS}
+                value={numbers}
+                onChange={event => setNumbers(Number(event.target.value))}
+              />
             </label>
-            <input
-              id="calc-numbers"
-              type="range"
-              min={1}
-              max={MAX_NUMBERS}
-              value={numbers}
-              onChange={event => setNumbers(Number(event.target.value))}
-            />
           </div>
           <div className="ms-calc-result" aria-live="polite">
-            <p className="ms-calc-plan rl-mono">{q.plan.name}</p>
-            <p className="ms-calc-total">
-              <strong>{money(q.monthly)}</strong>
-              <span>/mo</span>
-            </p>
-            <ul className="ms-calc-lines">
-              <li>{q.numbers} numbers × {money(price)}</li>
-              {q.extraUsers > 0 && (
-                <li>{q.extraUsers} extra users × {money(q.plan.extraUserPrice ?? 0)}</li>
-              )}
-              <li>
-                {q.poolMinutes !== null && q.poolTexts !== null
-                  ? `${q.poolMinutes.toLocaleString()} min + ${q.poolTexts.toLocaleString()} texts`
-                  : "Pay as you go"}
-              </li>
-              <li>{q.callsAtOnce} {q.callsAtOnce === 1 ? "call" : "calls"} at once</li>
-            </ul>
-            {q.blocked && (
+            <p className="ms-calc-plan rl-mono">Best fit: {q.plan.name}</p>
+            {q.monthly !== null ? (
+              <>
+                <p className="ms-calc-total">
+                  {money(q.monthly)}<small> /mo + usage</small>
+                </p>
+                <ul className="ms-calc-lines">
+                  <li>{q.plan.name} {money(q.plan.price ?? 0)}: {packageLine(q.plan)}</li>
+                  {q.extraUsers > 0 && (
+                    <li>
+                      {q.extraUsers} extra {q.extraUsers === 1 ? "user" : "users"} × {money(q.plan.extraUser ?? 0)}
+                    </li>
+                  )}
+                  {q.extraNumbers > 0 && (
+                    <li>
+                      {q.extraNumbers} extra {q.extraNumbers === 1 ? "number" : "numbers"} × {money(q.plan.extraNumber ?? 0)}
+                    </li>
+                  )}
+                  <li>Up to {q.callsAtOnce} {q.callsAtOnce === 1 ? "call" : "calls"} at once</li>
+                </ul>
+              </>
+            ) : (
               <p className="ms-calc-blocked">
-                {q.blocked}. <Link className="rl-text-link" to="/sales">Talk to sales</Link>
+                More than {CUSTOM_FROM_USERS} people? We'll put together a plan for you.{" "}
+                <Link className="rl-text-link" to="/sales?plan=custom">Talk to sales</Link>
               </p>
             )}
           </div>
@@ -203,8 +178,9 @@ export function PricingPage() {
           ))}
         </div>
         <p className="ms-footnote">
-          Competitor list prices, {COMPETITORS_CHECKED}. They advertise unlimited US calling under fair
-          use policies. Ringlite includes the pooled minutes shown, then {cents(RATES.minute)}/min.
+          Monthly list prices per user, {COMPETITORS_CHECKED}. Competitors bundle "unlimited" US calling
+          under fair use policies; Ringlite charges calls at {cents(RATES.minute)}/min, so compare usage
+          too if your team is on the phone all day.
         </p>
       </section>
 
@@ -222,55 +198,41 @@ export function PricingPage() {
             </thead>
             <tbody>
               <tr>
-                <th scope="row">Price per number ({billing})</th>
+                <th scope="row">Price per month</th>
                 {PLANS.map(plan => (
-                  <td key={plan.code}>{money(plan.pricePerNumber[billing])}</td>
-                ))}
-              </tr>
-              <tr>
-                <th scope="row">Numbers</th>
-                {PLANS.map(plan => (
-                  <td key={plan.code}>{plan.numbers.min}–{plan.numbers.max}</td>
+                  <td key={plan.code}>{plan.price !== null ? money(plan.price) : "Custom"}</td>
                 ))}
               </tr>
               <tr>
                 <th scope="row">Users included</th>
                 {PLANS.map(plan => (
-                  <td key={plan.code}>{plan.users.included}</td>
+                  <td key={plan.code}>{plan.included ? plan.included.users : "Custom"}</td>
                 ))}
               </tr>
               <tr>
-                <th scope="row">Max users</th>
+                <th scope="row">Numbers included</th>
                 {PLANS.map(plan => (
-                  <td key={plan.code}>{plan.users.max}</td>
+                  <td key={plan.code}>{plan.included ? plan.included.numbers : "Custom"}</td>
                 ))}
               </tr>
               <tr>
                 <th scope="row">Extra user</th>
                 {PLANS.map(plan => (
-                  <td key={plan.code}>{plan.extraUserPrice !== null ? money(plan.extraUserPrice) : "—"}</td>
+                  <td key={plan.code}>{plan.extraUser !== null ? `${money(plan.extraUser)}/mo` : "Custom"}</td>
                 ))}
               </tr>
               <tr>
-                <th scope="row">Minutes per number</th>
+                <th scope="row">Extra number</th>
+                {PLANS.map(plan => (
+                  <td key={plan.code}>{plan.extraNumber !== null ? `${money(plan.extraNumber)}/mo` : "Custom"}</td>
+                ))}
+              </tr>
+              <tr>
+                <th scope="row">Calls and texts</th>
                 {PLANS.map(plan => (
                   <td key={plan.code}>
-                    {plan.perNumberAllowance ? plan.perNumberAllowance.minutes.toLocaleString() : "Pay as you go"}
+                    {plan.price !== null ? `${cents(RATES.minute)}/min · ${cents(RATES.text)}/text` : "Volume rates"}
                   </td>
-                ))}
-              </tr>
-              <tr>
-                <th scope="row">Texts per number</th>
-                {PLANS.map(plan => (
-                  <td key={plan.code}>
-                    {plan.perNumberAllowance ? plan.perNumberAllowance.texts.toLocaleString() : "Pay as you go"}
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                <th scope="row">Calls at once per number</th>
-                {PLANS.map(plan => (
-                  <td key={plan.code}>{plan.callsPerNumber}</td>
                 ))}
               </tr>
               {COMPARED_FEATURES.map(feature => (
@@ -278,9 +240,7 @@ export function PricingPage() {
                   <th scope="row">{feature}</th>
                   {PLANS.map((plan, index) => (
                     <td key={plan.code}>
-                      {hasFeature(index, feature)
-                        ? <Check size={15} aria-label="Included" />
-                        : "—"}
+                      {hasFeature(index, feature) ? <Check size={15} aria-label="Included" /> : "—"}
                     </td>
                   ))}
                 </tr>
@@ -314,24 +274,23 @@ export function PricingPage() {
         <h2 id="fairuse-h">Fair use, in plain words</h2>
         <div className="ms-fairuse-grid">
           <article className="ms-card">
-            <h3>Pooled per number</h3>
+            <h3>Pay for what you use</h3>
             <p>
-              Every number adds its minutes and texts to one pool your whole workspace shares. A quiet
-              line's allowance is never wasted; a busy one can spend it.
+              Calls are {cents(RATES.minute)} a minute and texts {cents(RATES.text)} a segment, taken
+              from a prepaid balance you top up. Bundles bring the price down if you use a lot.
             </p>
           </article>
           <article className="ms-card">
-            <h3>Billed, never cut off</h3>
+            <h3>No surprise bills</h3>
             <p>
-              When the pool runs out, calls continue at {cents(RATES.minute)} a minute and texts at
-              {" "}{cents(RATES.text)} a segment, or you can buy a bundle. We email you at 80% and 100%
-              of your pool and never stop your service for going over.
+              You see your balance before you spend it, with alerts when it runs low. New workspaces
+              have a daily spending limit that protects you if a card or password is ever stolen.
             </p>
           </article>
           <article className="ms-card">
             <h3>Numbers stay healthy</h3>
             <p>
-              Each number carries a fixed number of live calls at once ({callsAtOnceByPlan()}) and about
+              Each number carries up to {CALLS_PER_NUMBER} live calls at once and about
               {" "}{DAILY_OUTBOUND_PER_NUMBER} outbound calls a day. Teams that call all day give each
               caller their own number.
             </p>
@@ -352,7 +311,7 @@ export function PricingPage() {
         <FaqList topic="Plans and billing" />
       </section>
 
-      <CtaBand title="Pick a number. Bring your team." />
+      <CtaBand title="Pick a plan. Bring your team." />
     </SitePage>
   );
 }

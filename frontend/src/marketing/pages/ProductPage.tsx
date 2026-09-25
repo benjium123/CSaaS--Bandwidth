@@ -3,7 +3,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 
 import { CtaBand, FaqList, Icon, SitePage } from "@/marketing/SiteChrome";
 import { PRODUCTS } from "@/marketing/content";
-import { money, planByCode } from "@/marketing/pricing.config";
+import { money, packageLine, planByCode } from "@/marketing/pricing.config";
 
 /** The faux app window shown beside the hero copy, chosen by product slug. */
 function visualBody(slug: string) {
@@ -126,7 +126,7 @@ export function ProductPage() {
         <div>
           <p className="rl-mono">PLAN FIT</p>
           <h2>Included on {plan.name} and up</h2>
-          <p>{money(plan.pricePerNumber.yearly)} per number / month, billed yearly.</p>
+          <p>{plan.price !== null ? `From ${money(plan.price)} a month, ${packageLine(plan).toLowerCase()}.` : "Custom pricing."}</p>
         </div>
         <Link className="rl-text-link" to="/pricing">
           See pricing

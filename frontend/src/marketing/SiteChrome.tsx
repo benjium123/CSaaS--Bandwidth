@@ -6,7 +6,7 @@ import { ArrowUpRight, Bot, Briefcase, Building2, ChevronDown, Hash, Home, Inbox
 import { useAuth } from "@/auth/AuthContext";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { COMPETITORS, PRODUCTS, SOLUTIONS, TEAM_SOLUTIONS, type IconName } from "@/marketing/content";
-import { COVERAGE, money, planByCode } from "@/marketing/pricing.config";
+import { COVERAGE, money, packageLine, planByCode } from "@/marketing/pricing.config";
 import { FAQS, faqById, faqsFor, type Faq, type FaqTopic } from "@/marketing/faq";
 import { ChatWidget } from "@/marketing/ChatWidget";
 import "@fontsource-variable/archivo";
@@ -28,7 +28,7 @@ function Mark() {
   return <span className="rl-mark" aria-hidden="true"><span /><span /><span /></span>;
 }
 
-const TEAM_YEARLY = planByCode("team").pricePerNumber.yearly;
+const TEAM_PRICE = planByCode("team").price ?? 0;
 
 const RESOURCES: { to: string; label: string; hint: string }[] = [
   { to: "/faq", label: "FAQ", hint: "The questions we get most" },
@@ -51,8 +51,8 @@ function ProductPanel({ onGo }: PanelProps) {
     <aside className="ms-mega-side">
       <div className="ms-mega-card">
         <p className="rl-mono">TEAM · YEARLY</p>
-        <h3>Pay per line, not per person</h3>
-        <p>{money(TEAM_YEARLY)} per number a month, billed yearly. Your team is included on the plan.</p>
+        <h3>Your team and numbers, one price</h3>
+        <p>Team is {money(TEAM_PRICE)} a month: {packageLine(planByCode("team")).toLowerCase()}.</p>
         <Link className="rl-text-link" to="/pricing" onClick={onGo}>See pricing <ArrowUpRight size={15} aria-hidden="true" /></Link>
       </div>
     </aside>

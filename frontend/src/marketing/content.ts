@@ -212,7 +212,7 @@ export const SOLUTIONS: Solution[] = [
 
 export const TEAM_SOLUTIONS: { slug: string; icon: IconName; menu: string; menuHint: string }[] = [
   { slug: "solo", icon: "phone", menu: "Solo operators", menuHint: "A real business line" },
-  { slug: "small-teams", icon: "users", menu: "Small teams", menuHint: "Share lines, not seat bills" },
+  { slug: "small-teams", icon: "users", menu: "Small teams", menuHint: "3 users and 3 numbers included" },
   { slug: "sales", icon: "list", menu: "Sales teams", menuHint: "Dialer, texting, follow-ups" },
 ];
 
@@ -227,10 +227,10 @@ export interface Competitor {
 export const COMPETITORS: Competitor[] = [
   {
     slug: "quo", name: "Quo (OpenPhone)",
-    summary: "Quo is a polished per-user phone system. Ringlite includes your team and charges per line.",
+    summary: "Quo is a polished per-user phone system. Ringlite packages users and numbers in one monthly price.",
     rows: [
-      { label: "How you pay", them: "Per user", us: "Per number, users included" },
-      { label: "Calling", them: "\"Unlimited\" under a discretionary fair use policy", us: "Exact minutes per number, then a published rate" },
+      { label: "How you pay", them: "Per user", us: "One monthly package with users and numbers" },
+      { label: "Calling", them: "\"Unlimited\" under a discretionary fair use policy", us: "Pay as you go at a published per-minute rate" },
       { label: "Texting registration", them: "Yes", us: "Built in" },
       { label: "Free trial", them: "7 days", us: "Welcome credit after approval" },
     ],
@@ -240,8 +240,8 @@ export const COMPETITORS: Competitor[] = [
     slug: "ringcentral", name: "RingCentral",
     summary: "RingCentral is built for large companies. Ringlite is self-serve and priced for small teams.",
     rows: [
-      { label: "How you pay", them: "Per user, prices through sales", us: "Per number, prices on the page" },
-      { label: "Texting", them: "25 to 200 texts per user", us: "Hundreds of texts per number, pooled" },
+      { label: "How you pay", them: "Per user, prices through sales", us: "Packages, prices on the page" },
+      { label: "Texting", them: "25 to 200 texts per user", us: "Texts at a published rate, no monthly cap" },
       { label: "Setup", them: "Sales-led", us: "Sign up and get approved in about an hour" },
     ],
     theyWin: ["Video meetings and contact center", "International calling", "Desk phones"],
@@ -250,7 +250,7 @@ export const COMPETITORS: Competitor[] = [
     slug: "callhippo", name: "CallHippo",
     summary: "CallHippo sells many add-ons per user. Ringlite puts the essentials in three plans.",
     rows: [
-      { label: "How you pay", them: "Per user plus add-ons", us: "Per number, users included" },
+      { label: "How you pay", them: "Per user plus add-ons", us: "One monthly package with users and numbers" },
       { label: "Power dialer", them: "Paid add-on", us: "Included on Business" },
       { label: "Rates", them: "Bundled", us: "Published per minute and per text" },
     ],
@@ -258,20 +258,20 @@ export const COMPETITORS: Competitor[] = [
   },
   {
     slug: "krispcall", name: "KrispCall",
-    summary: "KrispCall charges per user and meters usage separately. Ringlite includes usage per number.",
+    summary: "KrispCall charges per user and meters usage separately. Ringlite includes users and numbers in each plan and publishes every rate.",
     rows: [
-      { label: "How you pay", them: "Per user, usage extra", us: "Per number with minutes and texts included" },
+      { label: "How you pay", them: "Per user, usage extra", us: "Package price, usage at published rates" },
       { label: "Team size", them: "Entry plan up to 5 users", us: "Users included on every plan" },
     ],
     theyWin: ["Numbers in 100+ countries"],
   },
   {
     slug: "aircall", name: "Aircall",
-    summary: "Aircall needs at least three paid licenses. Ringlite starts at one number.",
+    summary: "Aircall needs at least three paid licenses. Ringlite starts at one user and one number.",
     rows: [
-      { label: "Minimum", them: "3 licenses", us: "1 number" },
-      { label: "How you pay", them: "Per license", us: "Per number, users included" },
-      { label: "Texting", them: "250 texts per user", us: "Texts included per number, pooled" },
+      { label: "Minimum", them: "3 licenses", us: "1 user and 1 number" },
+      { label: "How you pay", them: "Per license", us: "One monthly package with users and numbers" },
+      { label: "Texting", them: "250 texts per user", us: "Texts at a published rate, no monthly cap" },
     ],
     theyWin: ["250+ integrations", "Call-center analytics"],
   },

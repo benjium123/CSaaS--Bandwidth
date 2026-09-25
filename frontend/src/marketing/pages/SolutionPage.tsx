@@ -2,7 +2,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { ArrowUpRight } from "lucide-react";
 import { CtaBand, FaqList, Icon, SitePage } from "@/marketing/SiteChrome";
 import { PRODUCTS, SOLUTIONS } from "@/marketing/content";
-import { money, planByCode } from "@/marketing/pricing.config";
+import { addOnLine, money, packageLine, planByCode } from "@/marketing/pricing.config";
 
 /** Products shown under "What you get", keyed by solution slug. */
 const DEFAULT_PRODUCT_SLUGS: readonly string[] = ["calling", "inbox", "texting"];
@@ -51,10 +51,7 @@ export function SolutionPage() {
     return product ? [product] : [];
   });
 
-  const allowance =
-    plan.perNumberAllowance === null
-      ? "Minutes and texts are billed at the published rate."
-      : `${plan.perNumberAllowance.minutes.toLocaleString("en-US")} minutes and ${plan.perNumberAllowance.texts.toLocaleString("en-US")} texts are included for each number every month.`;
+  const allowance = "Calls and texts are pay as you go at the published rates.";
 
   return (
     <SitePage title={solution.menu} description={solution.lede}>
@@ -132,8 +129,8 @@ export function SolutionPage() {
             PLAN FIT
           </p>
           <h2>{`${plan.name} fits most ${solution.menu.toLowerCase()} teams`}</h2>
-          <p>{`${plan.users.included} ${plan.users.included === 1 ? "user" : "users"} included, up to ${plan.users.max}.`}</p>
-          <p>{`${money(plan.pricePerNumber.yearly)} per number / month, billed yearly.`}</p>
+          <p>{`${packageLine(plan)}. ${addOnLine(plan) ?? ""}`}</p>
+          <p>{plan.price !== null ? `${money(plan.price)} a month.` : "Custom pricing."}</p>
           <p>{allowance}</p>
           <Link className="rl-text-link" to="/pricing">
             See pricing
