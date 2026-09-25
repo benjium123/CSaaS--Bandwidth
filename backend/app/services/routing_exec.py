@@ -238,6 +238,22 @@ async def continue_carrier_flow(
     return await _drive(session, bus, call, flow, result, now=now)
 
 
+async def _transfer_commands(session: AsyncSession, call: Call, to: str) -> list[voice.VoiceCommand]:
+    """P44a: a flow's transfer target passes the destination firewall when the call is
+    transferred, not only when the flow was saved (flows saved before P44, or a policy
+    change since). Forwarding inbound calls to an IRSF number is the classic pump."""
+    from app.services import telephony_access
+
+    code = await telephony_access.destination_refusal(
+        session, telephony_access._settings_of(session), call.org_id, "call", to
+    )
+    set_org_context(session, call.org_id)
+    if code is not None:
+        log.warning("flow_transfer_refused", call_id=str(call.id), code=code)
+        return [voice.Speak(text="Sorry, this call cannot be transferred."), voice.Hangup()]
+    return [voice.Transfer(to=to, from_=call.our_e164)]
+
+
 async def _announcement_commands(
     session: AsyncSession, call: Call, *, force: bool = False
 ) -> list[voice.Speak]:
@@ -339,7 +355,7 @@ async def _drive(
                 # the neutral command set expresses directly. New-leg semantics on answer
                 # are P5's problem; this just emits the command.
                 commands.extend(await _announcement_commands(session, call))
-                commands.append(voice.Transfer(to=action.to, from_=call.our_e164))
+                commands.extend(await _transfer_commands(session, call, action.to))
             elif isinstance(action, fe.Hangup):
                 commands.append(voice.Hangup())
         if not looped:
@@ -433,7 +449,7 @@ async def _rerender_from_state(
                 session, call, force=bool((call.extra or {}).get("consent_announced"))
             )
         )
-        commands.append(voice.Transfer(to=node.get("to", ""), from_=call.our_e164))
+        commands.extend(await _transfer_commands(session, call, node.get("to", "")))
         return commands
 
     if terminal == "callback_requested":

@@ -116,9 +116,19 @@ async def decide(
             "A second operator must approve this - you requested it.",
             code="second_operator_required",
         )
-    row.status = "resolved" if approve else "dismissed"
-    row.reviewed_by = approver_id
-    row.reviewed_at = datetime.now(timezone.utc)
+    # Claim the decision atomically: two operators clicking at once must not both apply
+    # it. The losing UPDATE waits for the winner's commit, then matches no row.
+    status = "resolved" if approve else "dismissed"
+    reviewed_at = datetime.now(timezone.utc)
+    claimed = await session.execute(
+        sa.update(SecurityAlert)
+        .where(SecurityAlert.id == alert_id, SecurityAlert.status == "open")
+        .values(status=status, reviewed_by=approver_id, reviewed_at=reviewed_at)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        raise ConflictError("This grant was already decided")
+    row.status, row.reviewed_by, row.reviewed_at = status, approver_id, reviewed_at
     result: dict = {"status": row.status}
     if approve:
         org_id = row.org_id
@@ -129,7 +139,7 @@ async def decide(
                 session,
                 org_id,
                 int(detail["amount_micros"]),
-                reference=f"console:{uuid.uuid4()}",
+                reference=f"console-grant:{alert_id}",
                 note=note,
                 created_by=uuid.UUID(detail["requested_by"]),
             )
@@ -140,7 +150,7 @@ async def decide(
                 org_id,
                 detail["kind"],
                 int(detail["units"]),
-                reference=f"console:{uuid.uuid4()}",
+                reference=f"console-grant:{alert_id}",
                 note=note,
                 entry_type="adjustment",
             )

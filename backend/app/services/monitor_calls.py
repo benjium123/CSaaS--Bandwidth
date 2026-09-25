@@ -717,7 +717,9 @@ async def _fraud_signals(session: AsyncSession, settings: Settings, now: datetim
         if today < 10_000_000:
             continue
         avg = await billing_alerts.avg_daily_spend(session, org_id, now=midnight)
-        if today >= 5 * max(avg, 1) and await _signal_once_a_day(
+        # Without a real history (under $1/day) there is nothing to compare against; new
+        # accounts are held by the daily spend ceiling instead.
+        if avg >= 1_000_000 and today >= 5 * avg and await _signal_once_a_day(
             session,
             settings,
             org_id,
@@ -741,17 +743,21 @@ async def _fraud_signals(session: AsyncSession, settings: Settings, now: datetim
             .execution_options(**{ALLOW_UNSCOPED_KEY: True})
         )
     ).all()
-    buckets: dict[tuple[uuid.UUID, str], int] = {}
+    # Distinct numbers, not calls: redialling one contact is the P43 short_calls signal;
+    # pumping sweeps a whole number block. 30+ distinct numbers in ONE exchange in an hour
+    # is well beyond what a local cold-calling list produces.
+    buckets: dict[tuple[uuid.UUID, str], set[str]] = {}
     for org_id, contact in short:
         key = (org_id, (contact or "")[:8])  # +1 NPA NXX
-        buckets[key] = buckets.get(key, 0) + 1
-    for (org_id, exchange), n in buckets.items():
-        if n >= 20 and await _signal_once_a_day(
+        buckets.setdefault(key, set()).add(contact or "")
+    for (org_id, exchange), numbers in buckets.items():
+        n = len(numbers)
+        if n >= 30 and await _signal_once_a_day(
             session,
             settings,
             org_id,
             "short_call_burst",
-            f"{n} calls under 10 seconds to {exchange}xxxx in the last hour",
+            f"{n} different numbers in {exchange}xxxx got calls under 10 seconds in the last hour",
             {"exchange": exchange, "calls": n},
         ):
             added += 1

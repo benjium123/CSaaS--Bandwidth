@@ -13,6 +13,13 @@ from app.models import Call, KycProfile, Org
 from app.services import credits, exposure, telephony_access
 
 
+@pytest.fixture
+def settings():
+    from tests.conftest import make_settings
+
+    return make_settings(fraud_exposure_enforced=True)
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 

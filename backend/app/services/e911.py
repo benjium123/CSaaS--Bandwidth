@@ -147,7 +147,14 @@ async def _telnyx_create_address(carrier, address: EmergencyAddress) -> str:  # 
         carrier,
         "POST",
         "/addresses",
-        {**location, "first_name": first, "last_name": last, "business_name": address.caller_name},
+        {
+            **location,
+            "first_name": first,
+            "last_name": last,
+            "business_name": address.caller_name,
+            # Shared Telnyx account: mark our objects (the csaas ownership boundary).
+            "customer_reference": "csaas",
+        },
     )
     if resp.status_code >= 400:
         raise CarrierAddressRefused(f"Telnyx refused the address: {_error_text(resp)}")
@@ -218,15 +225,32 @@ _TELNYX_STATUS = {
 }
 
 
+async def _telnyx_number_id(carrier, number: OrgNumber) -> str:  # noqa: ANN001
+    """Telnyx's phone-number id for ``number``. ``provider_ref`` holds the ORDER id on
+    Telnyx (see providers/telnyx/numbers.py), so resolve it by e164 like release_number."""
+    client = await carrier._get_client()
+    try:
+        resp = await client.get(
+            f"{carrier.base_url}/phone_numbers",
+            params={"filter[phone_number]": number.e164},
+            headers={"Authorization": f"Bearer {carrier.api_key}"},
+        )
+    except httpx.TransportError as exc:
+        raise FeatureUnavailableError(f"Telnyx unreachable: {exc}") from exc
+    rows = (resp.json() or {}).get("data") or [] if resp.status_code == 200 else []
+    if not rows or not rows[0].get("id"):
+        raise FeatureUnavailableError(f"Telnyx has no number {number.e164} on this account")
+    return str(rows[0]["id"])
+
+
 async def _enable_on_number(carrier_name: str, carrier, number: OrgNumber, ref: str) -> str:  # noqa: ANN001
     """Bind the carrier address to the number. Returns our e911 status."""
-    if not number.provider_ref:
-        raise FeatureUnavailableError("This number has no carrier id yet - try again shortly")
     if carrier_name == "telnyx":
+        number_id = await _telnyx_number_id(carrier, number)
         resp = await _telnyx_request(
             carrier,
             "POST",
-            f"/phone_numbers/{number.provider_ref}/actions/enable_emergency",
+            f"/phone_numbers/{number_id}/actions/enable_emergency",
             {"emergency_enabled": True, "emergency_address_id": ref},
         )
         if resp.status_code >= 400:
@@ -234,6 +258,8 @@ async def _enable_on_number(carrier_name: str, carrier, number: OrgNumber, ref: 
         data = (resp.json() or {}).get("data") or {}
         status = ((data.get("emergency") or {}).get("emergency_status")) or "provisioning"
         return _TELNYX_STATUS.get(str(status), "pending")
+    if not number.provider_ref:
+        raise FeatureUnavailableError("This number has no carrier id yet - try again shortly")
     resp = await _signalwire_request(
         carrier,
         "POST",
@@ -247,12 +273,18 @@ async def _enable_on_number(carrier_name: str, carrier, number: OrgNumber, ref: 
 
 async def _carrier_status(carrier_name: str, carrier, number: OrgNumber) -> str | None:  # noqa: ANN001
     if carrier_name == "telnyx":
-        resp = await _telnyx_request(carrier, "GET", f"/phone_numbers/{number.provider_ref}")
+        try:
+            number_id = await _telnyx_number_id(carrier, number)
+        except FeatureUnavailableError:
+            return None
+        resp = await _telnyx_request(carrier, "GET", f"/phone_numbers/{number_id}")
         if resp.status_code != 200:
             return None
         data = (resp.json() or {}).get("data") or {}
         status = (data.get("emergency") or {}).get("emergency_status")
         return _TELNYX_STATUS.get(str(status)) if status else None
+    if not number.provider_ref:
+        return None
     resp = await _signalwire_request(carrier, "GET", f"/phone_numbers/{number.provider_ref}")
     if resp.status_code != 200:
         return None
@@ -454,7 +486,9 @@ def grace_deadline(settings, number: OrgNumber) -> datetime:  # noqa: ANN001
         start = datetime(2026, 9, 26, tzinfo=timezone.utc)
     grace = start + timedelta(days=int(getattr(settings, "e911_grace_days", 7)))
     created = _aware(number.purchased_at) or _aware(getattr(number, "created_at", None))
-    return max(created, grace) if created else grace
+    if created is None:
+        return grace
+    return max(created + timedelta(days=int(getattr(settings, "e911_grace_days", 7))), grace)
 
 
 async def require_e911(

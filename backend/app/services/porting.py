@@ -51,7 +51,7 @@ MAX_DOC_BYTES = 10 * 1024 * 1024
 MAX_NUMBERS = 50
 
 _TELNYX_PORT_STATUS = {
-    "draft": "submitted",
+    "draft": "exception",  # never confirmed: the filing did not go through
     "submitted": "submitted",
     "in-process": "in_process",
     "exception": "exception",
@@ -225,15 +225,22 @@ async def create_port_in(
         if not str(form.get(key) or "").strip():
             raise ValidationFailedError(f"{key.replace('_', ' ')} is required")
 
-    taken = (
+    known = (
         await session.execute(
-            sa.select(OrgNumber.e164)
-            .where(OrgNumber.e164.in_(numbers), OrgNumber.is_active.is_(True))
+            sa.select(OrgNumber.e164, OrgNumber.is_active, OrgNumber.org_id)
+            .where(OrgNumber.e164.in_(numbers))
             .execution_options(**{ALLOW_UNSCOPED_KEY: True})
         )
-    ).scalars().all()
-    if taken:
-        raise ConflictError(f"{taken[0]} is already active on Ringlite")
+    ).all()
+    for e164, active, owner in known:
+        if active:
+            raise ConflictError(f"{e164} is already active on Ringlite")
+        if owner != org_id:
+            # A number another workspace once held (released) - its row cannot simply be
+            # handed over, so support moves it by hand.
+            raise ConflictError(
+                f"{e164} was used on Ringlite before - contact support to port it in"
+            )
     open_rows = (
         await session.execute(
             sa.select(PortRequest.numbers)
@@ -399,14 +406,26 @@ async def _import(session: AsyncSession, registry, port: PortRequest) -> int:  #
     carrier = registry.get(port.carrier) if registry is not None else None
     added = 0
     for e164 in port.numbers or []:
-        exists = (
+        existing = (
             await session.execute(
-                sa.select(OrgNumber.id)
+                sa.select(OrgNumber)
                 .where(OrgNumber.e164 == e164)
                 .execution_options(**{ALLOW_UNSCOPED_KEY: True})
             )
-        ).first()
-        if exists is not None:
+        ).scalar_one_or_none()
+        if existing is not None and existing.is_active and existing.org_id == port.org_id:
+            continue  # already imported
+        if existing is not None and existing.org_id != port.org_id:
+            # Never report a port "done" while the number sits on someone else's record.
+            port.last_error = f"{e164} is recorded on another workspace - move it by hand"
+            from app.services import card_risk
+
+            await card_risk.open_alert(
+                session,
+                port.org_id,
+                "port_in_import_blocked",
+                {"port_id": str(port.id), "number": e164},
+            )
             continue
         ref = None
         if carrier is not None and port.carrier == "telnyx":
@@ -414,6 +433,17 @@ async def _import(session: AsyncSession, registry, port: PortRequest) -> int:  #
             if resp.status_code == 200:
                 rows = (resp.json() or {}).get("data") or []
                 ref = str(rows[0].get("id")) if rows else None
+        if existing is not None:
+            # This workspace's own released number coming back: reactivate the row.
+            set_org_context(session, port.org_id)
+            existing.is_active = True
+            existing.status = "active"
+            existing.released_at = None
+            existing.carrier = port.carrier
+            existing.provider_ref = ref
+            existing.purchased_at = _now()
+            added += 1
+            continue
         parsed = phonenumbers.parse(e164, None)
         kind = (
             "tollfree"
@@ -445,6 +475,14 @@ async def set_manual_status(
     """Operator-driven status for ports filed by hand (SignalWire)."""
     if status not in ("in_process", "exception", "foc_confirmed", "ported", "cancelled"):
         raise ValidationFailedError("Unknown port status")
+    # Only an APPROVED, still-open, hand-filed port-in moves by hand: never one waiting
+    # for review (that would import numbers nobody approved), a finished one or a port-out.
+    if (
+        port.direction != "in"
+        or not (port.details or {}).get("manual")
+        or port.status in ("awaiting_review", "ported", "rejected", "cancelled")
+    ):
+        raise ConflictError("This port request cannot be updated by hand")
     port.status = status
     if foc_date:
         port.foc_date = foc_date[:32]
@@ -530,7 +568,11 @@ async def poll_port_outs(session: AsyncSession, settings, registry) -> int:  # n
         ours = (
             await session.execute(
                 sa.select(OrgNumber)
-                .where(OrgNumber.e164.in_(numbers), OrgNumber.carrier == "telnyx")
+                .where(
+                    OrgNumber.e164.in_(numbers),
+                    OrgNumber.carrier == "telnyx",
+                    OrgNumber.is_active.is_(True),
+                )
                 .execution_options(**{ALLOW_UNSCOPED_KEY: True})
             )
         ).scalars().all()

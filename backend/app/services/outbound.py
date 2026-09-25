@@ -35,6 +35,7 @@ from app.errors import (
     CarrierNotConfiguredError,
     ComplianceBlockedError,
     ConflictError,
+    PermissionDeniedError,
     ValidationFailedError,
 )
 from app.models import (
@@ -681,6 +682,21 @@ async def outbound_tick(
                 row.last_error = str(exc)[:255]
                 await session.commit()
                 counts["blocked"] += 1
+            except PermissionDeniedError as exc:
+                # P44: a refused destination (foreign, premium, IRSF) is this recipient's
+                # problem only - block the row. Any other refusal (daily spend ceiling, a
+                # paused account) waits and retries. Raising out of the tick would stall
+                # every campaign behind this row, for every workspace.
+                row.last_error = str(exc)[:255]
+                if exc.code in ("destination_blocked", "destination_not_allowed"):
+                    row.status = "blocked"
+                    counts["blocked"] += 1
+                else:
+                    row.status = "queued"
+                    row.next_attempt_at = moment + timedelta(
+                        minutes=NO_ELIGIBLE_SENDER_RETRY_MINUTES
+                    )
+                await session.commit()
             else:
                 if message.hold_until is not None:
                     row.status = "deferred"

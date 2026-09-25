@@ -172,6 +172,33 @@ async def test_chargeback_holds_then_a_won_dispute_returns_the_credit(
     assert await credits.balance(session, org.id) == 50_000_000
 
 
+async def test_warning_then_chargeback_on_one_payment_holds_once(session, settings, fake_stripe):
+    _calls, state = fake_stripe
+    org = await _setup_paid_org(session)
+    await credits.topup(session, org.id, 50_000_000, reference=f"t-{uuid.uuid4()}")
+    await session.commit()
+    state["intent"] = _intent(org.id)
+    await card_risk.handle_stripe_event(session, settings, {
+        "type": "radar.early_fraud_warning.created",
+        "data": {"object": {"id": "issfr_2", "payment_intent": "pi_1", "actionable": False}},
+    })
+    await card_risk.handle_stripe_event(session, settings, {
+        "type": "charge.dispute.created",
+        "data": {"object": {"id": "dp_2", "payment_intent": "pi_1", "status": "needs_response"}},
+    })
+    await session.commit()
+    assert await credits.balance(session, org.id) == 50_000_000  # held once, not twice
+
+    # Refunded after the warning: winning the dispute must not hand the credit back too.
+    state["intent"] = {**_intent(org.id), "latest_charge": {"amount_refunded": 5000}}
+    await card_risk.handle_stripe_event(session, settings, {
+        "type": "charge.dispute.closed",
+        "data": {"object": {"id": "dp_2", "payment_intent": "pi_1", "status": "won"}},
+    })
+    await session.commit()
+    assert await credits.balance(session, org.id) == 50_000_000
+
+
 async def test_fraud_on_a_bundle_payment_pauses_without_touching_the_balance(
     session, settings, fake_stripe
 ):

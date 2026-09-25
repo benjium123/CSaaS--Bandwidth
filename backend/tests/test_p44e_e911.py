@@ -57,7 +57,7 @@ async def _org_with_number(session, carrier="telnyx", *, age=timedelta(days=0), 
         org_id=org.id,
         e164=f"+1214555{uuid.uuid4().int % 10000:04d}",
         carrier=carrier,
-        provider_ref="num-1",
+        provider_ref="order-1" if carrier == "telnyx" else "num-1",  # Telnyx: the ORDER id
         e911_status=status,
         purchased_at=datetime.now(timezone.utc) - age,
     )
@@ -78,6 +78,10 @@ def _telnyx_ok(seen):
             return httpx.Response(
                 202, json={"data": {"emergency": {"emergency_status": "provisioning"}}}
             )
+        if request.method == "GET" and path.endswith("/phone_numbers"):
+            return httpx.Response(200, json={"data": [{"id": "num-1"}]})
+        if "order-1" in path:
+            return httpx.Response(404)
         if path.endswith("/phone_numbers/num-1"):
             return httpx.Response(200, json={"data": {"emergency": {"emergency_status": "active"}}})
         return httpx.Response(404)
@@ -157,7 +161,10 @@ async def test_calls_need_911_after_the_grace_period(session):
     settings = make_settings(
         e911_enforced=True, e911_enforcement_start="2020-01-01", e911_grace_days=7
     )
-    org, number = await _org_with_number(session, age=timedelta(days=1))
+    # A number bought a day ago still has its own 7-day grace.
+    org, fresh = await _org_with_number(session, age=timedelta(days=1))
+    await e911.require_e911(session, settings, org.id, fresh.e164, "+12145550000")
+    org, number = await _org_with_number(session, age=timedelta(days=10))
     with pytest.raises(PermissionDeniedError) as err:
         await e911.require_e911(session, settings, org.id, number.e164, "+12145550000")
     assert err.value.code == "e911_required"

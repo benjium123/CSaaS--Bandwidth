@@ -31,7 +31,7 @@ from app.compliance import quiet_hours as qh
 from app.compliance import service as compliance_svc
 from app.compliance.gate import _contact_timezone as _gate_contact_timezone
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.errors import ConflictError, ValidationFailedError
+from app.errors import ConflictError, PermissionDeniedError, ValidationFailedError
 from app.models import (
     DIALER_MODES,
     Call,
@@ -145,6 +145,9 @@ async def start_dial_campaign(
 
 # --------------------------------------------------------------------------------------
 # The dial seam (DR-13)
+DESTINATION_REFUSALS = ("destination_blocked", "destination_not_allowed")
+
+
 # --------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DialOutcome:
@@ -160,6 +163,8 @@ class DialOutcome:
     status: str
     call_id: uuid.UUID | None = None
     amd_verdict: str | None = None
+    # P44: the refusal code when the call was never placed (destination, spend, E911...).
+    refused: str | None = None
 
 
 async def _start_call(
@@ -181,16 +186,22 @@ async def _start_call(
     tests replace this whole function with a deterministic fake instead."""
     if api is None:
         return DialOutcome(status="failed")
-    call, leg, _room, _token = await voice_plane_svc.start_room_call(
-        session,
-        api,
-        settings,
-        bus,
-        org_id=org_id,
-        to=to_e164,
-        from_e164=from_e164,
-        identity=identity,
-    )
+    try:
+        call, leg, _room, _token = await voice_plane_svc.start_room_call(
+            session,
+            api,
+            settings,
+            bus,
+            org_id=org_id,
+            to=to_e164,
+            from_e164=from_e164,
+            identity=identity,
+        )
+    except PermissionDeniedError as exc:
+        # P44: a refusal is this row's outcome, never an exception that aborts the wave.
+        return DialOutcome(status="failed", refused=exc.code)
+    except ValidationFailedError:
+        return DialOutcome(status="failed")
     # P21: the dialer dials over the LiveKit SIP trunk, never a provider API, so there is
     # no ranked plan to walk and nothing to explain about carrier choice. Record the one
     # honest sentence for this path and skip ranking entirely (phase-21-plan design 3).
@@ -405,6 +416,17 @@ def _apply_outcome(
     deliberately not one of the terminal counters (it matches the original per-tick
     counting behaviour, which never counted an in-flight retry as an outcome).
     """
+    if outcome.refused in DESTINATION_REFUSALS:
+        # A blocked or out-of-country number never becomes dialable: terminal, like DNC.
+        row.status = "failed"
+        row.disposition = "blocked"
+        return "failed"
+    if outcome.refused is not None:
+        # Spend ceiling, call slots, 911 address, a paused account: not this contact's
+        # fault and not an attempt - wait and try again.
+        row.status = "queued"
+        row.next_attempt_at = moment + timedelta(minutes=campaign.retry_backoff_minutes)
+        return "retry_scheduled"
     row.attempts += 1
     row.call_id = outcome.call_id
     row.amd_verdict = outcome.amd_verdict

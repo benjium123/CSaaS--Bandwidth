@@ -303,7 +303,8 @@ async def start_checkout(
         "payment_method_options": stripe_client.THREE_DS_OPTIONS,
         "success_url": f"{base}/settings/messaging?texting=paid",
         "cancel_url": f"{base}/settings/messaging",
-        "idempotency_key": f"tendlc-{reg.id}",
+        # "-3ds": P44c changed the params; the old key would 400 for 24h after deploy.
+        "idempotency_key": f"tendlc-{reg.id}-3ds",
     }
     if customer_email:
         params["customer_email"] = customer_email

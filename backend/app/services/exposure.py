@@ -57,16 +57,17 @@ async def _profile(session: AsyncSession, org_id: uuid.UUID) -> KycProfile | Non
 
 
 async def account_started(session: AsyncSession, org_id: uuid.UUID) -> datetime | None:
-    """When the workspace's track record starts: verification approval, else creation."""
-    profile = await _profile(session, org_id)
-    started = _aware(profile.decided_at) if profile is not None else None
-    if started is None:
-        org = await session.get(Org, org_id)
-        started = _aware(org.created_at) if org is not None else None
-    return started
+    """When the workspace's track record starts: its creation. Not the verification
+    decision - an operator re-decision would move that forward and make an established
+    account "new" again."""
+    org = await session.get(Org, org_id)
+    return _aware(org.created_at) if org is not None else None
 
 
 async def is_new(session: AsyncSession, settings: Settings, org_id: uuid.UUID) -> bool:
+    # An operator can vouch for a workspace early (limits.established = true).
+    if (await _limits(session, org_id)).get("established") is True:
+        return False
     started = await account_started(session, org_id)
     days = int(getattr(settings, "fraud_new_account_days", 30))
     return started is None or _now() - started < timedelta(days=days)
@@ -138,7 +139,7 @@ async def refusal(
     """Telephony gate hook (telephony_access.refusal): the daily spend ceiling."""
     if not getattr(settings, "fraud_exposure_enforced", True):
         return None
-    if kind in ("call", "sms"):
+    if kind in ("call", "sms", "sms_dispatch"):  # dispatch: queued, held and campaign texts
         if await spent_today_micros(session, org_id) >= await daily_spend_ceiling_micros(
             session, settings, org_id
         ):

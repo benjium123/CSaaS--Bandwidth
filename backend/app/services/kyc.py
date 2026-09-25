@@ -1077,7 +1077,26 @@ async def set_limits(
             if not isinstance(value, int) or value < 0:
                 raise ValidationFailedError(f"{key} must be a whole number of 0 or more")
             cleaned[key] = value
-        cleaned = cleaned or None
+    # P44 exposure limits. The ops limits form predates them and sends only the three keys
+    # above, so a key the payload leaves out keeps its current value instead of being
+    # wiped by an unrelated edit.
+    previous = dict(profile.limits or {})
+    for key in ("max_concurrent_calls", "daily_spend_micros", "established"):
+        if limits and key in limits:
+            value = limits[key]
+            if value is None:
+                continue
+            valid = isinstance(value, bool) if key == "established" else (
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            )
+            if not valid:
+                raise ValidationFailedError(f"{key} has an invalid value")
+            cleaned = cleaned if cleaned is not None else {}
+            cleaned[key] = value
+        elif key in previous:
+            cleaned = cleaned if cleaned is not None else {}
+            cleaned[key] = previous[key]
+    cleaned = cleaned or None
     profile.deposit_required_cents = deposit_required_cents
     profile.limits = cleaned
     _audit_operator(

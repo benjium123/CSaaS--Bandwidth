@@ -163,16 +163,18 @@ async def react_to_fraud(
     reference: str,
     amount_micros: int,
     fingerprint: str | None,
+    intent_id: str,
 ) -> None:
     """Freeze the disputed money, ban the card, pause the workspace, alert ops.
 
-    ``reference`` (the dispute or warning id) makes the balance adjustment idempotent: a
-    replayed webhook must not take the money out twice."""
+    The hold is keyed on the PAYMENT (``intent_id``), not on the warning or dispute id: a
+    payment can get both an early fraud warning and a chargeback, and a replayed webhook
+    arrives too. Either way its credit is taken out once."""
     from app.models import CreditLedgerEntry
     from app.services import ban_list, credits, monitor_score
 
     set_org_context(session, org_id)
-    ref = f"fraud:{reference}"[:120]
+    ref = f"fraud:{intent_id}"[:120]
     already = (
         await session.execute(
             sa.select(CreditLedgerEntry.id).where(
@@ -280,6 +282,7 @@ async def handle_stripe_event(session: AsyncSession, settings, event: dict) -> N
             reference=str(obj.get("id") or intent_id),
             amount_micros=credited,
             fingerprint=fingerprint,
+            intent_id=str(intent_id),
         )
         return
 
@@ -292,22 +295,32 @@ async def handle_stripe_event(session: AsyncSession, settings, event: dict) -> N
             reference=dispute_id,
             amount_micros=credited,
             fingerprint=fingerprint,
+            intent_id=str(intent_id),
         )
         return
 
     if etype == "charge.dispute.closed" and obj.get("status") == "won" and credited:
         from app.models import CreditLedgerEntry
 
+        if int(charge.get("amount_refunded") or 0) > 0:
+            # Refunded after an early fraud warning: the money went back to the card, so
+            # the held credit stays held even though the dispute was won.
+            return
         set_org_context(session, org_id)
-        ref = f"fraud-release:{dispute_id}"[:120]
-        done = (
-            await session.execute(
-                sa.select(CreditLedgerEntry.id).where(
-                    CreditLedgerEntry.org_id == org_id, CreditLedgerEntry.reference == ref
+        ref = f"fraud-release:{intent_id}"[:120]
+
+        async def _has(reference: str) -> bool:
+            return (
+                await session.execute(
+                    sa.select(CreditLedgerEntry.id).where(
+                        CreditLedgerEntry.org_id == org_id,
+                        CreditLedgerEntry.reference == reference,
+                    )
                 )
-            )
-        ).first()
-        if done is None:
+            ).first() is not None
+
+        # Give back only what was actually held, and only once.
+        if await _has(f"fraud:{intent_id}"[:120]) and not await _has(ref):
             await credits.adjust(
                 session,
                 org_id,

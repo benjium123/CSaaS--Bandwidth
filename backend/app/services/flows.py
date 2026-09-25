@@ -75,9 +75,21 @@ async def _validate_cross_refs(
             ref = node.get("profile_id")
             if isinstance(ref, str) and not await _exists(session, AgentProfile, org_id, ref):
                 errors.append(f"node '{node_id}' references unknown assistant '{ref}'")
-        # "transfer" is deliberately NOT checked here: its `to` field is a phone number,
-        # not an object reference, and flow_engine.validate_flow already validates its
-        # shape (item 11 ruling).
+        elif ntype == "transfer":
+            # Its `to` is a phone number, not an object reference - flow_engine validates
+            # the shape (item 11 ruling). P44a: it must also be a number this workspace
+            # may call, or the flow forwards every inbound call to an IRSF destination.
+            to = node.get("to")
+            if isinstance(to, str) and to:
+                from app.services import destination_policy, telephony_access
+
+                refused = await destination_policy.check(
+                    session, telephony_access._settings_of(session), org_id, to
+                )
+                if refused is not None:
+                    errors.append(
+                        f"node '{node_id}' transfers to {to}, which this workspace cannot call"
+                    )
 
     return errors
 
