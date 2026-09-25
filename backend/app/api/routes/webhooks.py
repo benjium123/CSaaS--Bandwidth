@@ -927,6 +927,8 @@ async def stripe_webhook(
     metadata = intent.get("metadata") or {}
     from app.services import payments as payments_svc
 
+    if await payments_svc.refuse_risky_payment(session, request.app.state.settings, intent):
+        return Response(status_code=204)
     if await payments_svc.handle_bundle_intent(session, intent):
         return Response(status_code=204)
     if metadata.get("kind") != "credit_topup":

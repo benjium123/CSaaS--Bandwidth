@@ -200,6 +200,38 @@ async def payment_fee_micros(settings, payment_intent_id: str) -> int | None:
     return None
 
 
+async def charge_risk(settings, payment_intent_id: str) -> dict | None:
+    """Radar's verdict on a succeeded PaymentIntent's charge: risk_score, risk_level and the
+    card's cvc_check. None when there is no charge to read."""
+    stripe = _stripe(settings)
+    intent = await _run_sync(
+        stripe.PaymentIntent.retrieve, payment_intent_id, expand=["latest_charge"]
+    )
+    charge = intent.get("latest_charge") if isinstance(intent, dict) else None
+    if not isinstance(charge, dict):
+        return None
+    outcome = charge.get("outcome") or {}
+    card = (charge.get("payment_method_details") or {}).get("card") or {}
+    return {
+        "risk_score": outcome.get("risk_score"),
+        "risk_level": outcome.get("risk_level"),
+        "cvc_check": (card.get("checks") or {}).get("cvc_check"),
+    }
+
+
+async def refund_fraudulent(settings, payment_intent_id: str, *, reason: str) -> None:
+    """Refund a whole payment as fraudulent (Stripe also feeds the card into Radar's block
+    lists). Idempotent per payment intent."""
+    stripe = _stripe(settings)
+    await _run_sync(
+        stripe.Refund.create,
+        payment_intent=payment_intent_id,
+        reason="fraudulent",
+        metadata={"kind": "risk_block", "why": reason[:200]},
+        idempotency_key=f"risk-refund-{payment_intent_id}",
+    )
+
+
 async def create_subscription_checkout_session(
     settings,
     *,

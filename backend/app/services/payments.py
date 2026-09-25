@@ -66,6 +66,110 @@ async def start_bundle_payment(
     return row, q
 
 
+#: Radar risk score (0-99) above which a credit/bundle payment is refunded, not credited.
+RISK_SCORE_BLOCK = 75
+
+
+def _risk_reason(risk: dict | None) -> str | None:
+    if not risk:
+        return None
+    if risk.get("cvc_check") == "fail":
+        return "card security code (CVC) check failed"
+    score = risk.get("risk_score")
+    if isinstance(score, int) and score > RISK_SCORE_BLOCK:
+        return f"Stripe risk score {score} is above {RISK_SCORE_BLOCK}"
+    return None
+
+
+async def refuse_risky_payment(session: AsyncSession, settings, intent: dict) -> bool:  # noqa: ANN001
+    """Our stand-in for the Radar rules Stripe offers no API for: before a top-up, bundle or
+    auto-recharge payment becomes credit, refund it (and credit nothing) when the card's CVC
+    check failed or Radar's risk score is above RISK_SCORE_BLOCK. Returns True when refused.
+    Fails open (returns False) when Stripe is not configured or cannot be read: Radar's
+    own default blocking still applies to the charge. Commits when it refuses."""
+    from app.services import audit as audit_svc
+    from app.services import stripe_client
+
+    metadata = intent.get("metadata") or {}
+    kind = str(metadata.get("kind") or "")
+    if kind != "credit_topup" and kind not in BUNDLE_METADATA_KINDS:
+        return False
+    intent_id = str(intent.get("id") or "")
+    if not intent_id or not stripe_client.is_configured(settings):
+        return False
+    try:
+        org_id = uuid.UUID(str(metadata.get("org_id")))
+    except (TypeError, ValueError):
+        return False
+    existing = await _by_intent(session, intent_id)
+    if existing is not None and existing.state == "refunded":
+        return True  # a replay of a payment already refused
+    if existing is not None and existing.state == "paid":
+        return False  # already credited before this screen existed; leave it
+    try:
+        reason = _risk_reason(await stripe_client.charge_risk(settings, intent_id))
+    except Exception:
+        log.warning("payments.risk_lookup_failed", intent_id=intent_id)
+        return False
+    if reason is None:
+        return False
+
+    await stripe_client.refund_fraudulent(settings, intent_id, reason=reason)
+    org = await session.get(Org, org_id)
+    if org is None:
+        log.error("payments.risk_refund_unknown_org", intent_id=intent_id)
+        return True
+    set_org_context(session, org_id)
+    amount = int(intent.get("amount_received") or 0) * 10_000
+    row = existing
+    if row is None:
+        payment_id = metadata.get("payment_id")
+        if payment_id:
+            try:
+                row = await session.get(BillingPayment, uuid.UUID(str(payment_id)))
+            except ValueError:
+                row = None
+    if row is None:
+        bundle_kind = BUNDLE_METADATA_KINDS.get(kind)
+        row = BillingPayment(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            kind=(
+                f"{bundle_kind}_bundle"
+                if bundle_kind
+                else ("auto_recharge" if metadata.get("source") == "auto_recharge" else "topup")
+            ),
+            quantity=int(metadata.get("qty") or 1),
+            list_micros=amount,
+            discount_micros=0,
+        )
+        session.add(row)
+    row.state = "refunded"
+    row.stripe_payment_intent_id = intent_id
+    row.paid_micros = amount
+    row.credited_micros = 0
+    row.units_credited = 0
+    if metadata.get("source") == "auto_recharge":
+        # A refused auto-recharge would be retried (and refunded, and pay Stripe's fee)
+        # every few hours: switch it off until the customer turns it back on.
+        auto = dict(org.credit_auto_recharge or {})
+        auto["enabled"] = False
+        auto.pop("pending_intent", None)
+        auto["last_failure"] = f"Refused for fraud risk: {reason}"
+        org.credit_auto_recharge = auto
+    audit_svc.record(
+        session,
+        org_id,
+        action="payment.refused_risk",
+        target_type="payment",
+        target_id=intent_id,
+        detail={"reason": reason, "amount_micros": amount, "kind": kind},
+    )
+    await session.commit()
+    log.error("payments.refused_risk", org_id=str(org_id), intent_id=intent_id, reason=reason)
+    return True
+
+
 async def handle_bundle_intent(session: AsyncSession, intent: dict) -> bool:
     """payment_intent.succeeded for a bundle: credit the units once, mark the row paid.
     Returns True when the intent was a bundle (handled or safely ignored). Commits."""
