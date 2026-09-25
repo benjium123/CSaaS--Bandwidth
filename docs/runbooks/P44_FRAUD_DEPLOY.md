@@ -43,7 +43,8 @@ registration, auto-registration of numbers without an address, and the call gate
 - Add a 911 address in Numbers → Emergency (911) addresses. It should go
   `pending` → `active` on one Telnyx number and one SignalWire number.
 - A portability check on a real number (no submit).
-- A Stripe test-mode early fraud warning refunds, holds the credit and pauses the
+- A Stripe test-mode early fraud warning raises an `efw_refund_needed` alert (refunds are
+  made BY HAND in Stripe), holds the credit and pauses the
   workspace.
 
 ## Switches (env)

@@ -231,7 +231,7 @@ async def handle_stripe_event(session: AsyncSession, settings, event: dict) -> N
     """React to fraud evidence on one of our payments. The caller commits.
 
     radar.early_fraud_warning.created  the card issuer reports the payment as fraud. We
-        refund it at once (a refunded payment cannot become a chargeback, so no $15 fee),
+        ask ops to refund it by hand (efw_refund_needed alert; a refund heads off the chargeback),
         take the credit it bought back out, ban the card and pause the workspace.
     charge.dispute.created             a chargeback: the money is already gone, so the
         credit it bought is held, the card banned, the workspace paused.
@@ -257,24 +257,39 @@ async def handle_stripe_event(session: AsyncSession, settings, event: dict) -> N
     card = ((charge.get("payment_method_details") or {}).get("card")) or {}
     fingerprint = card.get("fingerprint")
     # Only a credit top-up bought balance one-for-one; anything else (bundles, numbers)
-    # is stopped by the pause.
-    credited = (
-        int(intent.get("amount_received") or 0) * 10_000
-        if metadata.get("kind") == "credit_topup"
-        else 0
+    # is stopped by the pause. Hold what the ledger shows was actually credited for this
+    # payment - a payment refunded at once by the risk check was never credited.
+    credited = 0
+    if metadata.get("kind") == "credit_topup":
+        from app.models import CreditLedgerEntry
+
+        set_org_context(session, org_id)
+        credited = int(
+            (
+                await session.execute(
+                    sa.select(sa.func.coalesce(sa.func.sum(CreditLedgerEntry.amount_micros), 0))
+                    .where(
+                        CreditLedgerEntry.org_id == org_id,
+                        CreditLedgerEntry.entry_type == "topup",
+                        CreditLedgerEntry.reference == str(intent_id),
+                    )
+                )
+            ).scalar_one()
+        )
+    already_refunded = int(charge.get("amount_refunded") or 0) >= int(
+        charge.get("amount") or intent.get("amount_received") or 1
     )
 
     if etype == "radar.early_fraud_warning.created":
-        if obj.get("actionable", True):
-            try:
-                await stripe_client.refund_intent(
-                    settings, str(intent_id), idempotency_key=f"efw-{obj.get('id')}"
-                )
-            except Exception:  # noqa: BLE001 - still pause; ops refund by hand
-                log.exception("card_risk.refund_failed", intent=str(intent_id))
-                await open_alert(
-                    session, org_id, "efw_refund_failed", {"intent": str(intent_id)}
-                )
+        # Refunds are an operator decision, made by hand in Stripe: ask for one, never
+        # send it from here. The credit stays held and the workspace paused meanwhile.
+        if not already_refunded:
+            await open_alert(
+                session,
+                org_id,
+                "efw_refund_needed",
+                {"intent": str(intent_id), "warning": str(obj.get("id") or "")},
+            )
         await react_to_fraud(
             session,
             org_id,

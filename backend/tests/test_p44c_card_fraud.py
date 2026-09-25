@@ -115,12 +115,12 @@ def fake_stripe(monkeypatch):
 
 async def _setup_paid_org(session):
     org = await _org(session)
-    await credits.topup(session, org.id, 50_000_000, reference=f"t-{uuid.uuid4()}")
+    await credits.topup(session, org.id, 50_000_000, reference="pi_1")  # the intent id
     await session.commit()
     return org
 
 
-async def test_early_fraud_warning_refunds_holds_bans_and_pauses(session, settings, fake_stripe):
+async def test_early_fraud_warning_holds_bans_pauses_and_asks_for_a_refund(session, settings, fake_stripe):
     calls, state = fake_stripe
     org = await _setup_paid_org(session)
     state["intent"] = _intent(org.id)
@@ -131,7 +131,8 @@ async def test_early_fraud_warning_refunds_holds_bans_and_pauses(session, settin
     await card_risk.handle_stripe_event(session, settings, event)
     await session.commit()
 
-    assert calls["refunds"] == [("pi_1", "efw-issfr_1")]
+    assert calls["refunds"] == []  # refunds are made by hand; ops get an alert instead
+    assert len(await _alerts(session, org.id, "efw_refund_needed")) == 1
     assert await credits.balance(session, org.id) == 0
     assert await ban_list.matches(session, [ban_list.identifier("card_fingerprint", "stolen-fp")])
     set_org_context(session, org.id)
@@ -221,3 +222,28 @@ async def test_fraud_on_a_bundle_payment_pauses_without_touching_the_balance(
 
 def test_every_checkout_asks_for_3d_secure():
     assert stripe_client.THREE_DS_OPTIONS == {"card": {"request_three_d_secure": "any"}}
+
+
+async def test_a_payment_refunded_at_once_is_neither_refunded_nor_held_again(
+    session, settings, fake_stripe
+):
+    calls, state = fake_stripe
+    org = await _org(session)  # the risk check refunded it: no top-up was credited
+    await credits.topup(session, org.id, 20_000_000, reference=f"t-{uuid.uuid4()}")
+    await session.commit()
+    state["intent"] = {
+        **_intent(org.id),
+        "latest_charge": {
+            "amount": 5000,
+            "amount_refunded": 5000,
+            "payment_method_details": {"card": {"fingerprint": "stolen-fp"}},
+        },
+    }
+    await card_risk.handle_stripe_event(session, settings, {
+        "type": "radar.early_fraud_warning.created",
+        "data": {"object": {"id": "issfr_9", "payment_intent": "pi_1", "actionable": True}},
+    })
+    await session.commit()
+    assert calls["refunds"] == []
+    assert await credits.balance(session, org.id) == 20_000_000  # other money untouched
+    assert await ban_list.matches(session, [ban_list.identifier("card_fingerprint", "stolen-fp")])
