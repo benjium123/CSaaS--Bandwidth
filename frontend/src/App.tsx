@@ -206,6 +206,17 @@ export function App() {
   if (me.email_verification_required) return <ConfirmEmailPage />;
   if (me.second_factor_required) return <SecureAccountPage />;
 
+  // The operator console is its own full-screen app (the Switchboard), never squeezed into
+  // a workspace shell or behind the workspace picker.
+  if (me.is_platform_operator && location.pathname === "/ops") {
+    return (
+      <>
+        <OpsPage />
+        <StepUpDialog />
+      </>
+    );
+  }
+
   if (!orgId) {
     // P43: platform operators often belong to no workspace - the review console must not
     // be hidden behind the workspace picker.

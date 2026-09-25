@@ -75,7 +75,11 @@ async def test_short_application_submits_and_admin_approves(
     evidence = await client.get(evidence_path, headers=ah)
     assert evidence.status_code == 200, evidence.text
     assert "no-store" in evidence.headers["cache-control"]
-    assert evidence.json()["id_verifications"][0]["full_name"] == "Ada Solo"
+    assert evidence.json()["identity"]["full_name"] == "Ada Solo"
+    assert evidence.json()["photos"] == [
+        {"label": "ID front", "path": "id_verifications.0.front_image"}
+    ]
+    assert "id_verifications" not in evidence.json()  # the raw decision stays server-side
     assert (await client.get(evidence_path, headers=h)).status_code == 403
     queue = (await client.get("/api/v1/ops/queue", headers=ah)).json()
     assert any(a["org_id"] == org for a in queue["applications"])
