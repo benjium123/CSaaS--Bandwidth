@@ -87,6 +87,7 @@ async def refuse_risky_payment(session: AsyncSession, settings, intent: dict) ->
     check failed or Radar's risk score is above RISK_SCORE_BLOCK. Returns True when refused.
     Fails open (returns False) when Stripe is not configured or cannot be read: Radar's
     own default blocking still applies to the charge. Commits when it refuses."""
+    from app.models import SecurityAlert
     from app.services import audit as audit_svc
     from app.services import stripe_client
 
@@ -157,6 +158,21 @@ async def refuse_risky_payment(session: AsyncSession, settings, intent: dict) ->
         auto.pop("pending_intent", None)
         auto["last_failure"] = f"Refused for fraud risk: {reason}"
         org.credit_auto_recharge = auto
+    # Staff are told about every automatic refund (review only - it is already refunded).
+    session.add(
+        SecurityAlert(
+            id=uuid.uuid4(),
+            kind="payment_auto_refunded",
+            org_id=org_id,
+            detail={
+                "intent": intent_id,
+                "amount_micros": amount,
+                "kind": kind,
+                "reason": reason,
+                "action": "Refunded automatically at checkout; nothing was credited.",
+            },
+        )
+    )
     audit_svc.record(
         session,
         org_id,

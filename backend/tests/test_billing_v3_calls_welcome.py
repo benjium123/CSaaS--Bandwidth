@@ -561,6 +561,16 @@ async def test_failed_cvc_is_refunded_and_not_credited(session, monkeypatch):
     row = await _payment_row(session, org_id, intent["id"])
     assert row.state == "refunded" and row.credited_micros == 0
     assert await credits.balance(session, org_id) == 0
+    from app.models import SecurityAlert
+
+    [alert] = (
+        await session.execute(
+            sa.select(SecurityAlert).where(
+                SecurityAlert.org_id == org_id, SecurityAlert.kind == "payment_auto_refunded"
+            )
+        )
+    ).scalars().all()
+    assert alert.detail["intent"] == intent["id"]
 
 
 async def test_high_risk_score_bundle_is_refunded(session, monkeypatch):
