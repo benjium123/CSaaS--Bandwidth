@@ -444,6 +444,11 @@ class Settings(BaseSettings):
     #: P44d: positive console credit ONE operator may apply per UTC day before a second
     #: operator must approve (services/grant_approval.py).
     console_credit_solo_micros: int = 50_000_000
+    #: P44e: outbound calls need a working 911 address on the calling number. Numbers that
+    #: existed before E911_ENFORCEMENT_START get E911_GRACE_DAYS to add one.
+    e911_enforced: bool = True
+    e911_enforcement_start: str = "2026-09-26"
+    e911_grace_days: int = 7
     monitor_enforced: bool = True
     #: The pre-send text check waits at most this long for the AI.
     monitor_text_ai_timeout_seconds: float = 6.0

@@ -187,6 +187,9 @@ async def start_room_call(
     # Prepaid hard gate: refuse (402) before any row, room or dial exists, and hold the
     # first minutes. The hold rides this function's commit below.
     await calls_svc.require_owned_caller_ids(session, org_id, [from_e164])
+    from app.services import e911
+
+    await e911.require_e911(session, settings, org_id, from_e164, to)
     await telephony_access.require_telephony_allowed(session, org_id, "call", to_e164=to)
     from app.services import exposure
 

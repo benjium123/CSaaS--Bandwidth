@@ -106,6 +106,18 @@ class OrgNumber(Base, TenantScoped, TimestampMixin):
     provisioning: Mapped[dict] = mapped_column(
         PortableJSON(), nullable=False, default=dict, server_default="{}"
     )
+    #: P44e (migration 0068): the 911 service address bound to this number at its carrier,
+    #: and where that stands (none | pending | active | failed). Calls need "active".
+    emergency_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("emergency_addresses.id", ondelete="SET NULL"), nullable=True
+    )
+    e911_status: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="none", server_default="none"
+    )
+    e911_error: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    e911_updated_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
 
 class MessageThread(Base, TenantScoped, TimestampMixin):

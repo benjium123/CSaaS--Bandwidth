@@ -92,6 +92,10 @@ class NumberOut(BaseModel):
     #: Who picks this number up. Derived from the bound flow, never stored: a one-node
     #: ASSISTANT flow means an assistant answers, anything else means a person does.
     answered_by: AnsweredByOut = AnsweredByOut()
+    #: P44e: the 911 address bound to this number and its carrier state.
+    emergency_address_id: uuid.UUID | None = None
+    e911_status: str = "none"
+    e911_error: str | None = None
 
 
 def _audit_number(ctx: OrgContext, action: str, number: OrgNumber) -> None:
@@ -453,6 +457,9 @@ async def _out(
         purchased_at=n.purchased_at,
         order_detail=n.order_detail,
         answered_by=answered_by,
+        emergency_address_id=n.emergency_address_id,
+        e911_status=n.e911_status or "none",
+        e911_error=n.e911_error,
     )
 
 

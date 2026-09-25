@@ -93,6 +93,9 @@ def make_settings(**overrides) -> Settings:
         # never went through business verification. P41 tests opt back in explicitly.
         "require_2fa_privileged_users": False,
         "kyc_enforced": False,
+        # P44e: pre-P44 tests dial from numbers that have no 911 address; the E911 tests
+        # opt back in explicitly.
+        "e911_enforced": False,
         # Prepaid telephony is ON by default in production (migration 0055). Pre-existing
         # tests create orgs with a zero credit balance and expect to be able to text and
         # call, so the suite opts out; tests/test_prepaid_telephony.py turns the gate on

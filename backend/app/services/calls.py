@@ -336,6 +336,9 @@ async def create_outbound_call(
         reason="original",
     )
     await require_owned_caller_ids(session, org_id, [pair[1] for pair in attempts])
+    from app.services import e911
+
+    await e911.require_e911(session, telephony_access._settings_of(session), org_id, from_, to)
     # Prepaid hard gate: refuse (402) before the rows or the dial exist, and hold the
     # first minutes (committed with the rows just below).
     await telephony_access.require_telephony_allowed(session, org_id, "call", to_e164=to)

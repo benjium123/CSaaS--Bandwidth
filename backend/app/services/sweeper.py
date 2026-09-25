@@ -281,6 +281,18 @@ async def _run_once_locked(app) -> dict[str, int]:
         except Exception:
             log.exception("sweeper_number_order_poll_failed")
 
+    # P44e: bind the workspace's 911 address to new numbers, and follow carrier E911
+    # provisioning to "active".
+    if registry is not None:
+        from app.services import e911 as e911_svc
+
+        try:
+            async with get_sessionmaker()() as session:
+                results["e911_assigned"] = await e911_svc.auto_assign_all(session, registry)
+                results["e911_refreshed"] = await e911_svc.refresh_pending(session, registry)
+        except Exception:
+            log.exception("sweeper_e911_failed")
+
     # P43: second look at texts held by the AI safety check. Runs BEFORE the held-message
     # release so a text cleared here goes out on this same pass.
     if getattr(app.state.settings, "monitor_enforced", False):
