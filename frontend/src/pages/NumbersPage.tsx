@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import type { ApiClient } from "@/api/client";
+import { useGate } from "@/api/capabilities";
 import {
   useAgentProfiles,
   useAssignCampaign,
@@ -23,9 +24,11 @@ import {
   formatMonthlyCost,
   formatSetupCost,
   useAvailableNumbers,
+  useEmergencyAddresses,
   useNumbers,
   useOrderNumber,
   useSetAnsweredBy,
+  useSetEmergencyAddress,
   type AvailableNumberFilters,
   type NumberOut,
   type SearchOut,
@@ -47,12 +50,19 @@ import {
   EmptyState,
   Input,
   MutationStatus,
+  mutationErrorMessage,
   Pill,
   Section,
   Select,
   Spinner,
   type PillTone,
 } from "@/components/ui/primitives";
+import {
+  draftToInput,
+  EmergencyAddressChoice,
+  isAddressChoiceReady,
+  type AddressChoice,
+} from "@/components/numbers/EmergencyAddressForm";
 import { formatPhone } from "@/lib/format";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { cn } from "@/lib/utils";
@@ -144,6 +154,26 @@ function numberStatusPill(status: string): { label: string; tone: PillTone } {
   }
 }
 
+/** The 911 column's pill for a number whose emergency state the carrier does track (i.e.
+ * Telnyx, non-"unsupported"). Any status string the carrier adds later falls through to a
+ * neutral pill showing that string verbatim rather than being swallowed. */
+function emergencyPill(number: NumberOut): { label: string; tone: PillTone } {
+  switch (number.emergency_status) {
+    case "active":
+      return { label: "Active", tone: "success" };
+    case "provisioning":
+    case "pending":
+      return { label: "Setting up", tone: "warning" };
+    case "failed":
+      return { label: "Needs attention", tone: "danger" };
+    case "missing":
+    case undefined:
+      return { label: "Not set", tone: "danger" };
+    default:
+      return { label: number.emergency_status, tone: "neutral" };
+  }
+}
+
 function providerDisplayLabel(number: NumberOut): string {
   const friendly = (PROVIDER_LABELS as Record<string, string | undefined>)[number.carrier];
   if (friendly) return friendly;
@@ -171,6 +201,9 @@ export function NumbersPage() {
   // Same ["agent-profiles"] key the Assistants builder uses, so the two stay in step.
   const { data: assistants } = useAgentProfiles(api);
   const setAnsweredBy = useSetAnsweredBy(api);
+  // Only the new 911 controls consult this; the rest of the page is unchanged.
+  const gate = useGate();
+  const canManageNumbers = gate.can("numbers:manage");
   const campaignName = React.useCallback(
     (id: string | null | undefined) => campaigns?.find((c) => c.id === id)?.name ?? null,
     [campaigns],
@@ -188,6 +221,7 @@ export function NumbersPage() {
 
   const [value, setValue] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  const [e911NumberId, setE911NumberId] = React.useState<string | null>(null);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -222,6 +256,18 @@ export function NumbersPage() {
     }
   }
 
+  // A live Telnyx line with no usable 911 address is the one case that cannot be fixed
+  // silently later - emergency calls from it have nowhere to be located to.
+  const needsE911Warning = (numbers ?? []).some(
+    (n) =>
+      n.carrier === "telnyx" &&
+      n.status === "active" &&
+      (n.emergency_status === "missing" || n.emergency_status === "failed"),
+  );
+  const e911Number = e911NumberId
+    ? (numbers ?? []).find((n) => n.id === e911NumberId)
+    : undefined;
+
   return (
     <div className={cn(surfaceThemeClass(theme), "mx-auto max-w-5xl space-y-8 bg-background p-6 text-foreground")}>
       <Section
@@ -229,6 +275,14 @@ export function NumbersPage() {
         description="Search, order, release, and assign org numbers."
       >
         <div className="space-y-4">
+          {needsE911Warning && (
+            <div
+              role="alert"
+              className="rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-sm text-destructive"
+            >
+              Some numbers have no 911 address. Emergency calls from them cannot be located.
+            </div>
+          )}
           {paidCheckout ? <div className="rounded-2xl border border-blue-200 bg-blue-50 p-6"><h2 className="text-lg font-semibold text-blue-900">Grow your team, one number at a time</h2><p className="my-3 text-blue-800">$15 per phone number per month.</p><Link to="/choose-numbers" className="inline-block rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white">Choose phone numbers</Link></div> : <form className={cn(PANEL, "flex gap-3 p-3.5")} onSubmit={add}>
             <Input
               aria-label="Phone number"
@@ -289,6 +343,7 @@ export function NumbersPage() {
                     </th>
                     <th className={HEAD}>Purchased</th>
                     <th className={HEAD}>Status</th>
+                    <th className={HEAD}>911</th>
                     <th className={HEAD} title="Registration status for SMS messaging">
                       SMS registration
                     </th>
@@ -323,11 +378,20 @@ export function NumbersPage() {
                         }
                       }}
                       releasePending={releaseNumber.isPending}
+                      canManageE911={canManageNumbers}
+                      onEditE911={() => setE911NumberId(n.id)}
                     />
                   ))}
                 </tbody>
               </table>
             </div>
+          )}
+          {e911Number && (
+            <EmergencyAddressEditor
+              api={api}
+              number={e911Number}
+              onDone={() => setE911NumberId(null)}
+            />
           )}
           <div className="flex items-center gap-3">
             {/* Small inline pending/error readout - same local pattern as ProvidersPage /
@@ -358,6 +422,8 @@ function NumberRow({
   confirming,
   onRelease,
   releasePending,
+  canManageE911,
+  onEditE911,
 }: {
   number: NumberOut;
   campaignName: string | null;
@@ -372,6 +438,8 @@ function NumberRow({
   confirming: boolean;
   onRelease: () => void;
   releasePending: boolean;
+  canManageE911: boolean;
+  onEditE911: () => void;
 }) {
   const released = number.status === "released";
   const current = answeredBy(number);
@@ -381,6 +449,7 @@ function NumberRow({
       : null;
   const status = numberStatusPill(number.status);
   const providerLabel = providerDisplayLabel(number);
+  const e911 = emergencyPill(number);
 
   return (
     <tr className={ROW}>
@@ -457,6 +526,38 @@ function NumberRow({
         )}
       </td>
       <td className={CELL}>
+        {/* 911 is carrier-managed unless the carrier is Telnyx and there is nothing to
+            manage yet ("unsupported"). Numbers we cannot touch still say who owns them. */}
+        {number.emergency_status === "unsupported" || number.carrier !== "telnyx" ? (
+          <span className="text-xs text-muted-foreground">Managed by {providerLabel}</span>
+        ) : (
+          <>
+            <Pill tone={e911.tone}>{e911.label}</Pill>
+            {number.emergency_status === "failed" && number.emergency_detail && (
+              <span className="mt-1 block max-w-[240px] text-xs text-destructive">
+                {number.emergency_detail}
+              </span>
+            )}
+            {canManageE911 && !released && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-1 rounded-full px-3"
+                aria-label={
+                  number.emergency_address_id
+                    ? `Change 911 address for ${number.e164}`
+                    : `Set 911 address for ${number.e164}`
+                }
+                onClick={onEditE911}
+              >
+                {number.emergency_address_id ? "Change" : "Set 911 address"}
+              </Button>
+            )}
+          </>
+        )}
+      </td>
+      <td className={CELL}>
         {/* registration_detail comes from the backend and may contain carrier campaign
             terms; keep the surrounding label plain and render the backend text as the tooltip. */}
         <Pill
@@ -503,6 +604,97 @@ function NumberRow({
         )}
       </td>
     </tr>
+  );
+}
+
+/**
+ * Inline 911 address picker. Mounted only while a row's edit control is open, so
+ * `useEmergencyAddresses` fetches the saved-address list lazily - a page load never asks
+ * for it. Uses the shared EmergencyAddressChoice/Form so the checkout flow and this one
+ * stay visually and behaviourally identical.
+ */
+function EmergencyAddressEditor({
+  api,
+  number,
+  onDone,
+}: {
+  api: ApiClient;
+  number: NumberOut;
+  onDone: () => void;
+}) {
+  const addresses = useEmergencyAddresses(api);
+  const setAddress = useSetEmergencyAddress(api);
+  const [choice, setChoice] = React.useState<AddressChoice>(
+    number.emergency_address_id ? { kind: "existing", id: number.emergency_address_id } : null,
+  );
+
+  function save() {
+    if (!choice) return;
+    setAddress.mutate(
+      {
+        numberId: number.id,
+        address:
+          choice.kind === "existing"
+            ? { address_id: choice.id }
+            : { new: draftToInput(choice.draft) },
+      },
+      { onSuccess: onDone },
+    );
+  }
+
+  return (
+    <div
+      className={cn(PANEL, "space-y-3 p-3.5")}
+      role="group"
+      aria-label={`911 address for ${number.e164}`}
+    >
+      <p className="text-sm font-semibold text-foreground">
+        911 address for {formatPhone(number.e164)}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Emergency calls from this number are sent to this address.
+      </p>
+      {addresses.isLoading ? (
+        <Spinner label="Loading addresses" />
+      ) : addresses.error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {mutationErrorMessage(addresses.error)}
+        </p>
+      ) : (
+        <EmergencyAddressChoice
+          addresses={addresses.data?.addresses ?? []}
+          value={choice}
+          onChange={setChoice}
+          disabled={setAddress.isPending}
+          idPrefix={`e911-${number.id}`}
+        />
+      )}
+      <div className="flex gap-3">
+        <Button
+          type="button"
+          size="sm"
+          className="rounded-full px-4"
+          disabled={!isAddressChoiceReady(choice) || setAddress.isPending}
+          onClick={save}
+        >
+          Save 911 address
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="rounded-full px-4"
+          onClick={onDone}
+        >
+          Cancel
+        </Button>
+      </div>
+      {setAddress.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {mutationErrorMessage(setAddress.error)}
+        </p>
+      )}
+    </div>
   );
 }
 

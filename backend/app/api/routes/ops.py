@@ -67,6 +67,100 @@ async def number_purchase_queue(op: Reviewer) -> list[dict]:
     ]
 
 
+@router.get("/texting-registrations")
+async def texting_registrations(op: Reviewer) -> list[dict]:
+    """Self-serve 10DLC registrations across workspaces, newest first."""
+    from app.models import Brand, Campaign, Org, TenDlcRegistration
+
+    # JUSTIFIED: named operators follow registrations across customer workspaces.
+    rows = (
+        await op.session.execute(
+            sa.select(TenDlcRegistration, Org.name, Brand.name, Campaign.name)
+            .join(Org, Org.id == TenDlcRegistration.org_id)
+            .join(Brand, Brand.id == TenDlcRegistration.brand_id)
+            .join(Campaign, Campaign.id == TenDlcRegistration.campaign_id)
+            .order_by(TenDlcRegistration.created_at.desc())
+            .limit(100)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    return [
+        {
+            "id": str(reg.id),
+            "org_id": str(reg.org_id),
+            "org_name": org_name,
+            "brand_name": brand_name,
+            "campaign_name": campaign_name,
+            "stage": reg.stage,
+            "fee_tier": reg.fee_tier,
+            "detail": reg.detail,
+            "paid_at": reg.paid_at.isoformat() if reg.paid_at else None,
+            "updated_at": reg.updated_at.isoformat() if reg.updated_at else None,
+        }
+        for reg, org_name, brand_name, campaign_name in rows
+    ]
+
+
+async def _registration_org(op: OperatorContext, reg_id: uuid.UUID) -> uuid.UUID:
+    from app.models import TenDlcRegistration
+
+    org_id = (
+        await op.session.execute(
+            sa.select(TenDlcRegistration.org_id)
+            .where(TenDlcRegistration.id == reg_id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one_or_none()
+    if org_id is None:
+        raise NotFoundError("Registration not found")
+    return org_id
+
+
+@router.post("/texting-registrations/{reg_id}/reconcile")
+async def reconcile_texting_registration(reg_id: uuid.UUID, request: Request, op: Admin) -> dict:
+    """Ask Telnyx whether an interrupted filing landed: link it, or clear it so it is filed
+    again. Never sends a filing itself."""
+    from app.services import audit as audit_svc
+    from app.services import tendlc
+
+    org_id = await _registration_org(op, reg_id)
+    result = await tendlc.reconcile(op.session, request.app.state.settings, reg_id)
+    set_org_context(op.session, org_id)
+    audit_svc.record(
+        op.session,
+        org_id,
+        action="tendlc.reconciled",
+        target_type="tendlc_registration",
+        target_id=str(reg_id),
+        actor_user_id=op.user.id,
+        detail={"operator_user_id": str(op.user.id), **result},
+    )
+    await op.session.commit()
+    return result
+
+
+@router.post("/texting-registrations/{reg_id}/cancel")
+async def cancel_texting_registration(reg_id: uuid.UUID, request: Request, op: Admin) -> dict:
+    """Stop a registration and refund what the carrier never charged for."""
+    from app.services import audit as audit_svc
+    from app.services import tendlc
+
+    org_id = await _registration_org(op, reg_id)
+    detail = await tendlc.cancel(op.session, request.app.state.settings, reg_id)
+    set_org_context(op.session, org_id)
+    audit_svc.record(
+        op.session,
+        org_id,
+        action="tendlc.cancelled",
+        target_type="tendlc_registration",
+        target_id=str(reg_id),
+        actor_user_id=op.user.id,
+        detail={"operator_user_id": str(op.user.id), "detail": detail},
+    )
+    await op.session.commit()
+    return {"stage": "cancelled", "detail": detail}
+
+
 async def _purchase_org(op: OperatorContext, purchase_id: uuid.UUID) -> uuid.UUID:
     from app.models import NumberPurchase
 

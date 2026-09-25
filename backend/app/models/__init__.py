@@ -451,9 +451,11 @@ __all__ = [
     "AdminInvite",
     "NumberPurchase",
     "TenDlcRegistration",
+    "EmergencyAddress",
 ]
 from app.models.number_purchase import NumberPurchase
 from app.models.tendlc import TenDlcRegistration
+from app.models.emergency import EmergencyAddress
 from app.models.billing_v2 import (  # noqa: E402
     BillingPayment,
     BillingRefusal,

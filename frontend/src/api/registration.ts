@@ -277,7 +277,9 @@ export type TextingStage =
   | "brand_rejected"
   | "campaign_rejected"
   | "needs_attention"
-  | "expired";
+  | "expired"
+  // An operator stopped the registration and refunded what the carrier never charged.
+  | "cancelled";
 
 export interface TextingRegistration extends TextingQuote {
   id: string;

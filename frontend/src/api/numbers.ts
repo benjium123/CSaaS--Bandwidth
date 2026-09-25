@@ -18,6 +18,14 @@ type GeneratedSearchOut = components["schemas"]["SearchOut"];
 
 export type NumberStatus = "active" | "pending" | "failed" | "released";
 
+export type EmergencyStatus =
+  | "active"
+  | "provisioning"
+  | "pending"
+  | "failed"
+  | "missing"
+  | "unsupported";
+
 export type NumberOut = Omit<GeneratedNumberOut, "status"> & {
   status: NumberStatus;
   provider_account_id: string | null;
@@ -35,6 +43,11 @@ export type NumberOut = Omit<GeneratedNumberOut, "status"> & {
   answered_by?: AnsweredBy | null;
   answered_by_mode?: AnsweredByMode | null;
   answered_by_profile_id?: string | null;
+  // E911 fields: the generated types predate the emergency-address work, so they are
+  // added here as optional (existing fixtures and older payloads omit them).
+  emergency_status?: EmergencyStatus;
+  emergency_address_id?: string | null;
+  emergency_detail?: string | null;
 };
 
 export type AnsweredByMode = "human" | "assistant";
@@ -196,4 +209,82 @@ export function formatMonthlyCost(item: {
 
 export function formatSetupCost(cents: number | null | undefined): string {
   return cents == null ? "—" : `$${(cents / 100).toFixed(2)}`;
+}
+
+// --- E911 / emergency addresses ---------------------------------------------
+
+export type EmergencyAddress = {
+  id: string;
+  name: string;
+  street_address: string;
+  extended_address: string | null;
+  locality: string;
+  administrative_area: string;
+  postal_code: string;
+  country_code: string;
+  label: string;
+};
+
+export type EmergencyAddressInput = {
+  name: string;
+  street_address: string;
+  extended_address?: string;
+  locality: string;
+  administrative_area: string;
+  postal_code: string;
+  country_code: "US" | "CA";
+};
+
+export type EmergencyAddressList = {
+  addresses: EmergencyAddress[];
+  notice: string;
+};
+
+/**
+ * Starts with "numbers" on purpose: invalidating NUMBERS_QUERY_KEY (["numbers"]) also
+ * refetches this list (React Query matches by key prefix), so a number's emergency state
+ * and the saved-address list stay in sync after a write.
+ */
+export const EMERGENCY_ADDRESSES_QUERY_KEY = ["numbers", "emergency-addresses"] as const;
+
+export function useEmergencyAddresses(api: ApiClient, enabled = true) {
+  return useQuery({
+    queryKey: EMERGENCY_ADDRESSES_QUERY_KEY,
+    queryFn: () => api.request<EmergencyAddressList>("/api/v1/numbers/emergency-addresses"),
+    enabled,
+    retry: false,
+  });
+}
+
+/**
+ * Sets a number's emergency address. When the caller supplies a brand-new address (the
+ * `{ new }` variant) we POST it first to mint an id, then PUT that id — exactly the
+ * two-step the backend requires.
+ */
+export function useSetEmergencyAddress(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      numberId: string;
+      address: { address_id: string } | { new: EmergencyAddressInput };
+    }) => {
+      const addressId =
+        "new" in vars.address
+          ? (
+              await api.request<EmergencyAddress>("/api/v1/numbers/emergency-addresses", {
+                method: "POST",
+                json: vars.address.new,
+              })
+            ).id
+          : vars.address.address_id;
+      return api.request<NumberOut>(`/api/v1/numbers/${vars.numberId}/emergency-address`, {
+        method: "PUT",
+        json: { address_id: addressId },
+      });
+    },
+    onSuccess: () => {
+      // Covers both the number list and EMERGENCY_ADDRESSES_QUERY_KEY (same prefix).
+      qc.invalidateQueries({ queryKey: NUMBERS_QUERY_KEY });
+    },
+  });
 }

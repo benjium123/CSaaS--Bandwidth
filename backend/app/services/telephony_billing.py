@@ -695,8 +695,8 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
             call = await session.get(Call, call_id)
             if call is None or call.billed_at is not None:
                 continue
-            if (call.extra or {}).get("refused"):
-                # Refused for credit: never billed.
+            if (call.extra or {}).get("refused") or (call.extra or {}).get("emergency"):
+                # Refused for credit, or a call to 911/933: never billed.
                 call.billed_at = _now()
                 await session.commit()
                 continue

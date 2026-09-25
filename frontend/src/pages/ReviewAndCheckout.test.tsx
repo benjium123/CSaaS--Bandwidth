@@ -42,15 +42,22 @@ describe("Review and paid number setup", () => {
       "/api/v1/auth/me": me,
       "/api/v1/billing/number-purchases/current": null,
       "/api/v1/numbers/available?carrier=telnyx&area_code=212&limit=20": numbers,
+      "/api/v1/numbers/emergency-addresses": { addresses: [], notice: "911 notice text" },
       "/api/v1/billing/number-checkout": { id: "purchase-1", state: "checkout", numbers: [] },
     });
     renderWithProviders(<ChooseNumbersPage />, client);
     await userEvent.type(screen.getByLabelText("Area code"), "212");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
-    for (const box of await screen.findAllByRole("checkbox")) await userEvent.click(box);
+    for (const box of await screen.findAllByRole("checkbox", { name: /\+1212555010/ })) await userEvent.click(box);
     expect(screen.getByText("3 numbers × $15/month")).toBeInTheDocument();
     expect(screen.getByText("$45")).toBeInTheDocument();
+    await userEvent.type(await screen.findByLabelText("Business or person at this location"), "Ada Studio");
+    await userEvent.type(screen.getByLabelText("Street address"), "1 Main St");
+    await userEvent.type(screen.getByLabelText("City"), "New York");
+    await userEvent.type(screen.getByLabelText("State (2-letter)"), "NY");
+    await userEvent.type(screen.getByLabelText("ZIP code"), "10001");
+    await userEvent.click(screen.getByRole("checkbox", { name: "I understand how 911 works with these numbers" }));
     await userEvent.click(screen.getByRole("button", { name: "Continue to payment" }));
-    await waitFor(() => expect(client.calls.some(c => c.path === "/api/v1/billing/number-checkout" && (c.init.json as { numbers: string[] })?.numbers.length === 3)).toBe(true));
+    await waitFor(() => expect(client.calls.some(c => c.path === "/api/v1/billing/number-checkout" && (c.init.json as { numbers: string[]; acknowledge_e911?: boolean })?.numbers.length === 3 && (c.init.json as { acknowledge_e911?: boolean })?.acknowledge_e911 === true)).toBe(true));
   });
 });

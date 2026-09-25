@@ -714,6 +714,202 @@ async def associate_new_numbers(session, settings, org_id) -> None:
 
 
 # --------------------------------------------------------------------------------------
+# Operator recovery for an interrupted filing
+# --------------------------------------------------------------------------------------
+#: A filing interrupted this recently may still be landing at the carrier; never guess yet.
+RECONCILE_AFTER = timedelta(minutes=10)
+_BRAND_MARKER = "telnyx_brand_filing"
+_CAMPAIGN_MARKER = "telnyx_filing"
+
+
+def _when(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _created(record: dict) -> datetime | None:
+    return _when(record.get("createdAt") or record.get("createDate") or record.get("created_at"))
+
+
+def _attempted_at(marker: dict) -> datetime:
+    attempted = _when(marker.get("attempted_at"))
+    if attempted is None:
+        raise ConflictError("The interrupted filing has no timestamp; reconcile it by hand.")
+    if datetime.now(timezone.utc) - attempted < RECONCILE_AFTER:
+        raise ConflictError("That filing was attempted minutes ago. Try again in ten minutes.")
+    return attempted
+
+
+def _made_after(record: dict, attempted: datetime) -> bool:
+    created = _created(record)
+    return created is None or created >= attempted - timedelta(minutes=5)
+
+
+async def reconcile(session, settings, reg_id, *, client=None) -> dict:
+    """Operator: settle a filing that was interrupted after it was sent.
+
+    Asks Telnyx whether the record was created. Exactly one match: link it and carry on.
+    None: the submission never landed, so clear the attempt marker and let the job file it
+    again. More than one: stop - that needs a person. Never files anything itself.
+    """
+    from app.services.registration import advance_status
+
+    reg = (
+        await session.execute(
+            sa.select(TenDlcRegistration)
+            .where(TenDlcRegistration.id == reg_id)
+            .with_for_update()
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one()
+    set_org_context(session, reg.org_id)
+    if reg.stage != "needs_attention":
+        raise ConflictError(f"This registration is {reg.stage}; there is nothing to reconcile.")
+    brand = await session.get(Brand, reg.brand_id)
+    campaign = await session.get(Campaign, reg.campaign_id)
+    registration = await _registration_client(session, settings, client)
+    try:
+        if _telnyx_ref(brand) is None:
+            marker = (brand.carrier_refs or {}).get(_BRAND_MARKER) or {}
+            attempted = _attempted_at(marker)
+            found = await registration.list_brands(displayName=brand.name)
+            matches = [
+                b
+                for b in found
+                if (b.get("email") or "").lower() == (brand.email or "").lower()
+                and _made_after(b, attempted)
+            ]
+            refs = dict(brand.carrier_refs or {})
+            if len(matches) == 1:
+                refs["telnyx"] = str(matches[0].get("brandId") or matches[0].get("id"))
+                refs.pop(_BRAND_MARKER, None)
+                brand.carrier_refs = refs
+                advance_status(brand, "submitted")
+                reg.stage = "brand_filed"
+                outcome = "linked the brand Telnyx created"
+            elif not matches:
+                refs.pop(_BRAND_MARKER, None)
+                brand.carrier_refs = refs
+                reg.stage = "paid"
+                outcome = "Telnyx has no such brand; it will be filed again"
+            else:
+                reg.detail = "Several matching brands exist at the carrier; resolve by hand."
+                await session.commit()
+                raise ConflictError(reg.detail)
+        elif _telnyx_ref(campaign) is None:
+            marker = (campaign.carrier_refs or {}).get(_CAMPAIGN_MARKER) or {}
+            attempted = _attempted_at(marker)
+            found = await registration.list_campaigns(_telnyx_ref(brand))
+            reference = marker.get("reference_id")
+            matches = [c for c in found if reference and c.get("referenceId") == reference] or [
+                c for c in found if _made_after(c, attempted)
+            ]
+            refs = dict(campaign.carrier_refs or {})
+            if len(matches) == 1:
+                refs["telnyx"] = str(matches[0].get("campaignId") or matches[0].get("id"))
+                refs[_CAMPAIGN_MARKER] = {**marker, "state": "submitted"}
+                campaign.carrier_refs = refs
+                advance_status(campaign, "submitted")
+                reg.stage = "campaign_filed"
+                outcome = "linked the campaign Telnyx created"
+            elif not matches:
+                refs.pop(_CAMPAIGN_MARKER, None)
+                campaign.carrier_refs = refs
+                reg.stage = "brand_approved"
+                outcome = "Telnyx has no such campaign; it will be filed again"
+            else:
+                reg.detail = "Several matching campaigns exist at the carrier; resolve by hand."
+                await session.commit()
+                raise ConflictError(reg.detail)
+        else:
+            reg.stage = "campaign_filed"
+            outcome = "both are filed; resuming"
+    finally:
+        await registration.aclose()
+    reg.detail = None
+    await session.commit()
+    log.info("tendlc_reconciled", registration_id=str(reg.id), outcome=outcome)
+    await advance(session, settings, reg.id, client=client)
+    return {"stage": (await session.get(TenDlcRegistration, reg.id)).stage, "outcome": outcome}
+
+
+async def cancel(session, settings, reg_id) -> str:
+    """Operator: stop a registration for good and refund whatever the carrier never
+    charged us for. Nothing filed: everything. Brand filed only: the review and the three
+    months. Campaign filed: nothing (the carrier has billed it); the monthly fee stops."""
+    reg = (
+        await session.execute(
+            sa.select(TenDlcRegistration)
+            .where(TenDlcRegistration.id == reg_id)
+            .with_for_update()
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one()
+    set_org_context(session, reg.org_id)
+    if reg.stage in ("active", "cancelled", "expired", "brand_rejected", "campaign_rejected"):
+        raise ConflictError(f"This registration is {reg.stage}; it cannot be cancelled here.")
+    brand = await session.get(Brand, reg.brand_id)
+    campaign = await session.get(Campaign, reg.campaign_id)
+    fees = quote(reg.fee_tier)
+    if _telnyx_ref(brand) is None and not (brand.carrier_refs or {}).get(_BRAND_MARKER):
+        amount = fees["due_today_cents"]
+    elif _telnyx_ref(campaign) is None and not (campaign.carrier_refs or {}).get(_CAMPAIGN_MARKER):
+        amount = CAMPAIGN_REVIEW_CENTS + UPFRONT_MONTHS * MONTHLY_CENTS[reg.fee_tier]
+    else:
+        amount = 0
+    detail = "Cancelled by our team."
+    if reg.subscription_id:
+        stripe = stripe_client._stripe(settings)
+        subscription = await stripe_client._run_sync(
+            stripe.Subscription.retrieve, reg.subscription_id
+        )
+        if amount:
+            payments = await stripe_client._run_sync(
+                stripe.InvoicePayment.list, invoice=subscription["latest_invoice"], status="paid"
+            )
+            intent = next(
+                (
+                    p["payment"]["payment_intent"]
+                    for p in payments.get("data", [])
+                    if (p.get("payment") or {}).get("payment_intent")
+                ),
+                None,
+            )
+            if intent:
+                await stripe_client._run_sync(
+                    stripe.Refund.create,
+                    payment_intent=intent,
+                    amount=amount,
+                    metadata={"kind": "tendlc_refund", "registration_id": str(reg.id)},
+                    idempotency_key=f"tendlc-cancel-refund-{reg.id}",
+                )
+                detail = f"Cancelled by our team; ${amount / 100:.2f} refunded."
+            else:
+                detail = "Cancelled; no card payment was found to refund - refund it in Stripe."
+        if subscription["status"] != "canceled":
+            await stripe_client._run_sync(
+                stripe.Subscription.cancel,
+                reg.subscription_id,
+                idempotency_key=f"tendlc-cancel-{reg.id}",
+            )
+    elif reg.stage == "checkout" and reg.checkout_id:
+        stripe = stripe_client._stripe(settings)
+        remote = await stripe_client._run_sync(stripe.checkout.Session.retrieve, reg.checkout_id)
+        if remote.get("status") == "open":
+            await stripe_client._run_sync(stripe.checkout.Session.expire, reg.checkout_id)
+    reg.stage = "cancelled"
+    reg.detail = detail
+    await session.commit()
+    log.info("tendlc_cancelled", registration_id=str(reg.id), refunded_cents=amount)
+    return detail
+
+
+# --------------------------------------------------------------------------------------
 # Money on the way out
 # --------------------------------------------------------------------------------------
 async def _cancel_monthly(settings, reg) -> str:

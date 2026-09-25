@@ -92,6 +92,11 @@ class NumberOut(BaseModel):
     #: Who picks this number up. Derived from the bound flow, never stored: a one-node
     #: ASSISTANT flow means an assistant answers, anything else means a person does.
     answered_by: AnsweredByOut = AnsweredByOut()
+    #: E911: "active" | "provisioning" | "pending" | "failed" | "missing" | "unsupported"
+    #: (a number on another carrier registers its address there).
+    emergency_status: str = "missing"
+    emergency_address_id: uuid.UUID | None = None
+    emergency_detail: str | None = None
 
 
 def _audit_number(ctx: OrgContext, action: str, number: OrgNumber) -> None:
@@ -453,7 +458,16 @@ async def _out(
         purchased_at=n.purchased_at,
         order_detail=n.order_detail,
         answered_by=answered_by,
+        emergency_status=_e911_status(n)["status"],
+        emergency_address_id=_e911_status(n)["address_id"],
+        emergency_detail=_e911_status(n)["detail"],
     )
+
+
+def _e911_status(n: OrgNumber) -> dict:
+    from app.services import e911
+
+    return e911.status_of(n)
 
 
 def _carrier_or_primary(request: Request, name: str | None):
@@ -934,3 +948,96 @@ async def number_reputation(
         )
         for s in stats
     ]
+
+
+# --------------------------------------------------------------------------------------
+# E911 registered locations
+# --------------------------------------------------------------------------------------
+class EmergencyAddressIn(BaseModel):
+    #: The business or person at the location, as the 911 dispatcher will see it.
+    name: str = Field(min_length=1, max_length=255)
+    street_address: str = Field(min_length=1, max_length=255)
+    extended_address: str | None = Field(default=None, max_length=255)
+    locality: str = Field(min_length=1, max_length=127)
+    administrative_area: str = Field(min_length=2, max_length=32)
+    postal_code: str = Field(min_length=3, max_length=16)
+    country_code: str = Field(default="US", min_length=2, max_length=2)
+
+
+class EmergencyAssignIn(BaseModel):
+    address_id: uuid.UUID
+
+
+@router.get("/emergency-addresses")
+async def list_emergency_addresses(
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:read"))],
+) -> dict:
+    from app.models import EmergencyAddress
+    from app.services import e911
+
+    rows = (
+        await ctx.session.execute(
+            sa.select(EmergencyAddress).order_by(EmergencyAddress.created_at)
+        )
+    ).scalars()
+    return {
+        "addresses": [e911.public_address(a) for a in rows],
+        "notice": e911.LIMITATIONS_NOTICE,
+    }
+
+
+@router.post("/emergency-addresses", status_code=201)
+async def create_emergency_address(
+    payload: EmergencyAddressIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> dict:
+    """Register a location for 911. The carrier validates it first; an address it cannot
+    place is refused here rather than during an emergency."""
+    from app.services import e911
+
+    address = await e911.create_address(
+        ctx.session, request.app.state.settings, ctx.org.id, payload.model_dump()
+    )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="e911.address_created",
+        target_type="emergency_address",
+        target_id=str(address.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={"label": e911.one_line(address)},
+    )
+    await ctx.session.commit()
+    return e911.public_address(address)
+
+
+@router.put("/{number_id}/emergency-address", response_model=NumberOut)
+async def set_emergency_address(
+    number_id: uuid.UUID,
+    payload: EmergencyAssignIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> NumberOut:
+    """Register (or move) this number's 911 location with the carrier."""
+    from app.models import EmergencyAddress
+    from app.services import e911
+
+    number = await ctx.session.get(OrgNumber, number_id)
+    address = await ctx.session.get(EmergencyAddress, payload.address_id)
+    if number is None or number.org_id != ctx.org.id:
+        raise NotFoundError("Number not found")
+    if address is None or address.org_id != ctx.org.id:
+        raise NotFoundError("Address not found")
+    await e911.enable(ctx.session, request.app.state.settings, number, address)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="e911.number_registered",
+        target_type="number",
+        target_id=str(number.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={"address_id": str(address.id), "status": e911.status_of(number)["status"]},
+    )
+    await ctx.session.commit()
+    return await _out(ctx.session, number)

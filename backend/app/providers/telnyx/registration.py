@@ -188,6 +188,22 @@ class TelnyxRegistrationClient:
             payload={"otpPin": pin},
         )
 
+    async def list_brands(self, **filters: str) -> list[dict]:
+        """GET /10dlc/brand with filters (e.g. displayName). Returns the records."""
+        query = "&".join(f"{quote(k)}={quote(str(v), safe='')}" for k, v in filters.items())
+        data = await self._get(f"{_BRAND_PATH}?recordsPerPage=50&{query}", "brand search")
+        records = data.get("records")
+        return records if isinstance(records, list) else []
+
+    async def list_campaigns(self, brand_id: str) -> list[dict]:
+        """GET /10dlc/campaign?brandId=... Returns the records."""
+        data = await self._get(
+            f"{_CAMPAIGN_PATH}?recordsPerPage=50&brandId={quote(str(brand_id), safe='')}",
+            "campaign search",
+        )
+        records = data.get("records")
+        return records if isinstance(records, list) else []
+
     # -- campaigns ------------------------------------------------------------
 
     async def create_campaign(self, payload: dict) -> dict:

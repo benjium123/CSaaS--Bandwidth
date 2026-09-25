@@ -483,3 +483,47 @@ describe("TextingRegistrationCard stages", () => {
     expect(screen.queryByRole("form", { name: "Register for texting" })).toBeNull();
   });
 });
+
+describe("TextingRegistrationCard cancelled stage", () => {
+  it("offers a fresh registration and shows why it was cancelled", async () => {
+    const client = makeStubClient(
+      routes({
+        registration: registration({
+          stage: "cancelled",
+          detail: "Cancelled by support; $44.00 refunded.",
+        }),
+      }),
+    );
+    renderWithProviders(<TextingRegistrationCard />, client);
+
+    expect(
+      await screen.findByText(
+        "This registration was cancelled: Cancelled by support; $44.00 refunded.",
+      ),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Pay and register/ })).toBeInTheDocument();
+  });
+
+  it("a read-only user sees the cancellation reason but no form", async () => {
+    const client = makeStubClient(
+      routes({
+        permissions: ["compliance:read"],
+        registration: registration({
+          stage: "cancelled",
+          detail: "Cancelled by support; $44.00 refunded.",
+        }),
+      }),
+    );
+    renderWithProviders(<TextingRegistrationCard />, client);
+
+    expect(
+      await screen.findByText(
+        "This registration was cancelled: Cancelled by support; $44.00 refunded.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Pay and register/ })).toBeNull();
+    expect(
+      screen.getByText("Ask a workspace admin to register this workspace for texting."),
+    ).toBeInTheDocument();
+  });
+});

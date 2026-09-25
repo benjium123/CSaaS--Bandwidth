@@ -151,6 +151,7 @@ async def start_room_call(
     identity: str,
     name: str = "",
     tag: str = "",
+    emergency: bool = False,
 ) -> tuple[Call, CallLeg, str, str]:
     """Create the Call/CallLeg rows and the LiveKit room, then hand the SIP dial off to a
     BACKGROUND task and return immediately (tier-2 review B2).
@@ -185,15 +186,18 @@ async def start_room_call(
         tag=tag or None,
     )
     # Prepaid hard gate: refuse (402) before any row, room or dial exists, and hold the
-    # first minutes. The hold rides this function's commit below.
-    await telephony_access.require_telephony_allowed(session, org_id, "call")
-    await telephony_billing.require_call_credit(session, org_id, call)
+    # first minutes. The hold rides this function's commit below. A 911/933 call skips
+    # every gate: an emergency call must connect whatever the balance, limits, plan or
+    # verification say (47 CFR 9.11), and it is never billed or monitored.
+    if not emergency:
+        await telephony_access.require_telephony_allowed(session, org_id, "call")
+        await telephony_billing.require_call_credit(session, org_id, call)
     room = room_name_for_call(call.id)
-    call.extra = {"via": "livekit", "room": room}
+    call.extra = {"via": "livekit", "room": room, **({"emergency": True} if emergency else {})}
     # P43: chosen for monitoring now; the listener joins when the phone side answers.
     from app.services import monitor_calls
 
-    monitor_reason = await monitor_calls.choose(session, settings, org_id)
+    monitor_reason = None if emergency else await monitor_calls.choose(session, settings, org_id)
     if monitor_reason is not None:
         monitor_calls.mark(call, monitor_reason, record=False)
     sip_identity = f"{SIP_IDENTITY_PREFIX}{call.id}"

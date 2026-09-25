@@ -658,6 +658,14 @@ async def _run_once_locked(app) -> dict[str, int]:
             results["tendlc_advanced"] = tendlc_counts.get("advanced", 0)
         except Exception:
             log.exception("sweeper_tendlc_tick_failed")
+        # E911: retry numbers whose emergency activation failed, follow provisioning ones.
+        try:
+            from app.services import e911
+
+            e911_counts = await e911.tick(get_sessionmaker(), app.state.settings)
+            results["e911_active"] = e911_counts.get("active", 0)
+        except Exception:
+            log.exception("sweeper_e911_tick_failed")
 
     # P41: derived per-workspace messaging health - today's and yesterday's rollup rows,
     # then the owner/admin warnings. Same hourly gate discipline as reputation above:
