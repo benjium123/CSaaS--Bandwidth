@@ -149,6 +149,7 @@ function KpiGrid({
     balances_micros: number;
     sms_bundle_units_outstanding: number;
     mms_bundle_units_outstanding: number;
+    voice_bundle_minutes_outstanding?: number;
   };
 }): JSX.Element {
   return (
@@ -171,7 +172,7 @@ function KpiGrid({
       <KpiCard
         label="Bundle units outstanding"
         value={`${count(summary.sms_bundle_units_outstanding)} SMS`}
-        sub={`${count(summary.mms_bundle_units_outstanding)} MMS`}
+        sub={`${count(summary.mms_bundle_units_outstanding)} MMS · ${count(summary.voice_bundle_minutes_outstanding ?? 0)} call min`}
       />
     </div>
   );
@@ -471,7 +472,7 @@ function AdjustmentForm({ orgId }: { orgId: string }): JSX.Element {
 function BundleForm({ orgId }: { orgId: string }): JSX.Element {
   const { api } = useAuth();
   const grant = useGrantConsoleBundle(api);
-  const [kind, setKind] = React.useState<"sms" | "mms">("sms");
+  const [kind, setKind] = React.useState<"sms" | "mms" | "voice">("sms");
   const [units, setUnits] = React.useState("");
   const [note, setNote] = React.useState("");
 
@@ -497,9 +498,10 @@ function BundleForm({ orgId }: { orgId: string }): JSX.Element {
     <form className="space-y-2" onSubmit={handleSubmit}>
       <SectionLabel>Grant bundle units</SectionLabel>
       <div className="grid gap-2 sm:grid-cols-2">
-        <Select aria-label="Bundle kind" value={kind} onChange={(e) => setKind(e.target.value as "sms" | "mms")}>
+        <Select aria-label="Bundle kind" value={kind} onChange={(e) => setKind(e.target.value as "sms" | "mms" | "voice")}>
           <option value="sms">SMS</option>
           <option value="mms">MMS</option>
+          <option value="voice">Call minutes</option>
         </Select>
         <Input
           aria-label="Bundle units"
@@ -590,7 +592,7 @@ function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): J
         <KpiCard
           label="Bundle units"
           value={`${count(org.sms_bundle_units)} SMS`}
-          sub={`${count(org.mms_bundle_units)} MMS`}
+          sub={`${count(org.mms_bundle_units)} MMS · ${count(org.voice_bundle_minutes ?? 0)} call min`}
         />
       </div>
 

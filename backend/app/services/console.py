@@ -376,6 +376,7 @@ async def orgs_table(session: AsyncSession, start: date | None, end: date | None
                 "auto_recharge_failures": int(org.auto_recharge_failures or 0),
                 "sms_bundle_units": units.get((org.id, "sms"), 0),
                 "mms_bundle_units": units.get((org.id, "mms"), 0),
+                "voice_bundle_minutes": units.get((org.id, "voice"), 0),
                 "numbers": numbers.get(org.id, 0),
                 "plan_code": org.plan_code,
                 "metrics": m,
@@ -396,6 +397,7 @@ async def orgs_table(session: AsyncSession, start: date | None, end: date | None
             "active_numbers": sum(r["numbers"] for r in rows),
             "sms_bundle_units_outstanding": sum(r["sms_bundle_units"] for r in rows),
             "mms_bundle_units_outstanding": sum(r["mms_bundle_units"] for r in rows),
+            "voice_bundle_minutes_outstanding": sum(r["voice_bundle_minutes"] for r in rows),
         },
     }
 
@@ -459,6 +461,7 @@ async def org_detail(
             "auto_recharge_failures": int(org.auto_recharge_failures or 0),
             "sms_bundle_units": units.get((org.id, "sms"), 0),
             "mms_bundle_units": units.get((org.id, "mms"), 0),
+            "voice_bundle_minutes": units.get((org.id, "voice"), 0),
             "telnyx_billing_group_id": org.telnyx_billing_group_id,
         },
         "start": s.isoformat(),

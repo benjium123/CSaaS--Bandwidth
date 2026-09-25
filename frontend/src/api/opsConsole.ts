@@ -31,6 +31,7 @@ export interface ConsoleOrgRow {
   auto_recharge_failures: number;
   sms_bundle_units: number;
   mms_bundle_units: number;
+  voice_bundle_minutes?: number;
   numbers: number;
   plan_code: string | null;
   metrics: ConsoleMetrics;
@@ -45,6 +46,7 @@ export interface ConsoleSummary {
   active_numbers: number;
   sms_bundle_units_outstanding: number;
   mms_bundle_units_outstanding: number;
+  voice_bundle_minutes_outstanding?: number;
 }
 
 export interface ConsoleOrgsResponse {
@@ -70,6 +72,7 @@ export interface ConsoleOrgDetailOrg {
   auto_recharge_failures: number;
   sms_bundle_units: number;
   mms_bundle_units: number;
+  voice_bundle_minutes?: number;
   telnyx_billing_group_id: string | null;
 }
 
@@ -243,7 +246,7 @@ export async function adjustConsoleOrg(
 export async function grantConsoleBundle(
   api: ApiClient,
   orgId: string,
-  kind: "sms" | "mms",
+  kind: "sms" | "mms" | "voice",
   units: number,
   note: string,
 ): Promise<ConsoleBundleGrantResult> {
@@ -360,7 +363,7 @@ export function useGrantConsoleBundle(api: ApiClient) {
       note,
     }: {
       orgId: string;
-      kind: "sms" | "mms";
+      kind: "sms" | "mms" | "voice";
       units: number;
       note: string;
     }) => grantConsoleBundle(api, orgId, kind, units, note),

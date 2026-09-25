@@ -56,7 +56,7 @@ async def console_orgs_csv(op: Reviewer, start: Start = None, end: End = None) -
     metric_keys = sorted({k for r in data["orgs"] for k in r["metrics"]})
     base = [
         "org_id", "name", "slug", "prepaid", "billing_state", "balance_micros",
-        "auto_recharge", "sms_bundle_units", "mms_bundle_units", "numbers",
+        "auto_recharge", "sms_bundle_units", "mms_bundle_units", "voice_bundle_minutes", "numbers",
     ]
     buf = io.StringIO()
     w = csv.writer(buf)
