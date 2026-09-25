@@ -1,0 +1,166 @@
+/* Page sections of the public website. Tokens come from .rl-landing (landing.css). */
+
+.ms-muted, .ms-tagline, .ms-plan-tagline { color: var(--rl-soft); }
+.ms-footnote { font-size: 12px; color: var(--rl-soft); line-height: 1.7; margin-top: 16px; max-width: 90ch; }
+.ms-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--rl-live); flex-shrink: 0; }
+.ms-landing-section, .ms-home-plans, .ms-home-industries { padding-top: 90px; padding-bottom: 20px; }
+.ms-home-industries { padding-bottom: 90px; display: grid; gap: 22px; }
+.ms-home-industries h2 { margin-top: -6px; }
+
+/* proof strip under the ticker */
+.ms-proof { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 28px; padding-top: 22px; padding-bottom: 22px; border-bottom: 1px solid var(--rl-line); font-size: 13px; color: var(--rl-soft); }
+.ms-proof span { display: inline-flex; align-items: center; gap: 9px; }
+.ms-proof i { width: 7px; height: 7px; border-radius: 50%; background: var(--rl-live); }
+
+/* chips (home industries) */
+.ms-chip { display: inline-flex; align-items: center; border: 1px solid var(--rl-line); border-radius: 999px; padding: 10px 16px; font-size: 13px; font-weight: 500; color: var(--rl-ink); transition: border-color .2s, color .2s, background .2s; }
+.ms-chip:hover { border-color: var(--rl-blue); color: var(--rl-blue); background: color-mix(in srgb, var(--rl-blue) 7%, transparent); }
+
+/* billing toggle */
+.ms-seg { display: inline-flex; gap: 2px; padding: 4px; border: 1px solid var(--rl-line); border-radius: 999px; background: var(--rl-surface); margin-top: 26px; }
+.ms-seg button { border: 0; background: transparent; color: var(--rl-soft); border-radius: 999px; padding: 9px 16px; font: 500 13px 'Onest Variable', sans-serif; display: inline-flex; gap: 8px; align-items: center; }
+.ms-seg button[aria-pressed="true"] { background: var(--rl-bg); color: var(--rl-ink); box-shadow: 0 1px 4px rgba(0, 0, 0, .12); }
+.ms-seg small { color: var(--rl-live); font-weight: 600; font-size: 11px; }
+
+/* plan cards */
+.ms-plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 34px; align-items: start; }
+.ms-plan { position: relative; display: grid; gap: 16px; background: var(--rl-surface); border: 1px solid var(--rl-line); border-radius: 16px; padding: 28px; }
+.ms-plan.is-highlight { border-color: var(--rl-blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rl-blue) 16%, transparent), 0 30px 60px -40px color-mix(in srgb, var(--rl-blue) 60%, transparent); }
+.ms-plan-tag { display: flex; justify-content: space-between; align-items: center; gap: 10px; font: 500 10px 'Martian Mono Variable', monospace; letter-spacing: .07em; }
+.ms-plan-tag b, .ms-popular { font-weight: 500; color: var(--rl-blue); background: color-mix(in srgb, var(--rl-blue) 12%, transparent); padding: 4px 8px; border-radius: 999px; font-size: 9px; }
+.ms-plan-tagline, .ms-plan .ms-tagline { font-size: 14px; }
+.ms-price { display: flex; align-items: baseline; gap: 10px; }
+.ms-price strong { font: 780 56px/1 'Archivo Variable', sans-serif; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }
+.ms-price span { font-size: 12px; color: var(--rl-soft); line-height: 1.35; }
+.ms-starts { font-size: 12.5px; color: var(--rl-soft); margin-top: -8px; }
+.ms-includes { list-style: none; margin: 0; padding: 12px 14px; display: grid; gap: 4px; border-radius: 10px; background: color-mix(in srgb, var(--rl-blue) 9%, transparent); color: var(--rl-blue); font: 500 10.5px/1.7 'Martian Mono Variable', monospace; }
+.ms-features { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 13.5px; }
+.ms-features li { display: flex; gap: 10px; align-items: flex-start; }
+.ms-features svg { flex-shrink: 0; color: var(--rl-blue); margin-top: 3px; }
+.ms-plan > .rl-button, .ms-plan > .ms-ghost { width: 100%; justify-content: center; }
+
+/* calculator */
+.ms-calc { padding-top: 90px; }
+.ms-calc h2 { margin-bottom: 30px; }
+.ms-calc-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); border: 1px solid var(--rl-line); border-radius: 16px; overflow: hidden; }
+.ms-calc-inputs { padding: 28px; display: grid; gap: 22px; align-content: start; }
+.ms-calc-inputs label { display: grid; gap: 10px; font-size: 13.5px; font-weight: 500; }
+.ms-calc-inputs label > span { display: flex; justify-content: space-between; }
+.ms-calc-inputs output { font: 600 13px 'Martian Mono Variable', monospace; color: var(--rl-blue); }
+.ms-calc input[type="range"] { width: 100%; accent-color: var(--rl-blue); }
+.ms-calc-result { padding: 28px; background: var(--rl-surface); border-left: 1px solid var(--rl-line); display: grid; gap: 10px; align-content: start; }
+.ms-calc-plan { color: var(--rl-blue); }
+.ms-calc-total { font: 780 44px/1 'Archivo Variable', sans-serif; letter-spacing: -.05em; font-variant-numeric: tabular-nums; }
+.ms-calc-total small { font: 400 13px 'Onest Variable', sans-serif; color: var(--rl-soft); letter-spacing: 0; }
+.ms-calc-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13px; color: var(--rl-soft); }
+.ms-calc-blocked { font-size: 13px; color: hsl(6 70% 50%); }
+.ms-bars { display: grid; gap: 10px; margin-top: 22px; }
+.ms-bar-row { display: grid; grid-template-columns: 170px minmax(0, 1fr) 90px; gap: 14px; align-items: center; font-size: 13px; }
+.ms-bar-label { color: var(--rl-ink); }
+.ms-bar-track { height: 10px; border-radius: 6px; background: var(--rl-surface); border: 1px solid var(--rl-line); overflow: hidden; }
+.ms-bar-fill { display: block; height: 100%; width: 100%; background: var(--rl-soft); border-radius: 6px; transform-origin: left; transition: transform .35s ease; }
+.ms-bar-fill.is-us { background: var(--rl-blue); }
+.ms-bar-amount { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* tables */
+.ms-table-wrap { overflow-x: auto; border: 1px solid var(--rl-line); border-radius: 14px; margin-top: 24px; }
+.ms-table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.ms-table th, .ms-table td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--rl-line); vertical-align: top; }
+.ms-table th { font: 500 10px 'Martian Mono Variable', monospace; letter-spacing: .07em; text-transform: uppercase; color: var(--rl-soft); background: var(--rl-surface); white-space: nowrap; }
+.ms-table td:first-child { font-weight: 600; }
+.ms-table tbody tr:last-child td { border-bottom: 0; }
+.ms-table svg { color: var(--rl-blue); }
+
+/* rate card, fair use */
+.ms-rates, .ms-fairuse { padding-top: 90px; }
+.ms-rates-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1px; background: var(--rl-line); border: 1px solid var(--rl-line); border-radius: 14px; overflow: hidden; margin: 24px 0 0; }
+.ms-rates-list > div { background: var(--rl-bg); padding: 18px 20px; display: grid; gap: 4px; }
+.ms-rates-list dt { font: 500 10px 'Martian Mono Variable', monospace; letter-spacing: .07em; text-transform: uppercase; color: var(--rl-soft); }
+.ms-rates-list dd { margin: 0; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ms-fairuse-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-top: 24px; }
+
+/* product visual */
+.ms-visual { border: 1px solid var(--rl-line); border-radius: 16px; background: var(--rl-bg); box-shadow: 0 40px 100px -60px rgba(21, 24, 29, .56); overflow: hidden; }
+.ms-visual-bar { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--rl-line); font-size: 13px; font-weight: 650; }
+.ms-visual-bar .rl-mark { color: var(--rl-blue); transform: scale(.6); width: 18px; }
+.ms-visual > div:not(.ms-visual-bar), .ms-visual > pre { padding: 22px; }
+.ms-callcard { display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid var(--rl-line); border-radius: 12px; font-size: 13px; }
+.ms-callcard small { display: flex; align-items: center; gap: 7px; color: var(--rl-soft); font-size: 11.5px; margin-top: 3px; }
+.ms-number-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border: 1px solid var(--rl-line); border-radius: 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ms-number-row + .ms-number-row { margin-top: 8px; }
+.ms-code { margin: 0; padding: 18px; border-radius: 10px; background: var(--rl-surface); border: 1px solid var(--rl-line); font-size: 11.5px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; color: var(--rl-ink); }
+
+/* points, steps, related, plan fit */
+.ms-points { padding-top: 80px; }
+.ms-points-grid, .ms-points > .ms-point:first-of-type { margin-top: 0; }
+.ms-points-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
+.ms-points:not(:has(.ms-points-grid)) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.ms-points > h2 { grid-column: 1 / -1; }
+.ms-point { display: grid; gap: 10px; align-content: start; padding: 24px; border: 1px solid var(--rl-line); border-radius: 14px; }
+.ms-point > svg { color: var(--rl-blue); }
+.ms-point h3 { font-size: 18px; font-weight: 600; letter-spacing: -.03em; }
+.ms-point p { font-size: 13.5px; color: var(--rl-soft); line-height: 1.75; }
+.ms-steps { padding-top: 80px; }
+.ms-steps ol { list-style: none; margin: 24px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; counter-reset: none; }
+.ms-steps li { display: flex; gap: 14px; align-items: flex-start; padding: 20px; border: 1px solid var(--rl-line); border-radius: 14px; background: var(--rl-surface); font-size: 14px; }
+.ms-step-n { flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--rl-blue); color: #15181d; font: 600 12px 'Martian Mono Variable', monospace; }
+.ms-planfit { margin-top: 80px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; padding-top: 28px; padding-bottom: 28px; border-block: 1px solid var(--rl-line); }
+.ms-planfit-copy { display: grid; gap: 6px; }
+.ms-planfit p { color: var(--rl-soft); font-size: 14px; }
+.ms-planfit strong, .ms-planfit h3 { font: 700 20px 'Archivo Variable', sans-serif; letter-spacing: -.03em; color: var(--rl-ink); }
+.ms-related { padding-top: 80px; }
+.ms-related > div, .ms-related ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 22px; list-style: none; padding: 0; }
+.ms-related a { display: grid; gap: 6px; padding: 20px; border: 1px solid var(--rl-line); border-radius: 14px; color: var(--rl-ink); transition: border-color .2s, transform .2s; }
+.ms-related a:hover { border-color: var(--rl-blue); transform: translateY(-2px); }
+.ms-related a svg { color: var(--rl-blue); }
+.ms-related small { color: var(--rl-soft); font-size: 12.5px; }
+
+/* solution thread + pains */
+.ms-thread { border: 1px solid var(--rl-line); border-radius: 16px; background: var(--rl-bg); overflow: hidden; box-shadow: 0 40px 100px -60px rgba(21, 24, 29, .56); font-size: 13px; }
+.ms-thread-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--rl-line); }
+.ms-thread-name { display: grid; }
+.ms-thread-name small { color: var(--rl-soft); font-size: 11.5px; }
+.ms-thread > div:last-child { padding: 18px; display: grid; gap: 10px; }
+.ms-thread .rl-bubble { margin-top: 0; font-size: 13px; }
+.ms-thread .rl-note p { font-size: 12.5px; margin: 0; }
+.ms-callrow { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border: 1px solid var(--rl-line); border-radius: 10px; font-size: 12.5px; color: var(--rl-soft); }
+.ms-pains { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 20px; border-block: 1px solid var(--rl-line); }
+.ms-pain, .ms-pains > div { padding: 30px 28px; display: grid; gap: 10px; align-content: start; }
+.ms-pains > div + div, .ms-pain + .ms-pain { border-left: 1px solid var(--rl-line); }
+.ms-pains .rl-mono { color: var(--rl-blue); font-size: 10px; letter-spacing: .07em; }
+.ms-pains h3 { font-size: 20px; font-weight: 650; letter-spacing: -.035em; }
+.ms-pains p { font-size: 13.5px; color: var(--rl-soft); line-height: 1.75; }
+
+/* compare */
+.ms-costcard { margin-top: 20px; padding-top: 30px; padding-bottom: 30px; }
+.ms-cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 20px; }
+.ms-cost-line { padding: 22px; border: 1px solid var(--rl-line); border-radius: 14px; display: grid; gap: 6px; }
+.ms-cost-line:first-child { border-color: var(--rl-blue); background: color-mix(in srgb, var(--rl-blue) 7%, transparent); }
+.ms-cost-line strong { font: 780 34px/1 'Archivo Variable', sans-serif; letter-spacing: -.05em; font-variant-numeric: tabular-nums; }
+.ms-honest { padding-top: 70px; }
+.ms-honest ul { margin: 18px 0 0; padding-left: 20px; display: grid; gap: 8px; color: var(--rl-soft); font-size: 14.5px; }
+
+@media (max-width: 900px) {
+  .ms-plans, .ms-points-grid, .ms-points:not(:has(.ms-points-grid)), .ms-related > div, .ms-related ul, .ms-pains { grid-template-columns: 1fr; }
+  .ms-pains > div + div, .ms-pain + .ms-pain { border-left: 0; border-top: 1px solid var(--rl-line); }
+  .ms-calc-grid { grid-template-columns: 1fr; }
+  .ms-calc-result { border-left: 0; border-top: 1px solid var(--rl-line); }
+  .ms-home-plans, .ms-home-industries, .ms-calc, .ms-rates, .ms-fairuse, .ms-points, .ms-steps, .ms-related { padding-top: 60px; }
+  .ms-planfit { margin-top: 60px; }
+}
+@media (max-width: 540px) {
+  .ms-bar-row { grid-template-columns: 100px minmax(0, 1fr) 70px; gap: 10px; font-size: 12px; }
+  .ms-price strong { font-size: 46px; }
+  .ms-plan, .ms-calc-inputs, .ms-calc-result { padding: 22px; }
+  .ms-pain, .ms-pains > div { padding: 24px 4px; }
+  .ms-proof { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ms-bar-fill, .ms-related a, .ms-chip { transition: none; }
+}
+
+/* four plans (Starter, Team, Business, Custom) */
+.ms-plans.ms-plans-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ms-price-custom { font-size: 40px !important; }
+@media (max-width: 1180px) { .ms-plans.ms-plans-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .ms-plans.ms-plans-4 { grid-template-columns: 1fr; } }

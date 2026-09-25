@@ -95,7 +95,16 @@ def _route_ip_buckets(settings: Settings, path: str) -> tuple[tuple[int, int], .
             (settings.registration_ip_burst_max, settings.registration_ip_burst_seconds),
             (settings.registration_ip_hourly_max, settings.registration_ip_hourly_seconds),
         )
-    return ()
+    return _SITE_ROUTE_BUCKETS.get(path, ())
+
+
+#: Public website routes (routes/site.py): the assistant costs money per call, and a handoff
+#: or sales enquiry lands in the operator queue, so both get far tighter ceilings than 20/min.
+_SITE_ROUTE_BUCKETS: dict[str, tuple[tuple[int, int], ...]] = {
+    "/api/v1/public/site-chat/ask": ((10, 60), (60, 3600)),
+    "/api/v1/public/site-chat/handoff": ((3, 600), (10, 86400)),
+    "/api/v1/public/sales-leads": ((3, 600), (10, 86400)),
+}
 
 
 def _client_ip(request: Request) -> str:

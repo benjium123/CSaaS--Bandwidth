@@ -1,4 +1,5 @@
 import { LandingPage } from "@/pages/LandingPage";
+import { MarketingRoutes, isMarketingPath } from "@/marketing/routes";
 import { ChooseNumbersPage } from "@/pages/ChooseNumbersPage";
 import { ConfirmEmailPage } from "@/pages/ConfirmEmailPage";
 import * as React from "react";
@@ -172,6 +173,8 @@ export function App() {
   const location = useLocation();
   // The public homepage stays available independently of account setup state.
   if (location.pathname === "/") return <LandingPage />;
+  // Public marketing pages (pricing, product, solutions, compare, sales, FAQ, trust, 911).
+  if (isMarketingPath(location.pathname)) return <MarketingRoutes />;
   // Admin entry: intercept /admin and /admin/* only (never /administrator).
   if (
     location.pathname === "/admin" ||
