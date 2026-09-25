@@ -449,6 +449,10 @@ class Settings(BaseSettings):
     e911_enforced: bool = True
     e911_enforcement_start: str = "2026-09-26"
     e911_grace_days: int = 7
+    #: P44g toll-free inbound guard (services/tollfree_guard.py).
+    tollfree_guard_enforced: bool = True
+    tollfree_max_concurrent: int = 5
+    tollfree_daily_minutes: int = 500
     monitor_enforced: bool = True
     #: The pre-send text check waits at most this long for the AI.
     monitor_text_ai_timeout_seconds: float = 6.0

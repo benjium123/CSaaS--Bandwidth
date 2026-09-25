@@ -747,6 +747,21 @@ async def handle_livekit_event(
         return
 
     if created_inbound:
+        # P44g: toll-free traffic-pumping guard (bad caller ID, concurrency, per-caller
+        # rate, daily minutes). Refused before the call rings anyone.
+        from app.services import tollfree_guard
+
+        tf_code = await tollfree_guard.refusal(
+            session, telephony_access._settings_of(session), call
+        )
+        if tf_code is not None:
+            await tollfree_guard.refuse(session, call, tf_code)
+            await session.commit()
+            log.info("livekit_inbound_refused_tollfree", call_id=str(call.id), code=tf_code)
+            await hangup_room_call(session, api, bus, call)
+            return
+
+    if created_inbound:
         # (finding 9) publish only after the row is durable - a subscriber reacting to
         # call.ring must be able to immediately GET the call it names.
         await session.commit()
