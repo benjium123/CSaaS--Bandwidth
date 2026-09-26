@@ -48,7 +48,6 @@ services:
     # is actually included (deploy.sh 8.9 always includes it); harmless otherwise.
     extra_hosts:
       - "livekit:host-gateway"
-      - "lkrec:host-gateway"
     logging: *default-logging
 
   db:

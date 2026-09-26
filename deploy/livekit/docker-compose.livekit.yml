@@ -123,22 +123,26 @@ services:
   # Monitoring v2 recorder (recorder/, Go): records monitored softphone calls with no
   # transcoding (~4 MB idle, ~5-7% of a core per recorded call, measured 2026-09-26). The
   # backend starts it per call and its sweeper ingests the finished files from the shared
-  # dir. Listens on the docker0 address only (reached from the api via host-gateway, like
-  # livekit); the API also requires a token derived from LIVEKIT_API_SECRET. Runs as the
-  # api's uid so both can manage the shared dir.
+  # dir. UNLIKE the services around it, it stays on the private csaas network (no
+  # network_mode: host, no published port): the api reaches it as http://lkrec:9099, and it
+  # reaches livekit through host-gateway, which the existing "csaas api -> livekit signal"
+  # ufw rule (172.24.0.0/16 -> 7880) already allows - so no firewall change is needed.
+  # The API also requires a token derived from LIVEKIT_API_SECRET. Runs as the api's uid
+  # so both can manage the shared dir.
   lkrec:
     build:
       context: ../recorder
     restart: unless-stopped
     user: "10001:10001"
     environment:
-      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_URL: ws://livekit:7880
       LIVEKIT_API_KEY: csaas-media
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
       REC_DIR: /out
-      REC_LISTEN: 172.17.0.1:9099
+      REC_LISTEN: 0.0.0.0:9099
+    extra_hosts:
+      - "livekit:host-gateway"
     volumes: ["../var/lkrec:/out"]
-    network_mode: host
     cpus: "2"
     mem_limit: 512m
     depends_on: [livekit]
