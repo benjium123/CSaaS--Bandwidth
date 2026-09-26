@@ -29,7 +29,12 @@ from livekit.plugins import deepgram, elevenlabs
 
 from .backend_client import BackendClient
 from .transcript_buffer import TranscriptBuffer
-from .worker_config import resolve_monitor_agent_name, role_for_participant, sip_call_active
+from .worker_config import (
+    resolve_idle_processes,
+    resolve_monitor_agent_name,
+    role_for_participant,
+    sip_call_active,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +225,14 @@ async def entrypoint(ctx: JobContext) -> None:
 def main() -> None:
     name = resolve_monitor_agent_name()
     logger.info("call-monitor worker registering as agent_name=%s", name)
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name=name, port=8082))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            agent_name=name,
+            port=8082,
+            num_idle_processes=resolve_idle_processes("call-monitor"),
+        )
+    )
 
 
 if __name__ == "__main__":

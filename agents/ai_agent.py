@@ -25,7 +25,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from .backend_client import BackendClient, format_handoff_summary
 from .beep_detector import BeepDetector, VoicemailHeuristic
 from .transcript_buffer import TranscriptBuffer, assemble_instructions
-from .worker_config import resolve_agent_name
+from .worker_config import resolve_agent_name, resolve_idle_processes
 
 logger = logging.getLogger(__name__)
 
@@ -935,6 +935,7 @@ def main() -> None:
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             agent_name=agent_name,
+            num_idle_processes=resolve_idle_processes("ai-agent"),
         )
     )
 

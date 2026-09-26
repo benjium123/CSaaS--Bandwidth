@@ -5,7 +5,7 @@ plain backend venv can verify the worker/backend agent-name contract without pul
 the livekit SDK.
 """
 
-from agents.worker_config import AGENT_NAME_DEFAULT, resolve_agent_name
+from agents.worker_config import AGENT_NAME_DEFAULT, resolve_agent_name, resolve_idle_processes
 
 
 def test_the_default_matches_the_backends_dispatch_name() -> None:
@@ -57,3 +57,15 @@ def test_announcement_waits_for_the_phone_to_answer() -> None:
     assert sip_call_active({"sip.callStatus": "dialing"}) is False
     assert sip_call_active({"sip.callStatus": "active"}) is True
     assert sip_call_active({}) is True
+
+
+def test_idle_processes_default_per_worker():
+    assert resolve_idle_processes("ai-agent", {}) == 2
+    assert resolve_idle_processes("call-monitor", {}) == 1
+
+
+def test_idle_processes_env_override_and_bad_values_fall_back():
+    assert resolve_idle_processes("ai-agent", {"WORKER_IDLE_PROCESSES": "3"}) == 3
+    # 0 would make every call wait for a cold start; junk is ignored.
+    assert resolve_idle_processes("ai-agent", {"WORKER_IDLE_PROCESSES": "0"}) == 2
+    assert resolve_idle_processes("call-monitor", {"WORKER_IDLE_PROCESSES": "many"}) == 1
