@@ -255,7 +255,9 @@ async def test_a_subscription_mixing_monthly_and_yearly_is_refused(session, stri
 
 async def test_yearly_is_refused_cleanly_while_its_prices_are_missing(session, stripe):
     org = await _org(session)
-    bare = make_settings(stripe_webhook_secret="whsec_test")
+    bare = make_settings(
+        stripe_webhook_secret="whsec_test", stripe_plan_team_year_price_id="", stripe_extra_number_year_price_id=""
+    )
     assert plan_billing.yearly_available(bare) is False
     with pytest.raises(FeatureUnavailableError):
         await number_purchases.create(

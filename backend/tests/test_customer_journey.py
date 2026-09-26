@@ -256,7 +256,7 @@ async def test_sign_up_to_a_working_inbox(
     plan = (await client.get("/api/v1/billing/plan", headers=h)).json()
     assert plan["plan"]["code"] == "solo" and plan["plan"]["monthly_total_cents"] == 2000
     assert (plan["users"]["limit"], plan["numbers"]["limit"]) == (1, 2)
-    assert plan["minutes"] == {"included": 200, "remaining": 200}
+    assert plan["minutes"] == {"included": 0, "remaining": 0}  # Starter: calls pay as you go
 
     # 5. Solo is one user - the owner. A teammate needs a $15/month add-on user first.
     full = await client.post(
@@ -273,7 +273,7 @@ async def test_sign_up_to_a_working_inbox(
     )
     assert r.status_code == 200, r.text
     assert r.json()["users"]["limit"] == 2 and r.json()["plan"]["monthly_total_cents"] == 3500
-    assert r.json()["minutes"]["included"] == 400
+    assert r.json()["minutes"]["included"] == 0  # a fixed pool: add-on users add no minutes
 
     inboxes = (await client.get("/api/v1/inboxes", headers=h)).json()
     assert sorted(i["e164"] for i in inboxes) == NUMBERS  # the owner sees every number

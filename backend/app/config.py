@@ -100,13 +100,13 @@ class Settings(BaseSettings):
     stripe_extra_user_price_id: str = "price_1UJgDc744iNFjjqnRz5Bqqpm"  # $15/month (Solo, Team)
     stripe_business_extra_user_price_id: str = "price_1UJiBc744iNFjjqnjcjruFqz"  # $12/month
     stripe_extra_number_price_id: str = "price_1UJgDd744iNFjjqn9RTKz7AX"  # $5/month
-    # Yearly twins (ten months' price, billed every year). Empty = yearly not on sale yet.
-    stripe_plan_solo_year_price_id: str = ""  # $150/year
-    stripe_plan_team_year_price_id: str = ""  # $450/year
-    stripe_plan_business_year_price_id: str = ""  # $1,300/year
-    stripe_extra_user_year_price_id: str = ""  # $150/year
-    stripe_business_extra_user_year_price_id: str = ""  # $120/year
-    stripe_extra_number_year_price_id: str = ""  # $50/year
+    # Yearly twins (ten months' price, billed every year): two months free.
+    stripe_plan_solo_year_price_id: str = "price_1UJjFp744iNFjjqnMR6hQHiz"  # $150/year
+    stripe_plan_team_year_price_id: str = "price_1UJjFp744iNFjjqniMlDw5Om"  # $450/year
+    stripe_plan_business_year_price_id: str = "price_1UJjFq744iNFjjqnuOJRuOos"  # $1,300/year
+    stripe_extra_user_year_price_id: str = "price_1UJjFq744iNFjjqnwJVvGEPJ"  # $150/year
+    stripe_business_extra_user_year_price_id: str = "price_1UJjFq744iNFjjqntzNfAoSx"  # $120/year
+    stripe_extra_number_year_price_id: str = "price_1UJjFr744iNFjjqns14JPZCQ"  # $50/year
     #: Live 10DLC campaign pass-through fees (prod_VJxPdkTbXGhw6k): $10/month standard,
     #: $2/month sole proprietor. See services/tendlc.py for the one-time fees.
     stripe_tendlc_standard_price_id: str = "price_1UJJUY744iNFjjqnhOjPZHaj"
