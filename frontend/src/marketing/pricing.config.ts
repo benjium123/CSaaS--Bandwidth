@@ -250,6 +250,13 @@ export function addOnLine(plan: Plan): string | null {
  * Re-check on each vendor's live pricing page before changing, and keep the date.
  */
 export const COMPETITORS_CHECKED = "September 2026";
+export interface CompetitorTier {
+  name: string;
+  monthly: number;
+  yearly: number | null;
+  /** Most users this plan allows; null = no limit. */
+  maxUsers: number | null;
+}
 export interface CompetitorPrice {
   slug: string;
   name: string;
@@ -258,20 +265,37 @@ export interface CompetitorPrice {
   minSeats: number;
   numbersPerSeat: number;
   extraNumber: number | null;
+  /** Vendors whose plans cap team size: the calculator uses the cheapest plan that fits. */
+  tiers?: CompetitorTier[];
 }
 export const COMPETITOR_SEAT_PRICES: CompetitorPrice[] = [
   { slug: "quo", name: "Quo Business", monthly: 33, yearly: 23, minSeats: 1, numbersPerSeat: 1, extraNumber: 5 },
   { slug: "callhippo", name: "CallHippo Professional", monthly: 30, yearly: null, minSeats: 1, numbersPerSeat: 1, extraNumber: null },
-  { slug: "aircall", name: "Aircall Essentials", monthly: 30, yearly: 22.5, minSeats: 3, numbersPerSeat: 1, extraNumber: 6 },
-  { slug: "krispcall", name: "KrispCall Standard", monthly: 40, yearly: null, minSeats: 1, numbersPerSeat: 1, extraNumber: null },
+  { slug: "aircall", name: "Aircall Essentials", monthly: 40, yearly: 30, minSeats: 3, numbersPerSeat: 1, extraNumber: 6 },
+  {
+    slug: "krispcall", name: "KrispCall Starter", monthly: 15, yearly: 12, minSeats: 1, numbersPerSeat: 1, extraNumber: null,
+    tiers: [
+      { name: "KrispCall Starter", monthly: 15, yearly: 12, maxUsers: 5 },
+      { name: "KrispCall Advance", monthly: 40, yearly: 32, maxUsers: 50 },
+      { name: "KrispCall Max", monthly: 60, yearly: 48, maxUsers: null },
+    ],
+  },
   { slug: "ringcentral", name: "RingCentral Core", monthly: 30, yearly: 20, minSeats: 1, numbersPerSeat: 1, extraNumber: null },
 ];
 
 /** A competitor's monthly cost for the same team: seats (with their minimum) plus the
  * numbers beyond what the seats include. Yearly uses their yearly seat price when published. */
+export function competitorTier(c: CompetitorPrice, users: number): CompetitorTier {
+  return (
+    c.tiers?.find(t => t.maxUsers === null || users <= t.maxUsers) ??
+    { name: c.name, monthly: c.monthly, yearly: c.yearly, maxUsers: null }
+  );
+}
+
 export function competitorCost(c: CompetitorPrice, users: number, numbers: number, billing: Billing = "month"): number {
   const seats = Math.max(users, c.minSeats);
-  const seat = billing === "year" && c.yearly !== null ? c.yearly : c.monthly;
+  const tier = competitorTier(c, users);
+  const seat = billing === "year" && tier.yearly !== null ? tier.yearly : tier.monthly;
   const extraNumbers = Math.max(numbers - seats * c.numbersPerSeat, 0);
   return seats * seat + extraNumbers * (c.extraNumber ?? 0);
 }

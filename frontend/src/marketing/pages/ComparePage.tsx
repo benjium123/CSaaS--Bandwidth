@@ -7,6 +7,7 @@ import {
   COMPETITORS_CHECKED,
   COMPETITOR_SEAT_PRICES,
   competitorCost,
+  competitorTier,
   minutePoolsLine,
   missesNumberPrice,
   money,
@@ -76,7 +77,7 @@ export function ComparePage() {
             <div className="ms-cost-line">
               <span className="rl-mono">{c.name}</span>
               <strong>{theirs !== null ? `${money(Math.round(theirs))}/mo${partial ? "*" : ""}` : "Prices through sales"}</strong>
-              <small>{price ? `${price.name}, ${Math.max(users, price.minSeats)} seats` : "Not published"}</small>
+              <small>{price ? `${competitorTier(price, users).name}, ${Math.max(users, price.minSeats)} seats` : "Not published"}</small>
             </div>
           </div>
           {saving !== null && saving > 0 && (

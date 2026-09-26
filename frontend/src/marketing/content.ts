@@ -266,7 +266,7 @@ export const COMPETITORS: Competitor[] = [
     summary: "KrispCall charges per user and meters usage separately. Ringlite includes users and numbers in each plan and publishes every rate.",
     rows: [
       { label: "How you pay", them: "Per user, usage extra", us: "Package price, usage at published rates" },
-      { label: "Team size", them: "Entry plan up to 5 users", us: "Users included on every plan" },
+      { label: "Team size", them: "Starter up to 5 users, Advance up to 50", us: "Starter up to 5, Team up to 15, Business unlimited" },
     ],
     theyWin: ["Numbers in 100+ countries"],
     weWin: ["Users included in the package price", "Room to grow: 15 users on Team, unlimited on Business", "An exact shared minute pool instead of metering every call"],
@@ -278,6 +278,7 @@ export const COMPETITORS: Competitor[] = [
       { label: "Minimum", them: "3 licenses", us: "1 user and 1 number" },
       { label: "How you pay", them: "Per license", us: "One monthly package with users and numbers" },
       { label: "Texting", them: "250 texts per user", us: "Texts at a published rate, no monthly cap" },
+      { label: "Power dialer", them: "Professional plan, $70 per license a month", us: "Included on Business: $130 for 10 users" },
     ],
     theyWin: ["250+ integrations", "Call-center analytics"],
     weWin: ["No three-license minimum: start with one user for $15", "Texts at a published rate, no 250-per-user cap", "Power dialer included on Business"],

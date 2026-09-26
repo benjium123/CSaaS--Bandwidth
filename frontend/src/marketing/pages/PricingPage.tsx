@@ -21,6 +21,7 @@ import {
   YEARLY,
   cents,
   competitorCost,
+  competitorTier,
   minutePoolsLine,
   minutesLine,
   missesNumberPrice,
@@ -98,7 +99,7 @@ export function PricingPage() {
   const barRows = [
     ...(ours !== null ? [{ label: `Ringlite ${q.plan.name}`, value: ours, isUs: true, partial: false }] : []),
     ...COMPETITOR_SEAT_PRICES.map(c => ({
-      label: c.name,
+      label: competitorTier(c, users).name,
       value: competitorCost(c, users, numbers, billing),
       isUs: false,
       partial: missesNumberPrice(c, users, numbers),
