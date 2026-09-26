@@ -164,3 +164,105 @@
 .ms-price-custom { font-size: 40px !important; }
 @media (max-width: 1180px) { .ms-plans.ms-plans-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 620px) { .ms-plans.ms-plans-4 { grid-template-columns: 1fr; } }
+
+/* ===== Sep 26 refresh: brand color, contrast bands, billing switch, feature matrix ===== */
+
+/* Logo mark in the brand blue everywhere the site shows it. */
+.rl-logo .rl-mark { color: var(--rl-blue); }
+
+/* Product menu: two product columns + the pricing card. */
+.ms-mega-grid.ms-mega-grid-3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 300px; }
+@media (max-width: 1100px) { .ms-mega-grid.ms-mega-grid-3 { grid-template-columns: 1fr 1fr; } .ms-mega-grid-3 .ms-mega-side { display: none; } }
+
+/* Monthly / yearly switch. */
+.ms-billing { display: inline-flex; gap: 4px; padding: 5px; margin-top: 26px; border: 1px solid var(--rl-line); border-radius: 999px; background: var(--rl-surface); }
+.ms-billing button { display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; color: var(--rl-soft); font-size: 14px; font-weight: 600; padding: 9px 18px; border-radius: 999px; transition: background .18s, color .18s; }
+.ms-billing button[aria-checked="true"] { background: var(--rl-blue); color: #fff; }
+.ms-billing em { font-style: normal; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--rl-live) 22%, transparent); color: var(--rl-live); }
+.ms-billing button[aria-checked="true"] em { background: #ffffff30; color: #fff; }
+
+/* Full-width bands break the page into distinct chapters. */
+.ms-band { background: var(--rl-surface); border-block: 1px solid var(--rl-line); padding: 80px 0; margin-top: 90px; }
+.ms-band-dark {
+  --rl-bg: #0d1628; --rl-surface: #142038; --rl-ink: #f2f5fb; --rl-soft: #a7b3c9; --rl-line: #243352;
+  background: radial-gradient(1200px 400px at 85% 0%, color-mix(in srgb, var(--rl-blue) 28%, transparent), transparent 70%), var(--rl-bg);
+  color: var(--rl-ink); border: 0;
+}
+.ms-band-dark h2 { color: var(--rl-ink); }
+.ms-band .ms-calc, .ms-band .ms-fairuse, .ms-band .ms-costcard { padding-top: 0; margin-top: 0; }
+.ms-band-dark .ms-calc-inputs, .ms-band-dark .ms-calc-result { background: var(--rl-surface); border-color: var(--rl-line); }
+.ms-band-dark .ms-bar-fill:not(.is-us) { background: #5b6b8a; }
+.ms-bars-title { margin-top: 34px; font-size: 14px; color: var(--rl-soft); }
+.ms-calc-billed { margin-top: 4px; font-size: 13px; color: var(--rl-soft); }
+
+/* The recommended plan is a solid blue card: the eye lands there first. */
+.ms-plan.is-highlight {
+  --rl-soft: #dbe6ff;
+  background: linear-gradient(160deg, var(--rl-blue), color-mix(in srgb, var(--rl-blue) 70%, #0b1f55));
+  color: #fff; border-color: transparent; transform: translateY(-8px);
+}
+.ms-plan.is-highlight .ms-popular { background: #fff; color: var(--rl-blue); }
+.ms-plan.is-highlight .rl-button { background: #fff; color: var(--rl-blue); }
+.ms-plan.is-highlight .ms-includes li { color: #eef3ff; }
+.ms-compare-jump { display: flex; justify-content: center; margin-top: 30px; }
+.ms-compare-jump .ms-ghost { gap: 8px; }
+
+/* Feature matrix (after "Compare all features"). */
+.ms-matrix-section { padding-top: 90px; scroll-margin-top: 20px; }
+.ms-matrix { overflow-x: auto; }
+.ms-matrix-head, .ms-matrix-table tr { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(130px, 1fr)); min-width: 780px; }
+.ms-matrix-head { position: sticky; top: 0; z-index: 2; background: var(--rl-bg); border-bottom: 1px solid var(--rl-line); padding: 26px 0 18px; align-items: end; }
+.ms-matrix-title h2 { margin: 0; }
+.ms-matrix-title .ms-billing { margin-top: 14px; }
+.ms-matrix-title .ms-billing button { padding: 7px 12px; font-size: 13px; }
+.ms-matrix-plan { display: grid; gap: 4px; justify-items: center; text-align: center; padding: 0 8px; position: relative; }
+.ms-matrix-plan strong { font: 750 20px 'Archivo Variable', sans-serif; letter-spacing: -.02em; }
+.ms-matrix-plan small { color: var(--rl-soft); font-size: 12.5px; min-height: 2.6em; }
+.ms-matrix-plan .rl-button, .ms-matrix-plan .ms-ghost { margin-top: 6px; width: 100%; justify-content: center; padding: 10px 12px; font-size: 13px; }
+.ms-matrix-popular { position: absolute; top: -22px; font-size: 11px; font-weight: 700; color: var(--rl-blue); }
+.ms-matrix-table { width: 100%; border-collapse: collapse; margin-top: 34px; }
+.ms-matrix-table caption { text-align: left; font: 720 22px 'Archivo Variable', sans-serif; letter-spacing: -.02em; padding-bottom: 10px; }
+.ms-matrix-table tr { border-bottom: 1px solid var(--rl-line); }
+.ms-matrix-table th, .ms-matrix-table td { padding: 14px 8px; font-size: 14px; }
+.ms-matrix-table th { text-align: left; font-weight: 500; }
+.ms-matrix-table th small { display: block; margin-top: 3px; font-size: 11.5px; color: var(--rl-blue); font-weight: 500; }
+.ms-matrix-table td { text-align: center; display: flex; align-items: center; justify-content: center; }
+.ms-matrix-table td:nth-child(3) { background: color-mix(in srgb, var(--rl-blue) 6%, transparent); }
+.ms-yes { color: var(--rl-blue); }
+.ms-no { color: var(--rl-line); }
+
+/* Compare page: same team, both prices; the two "stronger" lists side by side. */
+.ms-stepper-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
+.ms-stepper { display: inline-flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; border: 1px solid var(--rl-line); border-radius: 999px; background: var(--rl-surface); font-size: 14px; }
+.ms-stepper button { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--rl-line); border-radius: 50%; background: var(--rl-bg); color: var(--rl-ink); }
+.ms-stepper button:disabled { opacity: .4; }
+.ms-stepper output { min-width: 2ch; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ms-cost-line small { color: var(--rl-soft); font-size: 13px; }
+.ms-cost-line.is-us { border-color: var(--rl-blue); background: color-mix(in srgb, var(--rl-blue) 16%, transparent); }
+.ms-saving { margin-top: 18px; display: inline-block; padding: 10px 16px; border-radius: 999px; font-weight: 650; background: color-mix(in srgb, var(--rl-live) 20%, transparent); color: var(--rl-live); }
+.ms-honest-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; padding-top: 70px; }
+.ms-honest-grid .ms-honest { padding: 28px; border: 1px solid var(--rl-line); border-radius: 16px; background: var(--rl-surface); }
+.ms-honest-grid .ms-honest.is-us { border-color: var(--rl-blue); background: color-mix(in srgb, var(--rl-blue) 8%, var(--rl-bg)); }
+.ms-honest-grid h2 { font-size: clamp(24px, 2.4vw, 32px); }
+.ms-honest-grid ul { list-style: none; padding: 0; }
+.ms-honest-grid li { display: flex; gap: 10px; align-items: flex-start; color: var(--rl-ink); }
+.ms-honest-grid li svg { flex: 0 0 auto; margin-top: 3px; color: var(--rl-soft); }
+.ms-honest-grid .is-us li svg { color: var(--rl-blue); }
+
+/* More color: icon tiles alternate between the brand blue and three supporting hues. */
+.ms-mega-item:nth-of-type(4n+2) .ms-mega-icon { background: color-mix(in srgb, #10b981 16%, transparent); color: #0e9f73; }
+.ms-mega-item:nth-of-type(4n+3) .ms-mega-icon { background: color-mix(in srgb, #8b5cf6 16%, transparent); color: #7c4ddf; }
+.ms-mega-item:nth-of-type(4n) .ms-mega-icon { background: color-mix(in srgb, #f59e0b 18%, transparent); color: #c77c02; }
+
+/* The closing call to action is a blue band, not more white page. */
+.ms-site .rl-final { background: linear-gradient(135deg, var(--rl-blue), color-mix(in srgb, var(--rl-blue) 65%, #0b1f55)); color: #fff; margin-top: 100px; }
+.ms-site .rl-final h2, .ms-site .rl-final .rl-eyebrow { color: #fff; }
+.ms-site .rl-final .rl-button { background: #fff; color: var(--rl-blue); }
+.ms-site .rl-final .ms-ghost { color: #fff; border-color: #ffffff80; }
+
+@media (max-width: 760px) {
+  .ms-band { padding: 56px 0; margin-top: 60px; }
+  .ms-plan.is-highlight { transform: none; }
+  .ms-matrix-head { position: static; }
+}
+@media (prefers-reduced-motion: reduce) { .ms-billing button { transition: none; } }

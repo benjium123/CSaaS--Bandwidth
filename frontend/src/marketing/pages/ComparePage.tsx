@@ -1,29 +1,49 @@
+import * as React from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Check, Minus, Plus } from "lucide-react";
 import { SitePage, FaqList, CtaBand } from "@/marketing/SiteChrome";
 import { COMPETITORS, type Competitor } from "@/marketing/content";
 import {
   COMPETITORS_CHECKED,
   COMPETITOR_SEAT_PRICES,
+  competitorCost,
   minutePoolsLine,
+  missesNumberPrice,
   money,
   recommend,
 } from "@/marketing/pricing.config";
 
-/** "Quo (OpenPhone)" -> "quo"; "CallHippo Professional" -> "callhippo". */
-function firstWord(name: string): string {
-  const [word = ""] = name.trim().split(/\s+/);
-  return word.replace(/[()]/g, "").toLowerCase();
+/** A small − n + control for the same-team comparison. */
+function Stepper({ label, value, min, max, onChange }: {
+  label: string; value: number; min: number; max: number; onChange: (n: number) => void;
+}) {
+  return (
+    <div className="ms-stepper">
+      <span>{label}</span>
+      <button type="button" aria-label={`Fewer ${label.toLowerCase()}`} disabled={value <= min} onClick={() => onChange(value - 1)}>
+        <Minus size={15} aria-hidden="true" />
+      </button>
+      <output aria-live="polite">{value}</output>
+      <button type="button" aria-label={`More ${label.toLowerCase()}`} disabled={value >= max} onClick={() => onChange(value + 1)}>
+        <Plus size={15} aria-hidden="true" />
+      </button>
+    </div>
+  );
 }
 
 export function ComparePage() {
   const { slug } = useParams<{ slug: string }>();
+  const [users, setUsers] = React.useState(5);
+  const [numbers, setNumbers] = React.useState(5);
   const competitor: Competitor | undefined = COMPETITORS.find(c => c.slug === slug);
   if (!competitor) return <Navigate to="/" replace />;
   const c = competitor;
 
-  const r = recommend(5, 2);
-  const seat = COMPETITOR_SEAT_PRICES.find(e => firstWord(e.name) === firstWord(c.name));
+  const r = recommend(users, numbers);
+  const price = COMPETITOR_SEAT_PRICES.find(e => e.slug === c.slug);
+  const theirs = price ? competitorCost(price, users, numbers) : null;
+  const partial = price ? missesNumberPrice(price, users, numbers) : false;
+  const saving = theirs !== null && r.monthly !== null ? theirs - r.monthly : null;
 
   return (
     <SitePage title={`Ringlite vs ${c.name}`} description={c.summary}>
@@ -40,21 +60,35 @@ export function ComparePage() {
         </div>
       </section>
 
-      <section className="ms-costcard rl-wrap rl-reveal">
-        <h2>A team of 5 with 2 phone numbers</h2>
-        <div className="ms-cost-grid">
-          <p className="ms-cost-line">
-            <span className="rl-mono">Ringlite</span>
-            {money(r.monthly ?? 0)}/mo on {r.plan.name} + usage
-          </p>
-          {seat ? (
-            <p className="ms-cost-line">
+      <section className="ms-band ms-band-dark">
+        <div className="ms-costcard rl-wrap rl-reveal">
+          <h2>The same team on both</h2>
+          <div className="ms-stepper-row">
+            <Stepper label="People" value={users} min={1} max={50} onChange={setUsers} />
+            <Stepper label="Phone numbers" value={numbers} min={1} max={40} onChange={setNumbers} />
+          </div>
+          <div className="ms-cost-grid">
+            <div className="ms-cost-line is-us">
+              <span className="rl-mono">Ringlite</span>
+              <strong>{r.monthly !== null ? `${money(r.monthly)}/mo` : "Custom"}</strong>
+              <small>{r.plan.name} plan{r.monthly !== null ? " + usage past the minute pool" : ""}</small>
+            </div>
+            <div className="ms-cost-line">
               <span className="rl-mono">{c.name}</span>
-              {money(Math.max(5, seat.minSeats) * seat.monthly)}/mo on {seat.name}
-            </p>
-          ) : null}
+              <strong>{theirs !== null ? `${money(Math.round(theirs))}/mo${partial ? "*" : ""}` : "Prices through sales"}</strong>
+              <small>{price ? `${price.name}, ${Math.max(users, price.minSeats)} seats` : "Not published"}</small>
+            </div>
+          </div>
+          {saving !== null && saving > 0 && (
+            <p className="ms-saving">You keep {money(Math.round(saving))} a month, {money(Math.round(saving * 12))} a year.</p>
+          )}
+          <p className="ms-footnote">
+            Monthly list prices, {COMPETITORS_CHECKED}: seats with the vendor's minimum, plus numbers
+            beyond one per seat.{partial ? ` * ${c.name} does not publish its extra-number price, so extra numbers are left out.` : ""}{" "}
+            Ringlite includes an exact shared pool of call minutes ({minutePoolsLine()} a month), then
+            published per-minute and per-text rates.
+          </p>
         </div>
-        <p className="ms-footnote">Monthly list prices, {COMPETITORS_CHECKED}. Ringlite includes an exact shared pool of call minutes ({minutePoolsLine()} a month), then published per-minute and per-text rates.</p>
       </section>
 
       <section className="rl-wrap rl-reveal">
@@ -80,13 +114,23 @@ export function ComparePage() {
         </div>
       </section>
 
-      <section className="ms-honest rl-wrap rl-reveal">
-        <h2>Where {c.name} is stronger</h2>
-        <ul>
-          {c.theyWin.map(item => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
+      <section className="ms-honest-grid rl-wrap rl-reveal">
+        <div className="ms-honest is-us">
+          <h2>Where Ringlite is stronger</h2>
+          <ul>
+            {c.weWin.map(item => (
+              <li key={item}><Check size={17} aria-hidden="true" />{item}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="ms-honest">
+          <h2>Where {c.name} is stronger</h2>
+          <ul>
+            {c.theyWin.map(item => (
+              <li key={item}><Plus size={17} aria-hidden="true" />{item}</li>
+            ))}
+          </ul>
+        </div>
       </section>
 
       <section className="ms-steps rl-wrap rl-reveal">

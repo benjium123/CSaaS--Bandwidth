@@ -222,6 +222,8 @@ export interface Competitor {
   summary: string;
   rows: { label: string; them: string; us: string }[];
   theyWin: string[];
+  /** Where Ringlite is the better pick. Only what the product and price list back today. */
+  weWin: string[];
 }
 
 export const COMPETITORS: Competitor[] = [
@@ -235,6 +237,7 @@ export const COMPETITORS: Competitor[] = [
       { label: "Free trial", them: "7 days", us: "Welcome credit after approval" },
     ],
     theyWin: ["More integrations today", "Mobile apps", "Thousands of public reviews"],
+    weWin: ["Users and numbers in one package: 3 people pay $45 a month, not $99", "Exact call minutes and published rates, not a discretionary fair use policy", "Texting registration done inside the app", "AI voice agent and power dialer on Business"],
   },
   {
     slug: "ringcentral", name: "RingCentral",
@@ -245,6 +248,7 @@ export const COMPETITORS: Competitor[] = [
       { label: "Setup", them: "Sales-led", us: "Sign up and get approved in about an hour" },
     ],
     theyWin: ["Video meetings and contact center", "International calling", "Desk phones"],
+    weWin: ["Prices on the page: sign up without a sales call", "Starts at $15 for one user and one number", "No per-user text caps: every text at a published rate", "Verified and ready in about an hour"],
   },
   {
     slug: "callhippo", name: "CallHippo",
@@ -255,6 +259,7 @@ export const COMPETITORS: Competitor[] = [
       { label: "Rates", them: "Bundled", us: "Published per minute and per text" },
     ],
     theyWin: ["International numbers", "WhatsApp"],
+    weWin: ["Power dialer and AI included on Business, not sold as add-ons", "Every rate published to the minute and the text", "Users and numbers bundled in one monthly price"],
   },
   {
     slug: "krispcall", name: "KrispCall",
@@ -264,6 +269,7 @@ export const COMPETITORS: Competitor[] = [
       { label: "Team size", them: "Entry plan up to 5 users", us: "Users included on every plan" },
     ],
     theyWin: ["Numbers in 100+ countries"],
+    weWin: ["Users included in the package price", "Room to grow: 15 users on Team, unlimited on Business", "An exact shared minute pool instead of metering every call"],
   },
   {
     slug: "aircall", name: "Aircall",
@@ -274,6 +280,7 @@ export const COMPETITORS: Competitor[] = [
       { label: "Texting", them: "250 texts per user", us: "Texts at a published rate, no monthly cap" },
     ],
     theyWin: ["250+ integrations", "Call-center analytics"],
+    weWin: ["No three-license minimum: start with one user for $15", "Texts at a published rate, no 250-per-user cap", "Power dialer included on Business"],
   },
 ];
 

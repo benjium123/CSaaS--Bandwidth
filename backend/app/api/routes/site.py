@@ -59,6 +59,8 @@ ASK_GLOBAL_DAILY_MAX = 3000
 FIXED_FACTS = """- Ringlite is a business phone service: numbers, browser calling, business texting, one shared inbox.
 - Calls and texts reach the 48 contiguous US states only. No Canada, Alaska, Hawaii or international.
 - Ringlite never sells "unlimited" calling. Starter is pay as you go; Team includes 200 and Business 1,000 call minutes a month, shared by the workspace; then a published per-minute rate.
+- Plans: Starter $15/month (1 user + 1 number, up to 5 users), Team $45/month (3 users + 3 numbers, up to 15 users), Business $130/month (10 users + 10 numbers, no user limit), Custom via sales. Extra users $15/month ($12 on Business), extra numbers $5/month.
+- Paying yearly gets 2 months free: Starter $150, Team $450, Business $1,300 a year.
 - Every account is identity-verified before it can call. Texting needs 10DLC carrier approval.
 - Ringlite is not HIPAA compliant and does not hold SOC 2."""
 

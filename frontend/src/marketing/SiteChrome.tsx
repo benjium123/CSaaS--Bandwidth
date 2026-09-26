@@ -41,18 +41,24 @@ const RESOURCES: { to: string; label: string; hint: string }[] = [
 interface PanelProps { onGo: () => void }
 
 function ProductPanel({ onGo }: PanelProps) {
-  return <div className="ms-mega-grid">
+  const item = (p: (typeof PRODUCTS)[number]) => <Link className="ms-mega-item" key={p.slug} to={`/product/${p.slug}`} onClick={onGo}>
+    <span className="ms-mega-icon"><Icon name={p.icon} /></span>
+    <span><strong>{p.menu}</strong><small>{p.menuHint}</small></span>
+  </Link>;
+  return <div className="ms-mega-grid ms-mega-grid-3">
     <div className="ms-mega-col">
-      {PRODUCTS.map(p => <Link className="ms-mega-item" key={p.slug} to={`/product/${p.slug}`} onClick={onGo}>
-        <span className="ms-mega-icon"><Icon name={p.icon} /></span>
-        <span><strong>{p.menu}</strong><small>{p.menuHint}</small></span>
-      </Link>)}
+      <p className="rl-mono">TALK AND TEXT</p>
+      {PRODUCTS.slice(0, 4).map(item)}
+    </div>
+    <div className="ms-mega-col">
+      <p className="rl-mono">AUTOMATE AND CONNECT</p>
+      {PRODUCTS.slice(4).map(item)}
     </div>
     <aside className="ms-mega-side">
       <div className="ms-mega-card">
-        <p className="rl-mono">TEAM · YEARLY</p>
+        <p className="rl-mono">PRICING</p>
         <h3>Your team and numbers, one price</h3>
-        <p>Team is {money(TEAM_PRICE)} a month: {packageLine(planByCode("team")).toLowerCase()}.</p>
+        <p>Team is {money(TEAM_PRICE)} a month: {packageLine(planByCode("team")).toLowerCase()}. Pay yearly and get 2 months free.</p>
         <Link className="rl-text-link" to="/pricing" onClick={onGo}>See pricing <ArrowUpRight size={15} aria-hidden="true" /></Link>
       </div>
     </aside>
