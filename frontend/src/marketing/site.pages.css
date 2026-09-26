@@ -208,10 +208,10 @@
 .ms-compare-jump .ms-ghost { gap: 8px; }
 
 /* Feature matrix (after "Compare all features"). */
-.ms-matrix-section { padding-top: 90px; scroll-margin-top: 20px; }
-.ms-matrix { overflow-x: auto; }
+.ms-matrix-section { padding-top: 90px; scroll-margin-top: 60px; }
+.ms-matrix { overflow: visible; }
 .ms-matrix-head, .ms-matrix-table tr { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(130px, 1fr)); min-width: 780px; }
-.ms-matrix-head { position: sticky; top: 0; z-index: 2; background: var(--rl-bg); border-bottom: 1px solid var(--rl-line); padding: 26px 0 18px; align-items: end; }
+.ms-matrix-head { position: sticky; top: 84px; z-index: 2; background: var(--rl-bg); border-bottom: 1px solid var(--rl-line); padding: 26px 0 18px; align-items: end; }
 .ms-matrix-title h2 { margin: 0; }
 .ms-matrix-title .ms-billing { margin-top: 14px; }
 .ms-matrix-title .ms-billing button { padding: 7px 12px; font-size: 13px; }
@@ -229,7 +229,7 @@
 .ms-matrix-table td { text-align: center; display: flex; align-items: center; justify-content: center; }
 .ms-matrix-table td:nth-child(3) { background: color-mix(in srgb, var(--rl-blue) 6%, transparent); }
 .ms-yes { color: var(--rl-blue); }
-.ms-no { color: var(--rl-line); }
+.ms-no { color: var(--rl-soft); opacity: .45; }
 
 /* Compare page: same team, both prices; the two "stronger" lists side by side. */
 .ms-stepper-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
@@ -265,4 +265,10 @@
   .ms-plan.is-highlight { transform: none; }
   .ms-matrix-head { position: static; }
 }
+@media (max-width: 900px) { .ms-matrix { overflow-x: auto; } .ms-matrix-head { position: static; } }
+.ms-price { flex-wrap: wrap; }
+.ms-price span.ms-price-note { flex-basis: 100%; }
 @media (prefers-reduced-motion: reduce) { .ms-billing button { transition: none; } }
+
+/* overflow:hidden makes the page a scroll container and breaks position:sticky; clip does not. */
+.rl-landing.ms-site { overflow: clip; }

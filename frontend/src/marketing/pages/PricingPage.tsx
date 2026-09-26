@@ -77,7 +77,7 @@ function PlanPrice({ plan, billing }: { plan: Plan; billing: Billing }) {
   return (
     <div className="ms-price">
       <strong>{money(monthlyWhenYearly(plan.price))}</strong>
-      <span>per month, billed {money(perBill(plan.price, "year"))} yearly</span>
+      <span className="ms-price-note">per month, billed {money(perBill(plan.price, "year"))} yearly</span>
     </div>
   );
 }
@@ -213,7 +213,7 @@ export function PricingPage() {
                 <div className="ms-bar-track" aria-hidden="true">
                   <div className={"ms-bar-fill" + (row.isUs ? " is-us" : "")} style={{ transform: `scaleX(${row.value / barMax})` }} />
                 </div>
-                <span className="ms-bar-amount">{money(Math.round(row.value))}/mo{row.partial ? "*" : ""}</span>
+                <span className="ms-bar-amount">{money(row.isUs ? row.value : Math.round(row.value))}/mo{row.partial ? "*" : ""}</span>
               </div>
             ))}
           </div>
