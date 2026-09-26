@@ -258,6 +258,10 @@ REMOTE
 
 # 8.4: migrations run against a freshly built image, BEFORE the api container starts
 # serving traffic on the old schema (or, worse, the new code against an old schema).
+# Monitoring v2: the dir lkrec writes recordings into and the api ingests from. Both
+# run as uid 10001; var/ is excluded from the rsync above, so this survives deploys.
+ssh "$TARGET" "mkdir -p ${REMOTE_DIR}/var/lkrec/announce && chown -R 10001:10001 ${REMOTE_DIR}/var/lkrec"
+
 say "Building the api image"
 ssh "$TARGET" "cd ${REMOTE_DIR} && docker compose --env-file .env -f ${COMPOSE_MAIN} build api"
 

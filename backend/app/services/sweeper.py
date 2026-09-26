@@ -48,6 +48,7 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
     from app.api.routes import monitoring as monitoring_routes
     from app.db.session import get_sessionmaker
     from app.services import (
+        lkrec,
         monitor_calls,
         monitor_cohorts,
         monitor_exam,
@@ -73,12 +74,18 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
             ),
             ("case_files", lambda s: monitor_score.case_file_tick(s, settings)),
         ]
+        if lkrec.enabled(settings):
+            jobs += [
+                ("recordings_ingest", lambda s: lkrec.ingest_tick(s, settings, app.state.media_store)),
+                ("recorder_resume", lambda s: lkrec.resume_tick(s, settings)),
+            ]
     if hourly_due:
         app.state._monitor_hourly_last_run = now
         jobs += [
             ("behaviour", lambda s: monitor_calls.behaviour_tick(s, settings)),
             ("unchecked_texts", lambda s: monitor_text.unchecked_tick(s, settings)),
             ("public_reports", lambda s: monitoring_routes.assess_reports_tick(s, settings)),
+            ("recordings_purge", lambda s: lkrec.purge_tick(s, settings, app.state.media_store)),
         ]
 
         async def canary(s):  # noqa: ANN001, ANN202

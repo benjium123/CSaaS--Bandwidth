@@ -120,6 +120,30 @@ services:
     depends_on: [livekit]
     logging: *default-logging
 
+  # Monitoring v2 recorder (recorder/, Go): records monitored softphone calls with no
+  # transcoding (~4 MB idle, ~5-7% of a core per recorded call, measured 2026-09-26). The
+  # backend starts it per call and its sweeper ingests the finished files from the shared
+  # dir. Listens on the docker0 address only (reached from the api via host-gateway, like
+  # livekit); the API also requires a token derived from LIVEKIT_API_SECRET. Runs as the
+  # api's uid so both can manage the shared dir.
+  lkrec:
+    build:
+      context: ../recorder
+    restart: unless-stopped
+    user: "10001:10001"
+    environment:
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: csaas-media
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
+      REC_DIR: /out
+      REC_LISTEN: 172.17.0.1:9099
+    volumes: ["../var/lkrec:/out"]
+    network_mode: host
+    cpus: "2"
+    mem_limit: 512m
+    depends_on: [livekit]
+    logging: *default-logging
+
   # P43 call-monitor: the silent listener that transcribes softphone calls chosen for
   # safety monitoring (backend services/monitor_calls.py dispatches it by agent name). Same
   # image as the AI worker; it only needs LiveKit, the backend, Deepgram and ElevenLabs

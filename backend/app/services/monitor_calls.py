@@ -220,6 +220,9 @@ async def transcribe_recording(
     from app.services import agent as agent_svc
     from app.services import recordings as recordings_svc
 
+    if (call.extra or {}).get("recorder"):
+        return await _transcribe_sides(session, settings, store, call, client=client)
+
     recording = (
         await session.execute(
             sa.select(CallRecording)
@@ -272,6 +275,64 @@ async def transcribe_recording(
             self.role, self.text, self.at_ms = role, text, at_ms
 
     rows = [_Seg(*s) for s in _utterances_to_segments(call, payload)]
+    await agent_svc.upsert_transcript_segments(session, call, rows)
+    return "done"
+
+
+async def _transcribe_sides(
+    session: AsyncSession,
+    settings: Settings,
+    store,  # noqa: ANN001
+    call: Call,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> str:
+    """Transcribe an lkrec recording: one Ogg file per side, so the speaker is known
+    without diarization and both sides share one timeline (at_ms lines up)."""
+    from app.services import agent as agent_svc
+    from app.services import lkrec
+
+    extra = call.extra or {}
+    if not extra.get("monitor_recordings"):
+        # The recorder writes its manifest when the room closes; the sweeper ingests it
+        # on its next pass. review_one gives up after GIVE_UP_AFTER.
+        return "waiting"
+    sides = await lkrec.load_sides(store, call)
+    if not sides:
+        return "none"  # announcement failed (nothing recorded) or already purged
+    api_key = settings.deepgram_api_key.get_secret_value().strip()
+    if not api_key:
+        return "failed"
+
+    class _Seg:
+        def __init__(self, role, text, at_ms):
+            self.role, self.text, self.at_ms = role, text, at_ms
+
+    rows: list[_Seg] = []
+    owns = client is None
+    client = client or httpx.AsyncClient(timeout=120.0)
+    try:
+        for side, data, offset_ms in sides:
+            resp = await client.post(
+                DEEPGRAM_URL,
+                params={"model": "nova-2", "smart_format": "true", "utterances": "true"},
+                headers={"Authorization": f"Token {api_key}", "Content-Type": "audio/ogg"},
+                content=data,
+            )
+            if resp.status_code >= 400:
+                retryable = resp.status_code in (408, 429) or resp.status_code >= 500
+                return "failed" if retryable else "rejected"
+            role = "user" if side == "customer" else "agent"
+            for u in (resp.json().get("results") or {}).get("utterances") or []:
+                text = str(u.get("transcript") or "").strip()
+                if text:
+                    rows.append(_Seg(role, text, offset_ms + int(float(u.get("start") or 0) * 1000)))
+    except (httpx.HTTPError, ValueError):
+        return "failed"
+    finally:
+        if owns:
+            await client.aclose()
+    rows.sort(key=lambda r: r.at_ms)
     await agent_svc.upsert_transcript_segments(session, call, rows)
     return "done"
 
@@ -836,5 +897,31 @@ async def on_livekit_event(session: AsyncSession, api, settings: Settings, event
     if reason is None:
         return
     if not ((call.extra or {}).get("assistant") or {}).get("profile_id"):
-        await dispatch_listener(session, api, settings, call)
+        if not await start_recorder(session, settings, call, room):
+            await dispatch_listener(session, api, settings, call)
     await session.commit()
+
+
+async def start_recorder(session: AsyncSession, settings: Settings, call: Call, room: str) -> bool:
+    """Record a monitored room call with lkrec (announcement first). False = not handled
+    (recorder off or unreachable, announcement unavailable): the caller falls back to the
+    live listener, so a monitored call is never left unwatched."""
+    from app.models import Org
+    from app.services import lkrec
+
+    if not lkrec.enabled(settings) or not room:
+        return False
+    if (call.extra or {}).get("recorder"):
+        return True  # participant_joined fires more than once per call
+    org = await session.get(Org, call.org_id)
+    try:
+        announcement = await lkrec.ensure_announcement(settings, org)
+    except lkrec.AnnouncementUnavailable:
+        log.warning("recorder_announcement_unavailable", call_id=str(call.id))
+        return False
+    if not await lkrec.start(settings, room, announcement=announcement):
+        return False
+    extra = dict(call.extra or {})
+    extra["recorder"] = {"room": room, "announcement": announcement}
+    call.extra = extra
+    return True

@@ -523,6 +523,13 @@ class Settings(BaseSettings):
     ai_agent_name: str = "ai-agent"
     #: P43: the silent call-monitor listener worker (agents/call_monitor.py).
     monitor_agent_name: str = "call-monitor"
+    #: lkrec, the self-hosted recorder (recorder/): when set, monitored softphone calls are
+    #: recorded (announcement first) and reviewed from the recording instead of getting the
+    #: live listener above. Empty = off (listener). Shared dir: recorder writes, sweeper ingests.
+    monitor_recorder_url: str = ""
+    monitor_recorder_dir: str = "var/lkrec"
+    #: Monitoring audio of calls reviewed "ok" (or skipped) is deleted after this many days.
+    monitor_recording_keep_days: int = 7
 
     # ---------------- media / storage ----------------
     media_store_backend: str = "local"  # local | memory | s3 (s3 raises until P5)

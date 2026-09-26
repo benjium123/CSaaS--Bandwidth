@@ -26,6 +26,10 @@ services:
       # it is, this MUST carry it too - redis with a password rejects an unauthenticated
       # client outright.
       REDIS_URL: redis://:${CSAAS_REDIS_PASSWORD:-}@redis:6379/0
+      # Monitoring v2: record monitored softphone calls with lkrec (deploy/livekit compose)
+      # instead of the live listener. Empty = listener. The dir is shared with lkrec.
+      MONITOR_RECORDER_URL: http://lkrec:9099
+      MONITOR_RECORDER_DIR: /app/var/lkrec
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_started}
@@ -33,7 +37,7 @@ services:
     ports: ["127.0.0.1:8080:8080"]
     # 8.1: named volume for MMS media, call recordings, voicemail, transcripts
     # (MEDIA_LOCAL_ROOT=var/media) - previously unmounted, so every deploy wiped it.
-    volumes: ["csaas_media:/app/var/media"]
+    volumes: ["csaas_media:/app/var/media", "../var/lkrec:/app/var/lkrec"]
     # Addendum to 8.16: deploy/livekit/docker-compose.livekit.yml's `livekit` service
     # now runs network_mode: host, so it is off this compose network entirely and the
     # "livekit" DNS name (used by .env's LIVEKIT_URL=ws://livekit:7880 on the box) would
@@ -44,6 +48,7 @@ services:
     # is actually included (deploy.sh 8.9 always includes it); harmless otherwise.
     extra_hosts:
       - "livekit:host-gateway"
+      - "lkrec:host-gateway"
     logging: *default-logging
 
   db:

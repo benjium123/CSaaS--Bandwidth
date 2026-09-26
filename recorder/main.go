@@ -18,6 +18,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -404,6 +407,21 @@ func recoverOrphans(dir string) {
 	}
 }
 
+// requireToken guards the API. The backend reaches the recorder over the docker
+// bridge, so the port is not loopback-only; callers must send
+// "Authorization: Bearer <hex sha256("lkrec:" + LIVEKIT_API_SECRET)>".
+func requireToken(secret string, next http.Handler) http.Handler {
+	sum := sha256.Sum256([]byte("lkrec:" + secret))
+	want := []byte("Bearer " + hex.EncodeToString(sum[:]))
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(req.Header.Get("Authorization")), want) != 1 {
+			writeJSON(w, 401, map[string]any{"ok": false, "error": "unauthorized"})
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -486,7 +504,7 @@ func main() {
 		writeJSON(w, 200, map[string]any{"ok": true, "rooms": names})
 	})
 
-	srv := &http.Server{Addr: env("REC_LISTEN", "127.0.0.1:9099"), Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: env("REC_LISTEN", "127.0.0.1:9099"), Handler: requireToken(r.apiSecret, mux), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
