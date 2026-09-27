@@ -47,6 +47,11 @@ def is_hallucination(text: str) -> bool:
     return len(words) >= 3 and len(set(words)) == 1
 
 
+#: A segment that is only one of these is noise the models emit on breaths and line hiss
+#: (seen on the first live test call); real one-word answers ("Yeah", "No") are kept.
+NOISE_WORDS = frozenset({"the", "a", "an", "um", "uh", "ah", "er", "hmm", "mm", "and", "i"})
+
+
 def clean_text(text: str, punct=None) -> str:
     if not text or not text.strip():
         return ""
@@ -54,6 +59,8 @@ def clean_text(text: str, punct=None) -> str:
     if punct is not None:
         text = punct.add_punctuation_with_case(text.lower()).strip()
     if not text or is_hallucination(text):
+        return ""
+    if text.strip(" .,!?").lower() in NOISE_WORDS:
         return ""
     return text
 
@@ -137,7 +144,7 @@ def speech_segments(samples, vad_path):
 
     cfg = sherpa_onnx.VadModelConfig()
     cfg.silero_vad.model = vad_path
-    cfg.silero_vad.threshold = 0.4
+    cfg.silero_vad.threshold = 0.3
     cfg.silero_vad.min_silence_duration = 0.5
     cfg.silero_vad.min_speech_duration = 0.25
     cfg.silero_vad.max_speech_duration = 20.0
@@ -161,8 +168,45 @@ def speech_segments(samples, vad_path):
         vad.pop()
 
     if segments:
-        return segments
+        return sorted(segments + missed_speech(samples, segments), key=lambda seg: seg[0])
     return fixed_chunks(samples, CHUNK_SECONDS)
+
+
+def missed_speech(samples, segments, frame=1600, min_frames=4, pad=3200, max_len=20 * SAMPLE_RATE):
+    """Loud stretches the VAD skipped. Phone audio at 8 kHz fools Silero on short, quiet
+    lines ("Hello?"): the first live test call lost its first 20 s that way. A 100 ms frame
+    counts as loud when its RMS is at least 30% of the loud-end (90th percentile) frame
+    RMS; a run of >= min_frames loud frames not covered by any VAD segment is returned as
+    an extra (start_sample, samples) segment, padded by 200 ms each side."""
+    n = len(samples) // frame
+    if n == 0:
+        return []
+    frames = np.asarray(samples[: n * frame], dtype=np.float32).reshape(n, frame)
+    energy = np.sqrt(np.mean(frames * frames, axis=1))
+    loud_level = float(np.percentile(energy, 90))
+    if loud_level <= 0:
+        return []
+    loud = energy >= 0.3 * loud_level
+    covered = np.zeros(n, dtype=bool)
+    for start, seg in segments:
+        first = int(start) // frame
+        last = (int(start) + len(seg) + frame - 1) // frame
+        covered[max(first, 0):min(last, n)] = True
+    extra = []
+    i = 0
+    while i < n:
+        if loud[i] and not covered[i]:
+            j = i
+            while j < n and loud[j] and not covered[j]:
+                j += 1
+            if j - i >= min_frames:
+                a = max(i * frame - pad, 0)
+                b = min(j * frame + pad, len(samples), a + max_len)
+                extra.append((a, samples[a:b]))
+            i = j
+        else:
+            i += 1
+    return extra
 
 
 def _decode_segments(recognizer, segments, punct):

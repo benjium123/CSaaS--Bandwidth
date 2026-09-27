@@ -106,3 +106,32 @@ def test_server_handler_no_models():
         srv.shutdown()
         srv.server_close()
         thread.join(timeout=2)
+
+
+def test_missed_speech_finds_loud_audio_the_vad_skipped():
+    sr = 16000
+    samples = np.zeros(10 * sr, dtype=np.float32)
+    samples[1 * sr:2 * sr] = 0.5  # covered by a VAD segment
+    samples[5 * sr:6 * sr] = 0.5  # skipped by the VAD
+    covered = [(1 * sr, samples[1 * sr:2 * sr])]
+    extra = server.missed_speech(samples, covered)
+    assert len(extra) == 1
+    start, seg = extra[0]
+    assert 5 * sr - 3200 <= start <= 5 * sr
+    assert len(seg) >= sr
+
+
+def test_missed_speech_nothing_when_all_covered_or_silent():
+    sr = 16000
+    samples = np.zeros(5 * sr, dtype=np.float32)
+    assert server.missed_speech(samples, []) == []
+    samples[sr:2 * sr] = 0.5
+    assert server.missed_speech(samples, [(sr, samples[sr:2 * sr])]) == []
+
+
+def test_clean_text_drops_one_word_noise_but_keeps_short_answers():
+    assert server.clean_text("The") == ""
+    assert server.clean_text("UM") == ""
+    assert server.clean_text("A.") == ""
+    assert server.clean_text("Yeah.") == "Yeah."
+    assert server.clean_text("No") == "No"
