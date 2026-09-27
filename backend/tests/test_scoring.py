@@ -10,10 +10,10 @@ import httpx
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.models import CallScore
+from app.models import CallScore, CreditLedgerEntry, PlatformPrice
 from app.models.agent import CallTranscriptSegment
 from app.models.voice import Call
-from app.services import scoring
+from app.services import credits, entitlements, scoring
 from tests.conftest import create_org, make_settings, register_and_login
 
 FROZEN = datetime(2026, 6, 15, 18, 0, tzinfo=timezone.utc)
@@ -25,7 +25,18 @@ async def _org_id(client, email: str, name: str) -> uuid.UUID:
     return uuid.UUID(org["id"])
 
 
-async def _terminal_call_with_transcript(session, org_id: uuid.UUID) -> Call:
+async def _terminal_call_with_transcript(
+    session, org_id: uuid.UUID, *, summaries: bool = True, duration_seconds: int | None = None
+) -> Call:
+    # AI call summaries are a paid, opt-in feature (call_summary); these tests assume it on.
+    await entitlements.set_feature(
+        session,
+        org_id,
+        "call_summary",
+        enabled=summaries,
+        price_override_micros=None,
+        actor_user_id=None,
+    )
     set_org_context(session, org_id)
     call = Call(
         id=uuid.uuid4(),
@@ -36,6 +47,7 @@ async def _terminal_call_with_transcript(session, org_id: uuid.UUID) -> Call:
         carrier="bandwidth",
         status="completed",
         ended_at=FROZEN,
+        duration_seconds=duration_seconds,
     )
     session.add(call)
     await session.flush()
@@ -285,3 +297,67 @@ async def test_openai_is_used_when_only_openai_key_is_configured(client, session
     row = await _score_row(session, org_id, call.id)
     assert row.status == "done"
     assert row.score == 4
+
+
+async def _usage_rows(session, org_id: uuid.UUID) -> list[CreditLedgerEntry]:
+    set_org_context(session, org_id)
+    return list(
+        (
+            await session.execute(
+                sa.select(CreditLedgerEntry).where(
+                    CreditLedgerEntry.org_id == org_id, CreditLedgerEntry.entry_type == "usage"
+                )
+            )
+        ).scalars()
+    )
+
+
+async def test_summary_off_keeps_sentiment_but_stores_and_charges_no_summary(client, session):
+    org_id = await _org_id(client, "sc-sum-off@example.com", "Org Sum Off")
+    call = await _terminal_call_with_transcript(
+        session, org_id, summaries=False, duration_seconds=125
+    )
+    session.add(PlatformPrice(metric="summary_min", price_micros=3_500))
+    await session.commit()
+
+    settings = make_settings(anthropic_api_key="test-anthropic-key")
+    body = '{"sentiment": "positive", "score": 5, "summary": "Happy customer."}'
+    mock = _anthropic_client([_text_reply(body)])
+    async with mock:
+        await scoring.score_pending_calls(session, settings, client=mock, now=FROZEN)
+
+    row = await _score_row(session, org_id, call.id)
+    assert row.status == "done"
+    assert row.sentiment == "positive"
+    assert row.summary is None
+    assert await _usage_rows(session, org_id) == []
+
+
+async def test_summary_on_charges_summary_min_per_call_minute_once(client, session):
+    org_id = await _org_id(client, "sc-sum-on@example.com", "Org Sum On")
+    set_org_context(session, org_id)
+    await credits.topup(session, org_id, 5_000_000, reference=f"topup-{uuid.uuid4()}")
+    await session.commit()
+    call = await _terminal_call_with_transcript(session, org_id, duration_seconds=125)
+    session.add(PlatformPrice(metric="summary_min", price_micros=3_500))
+    await session.commit()
+
+    settings = make_settings(anthropic_api_key="test-anthropic-key")
+    body = '{"sentiment": "positive", "score": 5, "summary": "Happy customer."}'
+    mock = _anthropic_client([_text_reply(body)])
+    async with mock:
+        await scoring.score_pending_calls(session, settings, client=mock, now=FROZEN)
+
+    row = await _score_row(session, org_id, call.id)
+    assert row.summary == "Happy customer."
+    rows = await _usage_rows(session, org_id)
+    assert len(rows) == 1
+    # 125 s rounds up to 3 minutes at $0.0035.
+    assert rows[0].amount_micros == -10_500
+    assert rows[0].reference == f"sum:{row.id}"
+
+    # Scored calls are never rescanned, so a second pass charges nothing more.
+    mock2 = _anthropic_client([_text_reply(body)])
+    async with mock2:
+        await scoring.score_pending_calls(session, settings, client=mock2, now=FROZEN)
+    assert len(await _usage_rows(session, org_id)) == 1

@@ -241,8 +241,23 @@ async def _score_one(
     row.status = "done"
     row.sentiment = parsed["sentiment"]
     row.score = parsed["score"]
-    row.summary = parsed["summary"]
     row.updated_at = moment
+    # The summary is a paid feature (summary_min, per call minute, 2026-09-28): stored and
+    # charged only for a workspace with call_summary on. Sentiment/score stay for everyone.
+    from app.services import entitlements, telephony_billing
+
+    if await entitlements.has(session, call.org_id, "call_summary"):
+        row.summary = parsed["summary"]
+        seconds = call.duration_seconds or (segments[-1].at_ms // 1000 if segments else 0)
+        await telephony_billing.charge_feature_minutes(
+            session,
+            call.org_id,
+            "summary_min",
+            seconds,
+            reference=f"sum:{row.id}",
+            note=f"{seconds}s call summary",
+            feature="call_summary",
+        )
     return True
 
 

@@ -84,6 +84,7 @@ PLATFORM_PRICE_MICROS: dict[str, int] = {
 PRICED_METRICS: dict[str, tuple[str, ...]] = {
     "recording_min": ("call_recording",),
     "transcription_min": ("call_transcription", "voicemail_transcription"),
+    "summary_min": ("call_summary",),
 }
 #: ``provider`` for platform features billed per minute (no carrier involved).
 FEATURE_PROVIDER = "platform"

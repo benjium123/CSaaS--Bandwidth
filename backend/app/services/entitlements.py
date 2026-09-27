@@ -56,6 +56,14 @@ CATALOG: dict[str, Feature] = {
         "transcription_min",
         "Transcripts of recorded human calls",
     ),
+    "call_summary": Feature(
+        "call_summary",
+        "AI call summaries",
+        "AI",
+        False,
+        "summary_min",
+        "A short AI summary of every transcribed call",
+    ),
     "voicemail": Feature(
         "voicemail", "Voicemail", "Calling", True, None, "Voicemail boxes in call flows"
     ),
