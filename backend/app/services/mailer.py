@@ -27,7 +27,19 @@ log = structlog.get_logger(__name__)
 outbox: list[EmailMessage] = []
 
 
-def _html(body: str) -> str:
+def _html(body: str, subject: str = "", app_name: str = "Ringlite") -> str:
+    """Branded HTML (button for the action link, code box for one-time codes); falls back
+    to the plain paragraph version if the template ever fails - an email must still go out."""
+    try:
+        from app.services import email_template
+
+        return email_template.render(subject, body, app_name=app_name)
+    except Exception:
+        log.warning("email_template_failed", exc_info=True)
+        return _plain_html(body)
+
+
+def _plain_html(body: str) -> str:
     def paragraph(value: str) -> str:
         escaped = html.escape(value).replace(chr(10), "<br>")
         return re.sub(
@@ -52,7 +64,7 @@ def _build(settings: Settings, to: list[str], subject: str, body: str) -> EmailM
     msg["To"] = ", ".join(to)
     msg["Subject"] = subject
     msg.set_content(body)
-    msg.add_alternative(_html(body), subtype="html")
+    msg.add_alternative(_html(body, subject, settings.app_name), subtype="html")
     return msg
 
 
@@ -100,7 +112,7 @@ async def _telnyx_post(
                     "to": recipients,
                     "subject": subject,
                     "text_body": body,
-                    "html_body": _html(body),
+                    "html_body": _html(body, subject, settings.app_name),
                     "tracking_settings": {"open_tracking": False, "click_tracking": False},
                 },
             )
@@ -131,7 +143,7 @@ async def _resend_post(settings: Settings, recipients: list[str], subject: str, 
                     "to": recipients,
                     "subject": subject,
                     "text": body,
-                    "html": _html(body),
+                    "html": _html(body, subject, settings.app_name),
                 },
             )
             result.raise_for_status()
