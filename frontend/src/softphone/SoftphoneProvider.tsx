@@ -98,6 +98,12 @@ export type IncomingRing = {
 
 export type DeviceOption = { deviceId: string; label: string };
 
+/** One live caption from the live-captions worker (room data, topic "captions"). */
+export type Caption = { role: "agent" | "user"; text: string; at_ms: number };
+
+/** Keep the strip short: only the latest lines of a long call. */
+const MAX_CAPTIONS = 50;
+
 /** Any parsed message off the realtime events websocket, raw. Consumers outside this
  * file (item 2: ConversationsPage/Timeline reacting to `message.received`) subscribe to
  * this instead of opening a second websocket. */
@@ -137,6 +143,8 @@ export type SoftphoneValue = {
   /** item 2: subscribe to every raw event off the realtime websocket (the provider
    * already owns the one connection) - returns an unsubscribe function. */
   subscribe(handler: (event: WsEvent) => void): () => void;
+  /** Live captions of the active call (empty unless the org has live transcription). */
+  captions: Caption[];
 };
 
 const SoftphoneContext = React.createContext<SoftphoneValue | null>(null);
@@ -179,6 +187,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const [activeCall, setActiveCall] = React.useState<ActiveCall | null>(null);
   const [incoming, setIncoming] = React.useState<IncomingRing[]>([]);
   const [muted, setMutedState] = React.useState(false);
+  const [captions, setCaptions] = React.useState<Caption[]>([]);
   const [wsConnected, setWsConnected] = React.useState(false);
   const [devices, setDevices] = React.useState<{ inputs: DeviceOption[]; outputs: DeviceOption[] }>(
     { inputs: [], outputs: [] },
@@ -274,6 +283,27 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
 
   const attachRoomListeners = React.useCallback(
     (room: Room) => {
+      setCaptions([]);
+      room.on(
+        RoomEvent.DataReceived,
+        (payload: Uint8Array, _participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
+          if (topic !== "captions" || roomRef.current !== room) return;
+          try {
+            const data = JSON.parse(new TextDecoder().decode(payload)) as Partial<Caption> & {
+              type?: string;
+            };
+            if (data.type !== "caption" || typeof data.text !== "string" || !data.text) return;
+            const caption: Caption = {
+              role: data.role === "agent" ? "agent" : "user",
+              text: data.text,
+              at_ms: typeof data.at_ms === "number" ? data.at_ms : 0,
+            };
+            setCaptions((prev) => [...prev, caption].slice(-MAX_CAPTIONS));
+          } catch {
+            // A malformed caption is dropped; captions are best-effort.
+          }
+        },
+      );
       // Item 3.11: one <audio> element PER remote audio track, not one shared element
       // for the whole call - see audioContainerRef above.
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
@@ -743,6 +773,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       setAudioDevices,
       refreshDevices,
       subscribe,
+      captions,
     }),
     [
       status,
@@ -765,6 +796,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       setAudioDevices,
       refreshDevices,
       subscribe,
+      captions,
     ],
   );
 

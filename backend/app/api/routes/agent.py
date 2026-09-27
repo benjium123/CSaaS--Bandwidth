@@ -154,6 +154,30 @@ async def post_agent_transcript(
     return {"accepted": accepted}
 
 
+class LiveUsageIn(BaseModel):
+    call_id: uuid.UUID
+    deepgram_seconds: int = Field(ge=0, le=86_400)
+
+
+@router.post("/live-usage")
+async def post_live_usage(
+    payload: LiveUsageIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """The live-captions worker reports the Deepgram seconds a call used, once, at exit."""
+    from app.services import live_captions
+
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, payload.call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    set_org_context(session, call.org_id)
+    await live_captions.meter_overflow(session, call, payload.deepgram_seconds)
+    await session.commit()
+    return {"ok": True}
+
+
 class OutcomeItemIn(BaseModel):
     call_id: uuid.UUID
     summary: str | None = None

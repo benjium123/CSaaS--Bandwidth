@@ -533,6 +533,10 @@ class Settings(BaseSettings):
     monitor_recorder_url: str = ""
     #: Private sherpa-onnx transcription worker (stt/), e.g. http://stt:9100. "" = transcription off.
     stt_url: str = ""
+    #: agents/live_captions.py worker name ("" = live captions off).
+    live_captions_agent_name: str = ""
+    #: Monthly Deepgram minutes per org when the box is too busy for live captions.
+    live_overflow_max_minutes: int = 600
     monitor_recorder_dir: str = "var/lkrec"
     #: Monitoring audio of calls reviewed "ok" (or skipped) is deleted after this many days.
     monitor_recording_keep_days: int = 7

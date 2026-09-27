@@ -161,9 +161,34 @@ services:
       MODELS_DIR: /models
       STT_THREADS: "2"
       STT_CONCURRENCY: "1"
+      STT_LIVE_CONCURRENCY: "2"
+    # Loopback only: the host-network live-captions worker reaches it here.
+    ports: ["127.0.0.1:9100:9100"]
     volumes: ["../var/stt-models:/models:ro"]
     cpus: "2"
     mem_limit: 2g
+    logging: *default-logging
+
+  # Live captions (agents/live_captions.py): transcribes a customer's call sentence by
+  # sentence with the local stt worker (Deepgram only as capped overflow) and shows it in
+  # the softphone. Dispatched by the backend (LIVE_CAPTIONS_AGENT_NAME) per call.
+  live-captions:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+    restart: unless-stopped
+    command: ["python", "-m", "agents.live_captions", "start"]
+    env_file: [../.env]
+    environment:
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: csaas-media
+      BACKEND_URL: http://127.0.0.1:8080
+      STT_URL: http://127.0.0.1:9100
+      LIVE_CAPTIONS_AGENT_NAME: live-captions
+    network_mode: host
+    cpus: "1"
+    mem_limit: 1g
+    depends_on: [livekit, stt]
     logging: *default-logging
 
   # P43 call-monitor: the silent listener that transcribes softphone calls chosen for

@@ -5,7 +5,7 @@ import type { CallDetailOut, RecordingOut } from "@/api/hooks";
 
 export type RecordingLayout = "mixed" | "agent" | "customer";
 export type ChannelLayout = "mixed" | "dual";
-export type TranscriptionMode = "off" | "after_call" | "overnight";
+export type TranscriptionMode = "off" | "after_call" | "overnight" | "live";
 
 export interface CallingSettings {
   recording_announcement: boolean;

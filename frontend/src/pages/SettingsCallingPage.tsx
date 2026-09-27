@@ -261,11 +261,13 @@ export function SettingsCallingPage() {
                 <option value="off">Off</option>
                 <option value="after_call">A few minutes after each call</option>
                 <option value="overnight">Overnight, after calling hours</option>
+                <option value="live">Live captions during the call</option>
               </select>
             </label>
             <p id="transcription-mode-help" className="text-[11.5px] text-[hsl(var(--cx-muted))]">
-              Overnight transcripts are ready by 8 am Eastern. Either way, anyone can press
-              Transcribe on a single call to get it right away.
+              Overnight transcripts are ready by 8 am Eastern. Live captions show in the phone
+              panel while the call is on and need "Record every call" turned on. Anyone can
+              press Transcribe on a single call to get it right away.
             </p>
 
             {/* The helper is a description, not part of the name: a screen reader hears

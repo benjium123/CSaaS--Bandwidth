@@ -114,6 +114,7 @@ const {
       ConnectionStateChanged: "connectionStateChanged",
       Disconnected: "disconnected",
       MediaDevicesError: "mediaDevicesError",
+      DataReceived: "dataReceived",
     };
     const ConnectionStateMock = {
       Disconnected: "disconnected",
@@ -205,6 +206,13 @@ function Harness() {
       <div data-testid="muted">{String(sp.muted)}</div>
       <div data-testid="device-error">{sp.deviceError ?? ""}</div>
       <div data-testid="has-me">{String(Boolean(me))}</div>
+      <ul data-testid="captions">
+        {sp.captions.map((c, i) => (
+          <li key={i} data-testid={`caption-${i}`}>
+            {`${c.role}:${c.text}:${c.at_ms}`}
+          </li>
+        ))}
+      </ul>
       <button onClick={() => selectOrg("org-2")}>SwitchOrg</button>
       <ul>
         {sp.incoming.map((r) => (
@@ -1062,6 +1070,97 @@ describe("SoftphoneProvider", () => {
     };
     room.emit("participantDisconnected", participantB);
     expect(document.querySelectorAll("audio")).toHaveLength(0);
+  });
+
+  // Live captions: RoomEvent.DataReceived on topic "captions".
+  function captionPayload(data: Record<string, unknown>): Uint8Array {
+    return new TextEncoder().encode(JSON.stringify(data));
+  }
+
+  it("adds a caption from a DataReceived event on the captions topic", async () => {
+    renderSoftphone(makeStubClient(dialRoutes()));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+
+    const room = FakeRoom.instances.at(-1)!;
+    act(() => {
+      room.emit(
+        "dataReceived",
+        captionPayload({ type: "caption", role: "agent", text: "hello", at_ms: 10 }),
+        undefined,
+        undefined,
+        "captions",
+      );
+    });
+
+    await waitFor(() => expect(screen.getByTestId("captions").textContent).toBe("agent:hello:10"));
+  });
+
+  it("ignores a DataReceived event on a topic other than captions", async () => {
+    renderSoftphone(makeStubClient(dialRoutes()));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+
+    const room = FakeRoom.instances.at(-1)!;
+    act(() => {
+      room.emit(
+        "dataReceived",
+        captionPayload({ type: "caption", role: "agent", text: "hello", at_ms: 10 }),
+        undefined,
+        undefined,
+        "some-other-topic",
+      );
+    });
+
+    expect(screen.getByTestId("captions").textContent).toBe("");
+  });
+
+  it("ignores a malformed (non-JSON) DataReceived payload on the captions topic", async () => {
+    renderSoftphone(makeStubClient(dialRoutes()));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+
+    const room = FakeRoom.instances.at(-1)!;
+    act(() => {
+      room.emit(
+        "dataReceived",
+        new TextEncoder().encode("not json"),
+        undefined,
+        undefined,
+        "captions",
+      );
+    });
+
+    expect(screen.getByTestId("captions").textContent).toBe("");
+  });
+
+  it("resets captions when a new room is attached", async () => {
+    renderSoftphone(makeStubClient(dialRoutes({ "/api/v1/calls/call-1/hangup": () => ({}) })));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+    const firstRoom = FakeRoom.instances.at(-1)!;
+    act(() => {
+      firstRoom.emit(
+        "dataReceived",
+        captionPayload({ type: "caption", role: "user", text: "yo", at_ms: 5 }),
+        undefined,
+        undefined,
+        "captions",
+      );
+    });
+    await waitFor(() => expect(screen.getByTestId("captions").textContent).toBe("user:yo:5"));
+
+    await userEvent.click(screen.getByText("HangUp"));
+    await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("idle"));
+
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(FakeRoom.instances.at(-1)).not.toBe(firstRoom));
+    expect(screen.getByTestId("captions").textContent).toBe("");
   });
 
   // Item 3.12

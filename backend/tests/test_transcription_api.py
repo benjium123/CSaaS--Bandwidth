@@ -34,7 +34,7 @@ async def test_settings_round_trip_record_calls_and_transcription_mode(p29_app):
     assert r.json()["transcription_mode"] == "overnight"
 
     r = await client.patch(
-        "/api/v1/orgs/current/calling", json={"transcription_mode": "live"}, headers=headers
+        "/api/v1/orgs/current/calling", json={"transcription_mode": "sometimes"}, headers=headers
     )
     assert r.status_code == 422, r.text
 

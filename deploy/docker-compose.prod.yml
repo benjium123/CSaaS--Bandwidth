@@ -32,6 +32,7 @@ services:
       MONITOR_RECORDER_DIR: /app/var/lkrec
       # Transcription worker (deploy/livekit compose, stt/). Empty = transcription off.
       STT_URL: http://stt:9100
+      LIVE_CAPTIONS_AGENT_NAME: live-captions
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_started}

@@ -913,6 +913,11 @@ async def on_livekit_event(session: AsyncSession, api, settings: Settings, event
         )
         if not started and reason is not None:
             await dispatch_listener(session, api, settings, call)
+    if customer and not assistant:
+        from app.services import live_captions, transcription
+
+        if live_captions.enabled(settings) and await transcription.wanted(session, org) == "live":
+            await live_captions.dispatch(session, api, settings, call)
     await session.commit()
 
 

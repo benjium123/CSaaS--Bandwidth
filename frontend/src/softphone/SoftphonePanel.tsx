@@ -17,7 +17,8 @@ import {
 } from "lucide-react";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { useNumbers } from "@/api/hooks";
-import { useSoftphone } from "@/softphone/SoftphoneProvider";
+import { useSoftphone, type Caption } from "@/softphone/SoftphoneProvider";
+import { useCapabilities } from "@/api/capabilities";
 import { Button, Input } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -126,6 +127,32 @@ function useRingTone(active: boolean, muted: boolean) {
   }, [active, muted]);
 }
 
+/** Live captions: the latest lines, newest at the bottom, scrolled into view. */
+function CaptionsStrip({ captions }: { captions: Caption[] }) {
+  const endRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    endRef.current?.scrollIntoView?.({ block: "end" });
+  }, [captions.length]);
+  return (
+    <div
+      role="log"
+      aria-label="Live captions"
+      aria-live="polite"
+      className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-border p-2 text-xs"
+    >
+      {captions.map((caption, i) => (
+        <p key={i}>
+          <span className="font-medium text-muted-foreground">
+            {caption.role === "agent" ? "You: " : "Them: "}
+          </span>
+          {caption.text}
+        </p>
+      ))}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
 export function SoftphonePanel() {
   // The console follows the one stored theme preference the front door writes. See
   // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
@@ -134,6 +161,11 @@ export function SoftphonePanel() {
   const { api, me, orgId } = useAuth();
   const { data: numbers } = useNumbers(api);
   const softphone = useSoftphone();
+  const capabilities = useCapabilities(api);
+  // Shown only to workspaces with transcription turned on (ops entitlement).
+  const captionsAllowed =
+    (capabilities.data as { features?: Record<string, boolean> } | undefined)?.features
+      ?.call_transcription === true;
   const [expanded, setExpanded] = React.useState(false);
   const [to, setTo] = React.useState("");
   const [from, setFrom] = React.useState("");
@@ -493,6 +525,10 @@ export function SoftphonePanel() {
             <p className="text-sm font-medium">{formatPhone(softphone.activeCall.contact)}</p>
             <p className="text-xs text-muted-foreground">{formatElapsed(elapsed)}</p>
           </div>
+
+          {captionsAllowed && softphone.captions.length > 0 && (
+            <CaptionsStrip captions={softphone.captions} />
+          )}
 
           {showKeypad && (
             <div className="space-y-2">

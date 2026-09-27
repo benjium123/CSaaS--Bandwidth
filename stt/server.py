@@ -182,6 +182,18 @@ def _decode_segments(recognizer, segments, punct):
     return texts
 
 
+class LockedPunct:
+    """The punctuation model is shared by every request; one call at a time (it is fast)."""
+
+    def __init__(self, punct):
+        self._punct = punct
+        self._lock = threading.Lock()
+
+    def add_punctuation_with_case(self, text):
+        with self._lock:
+            return self._punct.add_punctuation_with_case(text)
+
+
 def load_models():
     import sherpa_onnx
 
@@ -217,6 +229,15 @@ def load_models():
                 num_threads=threads,
             )
             engines["zipformer"] = recognizer
+            # A second instance only for live captions: a recognizer is
+            # never shared between a long after-call job and a live sentence.
+            engines["zipformer-live"] = sherpa_onnx.OfflineRecognizer.from_transducer(
+                encoder=os.path.join(zipformer_dir, "encoder-epoch-30-avg-1.int8.onnx"),
+                decoder=os.path.join(zipformer_dir, "decoder-epoch-30-avg-1.onnx"),
+                joiner=os.path.join(zipformer_dir, "joiner-epoch-30-avg-1.int8.onnx"),
+                tokens=os.path.join(zipformer_dir, "tokens.txt"),
+                num_threads=int(os.environ.get("STT_LIVE_THREADS", "2")),
+            )
         except Exception as exc:
             print(f"warning: failed to load zipformer model: {type(exc).__name__}", file=sys.stderr)
     else:
@@ -293,6 +314,8 @@ def make_server(port, token, engines, punct, vad_path):
                 "ok": True,
                 "busy": busy,
                 "capacity": self.server.capacity,
+                "live_busy": self.server.live_active,
+                "live_capacity": self.server.live_capacity,
                 "engines": sorted(self.server.engines.keys()),
                 "cpus": os.cpu_count(),
                 "load1": os.getloadavg()[0],
@@ -302,17 +325,24 @@ def make_server(port, token, engines, punct, vad_path):
             parsed = urllib.parse.urlparse(self.path)
             qs = urllib.parse.parse_qs(parsed.query)
             engine = qs.get("engine", [None])[0]
+            # Live captions (one sentence at a time) have their own slots, so a long
+            # after-call job never makes a caption wait.
+            live = qs.get("live", ["0"])[0] == "1"
+            if live and "zipformer-live" in self.server.engines:
+                engine = "zipformer-live"
+            semaphore = self.server.live_semaphore if live else self.server.semaphore
+            counter = "live_active" if live else "active"
 
             if engine not in self.server.engines:
                 self._send_json(400, {"error": "unknown or unavailable engine"})
                 return
 
-            if not self.server.semaphore.acquire(blocking=False):
+            if not semaphore.acquire(blocking=False):
                 self._send_json(503, {"error": "busy"})
                 return
 
             with self.server.active_lock:
-                self.server.active += 1
+                setattr(self.server, counter, getattr(self.server, counter) + 1)
 
             tmp_path = None
             started = time.monotonic()
@@ -353,7 +383,9 @@ def make_server(port, token, engines, punct, vad_path):
                     if not segments:
                         continue
 
-                    use_punct = self.server.punct if engine == "zipformer" else None
+                    use_punct = (
+                        self.server.punct if engine in ("zipformer", "zipformer-live") else None
+                    )
                     texts = _decode_segments(self.server.engines[engine], segments, use_punct)
 
                     pieces = []
@@ -404,16 +436,19 @@ def make_server(port, token, engines, punct, vad_path):
                     except OSError:
                         pass
                 with self.server.active_lock:
-                    self.server.active -= 1
-                self.server.semaphore.release()
+                    setattr(self.server, counter, getattr(self.server, counter) - 1)
+                semaphore.release()
 
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     server.engines = engines
-    server.punct = punct
+    server.punct = LockedPunct(punct) if punct is not None else None
     server.vad_path = vad_path
     server.capacity = int(os.environ.get("STT_CONCURRENCY", "1"))
     server.semaphore = threading.BoundedSemaphore(server.capacity)
     server.active = 0
+    server.live_capacity = int(os.environ.get("STT_LIVE_CONCURRENCY", "2"))
+    server.live_semaphore = threading.BoundedSemaphore(server.live_capacity)
+    server.live_active = 0
     server.active_lock = threading.Lock()
     return server
 

@@ -22,7 +22,8 @@ DEFAULT_DISPOSITIONS: tuple[str, ...] = (
 CHANNEL_LAYOUTS: frozenset[str] = frozenset({"mixed", "dual"})
 DEFAULT_CHANNEL_LAYOUT = "mixed"
 #: off | after_call (minutes after the call) | overnight (after calling hours, cheaper)
-TRANSCRIPTION_MODES: frozenset[str] = frozenset({"off", "after_call", "overnight"})
+#: | live (captions during the call; the saved transcript comes from them)
+TRANSCRIPTION_MODES: frozenset[str] = frozenset({"off", "after_call", "overnight", "live"})
 #: Plain English, no legalese, no product name. Played before connecting.
 DEFAULT_ANNOUNCEMENT_TEXT = "This call may be recorded for quality and training."
 MAX_DISPOSITIONS = 25
@@ -68,7 +69,7 @@ def transcription_mode_for(org) -> str:
 
 def normalize_transcription_mode(value) -> str:
     if not isinstance(value, str) or value not in TRANSCRIPTION_MODES:
-        raise ValidationFailedError("Transcripts must be off, after_call or overnight")
+        raise ValidationFailedError("Transcripts must be off, after_call, overnight or live")
     return value
 
 

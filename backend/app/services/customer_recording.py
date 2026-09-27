@@ -397,7 +397,8 @@ async def finalize_tick(
 
             if transcription.enabled(settings) and org is not None:
                 mode = await transcription.wanted(session, org)
-                if mode is not None:
+                # Live calls already have their transcript (from the captions).
+                if mode in ("after_call", "overnight"):
                     tier = "soon" if mode == "after_call" else "night"
                     await transcription.enqueue(session, call, row, tier=tier, now=now)
 

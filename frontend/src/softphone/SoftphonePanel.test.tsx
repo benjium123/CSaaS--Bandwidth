@@ -58,6 +58,7 @@ const { FakeRoom, FakeLocalParticipant, RoomEventMock, ConnectionStateMock, Trac
         ConnectionStateChanged: "connectionStateChanged",
         Disconnected: "disconnected",
         MediaDevicesError: "mediaDevicesError",
+        DataReceived: "dataReceived",
       },
       ConnectionStateMock: {
         Disconnected: "disconnected",
@@ -638,5 +639,115 @@ describe("SoftphonePanel", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Open softphone" }));
 
     expect(screen.getByText("Dial 933 to test your 911 address.")).toBeInTheDocument();
+  });
+
+  // Live captions: CaptionsStrip, gated on features.call_transcription from capabilities.
+  function captionPayload(data: Record<string, unknown>): Uint8Array {
+    return new TextEncoder().encode(JSON.stringify(data));
+  }
+
+  async function dialAndGetRoom(client: ReturnType<typeof makeStubClient>) {
+    renderWithProviders(
+      <SoftphoneProvider>
+        <SoftphonePanel />
+      </SoftphoneProvider>,
+      client,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Open softphone" }));
+    await userEvent.type(screen.getByLabelText("Number to call"), "+19725550199");
+    await userEvent.click(screen.getByRole("button", { name: /Call/ }));
+    await screen.findByRole("button", { name: /Hang up/ });
+    return FakeRoom.instances.at(-1)!;
+  }
+
+  it("shows a live captions log once call_transcription is enabled", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/me/capabilities": { permissions: [], org: {}, features: { call_transcription: true } },
+      "/api/v1/calls": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { ...NEW_CALL_DETAIL, room: "call-call-2", token: "tok-abc", url: "wss://lk.example.com" };
+        }
+        throw new Error("unexpected request");
+      },
+    });
+
+    const room = await dialAndGetRoom(client);
+    act(() => {
+      room.emit(
+        "dataReceived",
+        captionPayload({ type: "caption", role: "agent", text: "hi", at_ms: 1 }),
+        undefined,
+        undefined,
+        "captions",
+      );
+      room.emit(
+        "dataReceived",
+        captionPayload({ type: "caption", role: "user", text: "yo", at_ms: 2 }),
+        undefined,
+        undefined,
+        "captions",
+      );
+    });
+
+    const log = await screen.findByRole("log", { name: "Live captions" });
+    expect(log).toHaveTextContent("You: hi");
+    expect(log).toHaveTextContent("Them: yo");
+  });
+
+  it("does not show a live captions log when call_transcription is false", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/me/capabilities": { permissions: [], org: {}, features: { call_transcription: false } },
+      "/api/v1/calls": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { ...NEW_CALL_DETAIL, room: "call-call-2", token: "tok-abc", url: "wss://lk.example.com" };
+        }
+        throw new Error("unexpected request");
+      },
+    });
+
+    const room = await dialAndGetRoom(client);
+    act(() => {
+      room.emit(
+        "dataReceived",
+        captionPayload({ type: "caption", role: "agent", text: "hi", at_ms: 1 }),
+        undefined,
+        undefined,
+        "captions",
+      );
+    });
+
+    expect(screen.queryByRole("log", { name: "Live captions" })).toBeNull();
+  });
+
+  it("does not show a live captions log when capabilities omits features entirely", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { ...NEW_CALL_DETAIL, room: "call-call-2", token: "tok-abc", url: "wss://lk.example.com" };
+        }
+        throw new Error("unexpected request");
+      },
+      // No "/api/v1/me/capabilities" stub - the query errors, `data` stays undefined,
+      // matching a backend that hasn't rolled the field out yet.
+    });
+
+    const room = await dialAndGetRoom(client);
+    act(() => {
+      room.emit(
+        "dataReceived",
+        captionPayload({ type: "caption", role: "agent", text: "hi", at_ms: 1 }),
+        undefined,
+        undefined,
+        "captions",
+      );
+    });
+
+    expect(screen.queryByRole("log", { name: "Live captions" })).toBeNull();
   });
 });
