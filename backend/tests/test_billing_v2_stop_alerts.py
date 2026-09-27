@@ -473,9 +473,9 @@ async def test_evaluate_not_prepaid_returns_ok_and_sends_nothing(session, settin
 # Auto-recharge
 # ==================================================================================
 def test_recharge_amount():
-    assert ai_usage.recharge_amount(25_000_000, 0) == 30_000_000
-    assert ai_usage.recharge_amount(5_000_000, 23_000_000) == 30_000_000
-    assert ai_usage.recharge_amount(0, 1) == 10_000_000
+    assert ai_usage.recharge_amount(25_000_000, 0) == 25_000_000
+    assert ai_usage.recharge_amount(5_000_000, 23_000_000) == 25_000_000
+    assert ai_usage.recharge_amount(0, 1) == 5_000_000
     assert ai_usage.recharge_amount(40_000_000, 0) == 40_000_000
 
 
@@ -511,7 +511,7 @@ async def test_auto_recharge_declines_and_disables_after_max_failures(session, s
 
     org = await session.get(Org, org.id)
     assert org.auto_recharge_failures == 1
-    assert charged == [20_000_000]  # a $10 multiple covering the 9_000_000 shortfall
+    assert charged == [20_000_000]  # the configured $20 (covers the 9_000_000 shortfall)
 
     # Immediate retry waits an hour.
     assert await ai_usage.maybe_auto_recharge(session, org, settings=settings) is None

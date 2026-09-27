@@ -154,6 +154,10 @@ async def test_price_lines(session):
         [{"type": "package", "package": "fax", "quantity": 1}],
         [{"type": "item", "description": "x", "amount_cents": 100},
          {"type": "discount", "amount_cents": 101}],
+        # Under the $5 minimum, before or after the discount.
+        [{"type": "item", "description": "x", "amount_cents": 499}],
+        [{"type": "item", "description": "x", "amount_cents": 600},
+         {"type": "discount", "amount_cents": 101}],
     ):
         with pytest.raises(ValidationFailedError):
             await custom_invoices.price_lines(session, bad)

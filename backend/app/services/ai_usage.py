@@ -846,12 +846,12 @@ AUTO_RECHARGE_PENDING_MAX_HOURS = 3
 #: row switches auto-recharge off (the org is then hard-stopped at $0 like any other).
 AUTO_RECHARGE_RETRY_AFTER_HOURS = 1
 AUTO_RECHARGE_MAX_FAILURES = 3
-AUTO_RECHARGE_STEP_MICROS = 10_000_000
+AUTO_RECHARGE_STEP_MICROS = 5_000_000
 
 
 def recharge_amount(configured_micros: int, shortfall_micros: int) -> int:
     """At least the configured amount and at least the shortfall, rounded UP to a whole
-    $10 step, never under $10."""
+    $5 step, never under $5."""
     want = max(int(configured_micros), int(shortfall_micros), AUTO_RECHARGE_STEP_MICROS)
     step = AUTO_RECHARGE_STEP_MICROS
     return ((want + step - 1) // step) * step

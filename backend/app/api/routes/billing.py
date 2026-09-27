@@ -673,8 +673,9 @@ async def patch_auto_recharge(
             )
         if payload.threshold_micros <= 0 or payload.amount_micros <= 0:
             raise ValidationFailedError("Threshold and amount must be positive.")
-        if payload.amount_micros < 10_000_000 or payload.amount_micros % 10_000_000:
-            raise ValidationFailedError("Auto-recharge amount must be a multiple of $10.")
+        step = ai_usage.AUTO_RECHARGE_STEP_MICROS
+        if payload.amount_micros < step or payload.amount_micros % step:
+            raise ValidationFailedError("Auto-recharge amount must be a multiple of $5.")
 
         pm = (
             await ctx.session.execute(

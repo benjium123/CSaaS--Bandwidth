@@ -30,10 +30,10 @@ function dollarsInputValue(micros: number): string {
   return Number.isInteger(dollars) ? String(dollars) : dollars.toFixed(2);
 }
 
-// The server rejects any auto-recharge amount that is not a whole multiple of $10 with
-// "Auto-recharge amount must be a multiple of $10." - this mirrors that rule client-side so
+// The server rejects any auto-recharge amount that is not a whole multiple of $5 with
+// "Auto-recharge amount must be a multiple of $5." - this mirrors that rule client-side so
 // the invalid amount is caught before the request, not after a 422.
-const AUTO_RECHARGE_STEP_MICROS = 10_000_000;
+const AUTO_RECHARGE_STEP_MICROS = 5_000_000;
 
 function isAutoRechargeStep(micros: number): boolean {
   return micros % AUTO_RECHARGE_STEP_MICROS === 0;
@@ -96,7 +96,7 @@ export function BalanceCard({
   const customInvalid = customAmount.trim() !== "" && customMicros === null;
   const thresholdMicros = parseDollarsToMicros(thresholdText);
   const rawAmountMicros = parseDollarsToMicros(amountText);
-  // A parsed-but-not-a-multiple-of-$10 amount is invalid the same way a non-numeric amount
+  // A parsed-but-not-a-multiple-of-$5 amount is invalid the same way a non-numeric amount
   // is: it must not reach handleAutoSave, so it is treated as null right here rather than
   // threaded through as a separate flag.
   const amountMicros =
@@ -255,7 +255,7 @@ export function BalanceCard({
                   disabled={!canPay || autoRechargeMutation.isPending}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Charged in steps of $10. We top up when your balance drops below about one
+                  Charged in steps of $5 (at least $5). We top up when your balance drops below about one
                   day of usage (at least $5).
                   {summary.warn_threshold_micros != null
                     ? ` (currently ${formatCredits(summary.warn_threshold_micros)})`

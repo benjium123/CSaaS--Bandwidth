@@ -37,6 +37,8 @@ LINE_TYPES = ("package", "credit", "item", "discount")
 COLLECTIONS = ("charge_card", "email_link")
 MAX_LINES = 20
 MAX_LINE_CENTS = 10_000_000  # $100k
+#: Smallest invoice total after the discount (Stripe's fixed fee makes smaller ones a loss).
+MIN_TOTAL_CENTS = 500
 _CENT = 10_000  # micros
 PACKAGE_LABELS = {"sms": "SMS", "mms": "MMS", "voice": "call-minute"}
 UNIT_LABELS = {"sms": "SMS", "mms": "MMS", "voice": "call minutes"}
@@ -143,6 +145,10 @@ async def price_lines(session: AsyncSession, lines: list[dict]) -> list[dict]:
         if off > 0:
             desc = (d.get("description") or "").strip() or label
             out.append({"type": "discount", "description": desc[:200], "amount_cents": -off})
+    if sum(ln["amount_cents"] for ln in out) < MIN_TOTAL_CENTS:
+        raise ValidationFailedError(
+            f"An invoice must total at least ${MIN_TOTAL_CENTS // 100} after the discount"
+        )
     return out
 
 
