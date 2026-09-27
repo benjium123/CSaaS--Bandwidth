@@ -190,7 +190,8 @@ async def test_transcribe_pending_with_mocked_deepgram_stores_transcript(session
     def _handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == "Token dg-test-key"
         payload = {
-            "results": {"channels": [{"alternatives": [{"transcript": "hello, leave a message"}]}]}
+            "metadata": {"duration": 12.4},
+            "results": {"channels": [{"alternatives": [{"transcript": "hello, leave a message"}]}]},
         }
         return httpx.Response(200, content=json.dumps(payload))
 
@@ -206,6 +207,22 @@ async def test_transcribe_pending_with_mocked_deepgram_stores_transcript(session
     await session.refresh(vm)
     assert vm.transcript_status == "done"
     assert vm.transcript == "hello, leave a message"
+
+    # Our Deepgram cost is metered for the P&L (13 billed seconds) and never charged.
+    import sqlalchemy as sa
+
+    from app.models import AiUsageEvent
+
+    event = (
+        await session.execute(
+            sa.select(AiUsageEvent)
+            .where(AiUsageEvent.idempotency_key == f"voicemail-stt:{vm.id}")
+            .execution_options(allow_unscoped=True)
+        )
+    ).scalar_one()
+    assert (event.source, event.metric, event.quantity) == ("platform", "stt_seconds", 13)
+    assert event.cost_micros > 0
+    assert event.price_micros == 0
 
 
 async def test_transcribe_pending_skips_recording_not_yet_stored(session, engine):

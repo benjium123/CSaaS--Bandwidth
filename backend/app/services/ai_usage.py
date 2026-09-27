@@ -23,6 +23,7 @@ from app.models import (
     AI_USAGE_KINDS,
     AI_USAGE_METRICS,
     AI_USAGE_SOURCES,
+    PLATFORM_COST_SOURCES,
     AgentProfile,
     AiUsageEvent,
     Call,
@@ -179,9 +180,12 @@ async def record(
     else:
         cost_micros = int(unit_cost) * int(quantity)
 
-    price_micros = credits.price_for(
-        cost_micros=cost_micros, kind=kind, quantity=int(quantity), org=org
-    )
+    if source in PLATFORM_COST_SOURCES:
+        price_micros = 0  # our own cost: in the P&L, never billed
+    else:
+        price_micros = credits.price_for(
+            cost_micros=cost_micros, kind=kind, quantity=int(quantity), org=org
+        )
 
     event = AiUsageEvent(
         id=uuid.uuid4(),

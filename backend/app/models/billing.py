@@ -21,7 +21,10 @@ from app.db.base import Base, TenantScoped, TimestampMixin
 from app.db.types import GUID
 
 AI_USAGE_KINDS: tuple[str, ...] = ("llm", "stt", "tts", "voice")
-AI_USAGE_SOURCES: tuple[str, ...] = ("worker", "simulate", "sms_agent")
+AI_USAGE_SOURCES: tuple[str, ...] = ("worker", "simulate", "sms_agent", "platform")
+#: Sources that are OUR cost (e.g. safety-review / voicemail transcription): metered for
+#: the P&L, priced at 0, never charged to the workspace.
+PLATFORM_COST_SOURCES: frozenset[str] = frozenset({"platform"})
 AI_USAGE_METRICS: tuple[str, ...] = (
     "ai_voice_seconds",
     "stt_seconds",

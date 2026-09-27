@@ -175,6 +175,32 @@ async def transcribe_pending(
     return counts
 
 
+async def _meter_deepgram(session: AsyncSession, voicemail: Voicemail, resp) -> None:  # noqa: ANN001
+    """Record what Deepgram billed us for this voicemail (billed per audio second).
+
+    Source "platform": our own cost, in the P&L's ai_cost, priced at 0 so it is never
+    charged to the workspace. Metering must never break transcription.
+    """
+    import math
+
+    from app.services import ai_usage
+
+    try:
+        duration = float(resp.json().get("metadata", {}).get("duration") or 0)
+        await ai_usage.record(
+            session,
+            voicemail.org_id,
+            provider="deepgram",
+            kind="stt",
+            metric="stt_seconds",
+            quantity=max(1, math.ceil(duration)),
+            source="platform",
+            idempotency_key=f"voicemail-stt:{voicemail.id}",
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("voicemail_transcribe_meter_failed", voicemail_id=str(voicemail.id))
+
+
 async def _transcribe_one(
     session: AsyncSession,
     store,  # noqa: ANN001
@@ -210,6 +236,8 @@ async def _transcribe_one(
     if resp.status_code >= 400:
         voicemail.transcript_status = "failed"
         return False
+
+    await _meter_deepgram(session, voicemail, resp)
 
     try:
         payload = resp.json()
