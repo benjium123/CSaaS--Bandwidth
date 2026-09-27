@@ -8,6 +8,14 @@ from cryptography.fernet import Fernet
 
 from tests.conftest import auth_headers, make_settings, register_and_login
 
+
+def _next_totp_step(monkeypatch) -> None:
+    """Jump the clock to the next 30 s TOTP step instead of sleeping for it (the server's
+    replay guard needs a fresh step). Codes are then made with ``.at(time.time())``."""
+    before = time.time
+    offset = 31 - (int(before()) % 30)
+    monkeypatch.setattr(time, "time", lambda: before() + offset)
+
 FERNET_KEY = Fernet.generate_key().decode()
 
 
@@ -47,7 +55,7 @@ async def _enroll_and_activate(client, token, password: str = "correct-horse-bat
     return secret
 
 
-async def test_enroll_activate_login_verify(twofa_client):
+async def test_enroll_activate_login_verify(twofa_client, monkeypatch):
     client = twofa_client
     token = await register_and_login(client, "tf1@example.com")
     secret = await _enroll_and_activate(client, token)
@@ -64,10 +72,10 @@ async def test_enroll_activate_login_verify(twofa_client):
     assert pending
 
     # Wait for a fresh timestep so the activation code is not replayed.
-    time.sleep(31 - (int(time.time()) % 30))
+    _next_totp_step(monkeypatch)
     verify = await client.post(
         "/api/v1/auth/2fa/verify",
-        json={"pending_token": pending, "code": pyotp.TOTP(secret).now()},
+        json={"pending_token": pending, "code": pyotp.TOTP(secret).at(int(time.time()))},
     )
     assert verify.status_code == 200, verify.text
     real_token = verify.json()["access_token"]
@@ -108,13 +116,13 @@ async def test_wrong_code_rejected(twofa_client):
     assert r.status_code == 401
 
 
-async def test_code_replay_rejected(twofa_client):
+async def test_code_replay_rejected(twofa_client, monkeypatch):
     client = twofa_client
     token = await register_and_login(client, "tf4@example.com")
     secret = await _enroll_and_activate(client, token)
 
-    time.sleep(31 - (int(time.time()) % 30))
-    code = pyotp.TOTP(secret).now()
+    _next_totp_step(monkeypatch)
+    code = pyotp.TOTP(secret).at(int(time.time()))
 
     first_login = await client.post(
         "/api/v1/auth/login",
@@ -163,7 +171,7 @@ async def test_enroll_without_fernet_key_is_503(client):
     assert r.json()["error"]["code"] == "feature_unavailable"
 
 
-async def test_disable_requires_a_valid_code(twofa_client):
+async def test_disable_requires_a_valid_code(twofa_client, monkeypatch):
     client = twofa_client
     token = await register_and_login(client, "tf7@example.com")
     secret = await _enroll_and_activate(client, token)
@@ -175,10 +183,10 @@ async def test_disable_requires_a_valid_code(twofa_client):
     )
     assert bad.status_code == 401
 
-    time.sleep(31 - (int(time.time()) % 30))
+    _next_totp_step(monkeypatch)
     good = await client.post(
         "/api/v1/auth/2fa/disable",
-        json={"code": pyotp.TOTP(secret).now(), "password": "correct-horse-battery"},
+        json={"code": pyotp.TOTP(secret).at(int(time.time())), "password": "correct-horse-battery"},
         headers=auth_headers(token),
     )
     assert good.status_code == 200

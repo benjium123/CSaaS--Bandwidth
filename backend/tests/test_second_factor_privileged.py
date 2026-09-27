@@ -52,6 +52,14 @@ from tests.conftest import (
 pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
 
 #: conftest's default password shape (>= password_min_length of 10).
+
+def _next_totp_step(monkeypatch) -> None:
+    """Jump the clock to the next 30 s TOTP step instead of sleeping for it (the server's
+    replay guard needs a fresh step). Codes are then made with ``.at(time.time())``."""
+    before = time.time
+    offset = 31 - (int(before()) % 30)
+    monkeypatch.setattr(time, "time", lambda: before() + offset)
+
 PASSWORD = "correct-horse-battery"
 
 #: TOTP enrolment encrypts the secret at rest, so the settings need a Fernet key.
@@ -418,7 +426,7 @@ async def test_agent_in_one_org_and_admin_in_another_is_required(sf_client, sess
     assert me["second_factor_required"] is True
 
 
-async def test_agent_may_remove_their_only_factor(sf_client, session):
+async def test_agent_may_remove_their_only_factor(sf_client, session, monkeypatch):
     """A second factor is optional for an agent, and optional has to mean reversible.
 
     If this failed, enrolling one voluntarily would be a one-way door: an ordinary staff
@@ -434,13 +442,13 @@ async def test_agent_may_remove_their_only_factor(sf_client, session):
     secret = await _enroll_and_activate(sf_client, agent_token)
 
     # A TOTP code cannot be reused, so the code spent on activation must have expired
-    # before the disable below can use a fresh one. Do NOT delete this sleep: without it
-    # the disable is frequently rejected with a 401 replay error and the test goes flaky.
-    time.sleep(31 - (int(time.time()) % 30))
+    # before the disable below can use a fresh one. Do NOT delete this clock jump: without
+    # it the disable is frequently rejected with a 401 replay error and the test goes flaky.
+    _next_totp_step(monkeypatch)
 
     r = await sf_client.post(
         "/api/v1/auth/2fa/disable",
-        json={"code": pyotp.TOTP(secret).now(), "password": PASSWORD},
+        json={"code": pyotp.TOTP(secret).at(int(time.time())), "password": PASSWORD},
         headers=auth_headers(agent_token),
     )
     assert r.status_code == 200, r.text

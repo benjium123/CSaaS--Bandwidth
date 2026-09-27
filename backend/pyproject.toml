@@ -53,6 +53,9 @@ dev = [
     # PostgreSQL (SQLite serialises writes and never shows it), and without a watchdog the
     # whole run sits there with no output. Cost an hour twice before it was diagnosed.
     "pytest-timeout>=2.3",
+    # Parallel runs: `pytest -n auto` (each worker has its own in-memory SQLite). The full
+    # suite is ~275 files and takes about an hour on one process.
+    "pytest-xdist>=3.6",
     "ruff>=0.8",
 ]
 
