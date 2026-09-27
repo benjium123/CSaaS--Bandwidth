@@ -185,6 +185,47 @@ async def test_charge_sms_with_usage_discount(session):
     assert rows[0].discount_micros == 3_000
 
 
+async def test_full_usage_discount_still_records_what_was_given(session):
+    """A 100% discount charges $0 but still writes the row, so the console counts it."""
+    org_id = await _new_org(session, "Free SMS Org", prepaid=True)
+    set_org_context(session, org_id)
+    await credits.topup(session, org_id, 1_000_000, reference=f"topup-{uuid.uuid4()}")
+    await discounts.set_discount(
+        session, org_id, "usage", percent_bps=10_000, ends_at=None, note=None, actor_user_id=None
+    )
+    await session.commit()
+
+    set_org_context(session, org_id)
+    message = Message(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        thread_id=uuid.uuid4(),
+        direction="outbound",
+        status="accepted",
+        from_e164="+12145550109",
+        to_e164="+19725550109",
+        body="x",
+        media=[],
+        carrier="bandwidth",
+        segment_count_est=1,
+    )
+    await telephony_billing.charge_sms(session, org_id, message)
+    await session.commit()
+
+    set_org_context(session, org_id)
+    rows = list(
+        (
+            await session.execute(
+                sa.select(CreditLedgerEntry).where(CreditLedgerEntry.entry_type == "usage")
+            )
+        ).scalars()
+    )
+    assert len(rows) == 1
+    assert rows[0].amount_micros == 0
+    assert rows[0].discount_micros == 15_000
+    assert await credits.balance(session, org_id) == 1_000_000
+
+
 def test_quote_from_list_workspace_discount():
     q = bundles.quote_from_list("sms", 5, 13_000_000, workspace_bps=1000)
     assert q["list"] == 65_000_000
@@ -227,6 +268,14 @@ def test_tendlc_quote_service_discount():
     assert discounted["service_fee_cents"] == 400
     assert discounted["service_discount_cents"] == 100
     assert discounted["due_today_cents"] == base["due_today_cents"] - 100
+
+
+def test_tendlc_customer_quote_shows_the_discounted_total():
+    tier = next(iter(tendlc.MONTHLY_CENTS))
+    shown = tendlc.customer_quote(tier, 2000)
+    assert shown["due_today_cents"] == tendlc.quote(tier, 2000)["due_today_cents"]
+    assert "service_fee_cents" not in shown  # the Ringlite / carrier split stays hidden
+    assert tendlc.customer_quote(tier)["due_today_cents"] == tendlc.quote(tier)["due_today_cents"]
 
 
 async def test_discount_route_put_and_get(ops, session, ops_settings):

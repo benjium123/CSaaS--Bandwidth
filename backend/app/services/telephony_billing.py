@@ -483,7 +483,15 @@ async def charge_sms(session: AsyncSession, org_id: uuid.UUID, message: Message)
         outbound=outbound,
         units=billable,
     )
-    if price <= 0:
+    discount = await discount_on(
+        session,
+        org_id,
+        message.carrier,
+        _sms_metric(is_mms=_is_mms(message), outbound=outbound),
+        billable,
+    )
+    # A 100% discount still writes a $0 row so the console counts what was given away.
+    if price <= 0 and discount <= 0:
         return
     await credits.charge_usage(
         session,
@@ -491,13 +499,7 @@ async def charge_sms(session: AsyncSession, org_id: uuid.UUID, message: Message)
         price,
         reference=f"sms:{message.id}",
         note=f"{'MMS' if _is_mms(message) else 'SMS'} {'sent' if outbound else 'received'}",
-        discount_micros=await discount_on(
-            session,
-            org_id,
-            message.carrier,
-            _sms_metric(is_mms=_is_mms(message), outbound=outbound),
-            billable,
-        ),
+        discount_micros=discount,
     )
 
 
@@ -543,16 +545,15 @@ async def charge_segment_correction(
         return
     per_segment = await unit_price(session, org_id, message.carrier, "sms_out")
     delta = billable * per_segment
-    if delta > 0:
+    discount = await discount_on(session, org_id, message.carrier, "sms_out", billable)
+    if delta > 0 or discount > 0:
         await credits.charge_usage(
             session,
             org_id,
             delta,
             reference=f"sms:{message.id}:segments",
             note=f"{billable} extra segment(s) reported by the carrier",
-            discount_micros=await discount_on(
-                session, org_id, message.carrier, "sms_out", billable
-            ),
+            discount_micros=discount,
         )
 
 
@@ -775,13 +776,13 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
                 session, org_id, call.carrier, _call_metric(call.direction)
             )
             price = voice_price_micros(uncovered_seconds, per_minute)
-            if price > 0:
-                listed = voice_price_micros(
-                    uncovered_seconds,
-                    await list_unit_price(
-                        session, org_id, call.carrier, _call_metric(call.direction)
-                    ),
-                )
+            listed = voice_price_micros(
+                uncovered_seconds,
+                await list_unit_price(
+                    session, org_id, call.carrier, _call_metric(call.direction)
+                ),
+            )
+            if price > 0 or listed > price:
                 await credits.charge_usage(
                     session,
                     org_id,
@@ -1000,16 +1001,15 @@ async def _charge_rental_period(
     session: AsyncSession, org_id: uuid.UUID, number: OrgNumber, period_start: date
 ) -> None:
     price = await unit_price(session, org_id, number.carrier, "number_mrc")
-    if price > 0:
+    discount = await discount_on(session, org_id, number.carrier, "number_mrc", 1)
+    if price > 0 or discount > 0:
         await credits.charge_usage(
             session,
             org_id,
             price,
             reference=f"num:{number.id}:{period_start.isoformat()}",
             note=f"Monthly rental for {number.e164}",
-            discount_micros=await discount_on(
-                session, org_id, number.carrier, "number_mrc", 1
-            ),
+            discount_micros=discount,
         )
     number.rental_paid_through = _next_month(period_start)
 
@@ -1029,16 +1029,15 @@ async def charge_new_number(
     if org is None or not org.telephony_prepaid:
         return
     setup = await unit_price(session, org_id, number.carrier, "number_setup")
-    if setup > 0:
+    setup_discount = await discount_on(session, org_id, number.carrier, "number_setup", 1)
+    if setup > 0 or setup_discount > 0:
         await credits.charge_usage(
             session,
             org_id,
             setup,
             reference=f"num:{number.id}:setup",
             note=f"Setup for {number.e164}",
-            discount_micros=await discount_on(
-                session, org_id, number.carrier, "number_setup", 1
-            ),
+            discount_micros=setup_discount,
         )
     await _charge_rental_period(session, org_id, number, today or _now().date())
 

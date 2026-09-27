@@ -509,9 +509,12 @@ class TextingOtpIn(BaseModel):
 async def _texting_out(ctx: OrgContext, reg) -> dict:
     from app.services import tendlc
 
+    from app.services import discounts
+
     brand = await ctx.session.get(Brand, reg.brand_id)
     campaign = await ctx.session.get(Campaign, reg.campaign_id)
-    return tendlc.public(reg, brand, campaign)
+    bps = await discounts.active_bps(ctx.session, ctx.org.id, "tendlc")
+    return tendlc.public(reg, brand, campaign, bps)
 
 
 @router.get("/texting")
@@ -519,12 +522,13 @@ async def texting_registration(
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:read"))],
 ) -> dict:
     """The workspace's self-serve texting registration (or none) and what it costs."""
-    from app.services import tendlc
+    from app.services import discounts, tendlc
 
     reg = await tendlc.current(ctx.session, ctx.org.id)
+    bps = await discounts.active_bps(ctx.session, ctx.org.id, "tendlc")
     return {
         "registration": await _texting_out(ctx, reg) if reg else None,
-        "quotes": {tier: tendlc.customer_quote(tier) for tier in tendlc.MONTHLY_CENTS},
+        "quotes": {tier: tendlc.customer_quote(tier, bps) for tier in tendlc.MONTHLY_CENTS},
     }
 
 

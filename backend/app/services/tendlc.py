@@ -120,9 +120,10 @@ def quote(tier: str, service_discount_bps: int = 0) -> dict:
     }
 
 
-def customer_quote(tier: str) -> dict:
-    """What the customer is shown: totals only, never the carrier / Ringlite split."""
-    q = quote(tier)
+def customer_quote(tier: str, service_discount_bps: int = 0) -> dict:
+    """What the customer is shown: totals only, never the carrier / Ringlite split. Pass the
+    workspace's 10DLC discount so the total shown matches what checkout charges."""
+    q = quote(tier, service_discount_bps)
     return {
         key: q[key]
         for key in ("fee_tier", "monthly_cents", "upfront_months", "due_today_cents")
@@ -135,7 +136,12 @@ def tier_for(brand: Brand) -> str:
     )
 
 
-def public(reg: TenDlcRegistration, brand: Brand | None, campaign: Campaign | None) -> dict:
+def public(
+    reg: TenDlcRegistration,
+    brand: Brand | None,
+    campaign: Campaign | None,
+    service_discount_bps: int = 0,
+) -> dict:
     return {
         "id": str(reg.id),
         "stage": reg.stage,
@@ -146,7 +152,7 @@ def public(reg: TenDlcRegistration, brand: Brand | None, campaign: Campaign | No
         "checkout_url": reg.checkout_url if reg.stage == "checkout" else None,
         "otp_sent_at": reg.otp_sent_at.isoformat() if reg.otp_sent_at else None,
         "detail": reg.detail,
-        **customer_quote(reg.fee_tier),
+        **customer_quote(reg.fee_tier, service_discount_bps),
     }
 
 

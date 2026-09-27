@@ -139,6 +139,31 @@ def monthly_cents(spec: PlanSpec, extra_users: int, extra_numbers: int) -> int:
     return spec.price_cents + extra_users * spec.extra_user_cents + extra_numbers * EXTRA_NUMBER_CENTS
 
 
+def discounted_monthly_cents(
+    spec: PlanSpec, extra_users: int, extra_numbers: int, sub_bps: int, num_bps: int
+) -> int:
+    """``monthly_cents`` after the workspace's Stripe coupons: the plan and each extra user
+    less the ``subscription`` discount, each extra number less the ``numbers`` discount.
+    Per unit, floored, so a screen that multiplies the unit price gets the same total."""
+    from app.services.discounts import apply
+
+    return (
+        apply(spec.price_cents, sub_bps)
+        + extra_users * apply(spec.extra_user_cents, sub_bps)
+        + extra_numbers * apply(EXTRA_NUMBER_CENTS, num_bps)
+    )
+
+
+async def discount_bps(session: AsyncSession, org_id: uuid.UUID) -> tuple[int, int]:
+    """(subscription bps, numbers bps) active on the workspace right now."""
+    from app.services import discounts
+
+    return (
+        await discounts.active_bps(session, org_id, "subscription"),
+        await discounts.active_bps(session, org_id, "numbers"),
+    )
+
+
 def extra_user_price_id(settings: Settings, code: str, interval: str = MONTH) -> str:
     """The add-on user price for a plan: Business has its own, the others share one."""
     return getattr(settings, _setting(PLANS[code].extra_user_setting, interval))
@@ -662,7 +687,10 @@ async def add_users(
     ent = await require_entitlement(session, org_id)
     if refusal := user_limit_error(ent.spec, ent.users + count):
         raise refusal
-    increase = period_cents(count * ent.spec.extra_user_cents, ent.interval)
+    from app.services.discounts import apply
+
+    sub_bps, _ = await discount_bps(session, org_id)
+    increase = period_cents(count * apply(ent.spec.extra_user_cents, sub_bps), ent.interval)
     _require_accepted(accept_cents, increase, {"users": ent.users + count}, ent.interval)
     return await _apply(
         session,
@@ -687,9 +715,12 @@ async def reserve_numbers(
     need = max(count - free, 0)
     if need == 0:
         return ent
+    from app.services.discounts import apply
+
+    _, num_bps = await discount_bps(session, org_id)
     _require_accepted(
         accept_cents,
-        period_cents(need * EXTRA_NUMBER_CENTS, ent.interval),
+        period_cents(need * apply(EXTRA_NUMBER_CENTS, num_bps), ent.interval),
         {"included_free": free, "paid_numbers": need},
         ent.interval,
     )
@@ -724,7 +755,12 @@ async def change_plan(
         raise refusal
     extra_users = max(taken - spec.users, 0)
     extra_numbers = max(await numbers_held(session, org_id) - spec.numbers, 0)
-    new_total = period_cents(monthly_cents(spec, extra_users, extra_numbers), ent.interval)
+    new_total = period_cents(
+        discounted_monthly_cents(
+            spec, extra_users, extra_numbers, *await discount_bps(session, org_id)
+        ),
+        ent.interval,
+    )
     if accept_cents != new_total:
         raise PriceConfirmationRequiredError(
             {"monthly_total_cents": new_total, "plan": code, "interval": ent.interval}
@@ -785,10 +821,15 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
     taken = await users_taken(session, org_id)
     held = await numbers_held(session, org_id)
     interval = ent.interval if ent is not None else MONTH
+    # Prices shown to a workspace on a plan are after its Stripe coupons, so what the screen
+    # says, what it echoes back as accept_cents and what Stripe charges agree. Before the
+    # first plan, Stripe Checkout shows the discounted total itself.
+    sub_bps, num_bps = await discount_bps(session, org_id) if ent is not None else (0, 0)
     catalog = []
     for spec in PLANS.values():
         extra_u = max(taken - spec.users, 0)
         extra_n = max(held - spec.numbers, 0)
+        switched = discounted_monthly_cents(spec, extra_u, extra_n, sub_bps, num_bps)
         catalog.append(
             {
                 "code": spec.code,
@@ -800,11 +841,9 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
                 "minutes": spec.minutes,
                 "max_users": spec.max_users,
                 "yearly_price_cents": period_cents(spec.price_cents, YEAR),
-                "monthly_total_cents_if_switched": monthly_cents(spec, extra_u, extra_n),
+                "monthly_total_cents_if_switched": switched,
                 # Per billing period of the CURRENT plan: what change_plan wants accepted.
-                "total_cents_if_switched": period_cents(
-                    monthly_cents(spec, extra_u, extra_n), interval
-                ),
+                "total_cents_if_switched": period_cents(switched, interval),
             }
         )
     out: dict = {
@@ -820,16 +859,24 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
     if ent is None:
         return out
     voice = await plans.remaining(session, org_id, "voice_minutes")
+    from app.services.discounts import apply
+
+    monthly = discounted_monthly_cents(
+        ent.spec, ent.extra_users, ent.extra_numbers, sub_bps, num_bps
+    )
     out.update(
-        extra_user_cents=ent.spec.extra_user_cents,
+        extra_user_cents=apply(ent.spec.extra_user_cents, sub_bps),
+        extra_number_cents=apply(EXTRA_NUMBER_CENTS, num_bps),
+        discount_bps={"subscription": sub_bps, "numbers": num_bps},
         plan={
             "code": ent.spec.code,
             "name": ent.spec.name,
             "status": ent.subscription.status,
             "price_cents": ent.spec.price_cents,
-            "monthly_total_cents": ent.monthly_cents,
+            "monthly_total_cents": monthly,
+            "list_monthly_total_cents": ent.monthly_cents,
             "interval": ent.interval,
-            "period_total_cents": ent.period_cents,
+            "period_total_cents": period_cents(monthly, ent.interval),
             "renews_at": ent.subscription.current_period_end.isoformat()
             if ent.subscription.current_period_end
             else None,

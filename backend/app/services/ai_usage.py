@@ -227,7 +227,7 @@ async def record(
     enforce = bool(
         settings is not None and getattr(settings, "ai_billing_enforce", False)
     )
-    if enforce and int(price_micros) > 0:
+    if enforce and (int(price_micros) > 0 or discount_micros > 0):
         await credits.charge_usage(
             session,
             org_id,

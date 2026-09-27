@@ -634,3 +634,55 @@ async def test_plan_numbers_are_never_also_charged_rental_from_credits(session, 
     ]
     assert any(str(credit_number.id) in r for r in references), references
     assert not any(str(plan_number.id) in r for r in references), references
+
+
+# ------------------------------------------------------------------------ discounts
+async def test_confirmations_and_summary_show_the_discounted_price(session, stripe, monkeypatch):
+    """With workspace coupons, what the screen shows and asks to be accepted is the price
+    after the discount (Stripe charges that), not the list price."""
+    from app.services import discounts
+
+    monkeypatch.setattr(discounts, "sync_subscription", AsyncMock(return_value=True))
+    org = await _org(session)
+    await _on_plan(session, stripe, org, "team")
+    for category, bps in (("subscription", 2000), ("numbers", 5000)):
+        await discounts.set_discount(
+            session, org.id, category, percent_bps=bps, ends_at=None, note=None,
+            actor_user_id=None,
+        )
+    await session.commit()
+
+    summary = await plan_billing.summary(session, SETTINGS, org.id)
+    assert summary["extra_user_cents"] == 1200  # 1500 less 20%
+    assert summary["extra_number_cents"] == 250  # 500 less 50%
+    assert summary["plan"]["monthly_total_cents"] == 3600  # 4500 less 20%
+    assert summary["plan"]["list_monthly_total_cents"] == 4500
+    assert summary["discount_bps"] == {"subscription": 2000, "numbers": 5000}
+
+    with pytest.raises(PriceConfirmationRequiredError) as exc:
+        await plan_billing.add_users(session, SETTINGS, org.id, 1, 1500)
+    assert exc.value.quote["monthly_increase_cents"] == 1200
+    await plan_billing.add_users(session, SETTINGS, org.id, 1, 1200)
+
+    await _hold_numbers(session, org, 3)
+    with pytest.raises(PriceConfirmationRequiredError) as exc:
+        await plan_billing.reserve_numbers(session, SETTINGS, org.id, 2, None)
+    assert exc.value.quote["monthly_increase_cents"] == 500  # two paid numbers at $2.50
+
+    summary = await plan_billing.summary(session, SETTINGS, org.id)
+    business = next(p for p in summary["catalog"] if p["code"] == "business")
+    assert business["monthly_total_cents_if_switched"] == 13000 * 8 // 10
+
+
+async def test_summary_without_a_plan_shows_list_prices(session, stripe):
+    from app.services import discounts
+
+    org = await _org(session)
+    await discounts.set_discount(
+        session, org.id, "subscription", percent_bps=2000, ends_at=None, note=None,
+        actor_user_id=None,
+    )
+    await session.commit()
+    summary = await plan_billing.summary(session, SETTINGS, org.id)
+    team = next(p for p in summary["catalog"] if p["code"] == "team")
+    assert team["monthly_total_cents_if_switched"] == 4500

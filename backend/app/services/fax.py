@@ -299,13 +299,14 @@ async def handle_webhook(
         await credits.release(session, fax.org_id, reference=hold_reference(fax.id))
         if await telephony_billing.is_prepaid(session, fax.org_id):
             price = await _price(session, fax.org_id, "outbound") * pages
-            if price > 0:
+            discount = await telephony_billing.discount_on(
+                session, fax.org_id, "telnyx", "fax_page_out", pages
+            )
+            if price > 0 or discount > 0:
                 await credits.charge_usage(
                     session, fax.org_id, price, reference=f"fax:{fax.id}",
                     note=f"Fax sent, {pages} page(s)",
-                    discount_micros=await telephony_billing.discount_on(
-                        session, fax.org_id, "telnyx", "fax_page_out", pages
-                    ),
+                    discount_micros=discount,
                 )
                 fax.charged_micros = price
     elif event_type == "fax.failed" and fax.status not in ("delivered", "failed"):
@@ -383,13 +384,14 @@ async def _inbound(
     fax.completed_at = _now()
     if await telephony_billing.is_prepaid(session, fax.org_id):
         price = await _price(session, fax.org_id, "inbound") * pages
-        if price > 0:
+        discount = await telephony_billing.discount_on(
+            session, fax.org_id, "telnyx", "fax_page_in", pages
+        )
+        if price > 0 or discount > 0:
             await credits.charge_usage(
                 session, fax.org_id, price, reference=f"fax:{fax.id}",
                 note=f"Fax received, {pages} page(s)",
-                discount_micros=await telephony_billing.discount_on(
-                    session, fax.org_id, "telnyx", "fax_page_in", pages
-                ),
+                discount_micros=discount,
             )
             fax.charged_micros = price
     return "received"
