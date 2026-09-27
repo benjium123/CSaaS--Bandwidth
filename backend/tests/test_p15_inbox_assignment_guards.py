@@ -9,13 +9,38 @@ lives in the sibling module test_p15_inbox_assignments.py.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.models import InboxGrant, OrgMembership, Role
+from app.models import InboxGrant, KycProfile, Org, OrgMembership, Role
 from app.repositories import users as users_repo
 from tests.conftest import auth_headers, create_org, register_and_login
+
+
+async def _approve_kyc(session, org_id: uuid.UUID) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so POST /numbers now 403s
+    (number_checkout_required, then account_not_verified) unless cleared first -
+    mirrors conftest.make_org_with_number / test_agent_calls_place._approve_kyc_for_calls.
+    telephony_access.refusal additionally requires an individual profile's
+    decided_by/decided_at to be set, not just status=="approved"."""
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 async def _register_member(client, session, org_id: uuid.UUID, email, role_name="agent") -> str:
@@ -90,6 +115,7 @@ async def test_user_id_from_other_org_is_404(client, session):
     owner2_token = await register_and_login(client, "ig2b@example.com")
     org2 = await create_org(client, owner2_token, "Org IG2B")
     org2_id = uuid.UUID(org2["id"])
+    await _approve_kyc(session, org1_id)
 
     e164 = "+12145552001"
     created = await client.post("/api/v1/numbers", json={"e164": e164}, headers=h1)
@@ -138,6 +164,8 @@ async def test_inbox_id_from_other_org_rejected_and_nothing_written(client, sess
     owner2_token = await register_and_login(client, "ig3b@example.com")
     org2 = await create_org(client, owner2_token, "Org IG3B")
     h2 = auth_headers(owner2_token, org2["id"])
+    await _approve_kyc(session, org1_id)
+    await _approve_kyc(session, uuid.UUID(org2["id"]))
 
     e164_1 = "+12145552011"
     e164_2 = "+12145552012"
@@ -188,6 +216,7 @@ async def test_put_dedupes_same_inbox_keeping_member(client, session):
     org = await create_org(client, owner_token, "Org IG4")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     e164 = "+12145552021"
     created = await client.post("/api/v1/numbers", json={"e164": e164}, headers=h)
@@ -235,6 +264,7 @@ async def test_put_rejects_bad_role_and_writes_nothing(client, session):
     org = await create_org(client, owner_token, "Org IG5")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     e164 = "+12145552031"
     created = await client.post("/api/v1/numbers", json={"e164": e164}, headers=h)

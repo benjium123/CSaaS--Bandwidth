@@ -14,15 +14,18 @@ import asyncio
 import json
 import uuid
 from collections.abc import Callable
+from datetime import datetime, timezone
 
 import httpx
 import jwt
 import pytest
+import sqlalchemy as sa
 
 from app.auth.security import decode_access_token
 from app.db.base import set_org_context
 from app.events.bus import EventBus
 from app.main import create_app
+from app.models import KycProfile, Org, OrgMembership, OrgNumber
 from app.models.voice import Call, CallLeg
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import LiveKitApi
@@ -37,6 +40,30 @@ from tests.conftest import (
     register_and_login,
 )
 from tests.test_voice_webhooks import FakeVoiceCarrier, install_voice_carrier
+
+
+async def _approve_kyc(session, org_id: uuid.UUID) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so telephony_access.refusal now
+    refuses "call"/"number" (account_not_verified / number_checkout_required) unless
+    cleared first - mirrors conftest.make_org_with_number / test_agent_calls_place.
+    _approve_kyc_for_calls. An individual profile additionally needs decided_by/
+    decided_at set, not just status=="approved"."""
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 @pytest.fixture(autouse=True)
@@ -77,9 +104,19 @@ def default_lk_handler(requests: list[httpx.Request]):
     return handler
 
 
-async def _make_org(client) -> dict:
+async def _make_org(client, session) -> dict:
+    """Sep 2026: these callers dial straight through voice_service.start_room_call
+    (bypassing HTTP add_number), so OUR must be seeded as an owned, active OrgNumber by
+    hand here - require_owned_caller_ids (app/services/calls.py) 422s otherwise. The org
+    also needs KYC approval (see _approve_kyc) or the later telephony_access gate 403s."""
     token = await register_and_login(client, f"room-{uuid.uuid4()}@example.com")
-    return token, await create_org(client, token, "Org Room")
+    org = await create_org(client, token, "Org Room")
+    org_id = uuid.UUID(org["id"])
+    await _approve_kyc(session, org_id)
+    set_org_context(session, org_id)
+    session.add(OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=OUR, carrier="telnyx"))
+    await session.commit()
+    return token, org
 
 
 async def make_org_with_room_number(
@@ -89,9 +126,17 @@ async def make_org_with_room_number(
     trunk's carrier. Findings 10+11: via="room" number resolution never touches the carrier
     adapter registry - auto-pick only ever considers a number on carrier "telnyx" (the
     single trunk today), and POST /numbers accepts any carrier string regardless of what is
-    actually registered, which is exactly the LiveKit-only-deploy shape this models."""
+    actually registered, which is exactly the LiveKit-only-deploy shape this models.
+
+    Sep 2026 (commit 1fb0006): create_org's KYC gate now blocks POST /numbers too, so this
+    approves it first - opening its own session (many callers have no ``session`` fixture
+    in scope, e.g. the ``engine``/``app_with_room_calls``-only tests below)."""
+    from app.db.session import get_sessionmaker
+
     token = await register_and_login(client, email)
     org = await create_org(client, token, org_name)
+    async with get_sessionmaker()() as kyc_session:
+        await _approve_kyc(kyc_session, uuid.UUID(org["id"]))
     r = await client.post(
         "/api/v1/numbers",
         json={"e164": e164, "carrier": "telnyx"},
@@ -125,7 +170,7 @@ async def test_start_room_call_creates_rows_and_dials_the_right_trunk(client, se
     so the request path only ever synchronously creates the room and lands the leg on
     "dialing" - the dial itself, and the leg's move to "answered", only show up once
     ``wait_for_pending_dial_tasks`` has been awaited."""
-    token, org = await _make_org(client)
+    token, org = await _make_org(client, session)
     org_id = uuid.UUID(org["id"])
 
     requests: list[httpx.Request] = []
@@ -194,7 +239,7 @@ async def test_start_room_call_dial_task_no_answer_marks_call_no_answer(client, 
     """B2's cause mapping: a wait_until_answered dial that comes back with a timeout/ring-
     no-answer flavored error lands the leg at "hungup" (not "failed") so the call derives
     to "no_answer", not "failed"."""
-    token, org = await _make_org(client)
+    token, org = await _make_org(client, session)
     org_id = uuid.UUID(org["id"])
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -235,7 +280,7 @@ async def test_start_room_call_dial_task_no_answer_marks_call_no_answer(client, 
 async def test_start_room_call_livekit_error_marks_call_and_leg_failed_but_still_mints_a_token(
     client, session
 ):
-    token, org = await _make_org(client)
+    token, org = await _make_org(client, session)
     org_id = uuid.UUID(org["id"])
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -469,7 +514,7 @@ async def test_softphone_token_unknown_room_is_404(app_with_room_calls):
 
 async def test_softphone_token_cross_org_room_is_404(app_with_room_calls):
     client, _application, _fake_voice, _requests = app_with_room_calls
-    token_a, org_a, _ = await make_org_with_room_number(client, "spA@example.com", "Org SA", OUR)
+    token_a, org_a, _ = await make_org_with_room_number(client, "spa9@example.com", "Org SA", OUR)
     h_a = auth_headers(token_a, org_a["id"])
     created = await client.post("/api/v1/calls", json={"to": THEIRS, "via": "room"}, headers=h_a)
     assert created.status_code == 201, created.text
@@ -482,7 +527,7 @@ async def test_softphone_token_cross_org_room_is_404(app_with_room_calls):
     await voice_service.wait_for_pending_dial_tasks()
 
     token_b, org_b, _ = await make_org_with_number(
-        client, "spB@example.com", "Org SB", "+12145550101"
+        client, "spb9@example.com", "Org SB", "+12145550101"
     )
     h_b = auth_headers(token_b, org_b["id"])
 
@@ -594,7 +639,7 @@ async def test_answer_call_publishes_handoff_claimed_for_the_org(app_with_room_c
 
 async def test_answer_call_cross_org_is_404(app_with_room_calls, session):
     client, _application, _fake_voice, _requests = app_with_room_calls
-    token_a, org_a, _ = await make_org_with_number(client, "answerA@example.com", "Org ANA", OUR)
+    token_a, org_a, _ = await make_org_with_number(client, "answera9@example.com", "Org ANA", OUR)
     org_id_a = uuid.UUID(org_a["id"])
 
     set_org_context(session, org_id_a)
@@ -612,7 +657,7 @@ async def test_answer_call_cross_org_is_404(app_with_room_calls, session):
     await session.commit()
 
     token_b, org_b, _ = await make_org_with_number(
-        client, "answerB@example.com", "Org ANB", "+12145550101"
+        client, "answerb9@example.com", "Org ANB", "+12145550101"
     )
     h_b = auth_headers(token_b, org_b["id"])
 

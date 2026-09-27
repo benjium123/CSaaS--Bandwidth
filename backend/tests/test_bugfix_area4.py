@@ -11,10 +11,40 @@ import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.models import Message, Org, OrgNumber, ProviderSpendDaily
+from app.models import KycProfile, Message, Org, OrgMembership, OrgNumber, ProviderSpendDaily
 from app.providers.numbers import OrderResult
 from app.services import spend
 from tests.conftest import auth_headers, create_org, register_and_login
+
+
+async def _approve_kyc(org_id: uuid.UUID) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so POST /numbers now 403s
+    (number_checkout_required, then account_not_verified) unless cleared first -
+    mirrors conftest.make_org_with_number / test_agent_calls_place._approve_kyc_for_calls.
+    telephony_access.refusal additionally requires an individual profile's
+    decided_by/decided_at to be set, not just status=="approved". Opens its own session
+    (via get_sessionmaker, same pattern as test_4_8_order_conflict_releases_at_provider
+    below) since most tests in this file build the app from ``engine``/``settings``
+    directly rather than through the ``session`` fixture."""
+    from app.db.session import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        set_org_context(session, org_id)
+        org = await session.get(Org, org_id)
+        org.number_subscription_required = False
+        profile = (
+            await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+        ).scalar_one()
+        profile.status = "approved"
+        membership = (
+            await session.execute(
+                sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+            )
+        ).scalars().first()
+        profile.decided_by = membership.user_id if membership else None
+        profile.decided_at = datetime.now(timezone.utc)
+        await session.commit()
 
 
 class FakeNumberProvider:
@@ -68,6 +98,7 @@ async def test_1_1_add_number_rejects_unowned_number(engine, settings):
     async with client:
         token = await register_and_login(client, "area41-owner@example.com")
         org = await create_org(client, token, "Area41 Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+12145550100"},
@@ -82,6 +113,7 @@ async def test_1_1_add_number_accepts_when_owned(engine, settings):
     async with client:
         token = await register_and_login(client, "area41-owner2@example.com")
         org = await create_org(client, token, "Area41 Org2")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+12145550100"},
@@ -98,6 +130,7 @@ async def test_1_1_add_number_unverifiable_requires_opt_in(engine, settings):
     async with client2:
         token2 = await register_and_login(client2, "area41-owner3@example.com")
         org2 = await create_org(client2, token2, "Area41 Org3")
+        await _approve_kyc(uuid.UUID(org2["id"]))
         r = await client2.post(
             "/api/v1/numbers",
             json={"e164": "+12145550100"},
@@ -112,6 +145,7 @@ async def test_1_1_add_number_unverifiable_requires_opt_in(engine, settings):
     async with client3:
         token3 = await register_and_login(client3, "area41-owner4@example.com")
         org3 = await create_org(client3, token3, "Area41 Org4")
+        await _approve_kyc(uuid.UUID(org3["id"]))
         r = await client3.post(
             "/api/v1/numbers",
             json={"e164": "+12145550100"},
@@ -126,6 +160,7 @@ async def test_1_1_add_number_skips_check_for_non_number_provider_carrier(client
     behaviour for it unchanged, not 503/crash trying to verify ownership."""
     token = await register_and_login(client, "area41-legacy@example.com")
     org = await create_org(client, token, "Area41 Legacy Org")
+    await _approve_kyc(uuid.UUID(org["id"]))
     r = await client.post(
         "/api/v1/numbers",
         json={"e164": "+12145550100"},
@@ -145,6 +180,7 @@ async def test_b1_add_number_rejects_unconfigured_named_carrier(engine, settings
     async with client:
         token = await register_and_login(client, "b1-owner@example.com")
         org = await create_org(client, token, "B1 Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+12145550100", "carrier": "twilio"},
@@ -181,6 +217,7 @@ async def test_e3_add_number_rejects_named_carrier_that_cannot_verify_ownership(
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         token = await register_and_login(client, "e3-owner@example.com")
         org = await create_org(client, token, "E3 Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+12145550100", "carrier": "bandwidth"},
@@ -206,6 +243,7 @@ async def test_4_5_tollfree_add_derives_number_type(engine, settings):
     async with client:
         token = await register_and_login(client, "area45@example.com")
         org = await create_org(client, token, "Area45 Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+18005550100", "number_type": "local"},
@@ -301,6 +339,7 @@ async def test_4_8_order_conflict_releases_at_provider(engine, settings):
     async with client:
         token = await register_and_login(client, "area48@example.com")
         org = await create_org(client, token, "Area48 Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         e164 = "+12145550100"
 
         from app.db.session import get_sessionmaker
@@ -347,6 +386,7 @@ async def test_4_8_order_pre_check_never_reaches_the_carrier(engine, settings):
     async with client:
         token = await register_and_login(client, "area48b@example.com")
         org = await create_org(client, token, "Area48B Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         e164 = "+12145550111"
 
         r = await client.post(
@@ -608,6 +648,7 @@ async def test_add_number_detects_the_owning_carrier(engine, settings):
     async with client:
         token = await register_and_login(client, "owner-detected@example.com")
         org = await create_org(client, token, "Owner Detected Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+16824231003"},
@@ -624,6 +665,7 @@ async def test_add_number_refuses_a_number_nobody_owns(engine, settings):
     async with client:
         token = await register_and_login(client, "nobody-owns@example.com")
         org = await create_org(client, token, "Nobody Owns Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+16824231003"},
@@ -637,6 +679,7 @@ async def test_add_number_refuses_an_ambiguous_number(engine, settings):
     async with client:
         token = await register_and_login(client, "ambiguous@example.com")
         org = await create_org(client, token, "Ambiguous Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+16824231003"},
@@ -650,6 +693,7 @@ async def test_add_number_with_a_named_carrier_is_unchanged(engine, settings):
     async with client:
         token = await register_and_login(client, "named-carrier@example.com")
         org = await create_org(client, token, "Named Carrier Org")
+        await _approve_kyc(uuid.UUID(org["id"]))
         r = await client.post(
             "/api/v1/numbers",
             json={"e164": "+16824231003", "carrier": "bandwidth"},

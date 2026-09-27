@@ -9,16 +9,46 @@ group alphabetical) before that member has ever dragged anything.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
+import sqlalchemy as sa
+
+from app.db.base import set_org_context
+from app.models import KycProfile, Org, OrgMembership
 from app.repositories import users as users_repo
 from tests.conftest import auth_headers, create_org, register_and_login
 
 PASSWORD = "correct-horse-battery"
 
 
-async def _owner_org(client):
+async def _approve_kyc(session, org_id: uuid.UUID) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so POST /numbers now 403s
+    (number_checkout_required, then account_not_verified) unless cleared first -
+    mirrors conftest.make_org_with_number / test_agent_calls_place._approve_kyc_for_calls.
+    telephony_access.refusal additionally requires an individual profile's
+    decided_by/decided_at to be set, not just status=="approved"."""
+    set_org_context(session, org_id)
+    db_org = await session.get(Org, org_id)
+    db_org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
+async def _owner_org(client, session):
     token = await register_and_login(client, f"owner-{uuid.uuid4().hex[:8]}@example.com")
     org = await create_org(client, token, "Acme")
+    await _approve_kyc(session, uuid.UUID(org["id"]))
     return token, org, auth_headers(token, org["id"])
 
 
@@ -69,8 +99,8 @@ async def _set_grants(client, headers, inbox_id: str, grants: list[dict]) -> Non
 # --------------------------------------------------------------------------------------
 # Custom order
 # --------------------------------------------------------------------------------------
-async def test_saved_order_is_applied_and_reversible(client):
-    _token, org, h = await _owner_org(client)
+async def test_saved_order_is_applied_and_reversible(client, session):
+    _token, org, h = await _owner_org(client, session)
     for e164 in ("+12145553001", "+12145553002", "+12145553003"):
         await _add_number(client, h, e164)
     ids = {e164: await _inbox_id_for(client, h, e164) for e164 in
@@ -86,8 +116,8 @@ async def test_saved_order_is_applied_and_reversible(client):
     assert got == reversed_order
 
 
-async def test_saved_order_ignores_foreign_and_duplicate_ids(client):
-    _token, org, h = await _owner_org(client)
+async def test_saved_order_ignores_foreign_and_duplicate_ids(client, session):
+    _token, org, h = await _owner_org(client, session)
     await _add_number(client, h, "+12145554001")
     await _add_number(client, h, "+12145554002")
     a = await _inbox_id_for(client, h, "+12145554001")
@@ -105,8 +135,8 @@ async def test_saved_order_ignores_foreign_and_duplicate_ids(client):
     assert got == [b, a]
 
 
-async def test_inbox_granted_after_the_save_appends_at_the_end(client):
-    _token, org, h = await _owner_org(client)
+async def test_inbox_granted_after_the_save_appends_at_the_end(client, session):
+    _token, org, h = await _owner_org(client, session)
     await _add_number(client, h, "+12145555001")
     a = await _inbox_id_for(client, h, "+12145555001")
 
@@ -120,8 +150,8 @@ async def test_inbox_granted_after_the_save_appends_at_the_end(client):
     assert got == [a, b]
 
 
-async def test_order_is_per_member_not_shared(client):
-    _token, org, owner_h = await _owner_org(client)
+async def test_order_is_per_member_not_shared(client, session):
+    _token, org, owner_h = await _owner_org(client, session)
     org_id = org["id"]
     for e164 in ("+12145556001", "+12145556002"):
         await _add_number(client, owner_h, e164)
@@ -149,6 +179,7 @@ async def test_default_order_is_mine_then_department_then_unassigned(client, ses
     owner_email = f"owner-{uuid.uuid4().hex[:8]}@example.com"
     owner_token = await register_and_login(client, owner_email)
     org = await create_org(client, owner_token, "Acme")
+    await _approve_kyc(session, uuid.UUID(org["id"]))
     owner_h = auth_headers(owner_token, org["id"])
 
     # Alphabetically reversed on purpose so a name-only sort would fail this test.

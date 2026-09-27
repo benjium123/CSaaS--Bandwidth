@@ -10,13 +10,38 @@ branch exists at all.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.models import InboxGrant, OrgMembership, Role
+from app.models import InboxGrant, KycProfile, Org, OrgMembership, Role
 from app.repositories import users as users_repo
 from tests.conftest import auth_headers, create_org, register_and_login
+
+
+async def _approve_kyc(session, org_id: uuid.UUID) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so POST /numbers now 403s
+    (number_checkout_required, then account_not_verified) unless cleared first -
+    mirrors conftest.make_org_with_number / test_agent_calls_place._approve_kyc_for_calls.
+    telephony_access.refusal additionally requires an individual profile's
+    decided_by/decided_at to be set, not just status=="approved"."""
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 async def _register_member(client, session, org_id: uuid.UUID, email, role_name="agent") -> str:
@@ -62,6 +87,7 @@ async def test_bulk_lists_every_member_with_their_grants(client, session):
     org = await create_org(client, owner_token, "Org IB1")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     e164s = [
         "+12145553001",
@@ -125,6 +151,7 @@ async def test_bulk_element_shape_matches_single_user_get(client, session):
     org = await create_org(client, owner_token, "Org IB2")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     e164s = ["+12145553101", "+12145553102"]
     for e164 in e164s:
@@ -171,6 +198,8 @@ async def test_bulk_excludes_members_of_another_org(client, session):
     org2 = await create_org(client, owner2_token, "Org IB3B")
     org2_id = uuid.UUID(org2["id"])
     h2 = auth_headers(owner2_token, org2["id"])
+    await _approve_kyc(session, org1_id)
+    await _approve_kyc(session, org2_id)
 
     for headers, e164 in ((h1, "+12145553201"), (h2, "+12145553202")):
         created = await client.post("/api/v1/numbers", json={"e164": e164}, headers=headers)
@@ -207,6 +236,7 @@ async def test_bulk_reports_department_access_read_only(client, session):
     org = await create_org(client, owner_token, "Org IB4")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     e164 = "+12145553301"
     created = await client.post("/api/v1/numbers", json={"e164": e164}, headers=h)
@@ -283,6 +313,7 @@ async def test_bulk_query_count_does_not_grow_with_member_count(client, session,
     org = await create_org(client, owner_token, "Org IB6")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     for e164 in ("+12145553401", "+12145553402"):
         created = await client.post("/api/v1/numbers", json={"e164": e164}, headers=h)

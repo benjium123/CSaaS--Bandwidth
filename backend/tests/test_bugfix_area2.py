@@ -68,8 +68,15 @@ def _org(org_id: uuid.UUID, name: str, slug: str) -> Org:
     before the carrier is ever reached. That fails the test for a reason it is not about.
     None of these tests exercise prepaid billing (the same correction commit c45bc0 applied
     to the plan-supplied registration-gate fixture), so the gate is switched off explicitly.
+
+    Sep 2026 (commit 9297187, "enable safe public registration", landed after this file's
+    last edit): ``Org.kyc_required`` now defaults to True. telephony_access.refusal treats
+    that exactly like ``settings.kyc_enforced`` - no KycProfile row at all (never created
+    for a tenant built directly, unlike register/create_org) means "account_not_verified"
+    on every send. These tests are not about business verification either, so it is
+    switched off explicitly, the same way telephony_prepaid is above.
     """
-    return Org(id=org_id, name=name, slug=slug, telephony_prepaid=False)
+    return Org(id=org_id, name=name, slug=slug, telephony_prepaid=False, kyc_required=False)
 
 
 class PlivoParseCarrier(FakeCarrier):
@@ -157,6 +164,17 @@ async def test_release_held_messages_uses_message_carrier(monkeypatch, session):
     thread_plivo = _thread(org_id, OUR_B, THEIRS_B)
     session.add_all([thread_bw, thread_plivo])
     await session.flush()
+    # Sep 2026 (commit 1fb0006): _dispatch_to_carrier now re-checks that the FROM
+    # number is an OrgNumber this org actually holds before dispatching (previously it
+    # dispatched on the message's stored `carrier` alone) - a message with no matching
+    # row is rejected as "No active number configured for this account".
+    session.add_all(
+        [
+            OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=OUR, carrier="bandwidth"),
+            OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=OUR_B, carrier="plivo"),
+        ]
+    )
+    await session.flush()
     session.add_all(
         [
             Message(
@@ -224,6 +242,10 @@ async def test_d4_release_held_messages_resolves_the_orgs_db_backed_carrier(
         thread = _thread(org_id, OUR, THEIRS)
         session.add(thread)
         await session.flush()
+        # Sep 2026 (commit 1fb0006): _dispatch_to_carrier now requires a real OrgNumber
+        # row for the FROM number before dispatching - see test_release_held_messages_
+        # uses_message_carrier above.
+        session.add(OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=OUR, carrier="bandwidth"))
         session.add(
             Message(
                 id=uuid.uuid4(), org_id=org_id, thread_id=thread.id, direction="outbound",
@@ -301,6 +323,15 @@ async def test_failover_repoints_thread_to_winning_number(session):
     old_thread = _thread(org_id, primary_from, THEIRS)
     session.add(old_thread)
     await session.flush()
+    # Sep 2026 (commit 1fb0006): _dispatch_to_carrier now requires a real OrgNumber row
+    # for whichever FROM number it dispatches through - both the primary (rejected) and
+    # the failover route it repoints to must be numbers this org actually holds.
+    session.add_all(
+        [
+            OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=primary_from, carrier="bandwidth"),
+            OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=secondary_from, carrier="twilio"),
+        ]
+    )
     message = Message(
         id=uuid.uuid4(), org_id=org_id, thread_id=old_thread.id, direction="outbound",
         status="queued", from_e164=primary_from, to_e164=THEIRS, body="failover", media=[],
@@ -521,6 +552,16 @@ async def test_recover_stale_queued_resends_once_then_fails(session):
     thread_one = _thread(org_id, OUR, THEIRS)
     thread_two = _thread(org_id, OUR_B, THEIRS_B)
     session.add_all([thread_one, thread_two])
+    await session.flush()
+    # Sep 2026 (commit 1fb0006): _dispatch_to_carrier now requires a real OrgNumber row
+    # for the FROM number before dispatching - see test_release_held_messages_uses_
+    # message_carrier above.
+    session.add_all(
+        [
+            OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=OUR, carrier="bandwidth"),
+            OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=OUR_B, carrier="bandwidth"),
+        ]
+    )
     await session.flush()
     first = Message(
         id=uuid.uuid4(), org_id=org_id, thread_id=thread_one.id, direction="outbound",
@@ -779,6 +820,12 @@ async def test_send_message_skips_registration_gate_when_plan_supplied(monkeypat
             name="Area2 Plan Org",
             slug="area2-plan-org",
             telephony_prepaid=False,
+            # Sep 2026 (commit 9297187, landed after this file's last edit):
+            # Org.kyc_required now defaults to True, and this org has no KycProfile row
+            # at all (built directly, not through register/create_org) - switched off
+            # explicitly, same as _org() above; this test is about the registration
+            # gate, not business verification.
+            kyc_required=False,
         )
     )
     await session.flush()
@@ -792,18 +839,28 @@ async def test_send_message_skips_registration_gate_when_plan_supplied(monkeypat
     )
     await session.commit()
 
-    registration_called = False
+    # Sep 2026 (commit 1fb0006, landed after this file's last edit): _dispatch_to_carrier
+    # now ALWAYS re-checks registration immediately before handing a message to the
+    # carrier - "approval may have expired or been revoked while the message was
+    # queued" - so a plan-supplied send legitimately reaches check_number_may_send once
+    # too, at dispatch. That does not contradict this test's claim: the claim is about
+    # send_message's OWN enqueue-time gate (guarded by `plan is None` a few lines above
+    # in app/services/messaging.py), which plan_route already made redundant. A hard
+    # "must never be called" poison pill can no longer tell those two call sites apart,
+    # so this counts calls and asserts exactly one (the dispatch-time recheck) rather
+    # than zero, while still resolving realistically so the send actually goes through.
+    registration_calls = 0
 
-    async def should_not_be_called(*args, **kwargs):
-        nonlocal registration_called
-        registration_called = True
-        return False, "should never be reached"
+    async def counting_allowed(*args, **kwargs):
+        nonlocal registration_calls
+        registration_calls += 1
+        return True, ""
 
     async def allowed_gate(*args, **kwargs):
         return compliance_gate.ComplianceVerdict(True)
 
     monkeypatch.setattr(messaging_svc.gate, "check_outbound", allowed_gate)
-    monkeypatch.setattr(messaging_svc.registration, "check_number_may_send", should_not_be_called)
+    monkeypatch.setattr(messaging_svc.registration, "check_number_may_send", counting_allowed)
 
     class Route:
         def __init__(self, from_e164, carrier_name):
@@ -821,7 +878,10 @@ async def test_send_message_skips_registration_gate_when_plan_supplied(monkeypat
         registry=registry, plan=Plan(),
     )
     assert message.status == "accepted"
-    assert registration_called is False
+    # Exactly one call - the dispatch-time recheck - never two: a second call would mean
+    # send_message's own enqueue-time gate ran too despite the plan, the redundant check
+    # this test exists to catch.
+    assert registration_calls == 1
 
 
 # ----------------------------------------------------------------------------------

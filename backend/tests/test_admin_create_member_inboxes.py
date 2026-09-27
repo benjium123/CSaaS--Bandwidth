@@ -10,12 +10,13 @@ paths (foreign inbox, owner role, missing permission) and the atomicity claim
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.models import AuditLogEntry, InboxGrant, OrgMembership, Role
+from app.models import AuditLogEntry, InboxGrant, KycProfile, Org, OrgMembership, Role
 from app.models.rbac import SYSTEM_ROLES
 from app.repositories import users as users_repo
 from tests.conftest import auth_headers, create_org, register_and_login
@@ -29,9 +30,31 @@ ENDPOINT = "/api/v1/orgs/current/members"
 # ----------------------------------------------------------------------------------
 # Helpers (mirroring tests/test_admin_create_member.py and test_p15_inbox_assignments.py)
 # ----------------------------------------------------------------------------------
-async def _owner_org(client):
+async def _owner_org(client, session):
     token = await register_and_login(client, f"owner-{uuid.uuid4().hex[:8]}@example.com")
     org = await create_org(client, token, "Acme")
+    org_id = uuid.UUID(org["id"])
+    # Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    # account with number_subscription_required=True, so POST /numbers now 403s
+    # (number_checkout_required, then account_not_verified) unless cleared first -
+    # mirrors conftest.make_org_with_number / test_agent_calls_place._approve_kyc_for_calls.
+    # telephony_access.refusal additionally requires an individual profile's
+    # decided_by/decided_at to be set, not just status=="approved".
+    set_org_context(session, org_id)
+    db_org = await session.get(Org, org_id)
+    db_org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
     return token, org, auth_headers(token, org["id"])
 
 
@@ -101,7 +124,7 @@ async def _user_grants(session, org_id: uuid.UUID, user_id: uuid.UUID) -> list[I
 # 1. Two inboxes granted in one call
 # ----------------------------------------------------------------------------------
 async def test_create_member_with_two_inboxes_grants_both(client, session):
-    _token, org, h = await _owner_org(client)
+    _token, org, h = await _owner_org(client, session)
     org_id = uuid.UUID(org["id"])
 
     a, b = "+12145552001", "+12145552002"
@@ -134,7 +157,7 @@ async def test_create_member_with_two_inboxes_grants_both(client, session):
 # 2. Regression guard: no inbox_ids at all => no grants, identical body/audit shape
 # ----------------------------------------------------------------------------------
 async def test_create_member_without_inbox_ids_writes_no_grants(client, session):
-    _token, org, h = await _owner_org(client)
+    _token, org, h = await _owner_org(client, session)
     org_id = uuid.UUID(org["id"])
     email = f"no-inboxes-{uuid.uuid4().hex[:8]}@example.com"
 
@@ -165,8 +188,8 @@ async def test_create_member_without_inbox_ids_writes_no_grants(client, session)
 # 3. A foreign org's inbox is refused and NOTHING is written  <-- the atomicity test
 # ----------------------------------------------------------------------------------
 async def test_foreign_org_inbox_is_refused_and_no_user_row_is_written(client, session):
-    _token_a, org_a, h_a = await _owner_org(client)
-    _token_b, org_b, h_b = await _owner_org(client)
+    _token_a, org_a, h_a = await _owner_org(client, session)
+    _token_b, org_b, h_b = await _owner_org(client, session)
     org_b_id = uuid.UUID(org_b["id"])
 
     e164_b = "+12145553001"
@@ -200,7 +223,7 @@ async def test_foreign_org_inbox_is_refused_and_no_user_row_is_written(client, s
 # 4. A repeated id is not an error and creates exactly one row
 # ----------------------------------------------------------------------------------
 async def test_duplicate_inbox_id_in_list_does_not_500(client, session):
-    _token, org, h = await _owner_org(client)
+    _token, org, h = await _owner_org(client, session)
     org_id = uuid.UUID(org["id"])
 
     e164 = "+12145554001"
@@ -222,7 +245,7 @@ async def test_duplicate_inbox_id_in_list_does_not_500(client, session):
 # 5. "owner" is still refused, and the refusal writes nothing
 # ----------------------------------------------------------------------------------
 async def test_owner_role_still_refused_with_inbox_ids(client, session):
-    _token, org, h = await _owner_org(client)
+    _token, org, h = await _owner_org(client, session)
     org_id = uuid.UUID(org["id"])
 
     e164 = "+12145555001"
@@ -255,7 +278,7 @@ async def test_owner_role_still_refused_with_inbox_ids(client, session):
 # 6. A department grant on the same inbox survives
 # ----------------------------------------------------------------------------------
 async def test_department_grant_on_the_inbox_survives(client, session):
-    _token, org, h = await _owner_org(client)
+    _token, org, h = await _owner_org(client, session)
     org_id = uuid.UUID(org["id"])
 
     e164 = "+12145556001"
@@ -309,7 +332,7 @@ async def test_department_grant_on_the_inbox_survives(client, session):
 # 7. members:invite without inboxes:admin may create a teammate, never grant a number
 # ----------------------------------------------------------------------------------
 async def test_caller_with_members_invite_but_not_inboxes_admin_is_refused(client, session):
-    owner_token, org, owner_h = await _owner_org(client)
+    owner_token, org, owner_h = await _owner_org(client, session)
     org_id = uuid.UUID(org["id"])
 
     e164 = "+12145557001"

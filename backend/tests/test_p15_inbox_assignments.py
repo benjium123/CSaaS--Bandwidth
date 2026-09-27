@@ -8,13 +8,38 @@ The refusal/guard cases (RBAC, unknown user, bad role/inbox) live in a sibling m
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.models import InboxGrant, OrgMembership, Role
+from app.models import InboxGrant, KycProfile, Org, OrgMembership, Role
 from app.repositories import users as users_repo
 from tests.conftest import auth_headers, create_org, register_and_login
+
+
+async def _approve_kyc(session, org_id: uuid.UUID) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so POST /numbers now 403s
+    (number_checkout_required, then account_not_verified) unless cleared first -
+    mirrors conftest.make_org_with_number / test_agent_calls_place._approve_kyc_for_calls.
+    telephony_access.refusal additionally requires an individual profile's
+    decided_by/decided_at to be set, not just status=="approved"."""
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 async def _register_member(client, session, org_id: uuid.UUID, email, role_name="agent") -> str:
@@ -81,6 +106,7 @@ async def test_get_assignments_lists_every_inbox_two_granted(client, session):
     org = await create_org(client, owner_token, "Org IA1")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     e164s = [
         "+12145551001",
@@ -126,6 +152,7 @@ async def test_put_replaces_direct_grants_across_org(client, session):
     org = await create_org(client, owner_token, "Org IA2")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     a, b, c, d = "+12145551011", "+12145551012", "+12145551013", "+12145551014"
     for e164 in (a, b, c, d):
@@ -184,6 +211,7 @@ async def test_put_with_no_inboxes_preserves_department_grant(client, session):
     org = await create_org(client, owner_token, "Org IA3")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     e164 = "+12145551021"
     created = await client.post("/api/v1/numbers", json={"e164": e164}, headers=h)
@@ -263,6 +291,7 @@ async def test_deactivated_department_not_reported_as_via_department(client, ses
     org = await create_org(client, owner_token, "Org IA4")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
     e164 = "+12145551031"
     created = await client.post("/api/v1/numbers", json={"e164": e164}, headers=h)

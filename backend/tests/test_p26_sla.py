@@ -288,6 +288,12 @@ async def test_breach_marks_and_notifies_leads_once(client, session):
     assert result_again["breached"] == 0
     assert result_again["notifications"] == 0
 
+    # Sep 2026 (commit 1fb0006): register_and_login now also creates the registering
+    # user's own individual workspace org, so sla_tick's org sweep (this test called
+    # three register_and_login helpers above) walks several orgs and leaves the
+    # session's org context on whichever one it visited last, not necessarily this
+    # test's org_id - re-scope before querying, exactly as the check above does.
+    set_org_context(session, org_id)
     notifications_after = list(
         (
             await session.execute(
@@ -690,7 +696,14 @@ async def test_sla_tick_is_tenant_isolated(client, session):
     )
 
     result = await inbox_sla.sla_tick(session)
-    assert result["orgs"] == 2
+    # Sep 2026 (commit 1fb0006): register_and_login now also creates the registering
+    # user's own individual workspace org, so the DB-wide org count sla_tick reports
+    # is no longer just the 2 orgs this test explicitly creates via create_org - it also
+    # counts the 4 incidental individual orgs from the register_and_login calls above
+    # (token1, token2, and the two _register_user_with_role calls). What "tenant
+    # isolated" actually asserts is that the tick swept (at least) both tenant orgs and
+    # kept their breach counts apart, not the literal total row count.
+    assert result["orgs"] >= 2
     assert result["breached"] == 2
 
     set_org_context(session, org1_id)

@@ -343,20 +343,28 @@ async def test_1_6_status_route_requires_platform_operator(engine):
         assert r.status_code == 201, r.text
         brand_id = r.json()["id"]
 
+        # Sep 2026 (commit 51332c2/44e9cd1): an "approved" decision is now fail-closed -
+        # it 409s unless the brand already carries a confirmed Telnyx reference (see
+        # test_telnyx_brand_approval_guard.py, which owns that behaviour). This test is
+        # about the platform-operator-token gate (bugfix ledger 1.6) only, so the
+        # payload targets "submitted" - still a real forward status transition the route
+        # applies, and require_platform_operator is checked before the body regardless
+        # of payload.status - to prove the token gate without tripping the unrelated
+        # carrier-confirmation guard.
         url = f"/api/v1/registration/brands/{brand_id}/status"
-        r = await client.post(url, json={"status": "approved"}, headers=h)
+        r = await client.post(url, json={"status": "submitted"}, headers=h)
         assert r.status_code == 403, r.text
 
         r = await client.post(
             url,
-            json={"status": "approved"},
+            json={"status": "submitted"},
             headers={**h, "X-Platform-Ops-Token": "wrong"},
         )
         assert r.status_code == 403, r.text
 
         r = await client.post(
             url,
-            json={"status": "approved"},
+            json={"status": "submitted"},
             headers={**h, "X-Platform-Ops-Token": "opsecret"},
         )
         assert r.status_code == 200, r.text
@@ -719,7 +727,14 @@ async def test_frontend_support_me_returns_permissions_and_totp_enabled(client):
 
     # C8: no X-Org-Id, but this user has exactly ONE membership - that org's
     # permissions are returned rather than an uninformative [].
-    r = await client.get("/api/v1/auth/me", headers=auth_headers(token))
+    # Sep 2026 (commit 1fb0006): register_and_login now ALSO creates the registering
+    # user's own individual workspace org, so "1.me@example.com" (which then created
+    # "Org Me" above too) holds TWO memberships and no longer exercises this path - a
+    # freshly registered user who never creates a second org still has exactly one
+    # (their own auto-created workspace, with the same owner/wildcard role create_org
+    # grants - see repositories.orgs.create_org_with_owner, shared by both paths).
+    c8_token = await register_and_login(client, "1.me-c8@example.com")
+    r = await client.get("/api/v1/auth/me", headers=auth_headers(c8_token))
     assert r.status_code == 200, r.text
     assert "org:read" in r.json()["permissions"]
     assert "members:remove" in r.json()["permissions"]

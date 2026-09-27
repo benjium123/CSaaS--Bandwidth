@@ -8,12 +8,22 @@ each test isolates exactly the resolution path it names.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
 from app.api.routes.softphone import _event_visible
 from app.db.base import set_org_context
-from app.models import Department, DepartmentMember, Inbox, InboxGrant, OrgNumber
+from app.models import (
+    Department,
+    DepartmentMember,
+    Inbox,
+    InboxGrant,
+    KycProfile,
+    Org,
+    OrgMembership,
+    OrgNumber,
+)
 from app.repositories import users as users_repo
 from app.services.inbox_access import InboxAccess, resolve_access
 from tests.conftest import auth_headers, create_org, register_and_login
@@ -22,7 +32,29 @@ E164_A = "+12145550100"
 E164_B = "+12145550111"
 
 
-async def _add_number(client, token, org_id, e164: str) -> None:
+async def _add_number(client, session, token, org_id, e164: str) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so POST /numbers now 403s
+    (number_checkout_required, then account_not_verified) unless that is cleared first -
+    mirrors what conftest.make_org_with_number and test_agent_calls_place.
+    _approve_kyc_for_calls do for tests that go through those helpers; these tests build
+    the org by hand. telephony_access.refusal additionally requires an individual
+    profile's decided_by/decided_at to be set, not just status=="approved"."""
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
     r = await client.post(
         "/api/v1/numbers", json={"e164": e164}, headers=auth_headers(token, str(org_id))
     )
@@ -42,7 +74,7 @@ async def test_admin_permission_is_admin_and_can_use_anything(client, session):
     token = await register_and_login(client, "ia1@example.com")
     org = await create_org(client, token, "Org IA1")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_A)
 
     set_org_context(session, org_id)
     user = await users_repo.get_by_email(session, "ia1@example.com")
@@ -58,7 +90,7 @@ async def test_wildcard_permission_is_also_admin(client, session):
     token = await register_and_login(client, "ia2@example.com")
     org = await create_org(client, token, "Org IA2")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_A)
 
     set_org_context(session, org_id)
     user = await users_repo.get_by_email(session, "ia2@example.com")
@@ -74,7 +106,7 @@ async def test_api_key_caller_bypasses_the_tier(client, session):
     token = await register_and_login(client, "ia3@example.com")
     org = await create_org(client, token, "Org IA3")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_A)
 
     set_org_context(session, org_id)
     access = await resolve_access(session, None, ["inbox:send"])
@@ -86,8 +118,8 @@ async def test_direct_user_grant_member(client, session):
     token = await register_and_login(client, "ia4@example.com")
     org = await create_org(client, token, "Org IA4")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
-    await _add_number(client, token, org_id, E164_B)
+    await _add_number(client, session, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_B)
 
     await register_and_login(client, "member4@example.com")
     set_org_context(session, org_id)
@@ -117,7 +149,7 @@ async def test_direct_user_grant_viewer_is_read_only(client, session):
     token = await register_and_login(client, "ia5@example.com")
     org = await create_org(client, token, "Org IA5")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_A)
 
     await register_and_login(client, "viewer5@example.com")
     set_org_context(session, org_id)
@@ -144,7 +176,7 @@ async def test_department_grant_member_scopes_to_members_only(client, session):
     token = await register_and_login(client, "ia6@example.com")
     org = await create_org(client, token, "Org IA6")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_A)
 
     await register_and_login(client, "indept6@example.com")
     await register_and_login(client, "outsider6@example.com")
@@ -185,7 +217,7 @@ async def test_member_beats_viewer_when_both_paths_exist(client, session):
     token = await register_and_login(client, "ia7@example.com")
     org = await create_org(client, token, "Org IA7")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_A)
 
     await register_and_login(client, "dual7@example.com")
     set_org_context(session, org_id)
@@ -230,7 +262,7 @@ async def test_no_grants_is_fail_closed(client, session):
     token = await register_and_login(client, "ia8@example.com")
     org = await create_org(client, token, "Org IA8")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_A)
 
     set_org_context(session, org_id)
     user = await users_repo.get_by_email(session, "ia8@example.com")
@@ -251,7 +283,7 @@ async def test_org_isolation_grants_in_org_b_invisible_under_org_a(client, sessi
     org_a_id = uuid.UUID(org_a["id"])
     org_b_id = uuid.UUID(org_b["id"])
 
-    await _add_number(client, token, org_b_id, E164_A)
+    await _add_number(client, session, token, org_b_id, E164_A)
 
     await register_and_login(client, "watcher9@example.com")
     set_org_context(session, org_b_id)
@@ -284,7 +316,7 @@ async def test_deactivating_department_revokes_member_access(client, session):
     token = await register_and_login(client, "ia10@example.com")
     org = await create_org(client, token, "Org IA10")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_A)
 
     await register_and_login(client, "deptmember10@example.com")
     set_org_context(session, org_id)
@@ -412,8 +444,8 @@ async def test_unknown_grant_role_grants_nothing_rather_than_read_only(client, s
     token = await register_and_login(client, "iaX@example.com")
     org = await create_org(client, token, "Org IAX")
     org_id = uuid.UUID(org["id"])
-    await _add_number(client, token, org_id, E164_A)
-    await _add_number(client, token, org_id, E164_B)
+    await _add_number(client, session, token, org_id, E164_A)
+    await _add_number(client, session, token, org_id, E164_B)
 
     await register_and_login(client, "memberX@example.com")
     set_org_context(session, org_id)

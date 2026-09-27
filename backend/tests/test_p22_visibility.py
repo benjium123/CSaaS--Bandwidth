@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
@@ -13,6 +14,7 @@ from app.models import (
     DepartmentMember,
     Inbox,
     InboxGrant,
+    KycProfile,
     MessageThread,
     Org,
     OrgMembership,
@@ -26,6 +28,30 @@ from tests.conftest import auth_headers, create_contact, create_org, register_an
 A = "+12145550100"
 B = "+12145550111"
 AGENT_PHONE = "+12135550122"
+
+
+async def _approve_kyc(session, org_id: uuid.UUID) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so POST /numbers now 403s
+    (number_checkout_required, then account_not_verified) unless cleared first -
+    mirrors conftest.make_org_with_number / test_agent_calls_place._approve_kyc_for_calls.
+    telephony_access.refusal additionally requires an individual profile's
+    decided_by/decided_at to be set, not just status=="approved"."""
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 async def _register_member(client, session, org_id, email, role_name="agent", role_id=None):
@@ -228,8 +254,10 @@ async def test_inbound_autocreate_sets_department_from_inbox(client, session):
     org = await create_org(client, owner_token, "Vis Inbox Dept")
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id)
 
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    added = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added.status_code == 201, added.text
     dept = await client.post("/api/v1/departments", json={"name": "Support"}, headers=h_owner)
     dept_id = uuid.UUID(dept.json()["id"])
 
@@ -310,7 +338,9 @@ async def test_agent_contact_lookup_scoped_to_inbox_department(client, session, 
         headers=h_owner,
     )
 
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    await _approve_kyc(session, org_id)
+    added = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added.status_code == 201, added.text
     support = await client.post("/api/v1/departments", json={"name": "Support"}, headers=h_owner)
     sales = await client.post("/api/v1/departments", json={"name": "Sales"}, headers=h_owner)
     support_id = uuid.UUID(support.json()["id"])

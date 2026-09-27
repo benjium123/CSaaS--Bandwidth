@@ -8,6 +8,7 @@ surface, and the fan-out gates on threads/messages/calls.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -15,7 +16,7 @@ import sqlalchemy as sa
 
 from app.db.base import set_org_context
 from app.main import create_app
-from app.models import Inbox, OrgMembership, OrgNumber, Role
+from app.models import Inbox, KycProfile, Org, OrgMembership, OrgNumber, Role
 from app.repositories import users as users_repo
 from tests.conftest import (
     WEBHOOK_PASS,
@@ -61,6 +62,31 @@ async def _register_member(client, session, org_id: uuid.UUID, email, role_name=
     )
     await session.commit()
     return token
+
+
+async def _approve_kyc(session, org_id: uuid.UUID) -> None:
+    """Sep 2026 (commit 1fb0006): create_org always makes an unapproved 'individual'
+    account with number_subscription_required=True, so POST /numbers now 403s
+    (number_checkout_required, then account_not_verified) unless this is cleared first -
+    mirrors conftest.make_org_with_number / test_agent_calls_place._approve_kyc_for_calls
+    for tests here that build the org by hand. telephony_access.refusal additionally
+    requires an individual profile's decided_by/decided_at to be set, not just
+    status=="approved"."""
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    membership = (
+        await session.execute(
+            sa.select(OrgMembership).where(OrgMembership.org_id == org_id).limit(1)
+        )
+    ).scalars().first()
+    profile.decided_by = membership.user_id if membership else None
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 async def _inbox_id_for(client, headers, e164) -> str:
@@ -119,6 +145,7 @@ async def test_number_create_auto_creates_inbox(client, session):
     org = await create_org(client, token, "Org D2")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(token, org["id"])
+    await _approve_kyc(session, org_id)
 
     r = await client.post("/api/v1/numbers", json={"e164": A}, headers=h)
     assert r.status_code == 201, r.text
@@ -146,7 +173,9 @@ async def test_department_members_grants_and_delete_revokes_access(client, sessi
     org = await create_org(client, owner_token, "Org D3")
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, org["id"])
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    await _approve_kyc(session, org_id)
+    added = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added.status_code == 201, added.text
 
     agent_token = await _register_member(client, session, org_id, "agentd3@example.com")
     h_agent = auth_headers(agent_token, org["id"])
@@ -215,8 +244,11 @@ async def test_thread_filter_detail_404_and_send_guard(app_with_carrier, session
     org_id_str = org["id"]
     org_id = uuid.UUID(org_id_str)
     h_owner = auth_headers(owner_token, org_id_str)
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
-    await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
+    await _approve_kyc(session, org_id)
+    added_a = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added_a.status_code == 201, added_a.text
+    added_b = await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
+    assert added_b.status_code == 201, added_b.text
 
     agent_token = await _register_member(client, session, org_id, "agentd4@example.com")
     h_agent = auth_headers(agent_token, org_id_str)
@@ -307,8 +339,11 @@ async def test_call_list_filter_and_place_guard(app_with_voice_carrier, session)
     org = await create_org(client, owner_token, "Org D5")
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, str(org_id))
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
-    await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
+    await _approve_kyc(session, org_id)
+    added_a = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added_a.status_code == 201, added_a.text
+    added_b = await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
+    assert added_b.status_code == 201, added_b.text
 
     # A bespoke role with calls:place/calls:read but no inboxes:admin - the system "agent"
     # role has neither permission, and "admin" carries inboxes:admin (which would bypass
@@ -380,8 +415,11 @@ async def test_message_by_id_reads_gated_by_view_access(app_with_carrier, sessio
     org = await create_org(client, owner_token, "Org D6")
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, str(org_id))
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
-    await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
+    await _approve_kyc(session, org_id)
+    added_a = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added_a.status_code == 201, added_a.text
+    added_b = await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
+    assert added_b.status_code == 201, added_b.text
 
     agent_token = await _register_member(client, session, org_id, "agentd6@example.com")
     h_agent = auth_headers(agent_token, str(org_id))
@@ -444,7 +482,9 @@ async def test_inbox_threads_filter_and_mark_read_gating(app_with_carrier, sessi
     org = await create_org(client, owner_token, "Org D7")
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, str(org_id))
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    await _approve_kyc(session, org_id)
+    added = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added.status_code == 201, added.text
     await _inbound(client)
 
     threads_owner = (await client.get("/api/v1/inbox/threads", headers=h_owner)).json()

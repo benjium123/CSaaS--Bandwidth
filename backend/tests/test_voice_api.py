@@ -181,13 +181,13 @@ async def test_get_missing_call_is_404(app_with_voice_carrier):
 # ---------------------------------------------------------------------------------
 async def test_org_b_cannot_see_org_as_calls(app_with_voice_carrier):
     client, _, _ = app_with_voice_carrier
-    token_a, org_a, _ = await make_org_with_number(client, "tenA@example.com", "Org A", OUR)
+    token_a, org_a, _ = await make_org_with_number(client, "tena9@example.com", "Org A", OUR)
     h_a = auth_headers(token_a, org_a["id"])
     created = await client.post("/api/v1/calls", json={"to": THEIRS}, headers=h_a)
     call_id = created.json()["id"]
 
     token_b, org_b, _ = await make_org_with_number(
-        client, "tenB@example.com", "Org B", "+12145550101"
+        client, "tenb9@example.com", "Org B", "+12145550101"
     )
     h_b = auth_headers(token_b, org_b["id"])
 
