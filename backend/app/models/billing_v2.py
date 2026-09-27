@@ -42,6 +42,25 @@ class PlatformPrice(Base):
     updated_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
 
+class FixedCost(Base):
+    """A platform overhead we pay every month whoever uses it (the VPS, a SaaS seat).
+
+    Platform-wide, not org-scoped. The P&L pro-rates it per day (monthly x 12 / 365) over
+    the days of the report range that fall inside [starts_on, ends_on].
+    """
+
+    __tablename__ = "fixed_costs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(sa.String(80), nullable=False)
+    monthly_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    starts_on: Mapped[date] = mapped_column(sa.Date, nullable=False)
+    ends_on: Mapped[date | None] = mapped_column(sa.Date, nullable=True)
+    note: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+
+
 class BundleLedgerEntry(Base, TenantScoped, TimestampMixin):
     __tablename__ = "bundle_ledger"
     __table_args__ = (

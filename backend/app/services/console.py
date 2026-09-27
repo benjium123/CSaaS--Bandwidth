@@ -25,11 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY
 from app.models import (
+    AiUsageEvent,
     BillingPayment,
     BillingRefusal,
     BundleLedgerEntry,
     Call,
     CreditLedgerEntry,
+    FixedCost,
     Message,
     MessageThread,
     Org,
@@ -276,19 +278,81 @@ async def org_metrics(
     except ImportError:
         pass
 
+    # --- AI provider cost (LLM, speech-to-text, text-to-speech) -------------------------
+    # What WE paid for AI on the org's behalf; the customer's side of it is already in
+    # usage_revenue (AI usage is debited from the balance like any other usage).
+    for org_id, cost in await _rows(
+        session,
+        sa.select(
+            AiUsageEvent.org_id,
+            sa.func.coalesce(sa.func.sum(AiUsageEvent.cost_micros), 0),
+        )
+        .where(
+            AiUsageEvent.occurred_at >= lo,
+            AiUsageEvent.occurred_at < hi,
+            scope(AiUsageEvent.org_id),
+        )
+        .group_by(AiUsageEvent.org_id),
+    ):
+        out[org_id]["ai_cost"] += int(cost)
+
     for m in out.values():
         finish(m)
     return out
 
 
 def finish(m: dict[str, int]) -> dict[str, int]:
-    """Derived fields: blocked totals, carrier cost used, cash profit."""
+    """Derived fields: blocked totals, carrier cost used, provider cost, cash profit."""
     m["blocked_credit"] = sum(v for k, v in m.items() if k.startswith("blocked_credit_"))
     m["blocked_total"] = m["blocked_credit"] + m["blocked_compliance"] + m["blocked_moderation"]
     m["carrier_cost"] = m["telnyx_actual_cost"] or m["carrier_cost_est"]
-    m["cash_profit"] = m["paid"] - m["stripe_fees"] - m["carrier_cost"]
-    m["usage_margin"] = m["usage_revenue"] - m["carrier_cost"]
+    m["ai_cost"] = m.get("ai_cost", 0)
+    m["provider_cost"] = m["carrier_cost"] + m["ai_cost"]
+    m["cash_profit"] = m["paid"] - m["stripe_fees"] - m["provider_cost"]
+    m["usage_margin"] = m["usage_revenue"] - m["provider_cost"]
     return m
+
+
+def _fixed_cost_micros(rows: list, start: date, end: date) -> int:
+    """Each fixed cost pro-rated per day (monthly x 12 / 365) over the days of [start, end]
+    that fall inside [starts_on, ends_on]; rounded once, at the end."""
+    total = 0.0
+    for row in rows:
+        lo = max(start, row.starts_on)
+        hi = min(end, row.ends_on) if row.ends_on else end
+        days = (hi - lo).days + 1
+        if days > 0:
+            total += int(row.monthly_micros) * 12 / 365 * days
+    return round(total)
+
+
+async def platform_costs(session: AsyncSession, start: date, end: date) -> dict[str, int]:
+    """Costs that belong to no workspace: fixed overhead and carrier traffic we could not
+    attribute (Telnyx detail records with no org)."""
+    fixed_rows = (await session.execute(sa.select(FixedCost))).scalars().all()
+    unattributed = 0
+    try:
+        from app.models import TelnyxCostDaily  # type: ignore[attr-defined]
+
+        unattributed = int(
+            (
+                await session.execute(
+                    sa.select(sa.func.coalesce(sa.func.sum(TelnyxCostDaily.cost_micros), 0))
+                    .where(
+                        TelnyxCostDaily.period_date >= start,
+                        TelnyxCostDaily.period_date <= end,
+                        TelnyxCostDaily.org_id.is_(None),
+                    )
+                    .execution_options(**U)
+                )
+            ).scalar_one()
+        )
+    except ImportError:
+        pass
+    return {
+        "fixed_costs": _fixed_cost_micros(fixed_rows, start, end),
+        "unattributed_carrier_cost": unattributed,
+    }
 
 
 async def _balances(session: AsyncSession) -> dict[uuid.UUID, int]:
@@ -383,6 +447,13 @@ async def orgs_table(session: AsyncSession, start: date | None, end: date | None
             }
         )
     finish(totals)
+    # Platform lines: overhead and unattributed carrier cost reduce the TOTAL only - they
+    # are never spread onto a workspace's row.
+    platform = await platform_costs(session, s, e)
+    totals.update(platform)
+    totals["net_profit"] = (
+        totals["cash_profit"] - platform["fixed_costs"] - platform["unattributed_carrier_cost"]
+    )
     return {
         "start": s.isoformat(),
         "end": e.isoformat(),

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from app.auth.deps import OperatorContext, require_operator
 from app.db.base import set_org_context
 from app.errors import NotFoundError, ValidationFailedError
-from app.models import Org, PlatformPrice
+from app.models import FixedCost, Org, PlatformPrice
 from app.services import console
 
 router = APIRouter(prefix="/api/v1/ops/console", tags=["ops-console"])
@@ -141,6 +141,80 @@ async def console_set_price(metric: str, payload: PriceIn, op: Admin) -> dict:
     )
     await op.session.commit()
     return {"metric": metric, "price_micros": payload.price_micros, "previous_micros": old}
+
+
+class FixedCostIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    monthly_micros: int = Field(ge=0, le=100_000_000_000)
+    starts_on: date
+    ends_on: date | None = None
+    note: str | None = Field(default=None, max_length=255)
+
+
+def _fixed_cost_dict(row: FixedCost) -> dict:
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "monthly_micros": int(row.monthly_micros),
+        "starts_on": row.starts_on.isoformat(),
+        "ends_on": row.ends_on.isoformat() if row.ends_on else None,
+        "note": row.note,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/fixed-costs")
+async def console_fixed_costs(op: Reviewer) -> dict:
+    rows = (
+        (await op.session.execute(sa.select(FixedCost).order_by(FixedCost.starts_on)))
+        .scalars()
+        .all()
+    )
+    return {"fixed_costs": [_fixed_cost_dict(r) for r in rows]}
+
+
+def _check_dates(payload: FixedCostIn) -> None:
+    if payload.ends_on is not None and payload.ends_on < payload.starts_on:
+        raise ValidationFailedError("The end date must be on or after the start date")
+
+
+@router.post("/fixed-costs", status_code=201)
+async def console_add_fixed_cost(payload: FixedCostIn, op: Admin) -> dict:
+    _check_dates(payload)
+    row = FixedCost(**payload.model_dump(), updated_by=op.user.id, updated_at=datetime.now(timezone.utc))
+    op.session.add(row)
+    log.info("fixed_cost_added", name=payload.name, monthly_micros=payload.monthly_micros,
+             operator_user_id=str(op.user.id))
+    await op.session.commit()
+    return _fixed_cost_dict(row)
+
+
+@router.put("/fixed-costs/{cost_id}")
+async def console_update_fixed_cost(cost_id: uuid.UUID, payload: FixedCostIn, op: Admin) -> dict:
+    _check_dates(payload)
+    row = await op.session.get(FixedCost, cost_id)
+    if row is None:
+        raise NotFoundError("Fixed cost not found")
+    old = _fixed_cost_dict(row)
+    for key, value in payload.model_dump().items():
+        setattr(row, key, value)
+    row.updated_by = op.user.id
+    row.updated_at = datetime.now(timezone.utc)
+    log.info("fixed_cost_updated", cost_id=str(cost_id), old=old,
+             new=payload.model_dump(mode="json"), operator_user_id=str(op.user.id))
+    await op.session.commit()
+    return _fixed_cost_dict(row)
+
+
+@router.delete("/fixed-costs/{cost_id}", status_code=204)
+async def console_delete_fixed_cost(cost_id: uuid.UUID, op: Admin) -> Response:
+    row = await op.session.get(FixedCost, cost_id)
+    if row is None:
+        raise NotFoundError("Fixed cost not found")
+    log.info("fixed_cost_deleted", cost=_fixed_cost_dict(row), operator_user_id=str(op.user.id))
+    await op.session.delete(row)
+    await op.session.commit()
+    return Response(status_code=204)
 
 
 class AdjustIn(BaseModel):

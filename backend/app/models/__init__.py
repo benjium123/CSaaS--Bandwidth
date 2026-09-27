@@ -460,6 +460,7 @@ from app.models.billing_v2 import (  # noqa: E402
     BillingPayment,
     BillingRefusal,
     BundleLedgerEntry,
+    FixedCost,
     PlatformPrice,
     TelnyxCostDaily,
 )

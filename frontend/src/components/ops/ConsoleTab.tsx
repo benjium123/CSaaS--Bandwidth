@@ -1,4 +1,5 @@
 import * as React from "react";
+import { FixedCostsSection } from "@/components/ops/FixedCostsSection";
 import { useAuth } from "@/auth/AuthContext";
 import { formatMicros, lastNDaysRange } from "@/api/spend";
 import {
@@ -154,7 +155,11 @@ function KpiGrid({
 }): JSX.Element {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <KpiCard label="Cash profit" value={formatMicros(totals.cash_profit ?? 0)} />
+      <KpiCard
+        label="Net profit"
+        value={formatMicros(totals.net_profit ?? totals.cash_profit ?? 0)}
+        sub={`Workspaces ${formatMicros(totals.cash_profit ?? 0)} − fixed ${formatMicros(totals.fixed_costs ?? 0)} − unattributed ${formatMicros(totals.unattributed_carrier_cost ?? 0)}`}
+      />
       <KpiCard
         label="Paid"
         value={formatMicros(totals.paid ?? 0)}
@@ -162,6 +167,8 @@ function KpiGrid({
       />
       <KpiCard label="Stripe fees" value={formatMicros(totals.stripe_fees ?? 0)} />
       <KpiCard label="Carrier cost" value={formatMicros(totals.carrier_cost ?? 0)} />
+      <KpiCard label="AI cost" value={formatMicros(totals.ai_cost ?? 0)} sub="LLM, speech-to-text, text-to-speech" />
+      <KpiCard label="Fixed costs" value={formatMicros(totals.fixed_costs ?? 0)} sub="Pro-rated for this range" />
       <KpiCard label="Usage revenue" value={formatMicros(totals.usage_revenue ?? 0)} />
       <KpiCard label="Balances held" value={formatMicros(summary.balances_micros)} />
       <KpiCard
@@ -954,6 +961,7 @@ export function ConsoleTab(): JSX.Element {
 
       <PaymentsSection range={range} />
       <PriceListSection />
+      <FixedCostsSection />
 
       <OrgDrawer
         orgId={openOrgId}
