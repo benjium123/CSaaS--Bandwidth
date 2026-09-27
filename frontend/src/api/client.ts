@@ -6,6 +6,7 @@
  */
 
 import { deviceId } from "@/lib/device";
+import { clearViewAs, loadViewAs, VIEW_AS_HEADER } from "@/auth/viewAs";
 
 export type AuthState = {
   token: string | null;
@@ -90,6 +91,12 @@ export function authHeaders(api: ApiClient, method = "GET", base?: HeadersInit):
   const headers = new Headers(base);
   if (api.auth.token) headers.set("Authorization", `Bearer ${api.auth.token}`);
   if (api.auth.orgId) headers.set("X-Org-Id", api.auth.orgId);
+  // H3: while an operator views a customer workspace, every request is scoped to it.
+  const view = loadViewAs();
+  if (view) {
+    headers.set("X-Org-Id", view.orgId);
+    headers.set(VIEW_AS_HEADER, view.id);
+  }
   headers.set("X-Device-Id", deviceId());
   if (!SAFE_METHODS.has(method.toUpperCase())) {
     const csrf = csrfToken();
@@ -160,6 +167,14 @@ export function createClient(baseUrl = ""): ApiClient {
             : Array.isArray(detail) && detail.length > 0 && typeof detail[0]?.msg === "string"
               ? String(detail[0].msg).replace(/^Value error, /, "")
               : undefined;
+        const endedView = err?.code === "view_as_ended" ? loadViewAs({ includeExpired: true }) : null;
+        if (endedView) {
+          // H3: the view expired or was ended - leave the workspace and go back to the console.
+          const view = endedView;
+          clearViewAs();
+          client.setAuth({ orgId: view?.prevOrgId ?? null });
+          window.location.assign("/ops");
+        }
         if (
           err?.code === "ops_reason_required" &&
           client.onReasonRequired &&

@@ -37,6 +37,8 @@ ACCOUNT_AUDIT_ACTIONS: tuple[str, ...] = (
     "account.deactivated",
     "account.reactivated",
     "account.created_by_admin",
+    # H3: Ringlite support viewed a workspace this person owns (read-only, with a reason).
+    "support.viewed_workspace",
 )
 
 

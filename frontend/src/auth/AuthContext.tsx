@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, createClient, type ApiClient } from "@/api/client";
+import { loadViewAs, type ViewAs } from "@/auth/viewAs";
 
 export type Membership = {
   number_subscription_required?: boolean;
@@ -86,6 +87,24 @@ export function isOwner(me: Me | null, orgId: string | null): boolean {
   const membership = me.memberships.find((m) => m.org_id === orgId);
   if (!membership) return false;
   return membership.role_name === "owner";
+}
+
+/** H3: while viewing a customer workspace, the operator gets a synthetic READ-ONLY membership
+ * for it carrying exactly the permissions the server grants the view, so the normal app
+ * renders (hasPermission reads membership.permissions first). The server refuses writes. */
+export function withViewAs(me: Me, view: ViewAs): Me {
+  const membership: Membership = {
+    org_id: view.orgId,
+    org_name: view.orgName,
+    org_slug: "",
+    role_name: "support-view",
+    permissions: view.permissions,
+  };
+  return {
+    ...me,
+    memberships: [...me.memberships.filter((m) => m.org_id !== view.orgId), membership],
+    permissions: view.permissions,
+  };
 }
 
 export type Me = {
@@ -185,7 +204,8 @@ export function AuthProvider({
   const api = React.useMemo(() => client ?? createClient(), [client]);
   const queryClient = useQueryClient();
   const [me, setMe] = React.useState<Me | null>(null);
-  const [orgId, setOrgId] = React.useState<string | null>(api.auth.orgId);
+  // H3: a live support view pins the workspace for this tab (auth/viewAs.ts).
+  const [orgId, setOrgId] = React.useState<string | null>(loadViewAs()?.orgId ?? api.auth.orgId);
   const [ready, setReady] = React.useState(false);
 
   // P20: every identity/tenant boundary crossing (logout, forced-logout, org switch)
@@ -217,10 +237,12 @@ export function AuthProvider({
 
   const loadMe = React.useCallback(async () => {
     try {
-      const next = await api.request<Me>("/api/v1/auth/me");
+      const fetched = await api.request<Me>("/api/v1/auth/me");
+      const view = loadViewAs();
+      const next = view ? withViewAs(fetched, view) : fetched;
       setMe(next);
       // If the stored org is no longer one of ours, drop it rather than 403 on every call.
-      if (orgId && !next.memberships.some((m) => m.org_id === orgId)) {
+      if (orgId && !view && !next.memberships.some((m) => m.org_id === orgId)) {
         api.setAuth({ orgId: null });
         setOrgId(null);
       }

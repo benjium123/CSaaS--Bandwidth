@@ -300,23 +300,30 @@ async def get_current_org(
         except (ValueError, AttributeError) as exc:
             raise ValidationFailedError("X-Org-Id is not a valid UUID") from exc
 
-        found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
-        if found is None:
-            # Deliberately the same 403 whether the org does not exist or the user simply
-            # is not a member — do not let callers probe for which orgs exist.
-            raise PermissionDeniedError("You are not a member of this organization")
+        from app.services import view_as as view_as_svc
 
-        org, membership, role = found
-        if not org.is_active:
-            raise PermissionDeniedError("This organization is disabled")
-        _enforce_org_session_policy(request, org)
+        view_as_id = request.headers.get(view_as_svc.HEADER)
+        if view_as_id:
+            # H3: a platform operator's read-only, time-boxed view of this workspace.
+            ctx = await view_as_svc.org_context(request, session, user, org_id, view_as_id)
+        else:
+            found = await orgs_repo.get_membership(session, org_id=org_id, user_id=user.id)
+            if found is None:
+                # Deliberately the same 403 whether the org does not exist or the user
+                # simply is not a member — do not let callers probe for which orgs exist.
+                raise PermissionDeniedError("You are not a member of this organization")
 
-        set_org_context(session, org.id)
-        ctx = OrgContext(org=org, membership=membership, role=role, session=session)
+            org, membership, role = found
+            if not org.is_active:
+                raise PermissionDeniedError("This organization is disabled")
+            _enforce_org_session_policy(request, org)
+
+            set_org_context(session, org.id)
+            ctx = OrgContext(org=org, membership=membership, role=role, session=session)
         # No passkey mandate here: customer owners and admins may use any second factor
         # (email code, authenticator app or passkey). Only platform operators must sign in
         # with a passkey - see require_operator below and services/passkey_policy.py.
-        set_org_context(session, org.id)
+        set_org_context(session, ctx.org.id)
 
     # P25 IP allowlist: an org that sets ip_allowlist opts into a network restriction for
     # BOTH human and API-key auth. Fail closed when the client IP cannot be determined.

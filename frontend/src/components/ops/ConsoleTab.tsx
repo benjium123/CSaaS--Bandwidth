@@ -2,6 +2,7 @@ import * as React from "react";
 import { FixedCostsSection } from "@/components/ops/FixedCostsSection";
 import { OrgDiscountsPanel } from "@/components/ops/OrgDiscountsPanel";
 import { OrgFeaturesPanel } from "@/components/ops/OrgFeaturesPanel";
+import { ViewAsButton } from "@/components/ops/ViewAsButton";
 import { useAuth } from "@/auth/AuthContext";
 import { formatMicros, lastNDaysRange } from "@/api/spend";
 import {
@@ -751,6 +752,10 @@ function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): J
         <AdjustmentForm orgId={orgId} />
         <BundleForm orgId={orgId} />
         <PrepaidToggle orgId={orgId} enabled={org.prepaid} />
+      </SurfaceCard>
+
+      <SurfaceCard>
+        <ViewAsButton orgId={orgId} orgName={org.name} />
       </SurfaceCard>
 
       <SurfaceCard>

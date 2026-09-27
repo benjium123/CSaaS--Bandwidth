@@ -87,7 +87,11 @@ def test_the_major_actions_are_marked():
         ("POST", "/api/v1/ops/users/{user_id}/deactivate"),
     ]:
         assert expected in major
-    assert all(perm == "ops:admin" for _, _, perm, is_major in ROUTES if is_major)
+    # Every major action is admin-only, except opening a read-only support view (H3).
+    not_admin = {
+        (m, p, perm) for m, p, perm, is_major in ROUTES if is_major and perm != "ops:admin"
+    }
+    assert not_admin == {("POST", "/api/v1/ops/view-as", "ops:support")}
 
 
 async def test_read_only_reads_but_changes_nothing(ops, session):  # noqa: F811

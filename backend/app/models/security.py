@@ -181,3 +181,27 @@ class OperatorAuditEntry(Base):
     reason: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     ip: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+
+
+class OperatorViewSession(Base):
+    """H3: an operator viewing a customer workspace, read-only, for a limited time.
+
+    Started with a reason and a fresh second factor (require_operator_permission major);
+    the workspace owners are emailed and see it in their account activity. While valid, the
+    operator's requests carrying ``X-View-As: <id>`` get a read-only context for ``org_id``
+    (auth/deps.py get_current_org) and every one of them lands in operator_audit_log."""
+
+    __tablename__ = "operator_view_sessions"
+    __table_args__ = (sa.Index("ix_operator_view_sessions_operator", "operator_user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    operator_user_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), sa.ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reason: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)

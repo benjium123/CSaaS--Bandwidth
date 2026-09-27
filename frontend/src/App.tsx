@@ -31,6 +31,7 @@ import { VerificationBanner } from "@/components/kyc/VerificationBanner";
 import { MonitoringBanner } from "@/components/kyc/MonitoringBanner";
 import { ReportNumberPage } from "@/pages/ReportNumberPage";
 import { StepUpDialog } from "@/components/security/StepUpDialog";
+import { ViewAsBanner } from "@/components/security/ViewAsBanner";
 import { SecureAccountPage } from "@/pages/SecureAccountPage";
 import { OpsPage } from "@/pages/OpsPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "@/pages/PasswordResetPages";
@@ -306,6 +307,8 @@ export function App() {
 
   return (
     <LifecycleGate>
+      {/* H3: shown only while a platform operator is viewing this workspace. */}
+      <ViewAsBanner />
       {location.pathname.replace(/\/+$/, "") === "/settings/verification" ? (
         <Navigate to={`/verification${location.hash}`} replace />
       ) : location.pathname.replace(/\/+$/, "") === "/verification" ? (

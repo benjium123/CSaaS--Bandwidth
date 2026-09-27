@@ -119,6 +119,7 @@ const ACTIVITY_LABELS: Record<string, string> = {
   "account.unlocked": "Account unlocked",
   "account.deactivated": "Account deactivated",
   "account.reactivated": "Account reactivated",
+  "support.viewed_workspace": "Ringlite support viewed your workspace (read-only)",
 };
 
 export function AccountActivityCard() {

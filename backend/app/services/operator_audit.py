@@ -23,8 +23,17 @@ REASON_HEADER = "X-Ops-Reason"
 _STATE_KEY = "ops_audit"
 
 
-def tag(request: Request, *, user_id: uuid.UUID | None, email: str | None, role: str) -> None:
-    """Mark ``request`` as made by an operator (or by the shared token: user_id None)."""
+def tag(
+    request: Request,
+    *,
+    user_id: uuid.UUID | None,
+    email: str | None,
+    role: str,
+    log_reads: bool = False,
+    org_id: uuid.UUID | None = None,
+) -> None:
+    """Mark ``request`` as made by an operator (or by the shared token: user_id None).
+    ``log_reads``: record reads too (H3 view as workspace records every page opened)."""
     route = request.scope.get("route")
     setattr(
         request.state,
@@ -35,6 +44,8 @@ def tag(request: Request, *, user_id: uuid.UUID | None, email: str | None, role:
             "role": role,
             "route": getattr(route, "path", None) or request.url.path,
             "path_params": {k: str(v) for k, v in request.path_params.items()},
+            "log_reads": log_reads,
+            "org_id": org_id,
         },
     )
 
@@ -61,7 +72,7 @@ async def write(request: Request, status_code: int) -> None:
     """Persist one row for a tagged, non-read request. Never raises: a failed audit write
     is logged loudly but must not turn a completed action into a 500."""
     info = tagged(request)
-    if info is None or request.method in READ_METHODS:
+    if info is None or (request.method in READ_METHODS and not info.get("log_reads")):
         return
     from app.db.session import get_sessionmaker
     from app.net import client_ip
@@ -76,7 +87,7 @@ async def write(request: Request, status_code: int) -> None:
         method=request.method,
         route=info["route"][:255],
         path_params=info["path_params"],
-        org_id=_org_id(info["path_params"]),
+        org_id=info.get("org_id") or _org_id(info["path_params"]),
         status_code=status_code,
         reason=reason,
         ip=client_ip(request),
