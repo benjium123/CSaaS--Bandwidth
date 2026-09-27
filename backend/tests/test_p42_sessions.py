@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 from app.models import Org
 from app.models import Session as IdentitySession
-from tests.conftest import make_settings
+from tests.conftest import latest_email_code, make_settings
 
 PASSWORD = "correct-horse-battery-staple"
 
@@ -41,8 +41,26 @@ def _csrf(client: httpx.AsyncClient) -> dict:
 
 
 async def _login(client, email: str) -> None:
-    r = await client.post("/api/v1/auth/register", json={"email": email, "password": PASSWORD})
+    # Self-serve registration is unified around identity verification (1fb0006) and now
+    # requires full_name, plus a confirmed email before anything outside /api/v1/auth/
+    # (auth/deps.py:147). This is a cookie-only app (auth_bearer_compat=False), so confirm
+    # the way a browser does - conftest's confirm_registered_email needs a bearer token -
+    # then sign out and log back in so the rest of this test still sees exactly one
+    # (confirmed, non-throwaway) session, matching test_p43_monitor_fixes.py's pattern.
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": PASSWORD, "full_name": email.split("@")[0]},
+    )
     assert r.status_code == 201, r.text
+    r = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
+    assert r.status_code == 200, r.text
+    csrf = {"X-CSRF-Token": client.cookies.get("csaas_csrf", "")}
+    r = await client.post(
+        "/api/v1/auth/confirm-email", json={"code": latest_email_code(email)}, headers=csrf
+    )
+    assert r.status_code == 200, r.text
+    await client.post("/api/v1/auth/logout", headers=csrf)
+    client.cookies.clear()
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
     assert r.status_code == 200, r.text
     assert r.json()["access_token"] is None, "no bearer token without compat mode"
@@ -110,6 +128,12 @@ async def test_absolute_timeout(browser, session):
 async def test_stolen_cookie_with_wrong_secret_is_rejected(browser, session):
     await _login(browser, "forge@example.com")
     row = await _latest_session(session)
+    # httpx's cookie jar keys a Set-Cookie-derived cookie under the (RFC 2965-mangled,
+    # e.g. "test.local") request domain, while Cookies.set(name, value) with no domain
+    # stores it under domain="" - a distinct jar entry. Without delete() first, BOTH ride
+    # along on the next request and the server's cookie parser keeps the last (real, still
+    # valid) one, silently defeating this test. Delete by name (all domains) before forging.
+    browser.cookies.delete("csaas_session")
     browser.cookies.set("csaas_session", f"{row.id}.{'x' * 43}")
     assert (await browser.get("/api/v1/auth/me")).status_code == 401
 

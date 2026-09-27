@@ -23,7 +23,7 @@ from app.models import (
     User,
 )
 from app.models import Session as IdentitySession
-from tests.conftest import auth_headers, create_org, make_settings
+from tests.conftest import auth_headers, create_org, latest_email_code, make_settings
 
 PASSWORD = "correct-horse-battery-staple"
 NEW_PASSWORD = "violet-harbour-lantern-92"
@@ -87,8 +87,19 @@ def _cred(raw: str) -> str:
 
 
 async def _signup_with_passkey(client, email: str, raw: str = "cred-1") -> str:
-    r = await client.post("/api/v1/auth/register", json={"email": email, "password": PASSWORD})
+    # Self-serve registration (1fb0006) now requires full_name; the passkey routes below
+    # are all under /api/v1/auth/ and so stay reachable pre-email-confirmation
+    # (auth/deps.py:147), which is why no confirm-email step is needed here.
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": PASSWORD, "full_name": email.split("@")[0]},
+    )
     assert r.status_code == 201, r.text
+    # No factor is enrolled yet, so this login still returns a plain access_token rather
+    # than a pending_token (login_flow.second_factor_methods(user) is empty) - do the
+    # passkey enrolment on it before confirming the address below, since confirming turns
+    # on email-as-2FA (email_2fa_on_verify) and would otherwise force every later login
+    # from here into the pending_token/step-up path before a passkey exists to satisfy it.
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
     token = r.json()["access_token"]
     opts = await client.post("/api/v1/auth/passkeys/register/options", headers=auth_headers(token))
@@ -98,6 +109,16 @@ async def _signup_with_passkey(client, email: str, raw: str = "cred-1") -> str:
         headers=auth_headers(token),
     )
     assert r.status_code == 201, r.text
+    # Confirm on this SAME session/token (not conftest's confirm_registered_email, which
+    # logs out afterwards - callers keep using this token, e.g. to assert it is later
+    # revoked). Routes outside /api/v1/auth/ 403 with email_verification_required otherwise
+    # (POST /api/v1/orgs, /orgs/current/members/*/reset-2fa, etc.).
+    r = await client.post(
+        "/api/v1/auth/confirm-email",
+        json={"code": latest_email_code(email)},
+        headers=auth_headers(token),
+    )
+    assert r.status_code == 200, r.text
     return token
 
 
@@ -159,7 +180,8 @@ async def test_hibp_range_lookup_only_sends_prefix():
 
 async def test_register_enforces_policy(client42):
     r = await client42.post(
-        "/api/v1/auth/register", json={"email": "weak@example.com", "password": "tooshort12"}
+        "/api/v1/auth/register",
+        json={"email": "weak@example.com", "password": "tooshort12", "full_name": "Weak Case"},
     )
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "weak_password"
@@ -403,6 +425,32 @@ async def test_identity_recovery_clears_factors_and_blocks_sensitive_actions(
     assert user.has_passkey is False and user.step_up_blocked_until is not None
     row = await session.get(KycStepUp, uuid.UUID(step_up_id))
     assert row.consumed_at is not None
+    # bf7d532: a privileged role only obliges a second factor once platform review has
+    # approved that workspace. Approve the personal workspace registration auto-created for
+    # this user (distinct from the unrelated "Lost Co" org used above just to hold the
+    # verified KycPerson) so the owner role there counts, otherwise second_factor_required
+    # would stay False regardless of the passkey being cleared.
+    from app.models import KycProfile, OrgMembership
+
+    own_org_id = (
+        await session.execute(
+            sa.select(OrgMembership.org_id)
+            .where(OrgMembership.user_id == org_token_user)
+            .execution_options(allow_unscoped=True)
+        )
+    ).scalars().first()
+    profile = (
+        await session.execute(
+            sa.select(KycProfile)
+            .where(KycProfile.org_id == own_org_id)
+            .execution_options(allow_unscoped=True)
+        )
+    ).scalar_one()
+    from app.db.base import set_org_context as _set_org_context
+
+    _set_org_context(session, own_org_id)
+    profile.status = "approved"
+    await session.commit()
     # Enroll-only now (no factor), and sensitive actions wait out the cool-down.
     me = (await client42.get("/api/v1/auth/me", headers=auth_headers(token))).json()
     assert me["second_factor_required"] is True
@@ -470,12 +518,22 @@ async def test_identity_recovery_rejects_someone_elses_id(client42, session, mon
 # Admin reset
 # --------------------------------------------------------------------------------------
 async def _add_member(session, org_id, email: str, role_name: str):
-    from app.db.base import set_org_context
+    from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
     from app.models import OrgMembership, Role
 
     set_org_context(session, uuid.UUID(org_id))
     role = (await session.execute(sa.select(Role).where(Role.name == role_name))).scalar_one()
     user = (await session.execute(sa.select(User).where(User.email == email))).scalar_one()
+    # Self-serve registration (1fb0006) gives every new account its own personal workspace;
+    # _resettable_member (api/routes/orgs.py) refuses anyone who belongs to more than one
+    # workspace ("member_in_other_workspace") before it even looks at their role there, so
+    # drop that solo membership first - this test wants a member of ONLY the target org,
+    # the same shape as a teammate who was invited straight in.
+    await session.execute(
+        sa.delete(OrgMembership)
+        .where(OrgMembership.user_id == user.id)
+        .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    )
     session.add(
         OrgMembership(id=uuid.uuid4(), org_id=uuid.UUID(org_id), user_id=user.id, role_id=role.id)
     )

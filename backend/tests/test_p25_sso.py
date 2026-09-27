@@ -200,6 +200,12 @@ async def _create_owner_org(
     org_dict = await create_org(client, token, f"SSO Org {uuid.uuid4().hex}")
     org = await session.get(Org, uuid.UUID(org_dict["id"]))
     assert org is not None
+    # c39efc6: every new org is seat-limited to its (here nonexistent) plan/paid numbers
+    # (services/seats.py), which would otherwise 403 seat_limit_reached the moment SSO
+    # auto-provisions a second member - these tests are about SSO, not billing, so bypass
+    # it the same way conftest's make_org_with_number does for a pre-per-number-billing org.
+    org.number_subscription_required = False
+    await session.commit()
     return org, owner_email
 
 

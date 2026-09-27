@@ -44,6 +44,7 @@ from tests.conftest import (
     approve_workspaces,
     auth_headers,
     create_org,
+    latest_email_code,
     make_settings,
     register_and_login,
 )
@@ -142,7 +143,19 @@ async def _invited_user(
         "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
     )
     assert r.status_code == 200, r.text
-    return r.json()["access_token"]
+    token = r.json()["access_token"]
+    # register() sets email_verification_required=True for EVERY new account, invited or
+    # not (auth.py::register) - unconfirmed, every route outside /api/v1/auth/ (including
+    # /api/v1/contacts below) 403s with email_verification_required before the 2FA gate
+    # ever gets a look-in. make_settings defaults email_2fa_on_verify to False, so this
+    # does not hand the account an unintended second factor.
+    r = await sf_client.post(
+        "/api/v1/auth/confirm-email",
+        json={"code": latest_email_code(email)},
+        headers=auth_headers(token),
+    )
+    assert r.status_code == 200, r.text
+    return token
 
 
 def _membership_org_id(entry: dict) -> str:

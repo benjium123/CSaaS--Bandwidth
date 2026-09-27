@@ -92,6 +92,12 @@ async def _saml_org(client, session, *, verified: bool = True):
     from app.models import Org
 
     org = await session.get(Org, uuid.UUID(org_dict["id"]))
+    # c39efc6: every new org is seat-limited to its (here nonexistent) plan/paid numbers
+    # (services/seats.py), which would otherwise 403 seat_limit_reached the moment a SAML
+    # sign-in auto-provisions a second member - these tests are about SAML, not billing, so
+    # bypass it the same way conftest's make_org_with_number does for a pre-per-number-
+    # billing org.
+    org.number_subscription_required = False
     org.sso = {
         "protocol": "saml",
         "domain": DOMAIN,

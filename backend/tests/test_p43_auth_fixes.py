@@ -33,6 +33,7 @@ from app.models import Session as IdentitySession
 from tests.conftest import (
     auth_headers,
     create_org,
+    latest_email_code,
     make_settings,
     mark_recent_2fa,
     register_and_login,
@@ -451,10 +452,24 @@ async def test_operator_cookie_session_reaches_legacy_ops_routes(engine, session
     ) as browser:
         email = f"op-{uuid.uuid4().hex[:8]}@example.com"
         password = "correct-horse-battery-staple"
-        r = await browser.post("/api/v1/auth/register", json={"email": email, "password": password})
+        r = await browser.post(
+            "/api/v1/auth/register",
+            json={"email": email, "password": password, "full_name": "Operator"},
+        )
         assert r.status_code == 201
         r = await browser.post("/api/v1/auth/login", json={"email": email, "password": password})
         assert r.status_code == 200
+        # Confirm on this SAME session/cookie (no logout): the assertions below expect
+        # exactly one IdentitySession row for this user. Needed because /api/v1/platform/
+        # billing/... is not under /api/v1/auth/ and so 403s with
+        # email_verification_required until confirmed (auth/deps.py::_finish_user).
+        csrf = {"X-CSRF-Token": browser.cookies.get("csaas_csrf", "")}
+        r = await browser.post(
+            "/api/v1/auth/confirm-email",
+            json={"code": latest_email_code(email)},
+            headers=csrf,
+        )
+        assert r.status_code == 200, r.text
         user = await _user(session, email)
         user.totp_enabled = True
         user.has_passkey = True
@@ -476,6 +491,7 @@ async def test_operator_cookie_session_reaches_legacy_ops_routes(engine, session
 from tests.test_p41_kyc import (  # noqa: E402 - reuse the P41 verification harness
     _complete_application,
     _make_operator,
+    _signup_org,
     _write_sanctions,
     kyc_app,  # noqa: F401 - fixture
     kyc_settings,  # noqa: F401 - fixture
@@ -486,7 +502,7 @@ async def test_approval_rescreens_against_current_lists(kyc_app, session, kyc_se
     client, _app, _carrier, created, outcomes = kyc_app
     _write_sanctions(kyc_settings, ["IVAN BADGUY"])
     token = await register_and_login(client, "jane@acme-plumbing.example")
-    org = await create_org(client, token, "Acme")
+    org = await _signup_org(client, token, "Acme", session=session, business=True)
     h = auth_headers(token, org["id"])
     await _complete_application(client, created, outcomes, token, org["id"])
     r = await client.post("/api/v1/kyc/submit", headers=h)

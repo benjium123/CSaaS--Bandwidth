@@ -32,6 +32,9 @@ PASSWORD = "correct-horse-battery"
 
 
 async def _register(client, email: str, **extra) -> dict:
+    # 1fb0006: self-serve registration now requires full_name regardless of company_name -
+    # a default keeps this file about org-naming/ownership, not the full_name field itself.
+    extra.setdefault("full_name", "Test Owner")
     r = await client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": PASSWORD, **extra},
@@ -59,14 +62,23 @@ async def _org_count(session) -> int:
 
 
 # ----------------------------------------------------------------------------------
-# Self-serve signup mints exactly one org, named from company_name
+# Self-serve signup mints exactly one org, named from full_name (company_name ignored)
 # ----------------------------------------------------------------------------------
 async def test_self_serve_signup_owns_exactly_one_org_named_from_company_name(client):
+    """1fb0006: register() now forces every self-serve (non-invite) signup to
+    account_type="individual" ("signup no longer creates company-KYC accounts") and
+    requires full_name. _signup_org_name (auth.py) names an individual's workspace after
+    full_name unconditionally - company_name is accepted but ignored. Company/business
+    workspaces still exist, just created afterwards via POST /orgs, not at signup (see
+    test_p41_kyc.py's business-KYC tests, which flip account_type explicitly)."""
     reg = await _register(
-        client, "founder@acme-widgets.com", company_name="Acme Widgets"
+        client,
+        "founder@acme-widgets.com",
+        company_name="Acme Widgets",
+        full_name="Jane Founder",
     )
     assert len(reg["memberships"]) == 1
-    assert reg["memberships"][0]["org_name"] == "Acme Widgets"
+    assert reg["memberships"][0]["org_name"] == "Jane Founder"
     assert reg["memberships"][0]["role_name"] == "owner"
 
     token = await _login(client, "founder@acme-widgets.com")
@@ -74,24 +86,29 @@ async def test_self_serve_signup_owns_exactly_one_org_named_from_company_name(cl
     assert me.status_code == 200, me.text
     body = me.json()
     assert len(body["memberships"]) == 1
-    assert body["memberships"][0]["org_name"] == "Acme Widgets"
+    assert body["memberships"][0]["org_name"] == "Jane Founder"
     assert body["memberships"][0]["role_name"] == "owner"
 
 
 # ----------------------------------------------------------------------------------
-# No company_name -> the email domain names the workspace
+# _signup_org_name's OWN email-domain fallback, pinned directly
 # ----------------------------------------------------------------------------------
-async def test_org_name_falls_back_to_email_domain(client):
-    reg = await _register(client, "founder@acme-widgets.com")
-    assert len(reg["memberships"]) == 1
-    assert reg["memberships"][0]["org_name"] == "Acme Widgets"
+def test_org_name_falls_back_to_email_domain():
+    """This branch of _signup_org_name (no company_name, account_type != "individual") is
+    no longer reachable through POST /auth/register: register() forces every self-serve
+    signup to "individual" and, for those, _signup_org_name always prefers full_name
+    (required, never blank) over company_name or the domain - see the test above. Call
+    the function directly with the "business, no company_name" shape it was written for,
+    so this rule keeps its coverage rather than silently rotting into dead code."""
+    from app.api.routes.auth import RegisterIn, _signup_org_name
 
-    token = await _login(client, "founder@acme-widgets.com")
-    me = await client.get("/api/v1/auth/me", headers=auth_headers(token))
-    assert me.status_code == 200, me.text
-    body = me.json()
-    assert len(body["memberships"]) == 1
-    assert body["memberships"][0]["org_name"] == "Acme Widgets"
+    payload = RegisterIn(
+        email="founder@acme-widgets.com",
+        password=PASSWORD,
+        full_name="Jane Founder",
+        account_type="business",
+    )
+    assert _signup_org_name(payload) == "Acme Widgets"
 
 
 # ----------------------------------------------------------------------------------

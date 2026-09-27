@@ -68,7 +68,8 @@ async def _hammer(client, email: str, attempts: int) -> list[int]:
 async def test_lockout_does_not_reveal_which_emails_have_accounts(app_client, session):
     real = "real-person@example.com"
     r = await app_client.post(
-        "/api/v1/auth/register", json={"email": real, "password": PASSWORD}
+        "/api/v1/auth/register",
+        json={"email": real, "password": PASSWORD, "full_name": "Real Person"},
     )
     assert r.status_code == 201, r.text
 
@@ -90,7 +91,8 @@ async def test_control_a_single_bad_password_is_indistinguishable(app_client, se
     the failure above is specifically the lockout, not the login path in general."""
     real = "real-two@example.com"
     r = await app_client.post(
-        "/api/v1/auth/register", json={"email": real, "password": PASSWORD}
+        "/api/v1/auth/register",
+        json={"email": real, "password": PASSWORD, "full_name": "Real Two"},
     )
     assert r.status_code == 201, r.text
 

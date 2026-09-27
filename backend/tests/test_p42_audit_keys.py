@@ -129,7 +129,13 @@ async def test_api_key_lifetime_and_rotation_overlap(engine, session):
             "/api/v1/api-keys", json={"name": "default", "scopes": ["contacts:read"]}, headers=h
         )
         assert r.status_code == 201
-        expires = datetime.fromisoformat(r.json()["expires_at"])
+        # datetime.fromisoformat only accepts a trailing "Z" from Python 3.11 (this suite
+        # runs on 3.10.10, per the venv) - the API's "...Z" is standard ISO 8601 UTC, so
+        # normalize it to a "+00:00" offset rather than treat it as malformed.
+        expires_at = r.json()["expires_at"]
+        if expires_at.endswith("Z"):
+            expires_at = expires_at[:-1] + "+00:00"
+        expires = datetime.fromisoformat(expires_at)
         expires = expires if expires.tzinfo else expires.replace(tzinfo=timezone.utc)
         assert timedelta(days=364) < expires - datetime.now(timezone.utc) <= timedelta(days=365)
         too_long = (datetime.now(timezone.utc) + timedelta(days=800)).isoformat()

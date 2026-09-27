@@ -16,12 +16,13 @@ import pytest
 from app.db.base import set_org_context
 from app.models import KycDocument, KycProfile
 from app.services import ai_guard, kyc_checks, kyc_decision, kyc_doc_reader
-from tests.conftest import auth_headers, create_org, make_settings, register_and_login
+from tests.conftest import auth_headers, make_settings, register_and_login
 from tests.fake_ai import FakeSafetyAI
 from tests.test_p41_kyc import (  # noqa: F401 - fixtures
     _complete_application,
     _make_operator,
     _pdf_bytes,
+    _signup_org,
     _write_sanctions,
     kyc_app,
     kyc_settings,
@@ -87,7 +88,7 @@ async def test_ai_never_fails_open_when_unavailable():
 async def test_owners_must_declare_and_prove_where_they_live(kyc_app, session):
     client, _app, _carrier, _created, _outcomes = kyc_app
     token = await register_and_login(client, "addr@acme-plumbing.example")
-    org = await create_org(client, token, "Addr Co")
+    org = await _signup_org(client, token, "Addr Co", session=session, business=True)
     h = auth_headers(token, org["id"])
     r = await client.post(
         "/api/v1/kyc/persons",
@@ -127,7 +128,7 @@ async def test_rejected_proof_tells_the_applicant_why(kyc_app, session):
     client, app, _carrier, created, outcomes = kyc_app
     app.state.fake_ai.document = {**app.state.fake_ai.document, "name_matches": False}
     token = await register_and_login(client, "bad-bill@acme-plumbing.example")
-    org = await create_org(client, token, "Bad Bill")
+    org = await _signup_org(client, token, "Bad Bill", session=session, business=True)
     await _complete_application(client, created, outcomes, token, org["id"])
     profile = (
         await client.get("/api/v1/kyc/profile", headers=auth_headers(token, org["id"]))
@@ -143,7 +144,7 @@ async def test_ai_outage_blocks_approval_until_documents_are_read(kyc_app, sessi
     _write_sanctions(kyc_settings, ["NOBODY"])
     app.state.fake_ai.fail = True
     token = await register_and_login(client, "outage@acme-plumbing.example")
-    org = await create_org(client, token, "Outage Co")
+    org = await _signup_org(client, token, "Outage Co", session=session, business=True)
     await _complete_application(client, created, outcomes, token, org["id"])
     r = await client.post("/api/v1/kyc/submit", headers=auth_headers(token, org["id"]))
     assert r.status_code == 200, r.text
@@ -171,7 +172,7 @@ async def test_decision_pack_is_not_rewritten_when_nothing_changed(kyc_app, sess
     client, app, _carrier, created, outcomes = kyc_app
     _write_sanctions(kyc_settings, ["NOBODY"])
     token = await register_and_login(client, "stable@acme-plumbing.example")
-    org = await create_org(client, token, "Stable Co")
+    org = await _signup_org(client, token, "Stable Co", session=session, business=True)
     await _complete_application(client, created, outcomes, token, org["id"])
     await client.post("/api/v1/kyc/submit", headers=auth_headers(token, org["id"]))
     before = len(app.state.fake_ai.tasks("senior compliance analyst"))
@@ -186,7 +187,7 @@ async def test_queue_shows_the_ai_recommendation(kyc_app, session, kyc_settings)
     client, _app, _carrier, created, outcomes = kyc_app
     _write_sanctions(kyc_settings, ["NOBODY"])
     token = await register_and_login(client, "queue@acme-plumbing.example")
-    org = await create_org(client, token, "Queue Co")
+    org = await _signup_org(client, token, "Queue Co", session=session, business=True)
     await _complete_application(client, created, outcomes, token, org["id"])
     await client.post("/api/v1/kyc/submit", headers=auth_headers(token, org["id"]))
     oh = auth_headers(await _make_operator(client, session, "queue-ops@platform.example"))

@@ -211,7 +211,9 @@ async def _make_operator(client, session, email: str, role: str = "admin") -> st
     return token
 
 
-async def _signup_org(client, token: str, name: str) -> dict:
+async def _signup_org(
+    client, token: str, name: str, session=None, business: bool = False
+) -> dict:
     """The workspace this account works in.
 
     Registration now hands a self-serve signup its own workspace (auth.py::register), and
@@ -220,11 +222,33 @@ async def _signup_org(client, token: str, name: str) -> dict:
     one only when it gave us none. Written as a fallback rather than dropping create_org
     outright because an account can still legitimately arrive without one (an invited
     member does), and because this then survives org-on-signup changing shape again.
+
+    ``session`` (when given) also bypasses the newer per-workspace billing gates that a
+    fresh org (self-serve or POST /orgs) now carries and this file's KYC-flow tests are not
+    about: ``number_subscription_required`` (numbers.py's "number_checkout_required" on the
+    plain POST /api/v1/numbers seed endpoint these tests use) - the same bypass
+    conftest's make_org_with_number applies. ``business=True`` additionally flips
+    ``account_type`` to "business": individual accounts are always verified with Didit
+    regardless of settings (services/kyc.py::start_person_verification), so a test driving
+    the Stripe-mocked verification flow (kyc_app's monkeypatched stripe_client) needs a
+    business-type org, not the individual one self-serve signup hands out by default.
     """
     me = (await client.get("/api/v1/auth/me", headers=auth_headers(token))).json()
     if me.get("memberships"):
-        return {"id": me["memberships"][0]["org_id"]}
-    return await create_org(client, token, name)
+        org = {"id": me["memberships"][0]["org_id"]}
+    else:
+        org = await create_org(client, token, name)
+    if session is not None:
+        from app.models import Org
+
+        org_id = uuid.UUID(org["id"])
+        set_org_context(session, org_id)
+        row = await session.get(Org, org_id)
+        row.number_subscription_required = False
+        if business:
+            row.account_type = "business"
+        await session.commit()
+    return org
 
 
 async def _complete_application(
@@ -337,7 +361,7 @@ async def test_new_business_is_blocked_until_approved(kyc_app, session, kyc_sett
     client, app, carrier, created, outcomes = kyc_app
     _write_sanctions(kyc_settings, ["IVAN BADGUY", "EVIL CORP LTD"])
     token = await register_and_login(client, "jane@acme-plumbing.example")
-    org = await _signup_org(client, token, "Acme")
+    org = await _signup_org(client, token, "Acme", session=session, business=True)
     h = auth_headers(token, org["id"])
 
     # Draft: no numbers, no texts.
@@ -417,7 +441,7 @@ async def test_new_business_is_blocked_until_approved(kyc_app, session, kyc_sett
 async def test_identity_webhook_is_idempotent_and_never_unverifies(kyc_app, session):
     client, app, carrier, created, outcomes = kyc_app
     token = await register_and_login(client, "idem@example.com")
-    org = await _signup_org(client, token, "Idem")
+    org = await _signup_org(client, token, "Idem", session=session, business=True)
     h = auth_headers(token, org["id"])
     r = await client.post(
         "/api/v1/kyc/persons",
@@ -548,7 +572,7 @@ async def test_high_risk_needs_documents_and_sanctions_match_blocks(
     app.state.fake_ai.document = {**app.state.fake_ai.document, "address_matches": None}
     _write_sanctions(kyc_settings, ["Jane Smith"])
     token = await register_and_login(client, "risky@acme-plumbing.example")
-    org = await _signup_org(client, token, "Risky")
+    org = await _signup_org(client, token, "Risky", session=session, business=True)
     await _complete_application(client, created, outcomes, token, org["id"], vertical="debt_relief")
     r = await client.post("/api/v1/kyc/submit", headers=auth_headers(token, org["id"]))
     assert r.status_code == 200, r.text
@@ -588,7 +612,7 @@ async def test_rejected_and_banned_business_cannot_return(kyc_app, session, kyc_
     client, app, carrier, created, outcomes = kyc_app
     _write_sanctions(kyc_settings, ["NOBODY LISTED"])
     token = await register_and_login(client, "scam@acme-plumbing.example")
-    org = await _signup_org(client, token, "Scam One")
+    org = await _signup_org(client, token, "Scam One", session=session, business=True)
     await _complete_application(
         client, created, outcomes, token, org["id"], registration_number="EIN-99-0000001"
     )
@@ -609,17 +633,17 @@ async def test_rejected_and_banned_business_cannot_return(kyc_app, session, kyc_
 
     # Same people come back with a new account and a new company name.
     token2 = await register_and_login(client, "fresh@newname.example")
-    org2 = await _signup_org(client, token2, "Totally New Co")
+    org2 = await _signup_org(client, token2, "Totally New Co", session=session, business=True)
     await _complete_application(
         client, created, outcomes, token2, org2["id"], registration_number="EIN-99-0000001"
     )
+    # 26f66e9: the ban list is now enforced AT SUBMIT, not just surfaced for a reviewer to
+    # see later - re-submission with an identifier already on the list (the shared
+    # registration number here) is refused outright rather than let through to "submitted"
+    # for an operator to catch via checks.ban_list/approval_blockers.
     r = await client.post("/api/v1/kyc/submit", headers=auth_headers(token2, org2["id"]))
-    assert r.status_code == 200, r.text
-    detail = (
-        await client.get(f"/api/v1/ops/applications/{org2['id']}", headers=auth_headers(ops))
-    ).json()
-    assert detail["checks"]["ban_list"]["result"] == "fail"
-    assert any("ban list" in b for b in detail["approval_blockers"])
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "account_blacklisted"
 
 
 async def test_companies_house_registry_check(kyc_app, session, kyc_settings):
@@ -657,7 +681,7 @@ async def test_companies_house_registry_check(kyc_app, session, kyc_settings):
 # --------------------------------------------------------------------------------------
 async def _approved_org(client, session, email: str, name: str) -> tuple[str, dict]:
     token = await register_and_login(client, email)
-    org = await _signup_org(client, token, name)
+    org = await _signup_org(client, token, name, session=session, business=True)
     set_org_context(session, uuid.UUID(org["id"]))
     profile = (await session.execute(sa.select(KycProfile))).scalar_one()
     profile.status = "approved"
@@ -1171,7 +1195,9 @@ async def test_an_approval_email_never_carries_the_operators_private_note(
     ops = await _make_operator(client, session, "approve@platform.example")
     _token, org = await _submitted_org(client, session, "owner@app.example", "App Co")
 
-    async def approve_without_checks(_session, _settings, profile, _operator_id, _note):
+    async def approve_without_checks(
+        _session, _settings, profile, _operator_id, _note, manual_override=False
+    ):
         kyc_svc.transition(profile, "approved")
 
     monkeypatch.setattr(kyc_svc, "approve", approve_without_checks)

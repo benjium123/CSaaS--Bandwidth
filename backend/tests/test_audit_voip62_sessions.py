@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 from app.models import Org
 from app.models import Session as IdentitySession
-from tests.conftest import make_settings
+from tests.conftest import latest_email_code, make_settings
 
 PASSWORD = "correct-horse-battery-staple"
 
@@ -46,8 +46,25 @@ def _csrf(client: httpx.AsyncClient) -> dict:
 
 
 async def _login(client: httpx.AsyncClient, email: str) -> None:
-    r = await client.post("/api/v1/auth/register", json={"email": email, "password": PASSWORD})
+    # Self-serve registration (1fb0006) now requires full_name, plus a confirmed email
+    # before anything outside /api/v1/auth/ (auth/deps.py:147) - POST /api/v1/orgs in
+    # _setup below included. Cookie-only app (auth_bearer_compat=False), so confirm the
+    # way a browser does, then sign out and log back in so the rest of this module still
+    # sees exactly one (confirmed) session - same pattern as test_p42_sessions.py::_login.
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": PASSWORD, "full_name": email.split("@")[0]},
+    )
     assert r.status_code == 201, r.text
+    r = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
+    assert r.status_code == 200, r.text
+    csrf = {"X-CSRF-Token": client.cookies.get("csaas_csrf", "")}
+    r = await client.post(
+        "/api/v1/auth/confirm-email", json={"code": latest_email_code(email)}, headers=csrf
+    )
+    assert r.status_code == 200, r.text
+    await client.post("/api/v1/auth/logout", headers=csrf)
+    client.cookies.clear()
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
     assert r.status_code == 200, r.text
 

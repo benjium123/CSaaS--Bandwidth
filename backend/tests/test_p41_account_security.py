@@ -18,7 +18,14 @@ from cryptography.fernet import Fernet
 
 from app.models import LoginDevice, SecurityAlert, User, WebauthnChallenge
 from app.models import Session as IdentitySession
-from tests.conftest import approve_workspaces, auth_headers, create_org, make_settings
+from tests.conftest import (
+    approve_workspaces,
+    auth_headers,
+    confirm_registered_email,
+    create_org,
+    latest_email_code,
+    make_settings,
+)
 
 PASSWORD = "correct-horse-battery"
 DEVICE_A = "device-a-0123456789abcdef"
@@ -98,8 +105,18 @@ async def _register(client, email: str) -> str:
     )
     assert r.status_code == 200, r.text
     body = r.json()
+    token = body["access_token"]
+    # Confirm the address on this same token so routes outside /api/v1/auth/ stop 403ing
+    # with email_verification_required (auth/deps.py:147) - make_settings defaults
+    # email_2fa_on_verify to False, so this does not hand the account a second factor.
+    r = await client.post(
+        "/api/v1/auth/confirm-email",
+        json={"code": latest_email_code(email)},
+        headers=auth_headers(token),
+    )
+    assert r.status_code == 200, r.text
     assert body["requires_2fa_enrollment"] is True
-    return body["access_token"]
+    return token
 
 
 async def _add_passkey(client, token: str, raw_id: str = "cred-1") -> dict:
@@ -174,9 +191,11 @@ async def test_adding_a_passkey_unlocks_the_account(sec_client):
 async def test_gate_is_off_when_setting_disabled(client):
     # The default test settings keep pre-P41 behaviour (password-only login works).
     r = await client.post(
-        "/api/v1/auth/register", json={"email": "legacy@example.com", "password": PASSWORD}
+        "/api/v1/auth/register",
+        json={"email": "legacy@example.com", "password": PASSWORD, "full_name": "Legacy Owner"},
     )
     assert r.status_code == 201
+    await confirm_registered_email(client, "legacy@example.com", PASSWORD)
     r = await client.post(
         "/api/v1/auth/login", json={"email": "legacy@example.com", "password": PASSWORD}
     )
@@ -327,6 +346,14 @@ async def test_org_owner_is_emailed_about_a_members_flagged_login(sec_client, se
     owner_token = await _register(sec_client, "boss@example.com")
     await _add_passkey(sec_client, owner_token, "cred-boss")
     org = await create_org(sec_client, owner_token, "Boss Co")
+    # c39efc6: every new org is seat-limited to its (here nonexistent) plan/paid numbers, and
+    # this test is about the flagged-login email, not billing - bypass the same way
+    # conftest's make_org_with_number does, as a pre-per-number-billing workspace.
+    from app.models import Org
+
+    org_row = await session.get(Org, uuid.UUID(org["id"]))
+    org_row.number_subscription_required = False
+    await session.commit()
     invite = await sec_client.post(
         "/api/v1/orgs/current/invites",
         json={"email": "staff@example.com", "role_name": "agent"},
