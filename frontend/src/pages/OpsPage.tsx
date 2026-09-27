@@ -974,7 +974,7 @@ function Switchboard({
   account?: React.ReactNode;
   notice?: React.ReactNode;
 }) {
-  const { me } = useAuth();
+  const { me, logout } = useAuth();
   const counts = useNavCounts();
   const current = TABS.find((t) => t.id === tab)!;
   const eyebrow =
@@ -1014,6 +1014,9 @@ function Switchboard({
           <b title={me?.email}>{me?.email}</b>
           {hasWorkspace && <a href="/inbox">Back to your workspace</a>}
           {account}
+          <button type="button" className="sb-signout" onClick={logout}>
+            Sign out
+          </button>
         </div>
       </aside>
 

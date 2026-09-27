@@ -119,8 +119,8 @@ describe("LoginPage", () => {
     await screen.findByLabelText("Authenticator code");
     expect(client.calls.some((c) => c.path.includes("/2fa/email/"))).toBe(false);
 
-    await userEvent.click(screen.getByRole("button", { name: "Email me a code instead" }));
-    await userEvent.click(screen.getByRole("button", { name: "Email me a code" }));
+    // Choosing the Email code tab is the ask: it sends once, and only then.
+    await userEvent.click(screen.getByRole("tab", { name: "Email code" }));
     expect(await screen.findByLabelText("Email code")).toBeInTheDocument();
     expect(client.calls.filter((c) => c.path.endsWith("/2fa/email/login/send"))).toHaveLength(1);
   });

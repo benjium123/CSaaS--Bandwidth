@@ -148,6 +148,8 @@
 .sb-account button { padding: 5px 12px; border-radius: 8px; border: 1px solid var(--sb-line-2); color: var(--sb-text); font-weight: 600; font-size: 12.5px; }
 .sb-account button:hover:not(:disabled) { border-color: var(--sb-amber); color: var(--sb-amber); }
 .sb-operator a { display: inline-block; margin-top: 8px; color: var(--sb-dim); text-decoration: underline; text-underline-offset: 3px; }
+.sb-signout { display: block; margin-top: 8px; padding: 0; border: 0; background: none; font: inherit; color: var(--sb-dim); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.sb-signout:hover { color: inherit; }
 
 /* ---------------------------------------------------------------- the page */
 .sb-main { min-width: 0; padding: 34px clamp(18px, 4vw, 56px) 80px; }

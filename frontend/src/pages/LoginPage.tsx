@@ -44,7 +44,8 @@ const PASSKEY_NOTE_ID = "login-passkey-unsupported";
 export function LoginPage() {
   const { login, verify2fa, verifyPasskey, recoverWithCode, sendLoginEmailCode, verifyEmailCode } =
     useAuth();
-  const [factor, setFactor] = React.useState<"totp" | "email">("totp");
+  const [factor, setFactor] = React.useState<"totp" | "email" | "passkey">("totp");
+  const [emailAutoSent, setEmailAutoSent] = React.useState(false);
   const navigate = useNavigate();
   const [useRecoveryCode, setUseRecoveryCode] = React.useState(false);
   const [email, setEmail] = React.useState("");
@@ -73,7 +74,9 @@ export function LoginPage() {
     if (res.kind === "needs_2fa") {
       setPendingToken(res.pendingToken);
       setMethods(res.methods);
-      setFactor(res.methods.includes("totp") ? "totp" : "email");
+      setFactor(
+        res.methods.includes("totp") ? "totp" : res.methods.includes("passkey") ? "passkey" : "email",
+      );
       return;
     }
     if (res.kind === "error") {
@@ -103,11 +106,13 @@ export function LoginPage() {
   }
 
   const secondStep = Boolean(pendingToken);
-  const emailOffered = secondStep && methods.includes("email") && !useRecoveryCode;
-  const emailMode = emailOffered && (factor === "email" || !methods.includes("totp"));
+  // One tab per factor; only the chosen tab's factor is live on the screen.
+  const showTabs = secondStep && !useRecoveryCode;
+  const emailMode = showTabs && factor === "email" && methods.includes("email");
   const totpAllowed =
-    !secondStep || useRecoveryCode || (methods.includes("totp") && !emailMode);
-  const passkeyOffered = secondStep && methods.includes("passkey") && !useRecoveryCode;
+    !secondStep || useRecoveryCode || (factor === "totp" && methods.includes("totp"));
+  const passkeyOffered = showTabs && factor === "passkey" && methods.includes("passkey");
+  const tabNotSetUp = showTabs && !methods.includes(factor);
   // The button stays visible when the browser has no WebAuthn - hiding the only named
   // route would be more confusing than explaining why it cannot be taken - but it is
   // disabled and accompanied by the reason and an alternative.
@@ -120,7 +125,12 @@ export function LoginPage() {
   const passkeyUnsupported = passkeyOffered && !passkeysSupported();
   // The remaining silence: the server named no factor this screen can exercise at all -
   // reachable with an empty `methods` list - which used to render a form with nothing on it.
-  const noMethodOffered = secondStep && !totpAllowed && !passkeyOffered && !emailOffered;
+  const noMethodOffered =
+    showTabs && !["totp", "passkey", "email"].some((m) => methods.includes(m));
+
+  React.useEffect(() => {
+    if (emailMode) setEmailAutoSent(true);
+  }, [emailMode]);
 
   return (
     <AuthSurface>
@@ -179,6 +189,44 @@ export function LoginPage() {
 
         {secondStep ? (
           <div className="space-y-4">
+            {showTabs && (
+              <div role="tablist" aria-label="Second factor" className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    ["email", "Email code"],
+                    ["passkey", "Passkey"],
+                    ["totp", "Authenticator app"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={factor === key}
+                    onClick={() => {
+                      setFactor(key);
+                      setCode("");
+                      setError(null);
+                    }}
+                    className={`rounded-[3px] border px-2 py-2 text-xs font-medium ${factor === key ? "border-primary bg-primary/10 text-foreground" : "border-border/70 text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {tabNotSetUp && !noMethodOffered ? (
+              <AuthNotice>
+                {factor === "email"
+                  ? "Email codes are not turned on for this account."
+                  : factor === "passkey"
+                    ? "This account has no passkey yet."
+                    : "This account has no authenticator app yet."}{" "}
+                Use another tab to finish signing in, then add it in Settings, Security.
+              </AuthNotice>
+            ) : null}
+
             {passkeyOffered && (
               <div className="space-y-2">
                 <AuthButton
@@ -232,27 +280,13 @@ export function LoginPage() {
 
             {emailMode && pendingToken ? (
               <EmailCodeStep
-                autoSend={!methods.includes("totp") && !methods.includes("passkey")}
+                autoSend={!emailAutoSent}
                 send={() => sendLoginEmailCode(pendingToken)}
                 verify={async (value) => {
                   const res = await verifyEmailCode(pendingToken, value);
                   if (res.kind === "error") throw new Error(res.message);
                 }}
               />
-            ) : null}
-
-            {emailOffered && methods.includes("totp") ? (
-              <button
-                type="button"
-                className="ex-link"
-                onClick={() => {
-                  setFactor(emailMode ? "totp" : "email");
-                  setCode("");
-                  setError(null);
-                }}
-              >
-                {emailMode ? "Use my authenticator app instead" : "Email me a code instead"}
-              </button>
             ) : null}
 
             {totpAllowed && (
