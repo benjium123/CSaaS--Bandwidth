@@ -145,3 +145,37 @@ class PlatformOperator(Base, TimestampMixin):
     )
     role: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="reviewer")
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+
+
+class OperatorAuditEntry(Base):
+    """H1: one row per change a platform operator made (any non-GET request that passed an
+    operator guard), written by the middleware in main.py after the response, in its own
+    session, so a failed action is recorded with its status too. Not TenantScoped: most
+    operator actions (prices, operators, the ban list) belong to no workspace."""
+
+    __tablename__ = "operator_audit_log"
+    __table_args__ = (
+        sa.Index("ix_operator_audit_log_at", "at"),
+        sa.Index("ix_operator_audit_log_operator", "operator_user_id", "at"),
+        sa.Index("ix_operator_audit_log_org", "org_id", "at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    #: NULL with role "ops_token": the shared machine token (no person attached).
+    operator_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    operator_email: Mapped[str | None] = mapped_column(sa.String(320), nullable=True)
+    operator_role: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    method: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    #: The route template (/api/v1/ops/orgs/{org_id}/suspend), not the raw URL.
+    route: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    path_params: Mapped[dict] = mapped_column(PortableJSON(), nullable=False, default=dict)
+    #: The workspace the action touched, when the route names one.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    status_code: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    #: Free text from the X-Ops-Reason header (required for view-as-workspace, H3).
+    reason: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    ip: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)

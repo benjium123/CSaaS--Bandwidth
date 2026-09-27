@@ -617,3 +617,47 @@ async def console_decide_grant(alert_id: uuid.UUID, payload: GrantDecisionIn, op
         operator_user_id=str(op.user.id),
     )
     return result
+
+
+@router.get("/audit")
+async def console_audit(
+    op: Admin,
+    operator_user_id: uuid.UUID | None = None,
+    org_id: uuid.UUID | None = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    before: datetime | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> dict:
+    """H1: every change a platform operator (or the shared ops token) made, newest first.
+    ``q`` matches the route; ``before`` pages back (pass the last row's ``at``)."""
+    from app.models import OperatorAuditEntry as E
+
+    stmt = sa.select(E).order_by(E.at.desc(), E.id.desc()).limit(limit)
+    if operator_user_id is not None:
+        stmt = stmt.where(E.operator_user_id == operator_user_id)
+    if org_id is not None:
+        stmt = stmt.where(E.org_id == org_id)
+    if q:
+        stmt = stmt.where(E.route.ilike(f"%{q.strip()}%"))
+    if before is not None:
+        stmt = stmt.where(E.at < before)
+    rows = (await op.session.execute(stmt)).scalars().all()
+    return {
+        "entries": [
+            {
+                "id": r.id,
+                "at": r.at,
+                "operator_user_id": r.operator_user_id,
+                "operator_email": r.operator_email,
+                "operator_role": r.operator_role,
+                "method": r.method,
+                "route": r.route,
+                "path_params": r.path_params,
+                "org_id": r.org_id,
+                "status_code": r.status_code,
+                "reason": r.reason,
+                "ip": r.ip,
+            }
+            for r in rows
+        ]
+    }

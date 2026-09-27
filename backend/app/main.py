@@ -64,6 +64,7 @@ from app.events.bus import EventBus
 from app.logging import configure_logging
 from app.providers.registry import build_registry
 from app.providers.registry_org import CarrierRegistryProxy
+from app.services import operator_audit
 from app.services import plans as plans_svc
 from app.storage.base import build_store
 from app.voice_plane import service as voice_service
@@ -175,6 +176,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request_id=request_id, method=request.method, path=request.url.path
         )
         started = time.perf_counter()
+        # Create the per-request state dict now, so what the operator guards put in it
+        # (services/operator_audit.tag) is visible here after the response.
+        _ = request.state
         try:
             response = await call_next(request)
         except Exception:
@@ -202,6 +206,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status=response.status_code,
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
+        await operator_audit.write(request, response.status_code)
         return response
 
     @app.exception_handler(scim_routes.ScimError)

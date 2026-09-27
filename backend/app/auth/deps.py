@@ -655,6 +655,9 @@ async def _operator_check(
         # Signed in with a password alone (possible only before the account had a
         # factor): the operator console always needs a session that proved one.
         raise StepUpRequiredError(kind="recent_2fa", action="operator_console")
+    from app.services import operator_audit
+
+    operator_audit.tag(request, user_id=user.id, email=user.email, role=operator.role)
     return operator
 
 
@@ -694,6 +697,9 @@ async def require_platform_operator(
         # use to recover the token byte-by-byte.
         if not hmac.compare_digest(x_platform_ops_token, configured):
             raise PermissionDeniedError("Invalid platform operator token")
+        from app.services import operator_audit
+
+        operator_audit.tag(request, user_id=None, email=None, role="ops_token")
         return
     from app.services import session_tokens
 
