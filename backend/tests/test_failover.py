@@ -125,6 +125,13 @@ async def _org_with_numbers(client, session, email: str = "fo1@example.com") -> 
         "/api/v1/numbers", json={"e164": FALLBACK_NUM, "carrier": "telnyx"}, headers=h
     )
     assert r.status_code == 201, r.text
+    # individual accounts need a registered number (compliance/registration.py); this file
+    # is about carrier failover, not account type, so make the org a business account.
+    from app.models import Org
+
+    org_row = await session.get(Org, uuid.UUID(str(org["id"])))
+    org_row.account_type = "business"
+    await session.commit()
     await _register_telnyx_campaign(session, org["id"], FALLBACK_NUM)
     return token, org
 

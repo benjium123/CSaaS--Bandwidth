@@ -17,7 +17,7 @@ import pytest
 
 from app.compliance import registration as reg
 from app.compliance.telnyx_approval import build_evidence
-from app.models import OrgNumber
+from app.models import Org, OrgNumber
 from app.models.numbers import Campaign, TollFreeVerification
 
 NOW = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
@@ -46,6 +46,9 @@ class _Result:
     def all(self):
         return list(self._rows)
 
+    def __iter__(self):
+        return iter(self._rows)
+
 
 class _FakeSession:
     """Enough of an AsyncSession for the rows these code paths load.
@@ -71,6 +74,11 @@ class _FakeSession:
             return _Result(self.campaigns.values())
         if entity is TollFreeVerification:
             return _Result(self.tfvs.values())
+        if entity is Org:
+            # None of these fakes' numbers belong to an individual org - the individual
+            # gate (compliance/registration.py::_individual_org_ids) is exercised end to
+            # end in tests/test_individual_10dlc_gate.py.
+            return _Result([])
         raise AssertionError(f"unexpected query: {stmt}")
 
 

@@ -28,7 +28,9 @@ it is a number we failed to finish. For `carrier == "telnyx"`:
                 matching that carrier id.
 
 `REQUIRE_NUMBER_REGISTRATION=true` turns `unknown` into a refusal for every carrier, for
-deployments that do manage every registration here. Note the direction: that flag can only
+deployments that do manage every registration here. **Individual accounts always get that
+rule**: an individual texts only from a number with an approved 10DLC (or toll-free)
+registration, on every carrier - a hard gate, not a flag. Note the direction: that flag can only
 ever make the system *stricter*. There is deliberately no flag that loosens this, and none
 that lets a deployment claim a registration it does not have. Nothing on the send path
 calls the carrier: the Telnyx corroboration reads only what we have already persisted.
@@ -312,6 +314,25 @@ async def registration_state(
     )
 
 
+async def _individual_org_ids(session: AsyncSession, org_ids: set[uuid.UUID]) -> set[uuid.UUID]:
+    """Which of ``org_ids`` are individual accounts (they always need a registration)."""
+    from app.db.base import ALLOW_UNSCOPED_KEY
+    from app.models import Org
+
+    ids = {i for i in org_ids if i is not None}
+    if not ids:
+        return set()
+    return set(
+        (
+            await session.execute(
+                sa.select(Org.id)
+                .where(Org.id.in_(ids), Org.account_type == "individual")
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalars()
+    )
+
+
 async def check_number_may_send(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -355,6 +376,12 @@ async def check_number_may_send(
             f"{number.e164} has no registration on file and "
             f"REQUIRE_NUMBER_REGISTRATION is on. Register it, or link it to an approved "
             f"campaign."
+        )
+    # Asked only here, where an unregistered number would otherwise be let through.
+    if await _individual_org_ids(session, {org_id}):
+        return False, (
+            f"{number.e164} has no registration on file. Individual accounts text only "
+            f"from a number with an approved 10DLC registration."
         )
     log.warning(
         "number_registration_unknown",
@@ -404,6 +431,7 @@ async def partition_by_eligibility(
         ).scalars().all()
         tfvs = {t.number_id: t for t in rows}
 
+    individual: set[uuid.UUID] | None = None  # looked up once, only if needed
     allowed: list[OrgNumber] = []
     refused: dict[str, str] = {}
     # The batch's freshness inputs: resolved at most once, on the first Telnyx number that
@@ -463,6 +491,15 @@ async def partition_by_eligibility(
             refused[number.e164] = (
                 f"{number.e164} has no {regime} on file and REQUIRE_NUMBER_REGISTRATION "
                 f"is on."
+            )
+        elif number.org_id in (
+            individual := individual
+            if individual is not None
+            else await _individual_org_ids(session, {n.org_id for n in numbers})
+        ):
+            refused[number.e164] = (
+                f"{number.e164} has no {regime} on file. Individual accounts text only "
+                f"from a registered number."
             )
         else:
             allowed.append(number)

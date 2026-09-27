@@ -47,6 +47,12 @@ async def test_two_orgs_send_from_their_own_numbers_only(app_with_loopback, sess
     token_b, org_b, number_b = await make_org_with_number(
         client, "tenant-b-1@example.com", "Org B", "+19725550102"
     )
+    # individual accounts need a registered number (compliance/registration.py); this test
+    # is about tenancy, not account type, so make both orgs business accounts.
+    for oid in (org_a["id"], org_b["id"]):
+        row = await session.get(Org, uuid.UUID(str(oid)))
+        row.account_type = "business"
+    await session.commit()
     await seed_rates(session, org_a["id"])
     await seed_rates(session, org_b["id"])
     await enable_prepaid(session, org_a["id"], balance_micros=1_000_000)
@@ -98,6 +104,11 @@ async def test_outbound_sms_is_delivered_and_charged(app_with_loopback, session)
     token, org, _number = await make_org_with_number(
         client, "tenant-a-2@example.com", "Org A", "+12145550104"
     )
+    # individual accounts need a registered number (compliance/registration.py); this test
+    # is about billing, not account type, so make the org a business account.
+    row = await session.get(Org, uuid.UUID(str(org["id"])))
+    row.account_type = "business"
+    await session.commit()
     await seed_rates(session, org["id"])
     await enable_prepaid(session, org["id"], balance_micros=1_000_000)
     h = auth_headers(token, org["id"])
@@ -150,6 +161,12 @@ async def test_inbound_echo_lands_in_org_a_and_not_org_b(app_with_loopback, sess
     token_b, org_b, _number_b = await make_org_with_number(
         client, "tenant-b-3@example.com", "Org B", "+19725550107"
     )
+    # individual accounts need a registered number (compliance/registration.py); this test
+    # is about tenancy, not account type, so make both orgs business accounts.
+    for oid in (org_a["id"], org_b["id"]):
+        row = await session.get(Org, uuid.UUID(str(oid)))
+        row.account_type = "business"
+    await session.commit()
     await seed_rates(session, org_a["id"])
     await seed_rates(session, org_b["id"])
     await enable_prepaid(session, org_a["id"], balance_micros=1_000_000)
@@ -257,6 +274,9 @@ async def test_kyc_gate_blocks_unverified_org_and_approved_org_can_send(
     set_org_context(session, org_uuid)
     org_row = await session.get(Org, org_uuid)
     org_row.number_subscription_required = False
+    # individual accounts need a registered number (compliance/registration.py); this test
+    # is about the KYC gate, not account type, so make the org a business account.
+    org_row.account_type = "business"
     owner = (
         await session.execute(sa.select(User).where(User.email == "tenant-kyc-1@example.com"))
     ).scalar_one()

@@ -119,6 +119,15 @@ async def _org_with_numbers(client, email: str, session=None) -> tuple[str, dict
         "/api/v1/numbers", json={"e164": FALLBACK_NUM, "carrier": "telnyx"}, headers=h
     )
     assert r.status_code == 201, r.text
+    # individual accounts need a registered number (compliance/registration.py); this file
+    # is about route-reason sentences, not account type, so make the org a business account.
+    from app.db.session import get_sessionmaker
+    from app.models import Org
+
+    async with get_sessionmaker()() as setup_session:
+        row = await setup_session.get(Org, uuid.UUID(str(org["id"])))
+        row.account_type = "business"
+        await setup_session.commit()
     if session is not None:
         await _register_telnyx_campaign(session, org["id"], FALLBACK_NUM)
     return token, org
