@@ -247,6 +247,114 @@ async def console_set_recording_notice(
     }
 
 
+class DiscountIn(BaseModel):
+    #: One or more categories get the same percentage in one go.
+    categories: list[str] = Field(min_length=1, max_length=5)
+    percent: float = Field(gt=0, le=100)
+    ends_at: datetime | None = None
+    note: str | None = Field(default=None, max_length=255)
+
+
+async def _discounts_payload(op: OperatorContext, org_id: uuid.UUID, **extra) -> dict:  # noqa: ANN003
+    from app.services import discounts
+
+    return {
+        "org_id": str(org_id),
+        "categories": list(discounts.CATEGORIES),
+        "discounts": await discounts.for_org(op.session, org_id),
+        **extra,
+    }
+
+
+async def _sync_stripe(op: OperatorContext, request: Request, org_id: uuid.UUID) -> str:
+    """Push subscription/numbers percentages to the Stripe plan subscription. Never fails
+    the operator's change: the percentage is saved either way and applies in-app now."""
+    from app.services import discounts
+
+    try:
+        synced = await discounts.sync_subscription(
+            op.session, request.app.state.settings, org_id
+        )
+        await op.session.commit()
+    except Exception:
+        log.error("org_discount_sync_failed", org_id=str(org_id), exc_info=True)
+        await op.session.rollback()
+        return "failed"
+    return "synced" if synced else "no_subscription"
+
+
+@router.get("/orgs/{org_id}/discounts")
+async def console_org_discounts(org_id: uuid.UUID, op: Reviewer) -> dict:
+    await _org_or_404(op, org_id)
+    return await _discounts_payload(op, org_id)
+
+
+@router.put("/orgs/{org_id}/discounts")
+async def console_set_org_discounts(
+    org_id: uuid.UUID, payload: DiscountIn, op: Admin, request: Request
+) -> dict:
+    from app.services import discounts
+
+    categories = list(dict.fromkeys(payload.categories))
+    for category in categories:
+        if category not in discounts.CATEGORIES:
+            raise ValidationFailedError(f"Unknown discount category: {category}")
+    await _org_or_404(op, org_id)
+    bps = round(payload.percent * 100)
+    changes = []
+    for category in categories:
+        _row, previous = await discounts.set_discount(
+            op.session,
+            org_id,
+            category,
+            percent_bps=bps,
+            ends_at=payload.ends_at,
+            note=payload.note,
+            actor_user_id=op.user.id,
+        )
+        changes.append({"category": category, "from_bps": previous, "to_bps": bps})
+    _audit(
+        op,
+        org_id,
+        "org_discount.updated",
+        {
+            "changes": changes,
+            "ends_at": payload.ends_at.isoformat() if payload.ends_at else None,
+            "note": payload.note,
+        },
+    )
+    await op.session.commit()
+    stripe = None
+    if {"subscription", "numbers"} & set(categories):
+        stripe = await _sync_stripe(op, request, org_id)
+    discounts.invalidate(op.session, org_id)
+    return await _discounts_payload(op, org_id, stripe=stripe)
+
+
+@router.delete("/orgs/{org_id}/discounts/{category}")
+async def console_remove_org_discount(
+    org_id: uuid.UUID, category: str, op: Admin, request: Request
+) -> dict:
+    from app.services import discounts
+
+    await _org_or_404(op, org_id)
+    row = await discounts.remove(op.session, org_id, category)
+    if row is None:
+        raise NotFoundError("That workspace has no discount on this category")
+    _audit(
+        op,
+        org_id,
+        "org_discount.removed",
+        {"category": category, "from_bps": int(row.percent_bps)},
+    )
+    await op.session.commit()
+    stripe = None
+    if category in ("subscription", "numbers"):
+        stripe = await _sync_stripe(op, request, org_id)
+    discounts.invalidate(op.session, org_id)
+    return await _discounts_payload(op, org_id, stripe=stripe)
+
+
 class FixedCostIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     monthly_micros: int = Field(ge=0, le=100_000_000_000)

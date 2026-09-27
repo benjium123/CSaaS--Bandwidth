@@ -303,6 +303,9 @@ async def handle_webhook(
                 await credits.charge_usage(
                     session, fax.org_id, price, reference=f"fax:{fax.id}",
                     note=f"Fax sent, {pages} page(s)",
+                    discount_micros=await telephony_billing.discount_on(
+                        session, fax.org_id, "telnyx", "fax_page_out", pages
+                    ),
                 )
                 fax.charged_micros = price
     elif event_type == "fax.failed" and fax.status not in ("delivered", "failed"):
@@ -384,6 +387,9 @@ async def _inbound(
             await credits.charge_usage(
                 session, fax.org_id, price, reference=f"fax:{fax.id}",
                 note=f"Fax received, {pages} page(s)",
+                discount_micros=await telephony_billing.discount_on(
+                    session, fax.org_id, "telnyx", "fax_page_in", pages
+                ),
             )
             fax.charged_micros = price
     return "received"

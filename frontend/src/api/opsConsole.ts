@@ -34,6 +34,8 @@ export interface ConsoleOrgRow {
   voice_bundle_minutes?: number;
   numbers: number;
   plan_code: string | null;
+  /** The workspace's discounts (active and expired) - see api/opsDiscounts.ts. */
+  discounts?: { category: string; percent_bps: number; active: boolean }[];
   metrics: ConsoleMetrics;
 }
 

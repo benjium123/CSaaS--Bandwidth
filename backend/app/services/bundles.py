@@ -50,17 +50,22 @@ async def bundle_list_price(session: AsyncSession, kind: str) -> int:
     return await platform_price(session, f"{kind}_bundle")
 
 
-def quote_from_list(kind: str, qty: int, list_each: int) -> dict[str, int]:
+def quote_from_list(
+    kind: str, qty: int, list_each: int, workspace_bps: int = 0
+) -> dict[str, int]:
     """{list, discount, paid, unit_paid} in micros for `qty` bundles. Pure; integer math.
 
     The discount is computed on the unit price and rounded to whole cents, so what Stripe
-    charges (qty x unit, in cents) is exactly `paid`.
+    charges (qty x unit, in cents) is exactly `paid`. ``workspace_bps`` is the workspace's
+    own bundles discount (services/discounts.py), taken after the volume discount.
     """
     if qty < 1 or qty > MAX_QTY:
         raise ValidationFailedError(f"Choose between 1 and {MAX_QTY} bundles.")
     unit_paid = list_each
     if kind in VOLUME_DISCOUNT_KINDS and qty >= VOLUME_MIN_QTY:
         unit_paid = list_each * (10_000 - VOLUME_DISCOUNT_BPS_BY_KIND[kind]) // 10_000
+    if workspace_bps > 0:
+        unit_paid = unit_paid * (10_000 - min(int(workspace_bps), 10_000)) // 10_000
     unit_paid = (unit_paid // 10_000) * 10_000  # whole cents
     total_list = list_each * qty
     paid = unit_paid * qty
@@ -70,11 +75,17 @@ def quote_from_list(kind: str, qty: int, list_each: int) -> dict[str, int]:
         "paid": paid,
         "unit_paid": unit_paid,
         "units": UNITS_PER_BUNDLE[kind] * qty,
+        "workspace_discount_bps": max(int(workspace_bps), 0),
     }
 
 
-async def quote(session: AsyncSession, kind: str, qty: int) -> dict[str, int]:
-    return quote_from_list(kind, qty, await bundle_list_price(session, kind))
+async def quote(
+    session: AsyncSession, kind: str, qty: int, org_id: uuid.UUID | None = None
+) -> dict[str, int]:
+    from app.services import discounts
+
+    bps = await discounts.active_bps(session, org_id, "bundles")
+    return quote_from_list(kind, qty, await bundle_list_price(session, kind), bps)
 
 
 async def units(session: AsyncSession, org_id: uuid.UUID, kind: str) -> int:

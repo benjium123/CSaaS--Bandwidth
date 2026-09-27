@@ -1,5 +1,6 @@
 import * as React from "react";
 import { FixedCostsSection } from "@/components/ops/FixedCostsSection";
+import { OrgDiscountsPanel } from "@/components/ops/OrgDiscountsPanel";
 import { OrgFeaturesPanel } from "@/components/ops/OrgFeaturesPanel";
 import { useAuth } from "@/auth/AuthContext";
 import { formatMicros, lastNDaysRange } from "@/api/spend";
@@ -159,12 +160,17 @@ function KpiGrid({
       <KpiCard
         label="Net profit"
         value={formatMicros(totals.net_profit ?? totals.cash_profit ?? 0)}
-        sub={`Workspaces ${formatMicros(totals.cash_profit ?? 0)} − fixed ${formatMicros(totals.fixed_costs ?? 0)} − unattributed ${formatMicros(totals.unattributed_carrier_cost ?? 0)}`}
+        sub={`After discounts. Workspaces ${formatMicros(totals.cash_profit ?? 0)} − fixed ${formatMicros(totals.fixed_costs ?? 0)} − unattributed ${formatMicros(totals.unattributed_carrier_cost ?? 0)}`}
+      />
+      <KpiCard
+        label="Profit before discounts"
+        value={formatMicros(totals.net_profit_before_discount ?? totals.net_profit ?? 0)}
+        sub={`Discounts given ${formatMicros(totals.discount_given ?? 0)}`}
       />
       <KpiCard
         label="Paid"
         value={formatMicros(totals.paid ?? 0)}
-        sub={`List ${formatMicros(totals.list ?? 0)} · Discounts ${formatMicros(totals.discount ?? 0)}`}
+        sub={`List ${formatMicros(totals.list ?? 0)} · Bundle discounts ${formatMicros(totals.discount ?? 0)} · Usage discounts ${formatMicros(totals.usage_discount ?? 0)}`}
       />
       <KpiCard label="Stripe fees" value={formatMicros(totals.stripe_fees ?? 0)} />
       <KpiCard label="Carrier cost" value={formatMicros(totals.carrier_cost ?? 0)} />
@@ -260,9 +266,10 @@ type SortKey =
   | "prepaid"
   | "balance_micros"
   | "paid"
-  | "discount"
+  | "discount_given"
   | "usage_revenue"
   | "cash_profit"
+  | "profit_before_discount"
   | "sms_out_segments"
   | "sms_in_segments"
   | "minutes_out"
@@ -302,15 +309,24 @@ function sortOrgs(orgs: ConsoleOrgRow[], sort: SortState): ConsoleOrgRow[] {
   });
 }
 
+/** "10% usage · 5% bundles" for the workspace's active discounts, or "" when none. */
+function activeDiscounts(row: ConsoleOrgRow): string {
+  return (row.discounts ?? [])
+    .filter((d) => d.active)
+    .map((d) => `${Number((d.percent_bps / 100).toFixed(2))}% ${d.category}`)
+    .join(" · ");
+}
+
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "name", label: "Name" },
   { key: "billing_state", label: "State" },
   { key: "prepaid", label: "Prepaid" },
   { key: "balance_micros", label: "Balance" },
   { key: "paid", label: "Paid" },
-  { key: "discount", label: "Discount" },
+  { key: "discount_given", label: "Discounts given" },
   { key: "usage_revenue", label: "Usage revenue" },
-  { key: "cash_profit", label: "Cash profit" },
+  { key: "cash_profit", label: "Profit after discounts" },
+  { key: "profit_before_discount", label: "Profit before discounts" },
   { key: "sms_out_segments", label: "Texts out" },
   { key: "sms_in_segments", label: "Texts in" },
   { key: "minutes_out", label: "Minutes out" },
@@ -385,9 +401,17 @@ function OrgsTable({
               <td className="px-3 py-2 text-left">{row.prepaid ? "Yes" : "No"}</td>
               <td className="px-3 py-2 text-right">{formatMicros(row.balance_micros)}</td>
               <td className="px-3 py-2 text-right">{formatMicros(row.metrics.paid ?? 0)}</td>
-              <td className="px-3 py-2 text-right">{formatMicros(row.metrics.discount ?? 0)}</td>
+              <td className="px-3 py-2 text-right">
+                {formatMicros(row.metrics.discount_given ?? row.metrics.discount ?? 0)}
+                {activeDiscounts(row) ? (
+                  <div className="text-xs text-muted-foreground">{activeDiscounts(row)}</div>
+                ) : null}
+              </td>
               <td className="px-3 py-2 text-right">{formatMicros(row.metrics.usage_revenue ?? 0)}</td>
               <td className="px-3 py-2 text-right">{formatMicros(row.metrics.cash_profit ?? 0)}</td>
+              <td className="px-3 py-2 text-right">
+                {formatMicros(row.metrics.profit_before_discount ?? row.metrics.cash_profit ?? 0)}
+              </td>
               <td className="px-3 py-2 text-right">{count(row.metrics.sms_out_segments ?? 0)}</td>
               <td className="px-3 py-2 text-right">{count(row.metrics.sms_in_segments ?? 0)}</td>
               <td className="px-3 py-2 text-right">{count(row.metrics.minutes_out ?? 0)}</td>
@@ -593,7 +617,12 @@ function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): J
 
       <div className="grid gap-3 sm:grid-cols-3">
         <KpiCard label="Balance" value={formatMicros(org.balance_micros)} />
-        <KpiCard label="Cash profit" value={formatMicros(metrics.cash_profit ?? 0)} />
+        <KpiCard label="Profit after discounts" value={formatMicros(metrics.cash_profit ?? 0)} />
+        <KpiCard
+          label="Profit before discounts"
+          value={formatMicros(metrics.profit_before_discount ?? metrics.cash_profit ?? 0)}
+          sub={`Discounts given ${formatMicros(metrics.discount_given ?? 0)}`}
+        />
         <KpiCard label="Usage revenue" value={formatMicros(metrics.usage_revenue ?? 0)} />
         <KpiCard label="Paid" value={formatMicros(metrics.paid ?? 0)} />
         <KpiCard label="Blocked" value={count(metrics.blocked_total ?? 0)} />
@@ -726,6 +755,10 @@ function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): J
 
       <SurfaceCard>
         <OrgFeaturesPanel orgId={orgId} canEdit={me?.operator_role === "admin"} />
+      </SurfaceCard>
+
+      <SurfaceCard>
+        <OrgDiscountsPanel orgId={orgId} canEdit={me?.operator_role === "admin"} />
       </SurfaceCard>
     </div>
   );

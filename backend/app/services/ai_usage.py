@@ -180,12 +180,19 @@ async def record(
     else:
         cost_micros = int(unit_cost) * int(quantity)
 
+    discount_micros = 0
     if source in PLATFORM_COST_SOURCES:
         price_micros = 0  # our own cost: in the P&L, never billed
     else:
-        price_micros = credits.price_for(
+        from app.services import discounts
+
+        listed = credits.price_for(
             cost_micros=cost_micros, kind=kind, quantity=int(quantity), org=org
         )
+        price_micros = discounts.apply(
+            listed, await discounts.active_bps(session, org_id, "usage")
+        )
+        discount_micros = max(int(listed) - price_micros, 0)
 
     event = AiUsageEvent(
         id=uuid.uuid4(),
@@ -226,6 +233,7 @@ async def record(
             org_id,
             int(price_micros),
             reference=f"usage:{event.id}",
+            discount_micros=discount_micros,
         )
 
     return event

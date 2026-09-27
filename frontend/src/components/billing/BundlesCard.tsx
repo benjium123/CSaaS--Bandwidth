@@ -79,6 +79,13 @@ function BundleRow({ info, kind, canPay }: { info: BundlesInfo; kind: BundleKind
         Without a bundle: {formatUnitPrice(kindInfo.pay_as_you_go_micros)} {copy.unit}
       </p>
 
+      {info.workspace_discount_bps ? (
+        <p className="text-xs text-muted-foreground">
+          Your workspace discount: {Number((info.workspace_discount_bps / 100).toFixed(2))}% off
+          bundles, included in the price below.
+        </p>
+      ) : null}
+
       <div className="mt-2 flex items-center gap-2">
         <Button
           type="button"

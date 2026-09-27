@@ -210,8 +210,15 @@ async def create(
         "plan_code": plan_code,
     }
     base = settings.public_web_url.rstrip("/")
+    from app.services import discounts
+
+    extra: dict = {}
+    if coupon := await discounts.checkout_discounts(session, settings, org_id):
+        extra["discounts"] = coupon
+        await session.commit()  # keep a newly created coupon id
     checkout = await stripe_client._run_sync(
         stripe.checkout.Session.create,
+        **extra,
         mode="subscription",
         payment_method_types=["card"],
         payment_method_options=stripe_client.THREE_DS_OPTIONS,
@@ -300,6 +307,7 @@ async def fulfill(session, request, purchase):
             await plan_billing.upsert_from_stripe(
                 session, settings, subscription, purchase.org_id
             )
+            await _sync_discounts(session, settings, purchase.org_id)
         elif (
             len(items) != 1
             or items[0].get("price", {}).get("id") != settings.stripe_number_price_id
@@ -695,3 +703,15 @@ async def sync_released_number(session, settings, number):
         )
         purchase.subscription_status = "canceled"
     await session.commit()
+
+
+async def _sync_discounts(session, settings, org_id) -> None:  # noqa: ANN001
+    """Move the workspace discount onto the new subscription's items. A Stripe error here
+    must never undo a paid purchase: it is logged and the next plan change retries."""
+    from app.services import discounts
+
+    try:
+        if await discounts.has_stripe_discount(session, org_id):
+            await discounts.sync_subscription(session, settings, org_id)
+    except Exception:
+        log.error("org_discount_sync_failed", org_id=str(org_id), exc_info=True)

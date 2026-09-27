@@ -46,7 +46,7 @@ async def start_bundle_payment(
 ) -> tuple[BillingPayment, dict[str, int]]:
     """Price the purchase and create its pending row (before Stripe is called). Does not
     commit."""
-    q = await bundles.quote(session, kind, qty)
+    q = await bundles.quote(session, kind, qty, org_id)
     set_org_context(session, org_id)
     row = BillingPayment(
         id=uuid.uuid4(),

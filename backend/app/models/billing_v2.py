@@ -140,3 +140,24 @@ class TelnyxCostDaily(Base):
     quantity: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
     cost_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+
+DISCOUNT_CATEGORIES: tuple[str, ...] = ("subscription", "bundles", "usage", "numbers", "tendlc")
+
+
+class OrgDiscount(Base, TenantScoped, TimestampMixin):
+    """A per-workspace discount on one category of charges, set by an admin operator.
+    ``percent_bps`` is 1..10000 (0.01%..100%); ``ends_at`` NULL = until removed. Subscriptions
+    carry it as a Stripe coupon (``stripe_coupon_id``); everything priced in-app applies it
+    at quote/charge time (services/discounts.py)."""
+
+    __tablename__ = "org_discounts"
+    __table_args__ = (sa.UniqueConstraint("org_id", "category", name="uq_org_discounts_category"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    category: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    percent_bps: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    ends_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    note: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    stripe_coupon_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)

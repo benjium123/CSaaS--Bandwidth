@@ -11,6 +11,9 @@ Money definitions (integer micros):
 - carrier_cost    = our carrier cost estimate (provider_spend_daily)
 - telnyx_actual   = Telnyx's own billed cost (telnyx_cost_daily, when reconciled)
 - cash_profit     = paid - stripe_fees - (telnyx_actual when present else carrier_cost)
+- usage_discount  = what workspace discounts took off usage/number charges (ledger)
+- discount_given  = discount + usage_discount (bundle discounts incl. volume, and usage)
+- profit_before_discount = cash_profit + discount_given; cash_profit is AFTER discounts
 """
 
 from __future__ import annotations
@@ -145,12 +148,13 @@ async def org_metrics(
             m[f"talk_seconds_{d}"] += int(duration or 0)
 
     # --- money: ledger ------------------------------------------------------------------
-    for org_id, entry_type, amount in await _rows(
+    for org_id, entry_type, amount, discounted in await _rows(
         session,
         sa.select(
             CreditLedgerEntry.org_id,
             CreditLedgerEntry.entry_type,
             sa.func.coalesce(sa.func.sum(CreditLedgerEntry.amount_micros), 0),
+            sa.func.coalesce(sa.func.sum(CreditLedgerEntry.discount_micros), 0),
         )
         .where(
             CreditLedgerEntry.created_at >= lo,
@@ -161,6 +165,7 @@ async def org_metrics(
     ):
         if entry_type == "usage":
             out[org_id]["usage_revenue"] += -int(amount)
+            out[org_id]["usage_discount"] += int(discounted)
         elif entry_type in ("adjustment", "refund"):
             out[org_id][f"{entry_type}s"] += int(amount)
 
@@ -310,6 +315,10 @@ def finish(m: dict[str, int]) -> dict[str, int]:
     m["provider_cost"] = m["carrier_cost"] + m["ai_cost"]
     m["cash_profit"] = m["paid"] - m["stripe_fees"] - m["provider_cost"]
     m["usage_margin"] = m["usage_revenue"] - m["provider_cost"]
+    m["usage_discount"] = m.get("usage_discount", 0)
+    m["discount"] = m.get("discount", 0)
+    m["discount_given"] = m["discount"] + m["usage_discount"]
+    m["profit_before_discount"] = m["cash_profit"] + m["discount_given"]
     return m
 
 
@@ -411,12 +420,24 @@ async def _active_numbers(session: AsyncSession) -> dict[uuid.UUID, int]:
     return {o: int(n) for o, n in rows}
 
 
+async def _org_discounts(session: AsyncSession) -> dict[uuid.UUID, list[dict]]:
+    """Every workspace's discounts (active and expired), for the table's Discount column."""
+    from app.models import OrgDiscount
+    from app.services import discounts
+
+    out: dict[uuid.UUID, list[dict]] = defaultdict(list)
+    for (row,) in await _rows(session, sa.select(OrgDiscount)):
+        out[row.org_id].append(discounts.to_dict(row))
+    return out
+
+
 async def orgs_table(session: AsyncSession, start: date | None, end: date | None) -> dict[str, Any]:
     lo, hi, s, e = day_range(start, end)
     metrics = await org_metrics(session, lo, hi, s, e)
     balances = await _balances(session)
     units = await _bundle_units(session)
     numbers = await _active_numbers(session)
+    org_discounts = await _org_discounts(session)
     orgs = (await session.execute(sa.select(Org).order_by(Org.created_at))).scalars().all()
     rows = []
     totals: dict[str, int] = defaultdict(int)
@@ -443,6 +464,7 @@ async def orgs_table(session: AsyncSession, start: date | None, end: date | None
                 "voice_bundle_minutes": units.get((org.id, "voice"), 0),
                 "numbers": numbers.get(org.id, 0),
                 "plan_code": org.plan_code,
+                "discounts": org_discounts.get(org.id, []),
                 "metrics": m,
             }
         )
@@ -454,6 +476,7 @@ async def orgs_table(session: AsyncSession, start: date | None, end: date | None
     totals["net_profit"] = (
         totals["cash_profit"] - platform["fixed_costs"] - platform["unattributed_carrier_cost"]
     )
+    totals["net_profit_before_discount"] = totals["net_profit"] + totals["discount_given"]
     return {
         "start": s.isoformat(),
         "end": e.isoformat(),

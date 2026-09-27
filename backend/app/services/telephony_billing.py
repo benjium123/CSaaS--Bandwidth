@@ -134,7 +134,31 @@ async def platform_price(session: AsyncSession, metric: str) -> int:
 
 
 async def unit_price(session: AsyncSession, org_id: uuid.UUID, provider: str, metric: str) -> int:
-    """Customer price in micros for one unit of `metric` on `provider`.
+    """What the workspace pays for one unit of `metric` on `provider`: the list price less
+    its usage/numbers discount (services/discounts.py). Every quote, credit gate and charge
+    goes through here, so they all agree."""
+    from app.services import discounts
+
+    listed = await list_unit_price(session, org_id, provider, metric)
+    bps = await discounts.active_bps(session, org_id, discounts.category_for_metric(metric))
+    return discounts.apply(listed, bps)
+
+
+async def discount_on(
+    session: AsyncSession, org_id: uuid.UUID, provider: str, metric: str, units: int
+) -> int:
+    """What the workspace discount takes off ``units`` of ``metric`` - recorded on the
+    ledger row for the console's before/after-discount profit."""
+    if units <= 0:
+        return 0
+    listed = await list_unit_price(session, org_id, provider, metric)
+    return max(listed * units - await unit_price(session, org_id, provider, metric) * units, 0)
+
+
+async def list_unit_price(
+    session: AsyncSession, org_id: uuid.UUID, provider: str, metric: str
+) -> int:
+    """Customer LIST price in micros for one unit of `metric` on `provider` (no discount).
 
     An explicit per-org ``provider_rates.price_micros`` override always wins. Otherwise a
     metric in the flat ``PLATFORM_PRICE_MICROS`` table is priced straight from that table -
@@ -467,6 +491,13 @@ async def charge_sms(session: AsyncSession, org_id: uuid.UUID, message: Message)
         price,
         reference=f"sms:{message.id}",
         note=f"{'MMS' if _is_mms(message) else 'SMS'} {'sent' if outbound else 'received'}",
+        discount_micros=await discount_on(
+            session,
+            org_id,
+            message.carrier,
+            _sms_metric(is_mms=_is_mms(message), outbound=outbound),
+            billable,
+        ),
     )
 
 
@@ -519,6 +550,9 @@ async def charge_segment_correction(
             delta,
             reference=f"sms:{message.id}:segments",
             note=f"{billable} extra segment(s) reported by the carrier",
+            discount_micros=await discount_on(
+                session, org_id, message.carrier, "sms_out", billable
+            ),
         )
 
 
@@ -742,12 +776,19 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
             )
             price = voice_price_micros(uncovered_seconds, per_minute)
             if price > 0:
+                listed = voice_price_micros(
+                    uncovered_seconds,
+                    await list_unit_price(
+                        session, org_id, call.carrier, _call_metric(call.direction)
+                    ),
+                )
                 await credits.charge_usage(
                     session,
                     org_id,
                     price,
                     reference=f"call:{call.id}:voice",
                     note=f"{seconds}s {call.direction} call",
+                    discount_micros=listed - price,
                 )
             await _release_call_holds(session, org_id, call.id)
             call.billed_at = _now()
@@ -966,6 +1007,9 @@ async def _charge_rental_period(
             price,
             reference=f"num:{number.id}:{period_start.isoformat()}",
             note=f"Monthly rental for {number.e164}",
+            discount_micros=await discount_on(
+                session, org_id, number.carrier, "number_mrc", 1
+            ),
         )
     number.rental_paid_through = _next_month(period_start)
 
@@ -992,6 +1036,9 @@ async def charge_new_number(
             setup,
             reference=f"num:{number.id}:setup",
             note=f"Setup for {number.e164}",
+            discount_micros=await discount_on(
+                session, org_id, number.carrier, "number_setup", 1
+            ),
         )
     await _charge_rental_period(session, org_id, number, today or _now().date())
 

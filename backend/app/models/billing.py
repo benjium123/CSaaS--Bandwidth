@@ -94,6 +94,10 @@ class CreditLedgerEntry(Base, TenantScoped, TimestampMixin):
     #: Signed. topup/refund/release > 0; usage/reserve < 0; adjustment either.
     amount_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     balance_after_micros: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    #: What a usage charge was discounted by (services/discounts.py); 0 for everything else.
+    discount_micros: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=0, server_default="0"
+    )
     reference: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
     note: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(

@@ -170,6 +170,14 @@ describe("BundlesCard", () => {
 });
 
 describe("bundleQuote", () => {
+  it("stacks the workspace discount after the volume discount, like the server", () => {
+    const info = { ...BUNDLES_PAYLOAD, workspace_discount_bps: 1_000 };
+    // 12.00 list, 20% volume = 9.60, then 10% workspace = 8.64
+    expect(bundleQuote(info, "sms", 5).unitPaid).toBe(8_640_000);
+    // below the volume minimum only the workspace discount applies: 12.00 - 10% = 10.80
+    expect(bundleQuote(info, "sms", 1).unitPaid).toBe(10_800_000);
+  });
+
   it("charges list price with no discount below the volume minimum", () => {
     const quote = bundleQuote(BUNDLES_PAYLOAD, "sms", 4);
     expect(quote).toEqual({

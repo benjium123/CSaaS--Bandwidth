@@ -143,6 +143,16 @@ async def hourly(settings, app_state=None) -> dict:  # noqa: ANN001
                     results["fax_media_purged"] = await fax_svc.purge_old_media(session, store)
         except Exception:
             log.exception("billing_ops.fax_purge_failed")
+    if stripe_client.is_configured(settings):
+        try:
+            from app.services import discounts
+
+            async with get_sessionmaker()() as session:
+                results["discounts_expired_on_stripe"] = await discounts.expire_stripe_discounts(
+                    session, settings
+                )
+        except Exception:
+            log.exception("billing_ops.discount_expiry_failed")
     try:
         async with get_sessionmaker()() as session:
             results["welcome_credits"] = await grant_missing_welcome_credits(session)

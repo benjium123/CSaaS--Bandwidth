@@ -509,9 +509,13 @@ async def get_bundles(
 ) -> dict:
     """Units left, and the price list with the volume rule, for the Bundles card."""
     from app.services import bundles as bundles_svc
+    from app.services import discounts as discounts_svc
 
     out: dict = {"volume_min_qty": bundles_svc.VOLUME_MIN_QTY,
-                 "volume_discount_bps": bundles_svc.VOLUME_DISCOUNT_BPS, "kinds": {}}
+                 "volume_discount_bps": bundles_svc.VOLUME_DISCOUNT_BPS, "kinds": {},
+                 "workspace_discount_bps": await discounts_svc.active_bps(
+                     ctx.session, ctx.org.id, "bundles"
+                 )}
     for kind in ("sms", "mms", "voice"):
         out["kinds"][kind] = {
             "units": await bundles_svc.units(ctx.session, ctx.org.id, kind),
@@ -552,7 +556,7 @@ async def create_bundle_checkout(
         ctx.session,
         settings,
         ctx.org.id,
-        (await _bundles.quote(ctx.session, payload.kind, payload.qty))["paid"],
+        (await _bundles.quote(ctx.session, payload.kind, payload.qty, ctx.org.id))["paid"],
     )
     row, q = await payments_svc.start_bundle_payment(
         ctx.session, ctx.org.id, kind=payload.kind, qty=payload.qty
@@ -563,8 +567,14 @@ async def create_bundle_checkout(
         if payload.kind == "voice"
         else f"{size:,} {payload.kind.upper()} bundle"
     )
-    if q["discount"] > 0:
+    volume = (
+        payload.kind in bundles_svc.VOLUME_DISCOUNT_KINDS
+        and payload.qty >= bundles_svc.VOLUME_MIN_QTY
+    )
+    if volume:
         name += f" ({bundles_svc.VOLUME_DISCOUNT_BPS_BY_KIND[payload.kind] // 100}% volume discount)"
+    if q["workspace_discount_bps"] > 0:
+        name += f" ({q['workspace_discount_bps'] / 100:g}% workspace discount)"
     checkout = await stripe_client.create_bundle_checkout_session(
         settings,
         org=ctx.org,

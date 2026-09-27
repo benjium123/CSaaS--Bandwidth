@@ -100,17 +100,22 @@ PIN_SMS = "Your Ringlite texting registration code is @OTP_PIN@. It expires in 2
 SUCCESS_SMS = "Thanks - your number is verified for business texting with Ringlite."
 
 
-def quote(tier: str) -> dict:
+def quote(tier: str, service_discount_bps: int = 0) -> dict:
+    """``service_discount_bps`` is the workspace's 10DLC discount (services/discounts.py). It
+    applies to Ringlite's own service fee only - carrier fees pass through at cost."""
     monthly = MONTHLY_CENTS[tier]
+    bps = min(max(int(service_discount_bps), 0), 10_000)
+    service = SERVICE_FEE_CENTS * (10_000 - bps) // 10_000
     return {
         "fee_tier": tier,
         "brand_fee_cents": BRAND_FEE_CENTS,
         "campaign_review_cents": CAMPAIGN_REVIEW_CENTS,
-        "service_fee_cents": SERVICE_FEE_CENTS,
+        "service_fee_cents": service,
+        "service_discount_cents": SERVICE_FEE_CENTS - service,
         "monthly_cents": monthly,
         "upfront_months": UPFRONT_MONTHS,
         "due_today_cents": (
-            BRAND_FEE_CENTS + CAMPAIGN_REVIEW_CENTS + SERVICE_FEE_CENTS + UPFRONT_MONTHS * monthly
+            BRAND_FEE_CENTS + CAMPAIGN_REVIEW_CENTS + service + UPFRONT_MONTHS * monthly
         ),
     }
 
@@ -286,8 +291,13 @@ async def start_checkout(
     session.add(reg)
     await session.commit()
 
-    fees = quote(tier)
+    from app.services import discounts
+
+    discount_bps = await discounts.active_bps(session, org_id, "tendlc")
+    fees = quote(tier, discount_bps)
     metadata = {"kind": "tendlc_fee", "registration_id": str(reg.id), "org_id": str(org_id)}
+    if discount_bps:
+        metadata["service_discount_bps"] = str(discount_bps)
     base = settings.public_web_url.rstrip("/")
     params: dict[str, Any] = {
         "mode": "subscription",
@@ -874,14 +884,18 @@ async def cancel(session, settings, reg_id) -> str:
             payments = await stripe_client._run_sync(
                 stripe.InvoicePayment.list, invoice=subscription["latest_invoice"], status="paid"
             )
-            intent = next(
+            paid = next(
                 (
-                    p["payment"]["payment_intent"]
+                    p
                     for p in payments.get("data", [])
                     if (p.get("payment") or {}).get("payment_intent")
                 ),
                 None,
             )
+            intent = paid["payment"]["payment_intent"] if paid else None
+            if paid and isinstance(paid.get("amount_paid"), int):
+                # A workspace discount lowered what was charged: never refund more than that.
+                amount = min(amount, paid["amount_paid"])
             if intent:
                 await stripe_client._run_sync(
                     stripe.Refund.create,

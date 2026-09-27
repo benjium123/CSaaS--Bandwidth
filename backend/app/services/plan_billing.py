@@ -621,6 +621,18 @@ async def _apply(
             raise _stripe_failure(exc) from exc
         raise
     await upsert_from_stripe(session, settings, updated, ent.subscription.org_id)
+    from app.services import discounts
+
+    if any("price" in item for item in items) and await discounts.has_stripe_discount(
+        session, ent.subscription.org_id
+    ):
+        # A new item (or a new price on one) does not carry the workspace discount yet.
+        try:
+            await discounts.sync_subscription(session, settings, ent.subscription.org_id)
+        except Exception:
+            log.error(
+                "org_discount_sync_failed", org_id=str(ent.subscription.org_id), exc_info=True
+            )
     await session.commit()
     fresh = await entitlement(session, ent.subscription.org_id)
     assert fresh is not None

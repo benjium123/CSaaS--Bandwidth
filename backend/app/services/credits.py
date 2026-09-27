@@ -83,6 +83,7 @@ async def _append(
     reference: str | None,
     note: str | None = None,
     created_by: uuid.UUID | None = None,
+    discount_micros: int = 0,
 ) -> CreditLedgerEntry:
     if entry_type not in LEDGER_ENTRY_TYPES:
         raise ValidationFailedError(f"Unknown ledger entry type: {entry_type}")
@@ -105,6 +106,7 @@ async def _append(
         reference=reference,
         note=note,
         created_by=created_by,
+        discount_micros=max(int(discount_micros), 0),
     )
     session.add(entry)
     try:
@@ -186,9 +188,11 @@ async def charge_usage(
     *,
     reference: str,
     note: str | None = None,
+    discount_micros: int = 0,
 ) -> CreditLedgerEntry:
     """Debit the customer price of a usage event. May take the balance below zero (the
-    reserve was the guard; the actual cost is owed regardless)."""
+    reserve was the guard; the actual cost is owed regardless). ``discount_micros`` is what
+    the workspace discount took off this charge (reporting only - the price is already net)."""
     if price_micros < 0:
         raise ValidationFailedError("A usage charge cannot be negative")
     return await _append(
@@ -198,6 +202,7 @@ async def charge_usage(
         amount_micros=-price_micros,
         reference=reference,
         note=note,
+        discount_micros=discount_micros,
     )
 
 

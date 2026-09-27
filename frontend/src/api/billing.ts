@@ -32,6 +32,8 @@ export interface BundleKindInfo {
 export interface BundlesInfo {
   volume_min_qty: number;
   volume_discount_bps: number;
+  /** This workspace's own bundles discount, taken after the volume discount (0/absent = none). */
+  workspace_discount_bps?: number;
   /** `voice` (call minutes) is absent on servers older than the call bundles. */
   kinds: Record<"sms" | "mms", BundleKindInfo> & Partial<Record<"voice", BundleKindInfo>>;
 }
@@ -477,12 +479,21 @@ export function bundleQuote(
 ): { list: number; discount: number; paid: number; units: number; unitPaid: number } {
   const kindInfo = info.kinds[kind]!;
   const qualifiesForDiscount = kindInfo.volume_discount && qty >= info.volume_min_qty;
-  const unitPaid = qualifiesForDiscount
-    ? Math.floor(
-        Math.floor((kindInfo.list_micros * (10_000 - (kindInfo.volume_discount_bps ?? info.volume_discount_bps))) / 10_000) /
-          10_000,
-      ) * 10_000
-    : kindInfo.list_micros;
+  const workspaceBps = Math.min(Math.max(info.workspace_discount_bps ?? 0, 0), 10_000);
+  let unitPaid = kindInfo.list_micros;
+  if (qualifiesForDiscount || workspaceBps > 0) {
+    // Same order and rounding as the server: volume, then the workspace discount, then
+    // down to a whole cent.
+    if (qualifiesForDiscount) {
+      unitPaid = Math.floor(
+        (unitPaid * (10_000 - (kindInfo.volume_discount_bps ?? info.volume_discount_bps))) / 10_000,
+      );
+    }
+    if (workspaceBps > 0) {
+      unitPaid = Math.floor((unitPaid * (10_000 - workspaceBps)) / 10_000);
+    }
+    unitPaid = Math.floor(unitPaid / 10_000) * 10_000;
+  }
   const paid = unitPaid * qty;
   const list = kindInfo.list_micros * qty;
   return {

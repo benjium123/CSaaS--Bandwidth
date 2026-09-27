@@ -209,11 +209,11 @@ describe("ConsoleTab", () => {
     let rows = within(orgsTable).getAllByRole("row");
     expect(within(rows[1]).getByText("Alpha Realty")).toBeInTheDocument();
 
-    await userEvent.click(within(orgsTable).getByRole("button", { name: /^Cash profit/ }));
+    await userEvent.click(within(orgsTable).getByRole("button", { name: /^Profit after discounts/ }));
     rows = within(orgsTable).getAllByRole("row");
     expect(within(rows[1]).getByText("Alpha Realty")).toBeInTheDocument();
 
-    await userEvent.click(within(orgsTable).getByRole("button", { name: /^Cash profit/ }));
+    await userEvent.click(within(orgsTable).getByRole("button", { name: /^Profit after discounts/ }));
     rows = within(orgsTable).getAllByRole("row");
     expect(within(rows[1]).getByText("Bravo Homes")).toBeInTheDocument();
   });
