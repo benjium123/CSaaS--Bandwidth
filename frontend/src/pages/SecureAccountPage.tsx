@@ -34,6 +34,7 @@ export function SecureAccountPage() {
   const [code, setCode] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [option, setOption] = React.useState<"email" | "passkey" | "totp">("email");
 
   async function startTotp() {
     setError(null);
@@ -86,7 +87,26 @@ export function SecureAccountPage() {
         }
       >
         <div className="space-y-5">
-          <section className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
+          <div role="tablist" aria-label="Two-step method" className="grid grid-cols-3 gap-2">
+            {([
+              ["email", "Email code"],
+              ["passkey", "Passkey"],
+              ["totp", "Authenticator app"],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={option === key}
+                onClick={() => setOption(key)}
+                className={`rounded-[3px] border px-2 py-2 text-xs font-medium ${option === key ? "border-primary bg-primary/10 text-foreground" : "border-border/70 text-muted-foreground hover:text-foreground"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <section role="tabpanel" hidden={option !== "email"} className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <span className="ex-label">Option A · Simplest</span>
               <span className="text-xs text-muted-foreground">Code by email</span>
@@ -126,7 +146,7 @@ export function SecureAccountPage() {
             </div>
           </section>
 
-          <section className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
+          <section role="tabpanel" hidden={option !== "passkey"} className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <span className="ex-label">Option B · Most secure</span>
               <Lamp state="live">Cannot be phished</Lamp>
@@ -134,7 +154,7 @@ export function SecureAccountPage() {
             <PasskeysCard onAdded={() => void refreshMe()} />
           </section>
 
-          <section className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
+          <section role="tabpanel" hidden={option !== "totp"} className="rounded-[3px] border border-border/70 bg-[hsl(var(--ex-ink-raise)/0.5)] p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <span className="ex-label">Option C</span>
               <span className="text-xs text-muted-foreground">Authenticator app</span>
