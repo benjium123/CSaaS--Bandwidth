@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ConflictError, NotFoundError, ValidationFailedError
 from app.models import BillingPayment, Org, OrgMembership, PaymentMethod, Role, User
-from app.models.subscriptions import Subscription
 from app.models.billing_v2 import BUNDLE_KINDS
+from app.models.subscriptions import Subscription
 from app.services import bundles, credits
 
 log = structlog.get_logger("custom_invoices")
