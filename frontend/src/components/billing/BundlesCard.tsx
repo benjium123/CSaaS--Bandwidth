@@ -130,6 +130,13 @@ function BundleRow({ info, kind, canPay }: { info: BundlesInfo; kind: BundleKind
         {quote.discount > 0 ? ` (you save ${formatCredits(quote.discount)})` : ""}
       </p>
 
+      <p className="text-xs text-muted-foreground">
+        Bundles are non-refundable, including unused units.{" "}
+        <a className="underline" href="/legal/refunds" target="_blank" rel="noopener noreferrer">
+          Refund policy
+        </a>
+      </p>
+
       {belowVolumeMin ? (
         <p className="text-xs text-muted-foreground">
           Buy {info.volume_min_qty} or more to save {discountPct}%

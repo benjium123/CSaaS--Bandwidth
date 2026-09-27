@@ -175,6 +175,113 @@ function AdjustmentForm({
   );
 }
 
+export type RefundablePayment = {
+  payment_id: string;
+  kind: string;
+  paid_at: string | null;
+  credit_micros: number;
+  fee_micros: number;
+  refund_micros: number;
+};
+
+export type Refundable = {
+  balance_micros: number;
+  credit_micros: number;
+  fee_micros: number;
+  refund_micros: number;
+  waiting_on_fee_micros: number;
+  payments: RefundablePayment[];
+};
+
+type RefundResult = {
+  refunded: RefundablePayment[];
+  failed: { payment_id: string; error: string } | null;
+};
+
+/** Refund policy (2026-09-28): only unused, paid-for credit is refundable, less the card
+ * fees; bundle units never are. The server works out the amount; this only confirms it. */
+function RefundUnusedSection({ orgId, name }: { orgId: string; name: string }): JSX.Element {
+  const { api } = useAuth();
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = React.useState(false);
+  const q = useQuery({
+    queryKey: ["ops", "billing", "refundable", orgId],
+    queryFn: () => api.request<Refundable>(`/api/v1/ops/console/orgs/${orgId}/refundable`),
+  });
+  const refund = useMutation({
+    mutationFn: () =>
+      api.request<RefundResult>(`/api/v1/ops/console/orgs/${orgId}/refund-unused`, {
+        method: "POST",
+      }),
+    onSettled: () => {
+      setConfirming(false);
+      void qc.invalidateQueries({ queryKey: ["ops", "billing"] });
+    },
+  });
+  const plan = q.data;
+
+  return (
+    <ConsoleCard className="space-y-[11px]">
+      <SectionLabel>Refund unused credit</SectionLabel>
+      <p className="text-[13.5px] text-[hsl(var(--cx-muted))]">
+        Only unused, paid-for credit is refunded, less card fees. Bundles are never refunded.
+      </p>
+      {q.isLoading ? <Spinner /> : null}
+      {plan ? (
+        <div className="space-y-1 text-[13.5px] text-[hsl(var(--cx-text))]">
+          <p>Unused paid credit: {formatCredits(plan.credit_micros)}</p>
+          <p>Card fees kept: {formatCredits(plan.fee_micros)}</p>
+          <p className="font-medium" data-testid="ops-refund-amount">
+            Refund to card: {formatCredits(plan.refund_micros)}
+          </p>
+          {plan.waiting_on_fee_micros > 0 ? (
+            <p className="text-[hsl(var(--cx-muted))]">
+              {formatCredits(plan.waiting_on_fee_micros)} more is waiting for Stripe to settle
+              its fee; try again later.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {plan && plan.refund_micros > 0 ? (
+        confirming ? (
+          <div className="flex flex-wrap items-center gap-[11px]">
+            <p className="text-[13.5px]">
+              Refund {formatCredits(plan.refund_micros)} to {name}&apos;s card and take{" "}
+              {formatCredits(plan.credit_micros)} of credit back?
+            </p>
+            <Button type="button" disabled={refund.isPending} onClick={() => refund.mutate()}>
+              Confirm refund
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <Button type="button" onClick={() => setConfirming(true)}>
+            Refund unused credit
+          </Button>
+        )
+      ) : null}
+      {refund.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {mutationErrorMessage(refund.error)}
+        </p>
+      ) : null}
+      {refund.data?.failed ? (
+        <p role="alert" className="text-sm text-destructive">
+          A card refund failed ({refund.data.failed.error}); its credit was given back.
+        </p>
+      ) : null}
+      {refund.isSuccess && refund.data && refund.data.refunded.length > 0 ? (
+        <p role="status" className="text-sm text-[hsl(var(--cx-text))]">
+          Refunded{" "}
+          {formatCredits(refund.data.refunded.reduce((sum, p) => sum + p.refund_micros, 0))}
+        </p>
+      ) : null}
+    </ConsoleCard>
+  );
+}
+
 function MarginSection({ orgId }: { orgId: string }): JSX.Element {
   const { api } = useAuth();
   const range = React.useMemo(() => lastNDaysRange(30), []);
@@ -375,6 +482,7 @@ function BillingPanel({
       )}
 
       <AdjustmentForm orgId={selected.orgId} name={selected.name} />
+      <RefundUnusedSection orgId={selected.orgId} name={selected.name} />
       <MarginSection orgId={selected.orgId} />
     </div>
   );

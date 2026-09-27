@@ -140,7 +140,12 @@ export function ChoosePlanPage({
             </ul>
 
             <AuthNotice>
-              Subscriptions are billed through Stripe and can be changed later.
+              Subscriptions are billed through Stripe and can be changed later. Plans are billed
+              per period and are not refunded for partial periods; only unused prepaid credit is
+              refundable, less card fees.{" "}
+              <a href="/legal/refunds" target="_blank" rel="noopener noreferrer">
+                Refund policy
+              </a>
             </AuthNotice>
 
             {checkout.isPending && (

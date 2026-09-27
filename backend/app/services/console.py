@@ -190,7 +190,9 @@ async def org_metrics(
             sa.func.coalesce(sa.func.sum(BillingPayment.units_credited), 0),
         )
         .where(
-            BillingPayment.state == "paid",
+            # Refunded payments count too: Stripe keeps its fee on a refund (our cost),
+            # and the refunded cash comes off `paid` just below.
+            BillingPayment.state.in_(("paid", "refunded")),
             BillingPayment.paid_at >= lo,
             BillingPayment.paid_at < hi,
             scope(BillingPayment.org_id),
@@ -206,6 +208,34 @@ async def org_metrics(
         m[f"paid_{kind}"] += int(paid)
         if kind.endswith("_bundle"):
             m[f"{kind}s_bought"] += int(units)
+
+    # --- money: refunds (cash back to the card, per payment) ---------------------------------
+    for org_id, kind, state, paid, detail in await _rows(
+        session,
+        sa.select(
+            BillingPayment.org_id,
+            BillingPayment.kind,
+            BillingPayment.state,
+            BillingPayment.paid_micros,
+            BillingPayment.detail,
+        ).where(
+            BillingPayment.state.in_(("paid", "refunded")),
+            BillingPayment.paid_at >= lo,
+            BillingPayment.paid_at < hi,
+            scope(BillingPayment.org_id),
+        ),
+    ):
+        refund = (detail or {}).get("refund") or {}
+        if "refunded_micros" in refund:
+            back = min(int(refund["refunded_micros"]), int(paid))
+        else:
+            # Auto-refunded by the risk check (payments.refuse_risky_payment): all of it.
+            back = int(paid) if state == "refunded" else 0
+        if back > 0:
+            m = out[org_id]
+            m["refunded_cash"] += back
+            m["paid"] -= back
+            m[f"paid_{kind}"] -= back
 
     # --- bundle usage -----------------------------------------------------------------
     used_by_kind: dict[tuple[uuid.UUID, str], int] = {}

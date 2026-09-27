@@ -483,6 +483,40 @@ async def console_void_invoice(
     return custom_invoices.to_dict(row)
 
 
+@router.get("/orgs/{org_id}/refundable")
+async def console_refundable(org_id: uuid.UUID, op: Billing) -> dict:
+    """What "Refund unused credit" would refund now (policy: unused paid credit only, less
+    card fees; bundles never). Read-only."""
+    from app.services import refunds
+
+    await _org_or_404(op, org_id)
+    return await refunds.refundable(op.session, org_id)
+
+
+@router.post("/orgs/{org_id}/refund-unused")
+async def console_refund_unused(org_id: uuid.UUID, op: Billing, request: Request) -> dict:
+    """Refund the workspace's unused paid credit to its card(s), less card fees."""
+    from app.services import refunds
+
+    await _org_or_404(op, org_id)
+    result = await refunds.refund_unused_credit(
+        op.session, request.app.state.settings, org_id, actor_user_id=op.user.id
+    )
+    _audit(
+        op,
+        org_id,
+        "billing.refund_unused_credit",
+        {
+            "refunded_micros": sum(p["refund_micros"] for p in result["refunded"]),
+            "credit_micros": sum(p["credit_micros"] for p in result["refunded"]),
+            "payments": [p["payment_id"] for p in result["refunded"]],
+            "failed": result["failed"],
+        },
+    )
+    await op.session.commit()
+    return result
+
+
 class FixedCostIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     monthly_micros: int = Field(ge=0, le=100_000_000_000)
