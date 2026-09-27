@@ -466,7 +466,7 @@ def latest_email_code(email: str) -> str:
     from app.services import mailer
 
     for message in reversed(mailer.outbox):
-        if email in message["To"]:
+        if email.lower() in message["To"].lower():
             match = re.match(r"(\d{6}) is your ", message["Subject"])
             if match:
                 return match.group(1)
@@ -483,6 +483,9 @@ async def confirm_registered_email(client, email, password="correct-horse-batter
         headers=auth_headers(r.json()["access_token"]),
     )
     assert response.status_code == 200, response.text
+    # Leave no extra session behind: tests count and revoke sessions.
+    await client.post("/api/v1/auth/logout", headers=auth_headers(r.json()["access_token"]))
+    client.cookies.clear()
     return response
 
 
