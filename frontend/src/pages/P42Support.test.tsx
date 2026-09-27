@@ -36,7 +36,10 @@ describe("Operator console: Users", () => {
     });
     renderWithProviders(<OpsPage />, client);
 
-    await userEvent.click(await screen.findByRole("tab", { name: "Users" }));
+    // The console was redesigned from a tab strip to a grouped sidebar rail of `<Link>`s
+    // (commit "Switchboard: redesign the operator console"), so "Users" is now a nav link,
+    // not a tab.
+    await userEvent.click(await screen.findByRole("link", { name: "Users" }));
     await userEvent.type(screen.getByLabelText("User email"), "pat@acme.com");
     await userEvent.click(screen.getByRole("button", { name: "Find" }));
     expect(await screen.findByText(/Locked until/)).toBeTruthy();

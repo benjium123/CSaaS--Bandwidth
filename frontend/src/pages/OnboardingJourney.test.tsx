@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 import { SignUpPage } from "@/pages/SignUpPage";
@@ -306,9 +306,15 @@ describe("OnboardingPage — reverification offers a button only where the call 
 });
 
 describe("OnboardingPage — the waiting and approved screens claim only what they know", () => {
-  it("shows no estimate while a reviewer has it", async () => {
+  it("shows no progress bar while a reviewer has it", async () => {
+    // The title was unified to "Your application has been received" for both individual
+    // and business accounts (see commit "blue verification screens and approval
+    // progression"), which also replaced the old no-estimate copy with a "typical review
+    // time" guidance line - covered elsewhere (IndividualOnboarding.test.tsx). What still
+    // holds, and is worth pinning here, is that there is no progress bar: a typical-time
+    // sentence is guidance, not a claim precise enough to justify one.
     render(profile("in_review", { submitted_at: "2026-09-10T00:00:00+00:00" }));
-    expect(await screen.findByText("With a reviewer")).toBeTruthy();
+    expect(await screen.findByText("Your application has been received")).toBeTruthy();
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
@@ -344,30 +350,16 @@ describe("OnboardingPage — the waiting and approved screens claim only what th
   });
 });
 
-describe("SignUpPage — the consumer-domain hint is a courtesy, not a gate", () => {
-  it("warns on a personal address but leaves the form submittable", async () => {
-    renderWithProviders(<SignUpPage />, makeStubClient({ "/api/v1/auth/me": ME }));
-    await userEvent.type(screen.getByLabelText("Work email"), "someone@gmail.com");
-    await userEvent.type(screen.getByLabelText("Your name"), "Someone");
-    await userEvent.type(screen.getByLabelText("Password"), "correct horse battery staple");
-    expect(screen.getByText(/looks like a personal address/)).toBeTruthy();
-    // The server is the authority. If our list is ever wrong about a legitimate domain, a
-    // locked button would be an unappealable client-side refusal.
-    await waitFor(() => {
-      const btn = screen.getByRole("button", { name: "Create account" }) as HTMLButtonElement;
-      expect(btn.disabled).toBe(false);
-    });
-  });
-
-  it("does not warn on a company address", async () => {
-    renderWithProviders(<SignUpPage />, makeStubClient({ "/api/v1/auth/me": ME }));
-    await userEvent.type(screen.getByLabelText("Work email"), "someone@acme.co");
-    expect(screen.queryByText(/looks like a personal address/)).toBeNull();
-    // Paired with the assertion above: proves the form is mounted and the hint simply is
-    // not showing, rather than the whole screen having failed to render.
-    expect(screen.getByRole("button", { name: "Create account" })).toBeTruthy();
-  });
-});
+// The "consumer-domain hint is a courtesy, not a gate" describe block that used to live here
+// was deleted rather than updated. Its whole premise is gone: commit "Unify signup around
+// identity verification and unlock registered messaging" removed the business/individual
+// account-type choice from signup entirely, along with the "Work email" label, the
+// `looksConsumer` heuristic and the personal-address warning it drove - signup is unified
+// around one identity-verified account type that explicitly welcomes personal or work
+// email ("Email", hint: "Personal and work email addresses are welcome."). There is no
+// consumer-domain hint left to be a courtesy about. Submission is now gated instead by a
+// live password checklist (see PasswordChecklist / passwordApproved in SignUpPage.tsx),
+// which is a different feature with no prior test coverage to preserve here.
 
 describe("AuthAside — the equipment spec rows are gone", () => {
   it("keeps the aside but carries none of the removed specification copy", () => {

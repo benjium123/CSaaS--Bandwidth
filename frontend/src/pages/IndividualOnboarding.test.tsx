@@ -203,7 +203,10 @@ describe("IndividualOnboarding — approved is calling-only", () => {
   it("states calling is on and texting is not, with no SMS promise", async () => {
     render(profile("approved", { decided_at: "2026-09-12T00:00:00+00:00" }));
     expect(await screen.findByText("You're verified")).toBeTruthy();
-    expect(screen.getByText(/Calling is on\. Texting is not available/)).toBeTruthy();
+    // Individuals can now register a company and get a 10DLC campaign approved to unlock
+    // texting (see commit "Unify signup around identity verification and unlock registered
+    // messaging"), so the lede offers that path instead of declaring texting unavailable.
+    expect(screen.getByText(/Calling is on\. Register your company/)).toBeTruthy();
     expect(screen.queryByText(/texting are on/i)).toBeNull();
   });
 
