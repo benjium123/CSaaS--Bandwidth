@@ -504,6 +504,97 @@ async def test_pnl_org_discounts(ops, session, ops_settings):
     assert totals["net_profit_before_discount"] == totals["net_profit"] + totals["discount_given"]
 
 
+def _plan_invoice(org_id, *, invoice_id="in_1", paid=3600, discount=900, kind="workspace_plan"):
+    """A paid subscription invoice in the 2025+ Stripe shape (parent.subscription_details)."""
+    return {
+        "id": invoice_id,
+        "billing_reason": "subscription_cycle",
+        "amount_paid": paid,
+        "total_discount_amounts": [{"amount": discount, "discount": "di_1"}] if discount else [],
+        "status_transitions": {"paid_at": int(datetime.now(timezone.utc).timestamp())},
+        "parent": {
+            "subscription_details": {
+                "subscription": "sub_1",
+                "metadata": {"kind": kind, "org_id": str(org_id)},
+            }
+        },
+    }
+
+
+async def test_plan_invoice_is_recorded_once_with_its_discount(session):
+    from app.models import BillingPayment
+    from app.services import payments
+
+    org_id = await _new_org(session, "Plan Invoice Org")
+    assert await payments.record_subscription_invoice(session, _plan_invoice(org_id))
+    assert await payments.record_subscription_invoice(session, _plan_invoice(org_id))  # replay
+    await session.commit()
+
+    set_org_context(session, org_id)
+    rows = list((await session.execute(sa.select(BillingPayment))).scalars())
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row.kind, row.state) == ("plan", "paid")
+    assert row.paid_micros == 36_000_000
+    assert row.discount_micros == 9_000_000
+    assert row.list_micros == 45_000_000
+    assert row.stripe_checkout_id == "in_1"
+
+
+async def test_fully_discounted_plan_invoice_still_counts_the_discount(session):
+    from app.models import BillingPayment
+    from app.services import payments
+
+    org_id = await _new_org(session, "Free Plan Org")
+    invoice = _plan_invoice(org_id, invoice_id="in_free", paid=0, discount=4500)
+    assert await payments.record_subscription_invoice(session, invoice)
+    await session.commit()
+    set_org_context(session, org_id)
+    row = (await session.execute(sa.select(BillingPayment))).scalar_one()
+    assert (row.paid_micros, row.discount_micros, row.stripe_fee_micros) == (0, 45_000_000, 0)
+
+
+async def test_other_subscription_invoices_are_not_recorded(session):
+    from app.services import payments
+
+    org_id = await _new_org(session, "Tendlc Invoice Org")
+    tendlc_invoice = _plan_invoice(org_id, invoice_id="in_t", kind="tendlc_fee")
+    assert not await payments.record_subscription_invoice(session, tendlc_invoice)
+    assert not await payments.record_subscription_invoice(
+        session, {"id": "in_x", "amount_paid": 100}
+    )
+    # The older shape (top-level subscription + subscription_details) is still read.
+    old = {
+        "id": "in_old",
+        "subscription": "sub_2",
+        "subscription_details": {"metadata": {"kind": "workspace_plan", "org_id": str(org_id)}},
+        "amount_paid": 1500,
+        "payment_intent": "pi_old",
+    }
+    assert await payments.record_subscription_invoice(session, old)
+
+
+async def test_pnl_counts_plan_revenue_and_its_discount(ops, session, ops_settings):
+    from app.services import payments
+
+    token = await _operator(ops, session)
+    org_id = await _new_org(session, "PNL Plan Org")
+    await payments.record_subscription_invoice(
+        session, _plan_invoice(org_id, invoice_id="in_pnl")
+    )
+    await session.commit()
+
+    r = await ops.get("/api/v1/ops/console/orgs", headers=auth_headers(token))
+    assert r.status_code == 200, r.text
+    org = next(o for o in r.json()["orgs"] if o["org_id"] == str(org_id))
+    metrics = org["metrics"]
+    assert metrics["paid"] == 36_000_000
+    assert metrics["paid_plan"] == 36_000_000
+    assert metrics["discount"] == 9_000_000
+    assert metrics["discount_given"] == 9_000_000
+    assert metrics["profit_before_discount"] == metrics["cash_profit"] + 9_000_000
+
+
 async def test_sync_subscription_both_coupons(session, ops_settings, monkeypatch):
     org_id = await _new_org(session, "Sync Both Org")
     await discounts.set_discount(

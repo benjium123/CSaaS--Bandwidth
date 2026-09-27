@@ -895,6 +895,15 @@ async def stripe_webhook(
     if await tendlc.handle_event(session, event):
         return Response(status_code=204)
 
+    if event_type == "invoice.paid":
+        from app.services import payments
+
+        # Plan revenue (and what the workspace's coupons took off it) for the console P&L.
+        invoice = (event.get("data") or {}).get("object") or {}
+        if await payments.record_subscription_invoice(session, invoice):
+            await session.commit()
+            return Response(status_code=204)
+
     from app.services import plan_billing
 
     # Workspace plan subscriptions (Solo/Team/Business + add-ons) before the legacy

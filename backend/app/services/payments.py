@@ -1,5 +1,6 @@
-"""Card payments as the customer paid them (billing_payments): top-ups, auto-recharges and
-message bundles, with list price, discount and Stripe fee - the admin console's revenue.
+"""Card payments as the customer paid them (billing_payments): top-ups, auto-recharges,
+message bundles and paid plan invoices, with list price, discount and Stripe fee - the admin
+console's revenue.
 
 Money-owned. ``credits`` stays the only writer of credit_ledger and ``bundles`` of
 bundle_ledger; this module records the payment and calls them.
@@ -290,6 +291,105 @@ async def record_topup_paid(
             await session.flush()
     except Exception:
         log.exception("payments.record_topup_failed", intent_id=intent_id)
+
+
+#: Subscription metadata kind -> billing_payments.kind for the recurring invoices Stripe
+#: bills (plan, users and extra numbers; the retired per-number carts). 10DLC fees are not
+#: here: their refunds would need recording too.
+SUBSCRIPTION_INVOICE_KINDS: dict[str, str] = {
+    "workspace_plan": "plan",
+    "number_purchase": "numbers",
+}
+_CENT = 10_000  # micros
+
+
+def _invoice_subscription(invoice: dict) -> tuple[str | None, dict]:
+    """(subscription id, subscription metadata) from an invoice, in both Stripe shapes:
+    ``parent.subscription_details`` (2025+) and the older top-level fields."""
+    details = ((invoice.get("parent") or {}).get("subscription_details")) or {}
+    sub = details.get("subscription") or invoice.get("subscription")
+    if isinstance(sub, dict):
+        sub = sub.get("id")
+    metadata = details.get("metadata") or (
+        (invoice.get("subscription_details") or {}).get("metadata")
+    ) or {}
+    return (str(sub) if sub else None), dict(metadata)
+
+
+def _invoice_intent(invoice: dict) -> str | None:
+    intent = invoice.get("payment_intent")
+    if intent is None:
+        for item in ((invoice.get("payments") or {}).get("data")) or []:
+            intent = ((item or {}).get("payment") or {}).get("payment_intent")
+            if intent:
+                break
+    if isinstance(intent, dict):
+        intent = intent.get("id")
+    return str(intent) if intent else None
+
+
+async def record_subscription_invoice(session: AsyncSession, invoice: dict) -> bool:
+    """``invoice.paid`` for a plan (or per-number) subscription -> one paid billing_payments
+    row, so the console counts subscription revenue and what the workspace's coupons took
+    off it. ``list`` = paid + discount. Idempotent on the invoice id (kept in
+    ``stripe_checkout_id``: these rows have no Checkout Session of their own). Returns False
+    for invoices that are not ours to record. Does not commit."""
+    invoice_id = invoice.get("id")
+    sub_id, metadata = _invoice_subscription(invoice)
+    kind = SUBSCRIPTION_INVOICE_KINDS.get(str(metadata.get("kind") or ""))
+    if not invoice_id or not sub_id or kind is None:
+        return False
+    try:
+        org_id = uuid.UUID(str(metadata.get("org_id")))
+    except ValueError:
+        log.warning("payments.invoice_without_org", invoice_id=invoice_id)
+        return False
+    paid = int(invoice.get("amount_paid") or 0) * _CENT
+    discount = sum(
+        int((d or {}).get("amount") or 0) for d in invoice.get("total_discount_amounts") or []
+    ) * _CENT
+    if paid <= 0 and discount <= 0:
+        return True  # a $0 invoice with nothing given away (e.g. a trial): nothing to count
+    existing = (
+        await session.execute(
+            sa.select(BillingPayment.id)
+            .where(BillingPayment.stripe_checkout_id == str(invoice_id))
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return True
+    paid_at = (invoice.get("status_transitions") or {}).get("paid_at")
+    intent = _invoice_intent(invoice)
+    if intent is not None and await _by_intent(session, intent) is not None:
+        intent = None  # never collide with a row that already owns this intent
+    set_org_context(session, org_id)
+    session.add(
+        BillingPayment(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            kind=kind,
+            state="paid",
+            stripe_checkout_id=str(invoice_id),
+            stripe_payment_intent_id=intent,
+            quantity=1,
+            list_micros=paid + discount,
+            paid_micros=paid,
+            discount_micros=discount,
+            # A fully discounted invoice has no charge, so no Stripe fee to look up.
+            stripe_fee_micros=0 if paid <= 0 else None,
+            paid_at=(
+                datetime.fromtimestamp(int(paid_at), timezone.utc) if paid_at else _now()
+            ),
+            detail={
+                "invoice_id": str(invoice_id),
+                "subscription_id": sub_id,
+                "billing_reason": invoice.get("billing_reason"),
+            },
+        )
+    )
+    await session.flush()
+    return True
 
 
 async def fee_tick(session: AsyncSession, settings) -> int:  # noqa: ANN001
