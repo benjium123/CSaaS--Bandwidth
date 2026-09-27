@@ -19,6 +19,7 @@ from app.models import (
     Voicemail,
 )
 from app.services import audit as audit_svc
+from app.services import recordings as recordings_svc
 
 log = structlog.get_logger("retention")
 
@@ -157,8 +158,8 @@ async def purge_org(session, store, org_id, policy, *, now=None) -> dict[str, in
             if not recordings:
                 break
             for recording in recordings:
-                if recording.storage_key:
-                    await store.delete(recording.storage_key)
+                for key in recordings_svc.all_storage_keys(recording):
+                    await store.delete(key)
                 recording.status = "purged"
                 recording.storage_key = ""
             await session.commit()

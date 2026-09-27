@@ -28,6 +28,7 @@ from app.models import (
     Voicemail,
 )
 from app.services import audit as audit_svc
+from app.services import recordings as recordings_svc
 
 log = structlog.get_logger("privacy")
 
@@ -205,8 +206,8 @@ async def perform_erasure(session, store, request_row) -> dict:
             .all()
         )
         for recording in recording_rows:
-            if recording.storage_key:
-                await store.delete(recording.storage_key)
+            for key in recordings_svc.all_storage_keys(recording):
+                await store.delete(key)
             recording.status = "purged"
             recording.storage_key = ""
         recordings = len(recording_rows)

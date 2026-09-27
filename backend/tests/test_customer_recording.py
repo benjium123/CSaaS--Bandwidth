@@ -368,3 +368,38 @@ async def test_render_with_real_ffmpeg_puts_agent_audio_on_the_left_channel(tmp_
     left = sum(abs(s) for s in pcm[0::2])
     right = sum(abs(s) for s in pcm[1::2])
     assert left > 20 * (right + 1)
+
+
+async def test_dual_layout_works_on_the_local_disk_store_and_erasure_keys_cover_it(
+    session, mon_settings, tmp_path
+):
+    """Regression (first live test call): on local disk the mixed file IS the storage_key
+    path, so side files must be siblings, not children - and erasure must find them."""
+    from app.storage.base import LocalFSObjectStore
+
+    store = LocalFSObjectStore(tmp_path)
+    org_id = await _org(session)
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    calling_settings.apply(org, channel_layout="dual")
+    await session.commit()
+    call = await _finished_call(session, org_id)
+    call.extra = {k: v for k, v in call.extra.items() if k != "monitor"}
+    await session.commit()
+    await _seed_sides(session, store, org_id, call)
+
+    counts = await customer_recording.finalize_tick(
+        session, mon_settings, store, now=datetime.now(timezone.utc), runner=fake_runner
+    )
+
+    assert counts["stored"] == 1
+    row = await _row_for_call(session, org_id, call)
+    keys = recordings.all_storage_keys(row)
+    assert keys == [row.storage_key, f"{row.storage_key}.agent", f"{row.storage_key}.customer"]
+    for key in keys:
+        assert await store.get(key)
+    for key in keys:
+        await store.delete(key)
+    for key in keys:
+        with pytest.raises(KeyError):
+            await store.get(key)

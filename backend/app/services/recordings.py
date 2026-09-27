@@ -95,8 +95,17 @@ def layout_storage_key(recording: CallRecording, layout: str) -> str:
     if layout == "mixed":
         return recording.storage_key
     if layout in ("agent", "customer"):
-        return f"{recording.storage_key}/{layout}"
+        # A sibling, never a child: on local disk the mixed file IS the storage_key path,
+        # so "<key>/agent" would need that file to also be a directory (it cannot be).
+        return f"{recording.storage_key}.{layout}"
     raise ValueError("Unknown recording layout")
+
+
+def all_storage_keys(recording: CallRecording) -> list[str]:
+    """Every stored object of a recording - what retention and erasure must delete."""
+    if not recording.storage_key:
+        return []
+    return [layout_storage_key(recording, layout) for layout in available_layouts(recording)]
 
 
 def available_layouts(recording: CallRecording) -> list[str]:
