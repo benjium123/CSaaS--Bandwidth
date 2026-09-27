@@ -61,7 +61,8 @@ interface DraftLine {
   key: string;
   type: DraftLineType;
   package: InvoicePackage;
-  quantity: string;
+  units: string;
+  rate: string;
   amount: string;
   description: string;
 }
@@ -75,7 +76,8 @@ function blankLine(): DraftLine {
     key: `draft-line-${lineSeq}`,
     type: "package",
     package: "sms",
-    quantity: "1",
+    units: "",
+    rate: "",
     amount: "",
     description: "",
   };
@@ -92,13 +94,20 @@ function centsFromDollars(value: string): number | null {
 
 function lineProblem(line: DraftLine): string | null {
   if (line.type === "package") {
-    const quantity = Number(line.quantity.trim());
+    const units = Number(line.units.trim());
+    if (line.units.trim() === "" && line.amount.trim() === "") {
+      return "Enter the number of units or a price.";
+    }
     if (
-      line.quantity.trim() === "" ||
-      !Number.isInteger(quantity) ||
-      quantity <= 0
+      line.units.trim() !== "" &&
+      (!Number.isInteger(units) || units <= 0)
     ) {
-      return "Bundles must be a whole number greater than zero.";
+      return "Units must be a whole number greater than zero.";
+    }
+    if (line.rate.trim() !== "") {
+      const rate = Number(line.rate.trim());
+      if (!Number.isFinite(rate) || rate <= 0)
+        return "The rate must be a dollar amount per unit.";
     }
     if (line.amount.trim() !== "") {
       const cents = centsFromDollars(line.amount);
@@ -203,18 +212,15 @@ export function OrgInvoicesPanel({
     const built: InvoiceLineInput[] = [];
     for (const line of lines) {
       if (line.type === "package") {
-        const quantity = Number(line.quantity.trim());
+        // Units and/or a price; the server derives the other from the rate (the
+        // pay-as-you-go list price unless one is typed).
         const cents = centsFromDollars(line.amount);
-        built.push(
-          cents == null
-            ? { type: "package", package: line.package, quantity }
-            : {
-                type: "package",
-                package: line.package,
-                quantity,
-                amount_cents: cents,
-              },
-        );
+        const pkg: InvoiceLineInput = { type: "package", package: line.package };
+        if (line.units.trim() !== "") pkg.units = Number(line.units.trim());
+        if (line.rate.trim() !== "")
+          pkg.rate_micros = Math.round(Number(line.rate.trim()) * 1_000_000);
+        if (cents != null) pkg.amount_cents = cents;
+        built.push(pkg);
       } else if (line.type === "credit") {
         built.push({
           type: "credit",
@@ -457,15 +463,34 @@ export function OrgInvoicesPanel({
 
                     {line.type === "package" ? (
                       <label className="space-y-1 text-xs">
-                        <span className="block font-medium">Bundles</span>
+                        <span className="block font-medium">Units</span>
                         <input
-                          aria-label={`Line ${index + 1} quantity`}
+                          aria-label={`Line ${index + 1} units`}
                           type="number"
                           min="1"
                           step="1"
-                          value={line.quantity}
+                          placeholder="e.g. 760"
+                          value={line.units}
                           onChange={(event) =>
-                            editLine(line.key, { quantity: event.target.value })
+                            editLine(line.key, { units: event.target.value })
+                          }
+                          className={FIELD}
+                        />
+                      </label>
+                    ) : null}
+
+                    {line.type === "package" ? (
+                      <label className="space-y-1 text-xs">
+                        <span className="block font-medium">Rate $/unit (optional)</span>
+                        <input
+                          aria-label={`Line ${index + 1} rate`}
+                          type="number"
+                          min="0"
+                          step="0.0001"
+                          placeholder="pay-as-you-go"
+                          value={line.rate}
+                          onChange={(event) =>
+                            editLine(line.key, { rate: event.target.value })
                           }
                           className={FIELD}
                         />

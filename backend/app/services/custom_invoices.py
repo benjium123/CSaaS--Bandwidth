@@ -27,6 +27,7 @@ from app.models import BillingPayment, Org, OrgMembership, PaymentMethod, Role, 
 from app.models.billing_v2 import BUNDLE_KINDS
 from app.models.subscriptions import Subscription
 from app.services import bundles, credits
+from app.services.telephony_billing import platform_price
 
 log = structlog.get_logger("custom_invoices")
 
@@ -38,6 +39,9 @@ MAX_LINES = 20
 MAX_LINE_CENTS = 10_000_000  # $100k
 _CENT = 10_000  # micros
 PACKAGE_LABELS = {"sms": "SMS", "mms": "MMS", "voice": "call-minute"}
+UNIT_LABELS = {"sms": "SMS", "mms": "MMS", "voice": "call minutes"}
+#: The pay-as-you-go (non-bundle) list price a custom package amount defaults to.
+PAYG_METRICS = {"sms": "sms_out", "mms": "mms_out", "voice": "voice_min_out"}
 
 
 def _now() -> datetime:
@@ -64,7 +68,33 @@ async def price_lines(session: AsyncSession, lines: list[dict]) -> list[dict]:
         if kind == "discount":
             continue
         cents = ln.get("amount_cents")
-        if kind == "package":
+        if kind == "package" and (ln.get("units") is not None or ln.get("quantity") is None):
+            pkg = ln.get("package")
+            if pkg not in BUNDLE_KINDS:
+                raise ValidationFailedError(f"Unknown package: {pkg}")
+            # A custom amount: priced at the pay-as-you-go list rate (not the bundle rate)
+            # unless the operator gives a rate or a price. Units OR dollars; the other is
+            # derived from the rate.
+            rate = ln.get("rate_micros")
+            rate = int(rate) if rate is not None else await platform_price(
+                session, PAYG_METRICS[pkg]
+            )
+            if rate <= 0:
+                raise ValidationFailedError("The rate must be above $0")
+            units = ln.get("units")
+            if units is None:
+                if cents is None:
+                    raise ValidationFailedError("Give a number of units or an amount")
+                units = int(cents) * _CENT // rate
+            units = int(units)
+            most = bundles.UNITS_PER_BUNDLE[pkg] * bundles.MAX_QTY
+            if not 1 <= units <= most:
+                raise ValidationFailedError(f"Choose between 1 and {most:,} units")
+            if cents is None:
+                cents = (units * rate + _CENT // 2) // _CENT
+            desc = (ln.get("description") or "").strip() or f"{units:,} {UNIT_LABELS[pkg]}"
+            line = {"type": kind, "package": pkg, "units": units, "rate_micros": rate}
+        elif kind == "package":
             pkg = ln.get("package")
             if pkg not in BUNDLE_KINDS:
                 raise ValidationFailedError(f"Unknown package: {pkg}")

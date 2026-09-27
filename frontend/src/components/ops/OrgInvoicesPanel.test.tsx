@@ -206,8 +206,8 @@ describe("OrgInvoicesPanel", () => {
     await screen.findByText("No invoices yet.");
     await user.click(screen.getByRole("button", { name: "New invoice" }));
 
-    await user.clear(screen.getByLabelText("Line 1 quantity"));
-    await user.type(screen.getByLabelText("Line 1 quantity"), "3");
+    await user.type(screen.getByLabelText("Line 1 units"), "760");
+    await user.type(screen.getByLabelText("Line 1 rate"), "0.01");
     await user.type(screen.getByLabelText("Line 1 price"), "49.99");
     await user.selectOptions(screen.getByLabelText("Discount type"), "percent");
     await user.type(screen.getByLabelText("Discount value"), "10");
@@ -226,7 +226,7 @@ describe("OrgInvoicesPanel", () => {
     expect(screen.getByText("$49.50")).toBeTruthy();
 
     const expectedLines = [
-      { type: "package", package: "sms", quantity: 3, amount_cents: 4999 },
+      { type: "package", package: "sms", units: 760, rate_micros: 10_000, amount_cents: 4999 },
       { type: "discount", percent: 10 },
     ];
     expect(previewBody).toEqual({ lines: expectedLines });
@@ -262,6 +262,7 @@ describe("OrgInvoicesPanel", () => {
 
     await screen.findByText("No invoices yet.");
     await user.click(screen.getByRole("button", { name: "New invoice" }));
+    await user.type(screen.getByLabelText("Line 1 units"), "500");
     await user.click(screen.getByRole("button", { name: "Preview" }));
 
     await waitFor(() => expect(previewCalls).toBe(1));
@@ -269,8 +270,8 @@ describe("OrgInvoicesPanel", () => {
       (screen.getByRole("button", { name: "Charge card" }) as HTMLButtonElement).disabled,
     ).toBe(false);
 
-    await user.clear(screen.getByLabelText("Line 1 quantity"));
-    await user.type(screen.getByLabelText("Line 1 quantity"), "4");
+    await user.clear(screen.getByLabelText("Line 1 units"));
+    await user.type(screen.getByLabelText("Line 1 units"), "500");
 
     expect(
       (screen.getByRole("button", { name: "Charge card" }) as HTMLButtonElement).disabled,
@@ -360,6 +361,7 @@ describe("OrgInvoicesPanel", () => {
 
     await screen.findByText("No invoices yet.");
     await user.click(screen.getByRole("button", { name: "New invoice" }));
+    await user.type(screen.getByLabelText("Line 1 units"), "500");
     await user.click(screen.getByRole("button", { name: "Preview" }));
     await screen.findByText("Subtotal");
     await user.click(screen.getByRole("button", { name: "Charge card" }));

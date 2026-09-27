@@ -159,6 +159,41 @@ async def test_price_lines(session):
             await custom_invoices.price_lines(session, bad)
 
 
+async def test_custom_package_amount_is_priced_at_the_pay_as_you_go_rate(session):
+    from app.services.telephony_billing import platform_price
+
+    per_min = await platform_price(session, "voice_min_out")
+    # 760 call minutes, no price: units x the pay-as-you-go rate (not the bundle rate).
+    [ln] = await custom_invoices.price_lines(
+        session, [{"type": "package", "package": "voice", "units": 760}]
+    )
+    assert ln["units"] == 760
+    assert ln["amount_cents"] == (760 * per_min + CENT // 2) // CENT
+    assert ln["description"] == "760 call minutes"
+    # $6 of call minutes with 7% off: the minutes come from the rate, the discount is its
+    # own line, and the minutes are granted in full.
+    lines = await custom_invoices.price_lines(
+        session,
+        [{"type": "package", "package": "voice", "amount_cents": 600},
+         {"type": "discount", "percent": 7}],
+    )
+    assert lines[0]["units"] == 600 * CENT // per_min
+    assert [x["amount_cents"] for x in lines] == [600, -42]
+    assert custom_invoices.totals(lines)["paid"] == 558 * CENT
+    # The operator's own rate: 500 SMS at 1.2 cents.
+    [own] = await custom_invoices.price_lines(
+        session, [{"type": "package", "package": "sms", "units": 500, "rate_micros": 12_000}]
+    )
+    assert (own["amount_cents"], own["units"], own["description"]) == (600, 500, "500 SMS")
+    for bad in (
+        [{"type": "package", "package": "voice"}],
+        [{"type": "package", "package": "voice", "units": 0}],
+        [{"type": "package", "package": "voice", "amount_cents": 1, "rate_micros": 1_000_000}],
+    ):
+        with pytest.raises(ValidationFailedError):
+            await custom_invoices.price_lines(session, bad)
+
+
 async def test_invoice_is_charged_and_granted_once(ops, session, fake_stripe):
     token = await _operator(ops, session)
     org_id = await _new_org(session, "Invoice Org")

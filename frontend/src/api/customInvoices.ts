@@ -52,7 +52,12 @@ export type InvoiceLineInput =
   | {
       type: "package";
       package: InvoicePackage;
-      quantity: number;
+      /** Whole bundles (older invoices); new ones send `units` and/or a price. */
+      quantity?: number;
+      /** Exact units, e.g. 760 call minutes. */
+      units?: number;
+      /** Per-unit rate in micros; default = the pay-as-you-go list price. */
+      rate_micros?: number;
       amount_cents?: number;
       description?: string;
     }

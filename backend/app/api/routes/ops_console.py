@@ -379,6 +379,10 @@ class InvoiceLineIn(BaseModel):
     amount_cents: int | None = Field(default=None, ge=0, le=10_000_000)
     package: str | None = None
     quantity: int | None = Field(default=None, ge=1, le=500)
+    #: A custom package amount (e.g. 760 call minutes) and an optional per-unit rate in
+    #: micros; without a rate the pay-as-you-go list price is used.
+    units: int | None = Field(default=None, ge=1, le=500_000)
+    rate_micros: int | None = Field(default=None, ge=1, le=10_000_000)
     percent: float | None = Field(default=None, gt=0, le=100)
 
 
