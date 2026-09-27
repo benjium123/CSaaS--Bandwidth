@@ -10,7 +10,8 @@ export type SettingsSectionId =
   | "calling"
   | "ai"
   | "billing"
-  | "developers";
+  | "developers"
+  | "profile";
 
 /** One row of the settings nav. `ownerOnly` marks a section only the workspace OWNER may
  * open even when the caller holds the section's permission string: a non-owner ADMIN holds
@@ -37,6 +38,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "ai", label: "AI", permission: "settings:read" },
   { id: "billing", label: "Billing & usage", permission: "settings:read", ownerOnly: true },
   { id: "developers", label: "Developers", permission: "settings:write" },
+  // Every member: their own name and 911 address. Empty permission = no gate.
+  { id: "profile", label: "My profile", permission: "" },
 ];
 
 /** The one statement of "may this caller open this section?", shared by SettingsPage's nav
@@ -48,5 +51,5 @@ export function canViewSettingsSection(
   can: (permission: string) => boolean,
   owner: boolean,
 ): boolean {
-  return can(section.permission) && (!section.ownerOnly || owner);
+  return (section.permission === "" || can(section.permission)) && (!section.ownerOnly || owner);
 }

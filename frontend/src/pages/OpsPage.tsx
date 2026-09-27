@@ -13,6 +13,7 @@ import { BillingTab } from "@/components/ops/BillingTab";
 import { ConsoleTab } from "@/components/ops/ConsoleTab";
 import { PortReviewTab } from "@/components/ops/PortReviewTab";
 import { WebsiteTab } from "@/components/ops/WebsiteTab";
+import { SupportTab } from "@/components/ops/SupportTab";
 import { OperatorAuditTab } from "@/components/ops/OperatorAuditTab";
 import { PlatformMessagingHealth } from "@/components/billing/PlatformMessagingHealth";
 import { ServerSection } from "@/components/ops/ServerSection";
@@ -872,6 +873,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { id: "alerts", label: "Security alerts", title: "Security alerts", lede: "Sign-ins and actions the system flagged." },
       { id: "ports", label: "Ports & grants", title: "Ports & grants", lede: "Number ports waiting for review, and credit grants waiting for a second operator." },
       { id: "website", label: "Website", title: "Website chats & sales", lede: "Visitors who asked the chat for a person, and Talk to sales enquiries." },
+      { id: "support", label: "Support", title: "Support requests", lede: "Questions customers sent from the Help menu. Replies go out by email." },
     ],
   },
   {
@@ -1059,6 +1061,7 @@ function Switchboard({
               {tab === "texting" && <TextingRegistrationsTab />}
               {tab === "ports" && <PortReviewTab />}
               {tab === "website" && <WebsiteTab />}
+              {tab === "support" && <SupportTab />}
               {tab === "accounts" && <AccountsTab />}
               {tab === "users" && <UsersTab />}
               {tab === "server" && <ServerSection />}

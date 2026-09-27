@@ -1,4 +1,5 @@
 import * as React from "react";
+import { SettingsProfilePage } from "@/pages/SettingsProfilePage";
 import { Navigate, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { hasPermission, isOwner, useAuth } from "@/auth/AuthContext";
@@ -423,6 +424,8 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
       return <BillingSettingsSection />;
     case "developers":
       return <PlatformPage />;
+    case "profile":
+      return <SettingsProfilePage />;
   }
 
   return null;

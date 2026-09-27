@@ -7,6 +7,7 @@ import { isWorkspaceFullySetUp } from "@/components/onboarding/OnboardingCheckli
 import { useAuth } from "@/auth/AuthContext";
 import { Button } from "@/components/ui/primitives";
 import { openCommandPalette } from "@/components/ui/CommandPalette";
+import { HelpMenu } from "@/components/shell/HelpMenu";
 import { NotificationBell } from "@/components/shell/NotificationBell";
 import { cn } from "@/lib/utils";
 import { SETTINGS_SECTIONS } from "@/pages/settingsSections";
@@ -223,6 +224,8 @@ export function Sidebar() {
             <span className="sr-only">Trust & safety</span>
           </NavLink>
         ) : null}
+
+        <HelpMenu />
 
         {canSeeSettings ? (
           <NavLink

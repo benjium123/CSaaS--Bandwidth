@@ -129,12 +129,13 @@ describe("nav gating for a real agent (backend permission set)", () => {
     expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 
-  it("B1 fixed: /settings sends an agent with no settings sections back to the inbox", async () => {
+  it("B1 fixed: /settings takes an agent with no workspace settings to their own profile", async () => {
+    // Every member has "My profile" (name + 911 address), so /settings always has a section.
     renderWith(<App />, AGENT_CAPS, ["/settings"]);
 
-    expect(await screen.findByText("Inbox page")).toBeInTheDocument();
+    const nav = await screen.findByRole("navigation", { name: "Settings" });
+    expect(within(nav).getByRole("link", { name: "My profile" })).toBeInTheDocument();
     expect(screen.queryByText("You do not have access to this setting.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: "Settings" })).not.toBeInTheDocument();
   });
 });
 
@@ -191,7 +192,8 @@ describe("settings section routing", () => {
     ]) {
       expect(ids.has(target as never)).toBe(true);
     }
-    expect(SETTINGS_SECTIONS).toHaveLength(11);
+    // + "profile" (every member's own name and 911 address).
+    expect(SETTINGS_SECTIONS).toHaveLength(12);
   });
 
   it("an unknown /settings/:section bounces to workspace exactly once", async () => {
