@@ -296,6 +296,9 @@ async def test_blind_transfer_end_to_end_completes_only_when_last_leg_ends(
     assert detail.json()["status"] == "answered"
 
     transfer_target = "+19725550001"
+    # Transfers only go to the workspace's own numbers.
+    r = await client.post("/api/v1/numbers", json={"e164": transfer_target}, headers=h)
+    assert r.status_code == 201, r.text
     xfer = await client.post(
         f"/api/v1/calls/{call_id}/transfer", json={"to": transfer_target}, headers=h
     )
@@ -396,6 +399,8 @@ async def test_transfer_with_no_active_leg_is_a_conflict(app_with_voice_carrier,
         org_id,
     )
 
+    r = await client.post("/api/v1/numbers", json={"e164": "+19725550001"}, headers=h)
+    assert r.status_code == 201, r.text
     r = await client.post(
         f"/api/v1/calls/{call_id}/transfer", json={"to": "+19725550001"}, headers=h
     )
@@ -533,3 +538,16 @@ async def test_gather_with_no_active_leg_is_a_conflict(app_with_voice_carrier, s
 
     r = await client.post(f"/api/v1/calls/{call_id}/gather", json={}, headers=h)
     assert r.status_code == 409
+
+
+async def test_transfer_to_an_outside_number_is_refused(app_with_voice_carrier):
+    client, _fake, _ = app_with_voice_carrier
+    token, org, _ = await make_org_with_number(client, "xfer-out@example.com", "Org O", OUR)
+    h = auth_headers(token, org["id"])
+    created = await client.post("/api/v1/calls", json={"to": THEIRS}, headers=h)
+    assert created.status_code == 201, created.text
+    r = await client.post(
+        f"/api/v1/calls/{created.json()['id']}/transfer", json={"to": "+13125550123"}, headers=h
+    )
+    assert r.status_code == 422, r.text
+    assert "teammates or your own numbers" in r.text

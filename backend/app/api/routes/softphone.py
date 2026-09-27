@@ -397,6 +397,9 @@ _THREAD_ID_EVENTS = frozenset({"sms.handoff", "message.received"})
 #: (hidden from non-admins) rather than defaulting to visible-to-everyone, so a future
 #: event type added without updating this gate does not leak by default.
 _BROADCAST_EVENT_TYPES = frozenset({"ping", "appointment.booked"})
+#: Events addressed to exactly one person via their own "user_id" - checked before the
+#: admin short-circuit, so no one else ever receives them.
+_PERSONAL_EVENT_TYPES = frozenset({"notification.created", "call.invite", "call.invite.update"})
 
 
 async def _resolve_ws_access(
@@ -467,8 +470,9 @@ async def _event_visible(
     """
     event_type = event.get("type")
 
-    if event_type == "notification.created":
-        # Fail-closed: an event with no recipient reaches nobody.
+    if event_type in _PERSONAL_EVENT_TYPES:
+        # Fail-closed: an event with no recipient reaches nobody. A teammate invite rings
+        # only the invited person (never every admin, unlike call.ring).
         recipient = event.get("user_id")
         return bool(recipient) and str(recipient) == str(user_id)
 

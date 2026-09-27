@@ -899,6 +899,11 @@ async def transfer_call(
     # P43 (audit): the workspace's own region, not always US - a UK workspace dialling a
     # bare national number would otherwise place a call to a different real number.
     to_norm = to_e164(payload.to, await phone_region.for_org(ctx.session, ctx.org.id))
+    # Transfers never leave the workspace: only its own active numbers (teammates are
+    # brought in with /invite instead).
+    from app.services import call_invites
+
+    await call_invites.require_own_number(ctx.session, ctx.org.id, to_norm)
 
     if (call.extra or {}).get("via") == "livekit":
         api = getattr(request.app.state, "livekit", None)
@@ -958,6 +963,141 @@ async def dispatch_agent(
 
 class HoldIn(BaseModel):
     on: bool
+
+
+class TransferTargetsOut(BaseModel):
+    teammates: list[dict]
+    numbers: list[dict]
+
+
+@router.get("/calls/{call_id}/transfer-targets", response_model=TransferTargetsOut)
+async def call_transfer_targets(
+    call_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+) -> TransferTargetsOut:
+    """Who and where this call may go: teammates who can take calls on its number, and the
+    workspace's own active numbers. Nothing outside the workspace."""
+    from app.models import OrgNumber
+    from app.services import call_invites
+
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
+    teammates = await call_invites.teammates_for(
+        ctx.session, call, exclude_user_id=ctx.actor_user_id
+    )
+    rows = (
+        await ctx.session.execute(
+            sa.select(OrgNumber.e164).where(
+                OrgNumber.org_id == ctx.org.id,
+                OrgNumber.is_active.is_(True),
+                OrgNumber.released_at.is_(None),
+            )
+        )
+    ).scalars()
+    numbers = [{"e164": e164} for e164 in sorted(rows) if e164 != call.our_e164]
+    return TransferTargetsOut(teammates=teammates, numbers=numbers)
+
+
+class InviteIn(BaseModel):
+    user_id: uuid.UUID
+    mode: str = Field(pattern="^(add|transfer)$")
+
+
+@router.post("/calls/{call_id}/invite", response_model=CallDetailOut)
+async def invite_teammate(
+    call_id: uuid.UUID,
+    payload: InviteIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+    user: Annotated[User, Depends(get_current_user)],
+) -> CallDetailOut:
+    """Ring one teammate into this call: add them (3-way) or transfer (caller on hold)."""
+    from app.services import call_invites
+
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
+    await call_invites.invite(
+        ctx.session,
+        request.app.state.event_bus,
+        getattr(request.app.state, "livekit", None),
+        request.app.state.settings,
+        call,
+        inviter=user,
+        target_user_id=payload.user_id,
+        mode=payload.mode,
+    )
+    return await _detail_out(ctx.session, request, call)
+
+
+@router.post("/calls/{call_id}/join", response_model=SoftphoneAnswerOut)
+async def join_invited_call(
+    call_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+    user: Annotated[User, Depends(get_current_user)],
+) -> SoftphoneAnswerOut:
+    """The invited teammate joins the live call (only with a live invite for them)."""
+    from app.services import call_invites
+
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
+    settings = request.app.state.settings
+    room = await call_invites.accept(
+        ctx.session,
+        request.app.state.event_bus,
+        getattr(request.app.state, "livekit", None),
+        settings,
+        call,
+        user=user,
+    )
+    token = mint_access_token(
+        api_key=settings.livekit_api_key,
+        api_secret=settings.livekit_api_secret.get_secret_value(),
+        identity=f"user-{user.id}",
+        name=user.email,
+        room=room,
+        ttl_seconds=120,
+    )
+    return SoftphoneAnswerOut(
+        url=settings.livekit_public_url or settings.livekit_url, token=token, room=room
+    )
+
+
+class InviteCancelIn(BaseModel):
+    user_id: uuid.UUID
+
+
+@router.post("/calls/{call_id}/invite/cancel", status_code=204)
+async def cancel_invite(
+    call_id: uuid.UUID,
+    payload: InviteCancelIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """The inviter cancels a ringing invite, or the invitee declines it."""
+    from app.services import call_invites
+
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
+    await call_invites.cancel(
+        ctx.session,
+        request.app.state.event_bus,
+        getattr(request.app.state, "livekit", None),
+        request.app.state.settings,
+        call,
+        actor=user,
+        user_id=payload.user_id,
+    )
+    return Response(status_code=204)
 
 
 @router.post("/calls/{call_id}/hold", response_model=CallDetailOut)
