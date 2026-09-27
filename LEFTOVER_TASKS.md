@@ -61,7 +61,7 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
    `send()` so codes try that provider first, Telnyx fallback, and re-measure.
 7. **[USER] Stripe webhook events** — add `invoice.payment_failed` and `invoice.voided` to
    `https://ringlite.io/api/v1/webhooks/stripe` in the Stripe dashboard (code already handles them).
-8. ~~Refund claw-back decision~~ DECIDED + BUILT 2026-09-28 (services/refunds.py, `charge.refunded`): a Stripe refund takes back only the UNUSED part of what the payment granted (top-up credit, bundle units, invoice lines), pro rata, never below zero; any excess raises a `refund_shortfall` ops alert. Used service is never refunded. [USER] add `charge.refunded` to the Stripe webhook.
+8. ~~Refund claw-back decision~~ DECIDED + BUILT 2026-09-28 (dbb1d01, 70d0f74): refundable = ONLY unused paid credit, less Stripe fees (customer bears card fees both ways); bundles/spent credit/plans/number+10DLC fees never. Ops -> Billing -> "Refund unused credit" issues it; refunds made in Stripe take back the unused part (fee-grossed), excess -> `refund_shortfall` alert; P&L nets refunds, keeps fees. [USER] add `charge.refunded` to the Stripe webhook; policy page /legal/refunds = Ringlite branch.
    Original note: **Refund claw-back decision** — refunding a custom invoice does not take back granted
    packages/credit (reference `invoice:<id>:<line>`). Needs a `charge.refunded` handler if wanted.
 9. **[USER] Invoiced packages roll-over?** — today they expire at monthly renewal like bought bundles
