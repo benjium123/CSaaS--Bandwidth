@@ -22,10 +22,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import (
+    OperatorContext,
     OrgContext,
     check_org_selfie_step_up,
+    require_operator_permission,
     require_permission,
-    require_platform_operator,
     requires_feature,
 )
 from app.db.base import set_org_context
@@ -523,7 +524,7 @@ def _platform_billing_shape(org, *, balance_micros: int, reserved_micros: int) -
 @router.get("/platform/billing/orgs/{org_id}")
 async def get_platform_billing_org(
     org_id: uuid.UUID,
-    _ops: Annotated[None, Depends(require_platform_operator)],
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))],
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     org = await session.get(Org, org_id)
@@ -545,7 +546,7 @@ async def get_platform_billing_org(
 async def patch_platform_billing_org(
     org_id: uuid.UUID,
     payload: PlatformBillingPatch,
-    _ops: Annotated[None, Depends(require_platform_operator)],
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:billing"))],
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     org = await session.get(Org, org_id)
@@ -607,7 +608,7 @@ async def patch_platform_billing_org(
 async def post_platform_billing_adjustment(
     org_id: uuid.UUID,
     payload: PlatformAdjustmentIn,
-    _ops: Annotated[None, Depends(require_platform_operator)],
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:billing"))],
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     org = await session.get(Org, org_id)
@@ -661,7 +662,7 @@ async def post_platform_billing_adjustment(
 async def put_platform_billing_rates(
     payload: PlatformRatesPut,
     org_id: Annotated[uuid.UUID, Query(description="Target org for these rate rows")],
-    _ops: Annotated[None, Depends(require_platform_operator)],
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:billing"))],
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     set_org_context(session, org_id)
@@ -711,7 +712,7 @@ async def get_platform_billing_margin(
     org_id: Annotated[uuid.UUID | None, Query()] = None,
     start_date: Annotated[date, Query(alias="from")] = None,
     end_date: Annotated[date, Query(alias="to")] = None,
-    _ops: Annotated[None, Depends(require_platform_operator)] = None,
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))] = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     if start_date is None or end_date is None:
@@ -775,7 +776,7 @@ class ReceiptsCheckRowOut(BaseModel):
 
 @router.get("/platform/messaging/health", response_model=PlatformMessagingHealthOut)
 async def platform_messaging_health(
-    _ops: Annotated[None, Depends(require_platform_operator)],
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))],
     session: AsyncSession = Depends(get_session),
 ) -> PlatformMessagingHealthOut:
     rows = await messaging_health_svc.platform_rows(session)
@@ -798,7 +799,7 @@ async def platform_messaging_health(
 
 @router.get("/platform/messaging/receipts-check", response_model=list[ReceiptsCheckRowOut])
 async def platform_messaging_receipts_check(
-    _ops: Annotated[None, Depends(require_platform_operator)],
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))],
     session: AsyncSession = Depends(get_session),
 ) -> list[ReceiptsCheckRowOut]:
     rows = await messaging_health_svc.receipts_check(session)

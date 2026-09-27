@@ -8,7 +8,14 @@ from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import UnauthenticatedError
 from app.models import CreditLedgerEntry, Org, PaymentMethod, PlatformEvent
 from app.services import ai_usage, credits, stripe_client
-from tests.conftest import TEST_PLATFORM_OPS_TOKEN, create_org, make_settings, register_and_login
+from tests.conftest import (
+    TEST_PLATFORM_OPS_TOKEN,
+    auth_headers,
+    create_org,
+    make_settings,
+    register_and_login,
+)
+from tests.test_ops_console import _operator
 
 
 def _payment_intent_event(*, metadata, amount_received=500, intent_id="pi_test_123"):
@@ -281,7 +288,9 @@ async def test_a_platform_operator_adjustment_requires_a_note(client, session):
     org_id = uuid.UUID(org["id"])
 
     url = f"/api/v1/platform/billing/orgs/{org['id']}/adjustments"
-    ops_headers = {"X-Platform-Ops-Token": TEST_PLATFORM_OPS_TOKEN}
+    # H4: a named operator with ops:billing, never the shared token.
+    operator = await _operator(client, session, "ops-billing@example.com", "billing")
+    ops_headers = auth_headers(operator)
 
     r_empty = await client.post(
         url,
@@ -302,26 +311,25 @@ async def test_a_platform_operator_adjustment_requires_a_note(client, session):
     assert await credits.balance(session, org_id) == 1000
 
 
-async def test_platform_billing_routes_reject_a_bad_ops_token(client):
+async def test_platform_billing_routes_no_longer_accept_the_shared_ops_token(client):
+    """H4: these are console routes for people; the shared token (right or wrong) is not a
+    person and is refused."""
     token = await register_and_login(client, "bad-ops@example.com")
     org = await create_org(client, token, "Bad Ops Org")
 
     url = f"/api/v1/platform/billing/orgs/{org['id']}/adjustments"
-    r = await client.post(
-        url,
-        json={"amount_micros": 1000, "note": "hello", "entry_type": "adjustment"},
-        headers={"X-Platform-Ops-Token": "wrong-token"},
-    )
-    assert r.status_code == 403, r.text
-    assert r.json()["error"]["code"] == "permission_denied"
+    for ops_token in (TEST_PLATFORM_OPS_TOKEN, "wrong-token"):
+        r = await client.post(
+            url,
+            json={"amount_micros": 1000, "note": "hello", "entry_type": "adjustment"},
+            headers={"X-Platform-Ops-Token": ops_token},
+        )
+        assert r.status_code in (401, 403), r.text
 
 
-async def test_platform_billing_routes_reject_a_missing_ops_token(client):
-    """A MISSING ops token must be 403, exactly like a wrong one.
-
-    Binding: the operator frontend treats any 401 as a full session expiry and logs the
-    operator out app-wide, so a forgotten or mistyped ops token must never return 401.
-    """
+async def test_platform_billing_routes_refuse_a_signed_in_non_operator_with_403(client):
+    """A signed-in customer gets 403, never 401: the frontend treats any 401 as a full
+    session expiry and would sign the person out app-wide."""
     token = await register_and_login(client, "no-ops@example.com")
     org = await create_org(client, token, "No Ops Org")
 
@@ -329,6 +337,7 @@ async def test_platform_billing_routes_reject_a_missing_ops_token(client):
     r = await client.post(
         url,
         json={"amount_micros": 1000, "note": "hello", "entry_type": "adjustment"},
+        headers=auth_headers(token),
     )
     assert r.status_code == 403, r.text
     assert r.json()["error"]["code"] == "permission_denied"

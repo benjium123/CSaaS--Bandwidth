@@ -14,6 +14,7 @@ import { ConsoleTab } from "@/components/ops/ConsoleTab";
 import { PortReviewTab } from "@/components/ops/PortReviewTab";
 import { WebsiteTab } from "@/components/ops/WebsiteTab";
 import { OperatorAuditTab } from "@/components/ops/OperatorAuditTab";
+import { PlatformMessagingHealth } from "@/components/billing/PlatformMessagingHealth";
 import { ServerSection } from "@/components/ops/ServerSection";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAuthedBlob } from "@/api/client";
@@ -893,6 +894,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "monitoring", label: "Monitoring", title: "Monitoring", lede: "Traffic health and paused accounts." },
       { id: "bans", label: "Ban list", title: "Ban list", lede: "Identities that may not sign up again." },
+      { id: "health", label: "Messaging health", title: "Messaging health", lede: "Delivery, spam and opt-out rates for every workspace and carrier." },
       { id: "audit", label: "Operator audit", title: "Operator audit", lede: "Every change made by the platform team, who made it and why." },
       { id: "server", label: "Server", title: "Server", lede: "CPU, memory, disk and load for the whole server, and what each app uses." },
     ],
@@ -1061,6 +1063,7 @@ function Switchboard({
               {tab === "users" && <UsersTab />}
               {tab === "server" && <ServerSection />}
               {tab === "audit" && <OperatorAuditTab />}
+              {tab === "health" && <PlatformMessagingHealth />}
             </section>
           </>
         )}

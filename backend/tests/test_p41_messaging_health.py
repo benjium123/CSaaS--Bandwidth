@@ -28,6 +28,7 @@ from app.providers.domain import DeliveryReceipt
 from app.services import messaging as messaging_svc
 from app.services import messaging_health as messaging_health_svc
 from tests.conftest import TEST_PLATFORM_OPS_TOKEN, auth_headers, make_org_with_number
+from tests.test_ops_console import _operator
 
 OUR = "+12145550100"
 OUR2 = "+12145550101"
@@ -622,20 +623,25 @@ async def test_analytics_health_route_shape(client, session):
     }
 
 
-async def test_platform_messaging_health_route_is_ops_gated(client):
+async def test_platform_messaging_health_route_is_ops_gated(client, session):
     r = await client.get("/api/v1/platform/messaging/health")
-    assert r.status_code == 403
-
+    assert r.status_code in (401, 403)
+    # H4: the shared token no longer opens it; a named operator does.
     r = await client.get("/api/v1/platform/messaging/health", headers=OPS)
+    assert r.status_code in (401, 403)
+
+    ops = auth_headers(await _operator(client, session, "health-ro@example.com", "read_only"))
+    r = await client.get("/api/v1/platform/messaging/health", headers=ops)
     assert r.status_code == 200, r.text
     assert isinstance(r.json()["rows"], list)
 
 
-async def test_platform_receipts_check_route_is_ops_gated(client):
+async def test_platform_receipts_check_route_is_ops_gated(client, session):
     r = await client.get("/api/v1/platform/messaging/receipts-check")
-    assert r.status_code == 403
+    assert r.status_code in (401, 403)
 
-    r = await client.get("/api/v1/platform/messaging/receipts-check", headers=OPS)
+    ops = auth_headers(await _operator(client, session, "receipts-ro@example.com", "read_only"))
+    r = await client.get("/api/v1/platform/messaging/receipts-check", headers=ops)
     assert r.status_code == 200, r.text
     assert [row["carrier"] for row in r.json()] == [
         "bandwidth",

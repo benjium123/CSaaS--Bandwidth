@@ -38,6 +38,8 @@ SECURITY_ALERT_KINDS: tuple[str, ...] = (
     "account_recovery",
     "recovery_code_used",
     "account_locked",
+    # H4: someone was given temporary admin access from the server (scripts/break_glass.py).
+    "break_glass",
 )
 SECURITY_ALERT_STATUSES: tuple[str, ...] = ("open", "reviewed")
 
@@ -147,6 +149,8 @@ class PlatformOperator(Base, TimestampMixin):
     )
     role: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="reviewer")
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    #: H4 break-glass: temporary access stops by itself at this time (NULL = permanent).
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
 
 class OperatorAuditEntry(Base):

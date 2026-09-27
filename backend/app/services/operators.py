@@ -7,6 +7,7 @@ through the API: there is no route that can turn a customer account into an oper
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,10 +47,14 @@ def permissions_for(role: str) -> list[str]:
 
 
 async def get_active(session: AsyncSession, user_id: uuid.UUID) -> PlatformOperator | None:
+    now = datetime.now(timezone.utc)
     return (
         await session.execute(
             sa.select(PlatformOperator).where(
-                PlatformOperator.user_id == user_id, PlatformOperator.is_active.is_(True)
+                PlatformOperator.user_id == user_id,
+                PlatformOperator.is_active.is_(True),
+                # H4: break-glass access ends by itself.
+                sa.or_(PlatformOperator.expires_at.is_(None), PlatformOperator.expires_at > now),
             )
         )
     ).scalar_one_or_none()
@@ -82,6 +87,45 @@ async def grant(session: AsyncSession, *, email: str, role: str) -> PlatformOper
     else:
         row.role = role
         row.is_active = True
+    row.expires_at = None  # a normal grant is permanent (break_glass sets an expiry)
+    return row
+
+
+BREAK_GLASS_MAX = timedelta(hours=1)
+
+
+async def break_glass(
+    session: AsyncSession, *, email: str, reason: str, minutes: int = 60
+) -> PlatformOperator:
+    """H4: temporary admin for a named, existing account (scripts/break_glass.py only).
+
+    Refuses an account that is already an active operator (nothing to break into) and any
+    reason shorter than 10 characters. Access ends by itself (get_active); the account
+    still needs its own second factor to use the console. The caller records the audit
+    row, raises the alert and commits."""
+    reason = reason.strip()
+    if len(reason) < 10:
+        raise ValidationFailedError("Give a real reason (10+ characters)")
+    minutes = max(1, min(int(minutes), int(BREAK_GLASS_MAX.total_seconds() // 60)))
+    user = (
+        await session.execute(sa.select(User).where(User.email == email.strip().lower()))
+    ).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError(f"No account with email {email}")
+    if await get_active(session, user.id) is not None:
+        raise ValidationFailedError(f"{email} is already an active operator")
+    row = (
+        await session.execute(
+            sa.select(PlatformOperator).where(PlatformOperator.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = PlatformOperator(id=uuid.uuid4(), user_id=user.id, role="admin", is_active=True)
+        session.add(row)
+    else:
+        row.role = "admin"
+        row.is_active = True
+    row.expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     return row
 
 

@@ -1,59 +1,15 @@
-import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ApiClient } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Input, Spinner } from "@/components/ui/primitives";
+import { Spinner, mutationErrorMessage } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import type {
   PlatformMessagingHealthOut,
   PlatformMessagingHealthRow,
 } from "@/api/hooks";
 
-// The ops token helpers below are deliberately duplicated from PlatformBillingOps.tsx:
-// they are module-private there, and this section only needs the same two small shapes.
-const TOKEN_STORAGE_KEY = "csaas.platform.ops.token";
+// Messaging health across every workspace, for platform operators (Switchboard). Reads the
+// signed-in operator's session; the shared ops token is no longer accepted (H4).
 const MESSAGING_HEALTH_PATH = "/api/v1/platform/messaging/health?days=7";
-
-function readStoredOpsToken(): string {
-  try {
-    return sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function writeStoredOpsToken(token: string): void {
-  try {
-    if (token === "") sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-    else sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
-  } catch {
-    // Private mode / storage disabled - the token simply won't persist across reloads.
-  }
-}
-
-/**
- * 403 first, as in PlatformBillingOps: ApiClient turns a 401 into a whole-app logout, so a
- * mistyped ops token must not sign the operator out of the console.
- */
-function isUnauthorizedError(error: unknown): boolean {
-  const status = (error as { status?: number } | null)?.status;
-  if (status === 403 || status === 401) return true;
-  return error instanceof Error && (error.message.includes("403") || error.message.includes("401"));
-}
-
-async function opsRequest<T>(
-  api: ApiClient,
-  token: string,
-  path: string,
-  init: RequestInit & { json?: unknown } = {},
-): Promise<T> {
-  const existingHeaders = (init.headers as Record<string, string> | undefined) ?? {};
-  const headers: Record<string, string> = {
-    ...existingHeaders,
-    "X-Platform-Ops-Token": token,
-  };
-  return api.request<T>(path, { ...init, headers, json: init.json });
-}
 
 const LEVEL_LABELS: Record<PlatformMessagingHealthRow["level"], string> = {
   ok: "Healthy",
@@ -82,43 +38,11 @@ function formatShortDate(value: string | null): string {
 
 export function PlatformMessagingHealth() {
   const { api } = useAuth();
-  const [token, setToken] = React.useState<string>(readStoredOpsToken);
-  const [inputValue, setInputValue] = React.useState("");
-  const [unauthorized, setUnauthorized] = React.useState(false);
-  const unlocked = token !== "";
 
   const healthQuery = useQuery({
-    queryKey: ["platform-messaging-health", token],
-    queryFn: () => opsRequest<PlatformMessagingHealthOut>(api, token, MESSAGING_HEALTH_PATH),
-    enabled: unlocked,
+    queryKey: ["platform-messaging-health"],
+    queryFn: () => api.request<PlatformMessagingHealthOut>(MESSAGING_HEALTH_PATH),
   });
-
-  const rejected = unauthorized || (healthQuery.isError && isUnauthorizedError(healthQuery.error));
-  const showLocked = !unlocked || rejected;
-
-  React.useEffect(() => {
-    if (healthQuery.isError && isUnauthorizedError(healthQuery.error)) {
-      writeStoredOpsToken("");
-      setToken("");
-      setUnauthorized(true);
-    }
-  }, [healthQuery.isError, healthQuery.error]);
-
-  function handleUnlock(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const next = inputValue.trim();
-    if (!next) return;
-    writeStoredOpsToken(next);
-    setToken(next);
-    setUnauthorized(false);
-    setInputValue("");
-  }
-
-  function handleLock() {
-    writeStoredOpsToken("");
-    setToken("");
-    setUnauthorized(false);
-  }
 
   return (
     <div className="rounded-md border border-border p-4">
@@ -129,41 +53,14 @@ export function PlatformMessagingHealth() {
             Delivery, spam-block and opt-out rates over the last 7 days, worst first.
           </p>
         </div>
-        {showLocked ? null : (
-          <Button type="button" variant="outline" onClick={handleLock}>
-            Lock
-          </Button>
-        )}
       </div>
 
-      {showLocked ? (
-        <div className="space-y-3">
-          {rejected ? (
-            <div role="alert" className="text-sm text-destructive">
-              That token was not accepted.
-            </div>
-          ) : null}
-          <form className="flex gap-2" onSubmit={handleUnlock}>
-            <Input
-              aria-label="Platform ops token"
-              placeholder="Platform ops token"
-              type="password"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-            />
-            <Button type="submit" disabled={!inputValue.trim()}>
-              Unlock
-            </Button>
-          </form>
-        </div>
-      ) : healthQuery.isLoading ? (
+      {healthQuery.isLoading ? (
         <Spinner label="Loading messaging health" />
       ) : healthQuery.isError ? (
-        <div role="alert" className="text-sm text-destructive">
-          {healthQuery.error instanceof Error
-            ? healthQuery.error.message
-            : "Failed to load messaging health."}
-        </div>
+        <p role="alert" className="text-sm text-destructive">
+          {mutationErrorMessage(healthQuery.error)}
+        </p>
       ) : !healthQuery.data ? null : healthQuery.data.rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No workspaces with text traffic yet.</p>
       ) : (

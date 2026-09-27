@@ -20,6 +20,7 @@ from app.services import credits, telephony_billing
 from app.services import messaging as messaging_svc
 from app.services.telephony_billing import TelephonyCreditsError
 from tests.conftest import TEST_PLATFORM_OPS_TOKEN, auth_headers, make_org_with_number
+from tests.test_ops_console import _operator
 
 SMS_OUT = 15_000  # $0.015 per segment, flat (billing v2, no bundle)
 SMS_IN = 15_000
@@ -630,16 +631,18 @@ async def test_ops_toggle_turns_the_gate_on_and_restamps_since(app_with_carrier,
         client, "pp-ops@example.com", "PP Ops", "+12145550906"
     )
     url = f"/api/v1/platform/billing/orgs/{org['id']}"
+    # H4: a named billing operator, not the shared token.
+    ops = auth_headers(await _operator(client, session, "pp-billing@example.com", "billing"))
 
-    r = await client.patch(url, json={"telephony_prepaid": True}, headers=OPS)
+    r = await client.patch(url, json={"telephony_prepaid": True}, headers=ops)
     assert r.status_code == 200, r.text
     first = r.json()
     assert first["telephony_prepaid"] is True
     assert first["telephony_prepaid_since"] is not None
 
-    r = await client.patch(url, json={"telephony_prepaid": False}, headers=OPS)
+    r = await client.patch(url, json={"telephony_prepaid": False}, headers=ops)
     assert r.json()["telephony_prepaid"] is False
-    r = await client.patch(url, json={"telephony_prepaid": True}, headers=OPS)
+    r = await client.patch(url, json={"telephony_prepaid": True}, headers=ops)
     assert r.json()["telephony_prepaid_since"] >= first["telephony_prepaid_since"]
 
     summary = await client.get("/api/v1/billing/summary", headers=auth_headers(token, org["id"]))

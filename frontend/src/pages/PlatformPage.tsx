@@ -35,7 +35,6 @@ import {
 } from "@/components/ui/primitives";
 import { ConsoleCard, PageHeader, SurfaceCard } from "@/components/ui/consoleChrome";
 import { cn } from "@/lib/utils";
-import { PlatformMessagingHealth } from "@/components/billing/PlatformMessagingHealth";
 
 function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
@@ -825,27 +824,8 @@ export function PlatformPage() {
       <WebhooksSection />
       <AuditSection />
       <UsageSection />
-      {/* KEPT from main: messaging health is a live, working feature. Noting for later that
-          it carries the same shape as the panel removed below - its own comment says the ops
-          token helpers are "deliberately duplicated from PlatformBillingOps.tsx", so it too
-          unlocks by pasting the shared X-Platform-Ops-Token into a box on a CUSTOMER's
-          Developers tab. Unlike that panel it is not broken, so it stays until someone
-          decides to move it behind the named-operator console. */}
-      <PlatformMessagingHealth />
-      {/* PlatformBillingOps was mounted here: a platform-operator billing panel sitting at the
-          bottom of a CUSTOMER's Developers tab. Removed, for three reasons.
-          1. It authenticates by pasting the shared X-Platform-Ops-Token into a text box and
-             keeping it in sessionStorage. The named-operator console requires a second factor
-             and a recent step-up; this was the weaker of the two doors, on the more public page.
-          2. It is built against a contract the server does not serve: it GETs
-             /platform/billing/rates (PUT only - platform.py:636), sends `cost_micros` where the
-             API takes `unit_cost_micros` (:481), and reads `org_id`/`name` off a response that
-             carries neither (_platform_billing_shape, :488). Its 11 tests pass because they stub
-             the shape the component imagines, so they compare it against itself.
-          3. Operator billing now lives in the Ops console (components/ops/BillingTab.tsx),
-             behind require_operator, written against the contract read out of the Python.
-          The component and its test file still exist and are now unreferenced - delete them once
-          the Ops console Billing tab has been exercised against a live backend. */}
+      {/* H4: messaging health moved to the operator Switchboard (Safety > Messaging health), where it
+          uses the operator's own session; the shared-token billing panel was deleted. */}
     </div>
   );
 }

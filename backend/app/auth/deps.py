@@ -740,9 +740,10 @@ async def require_platform_operator(
     session: Annotated[AsyncSession, Depends(get_session)],
     x_platform_ops_token: Annotated[str | None, Header(alias="X-Platform-Ops-Token")] = None,
 ) -> None:
-    """Legacy ops routes (billing knobs, registration status callbacks): the shared token
-    for scripts, OR an admin operator's session. P41 merged the two identical copies that
-    lived in routes/platform.py and routes/registration.py into this one."""
+    """Machine callbacks only (H4): the 10DLC / toll-free registration routes in
+    routes/registration.py. The shared token for scripts, OR an admin operator's session;
+    every use is in operator_audit_log (role "ops_token"). Console routes for people never
+    use this guard - they use require_operator_permission."""
     configured = request.app.state.settings.platform_ops_token.get_secret_value().strip()
     if x_platform_ops_token:
         if not configured:

@@ -468,7 +468,7 @@ async def test_operator_access_needs_a_named_operator_with_second_factor(sec_cli
     assert callable(require_operator("admin"))
 
 
-async def test_legacy_ops_routes_accept_an_admin_operator_session(sec_client, session):
+async def test_platform_billing_reads_need_a_named_operator_not_the_token(sec_client, session):
     from app.services import operators as operators_svc
 
     owner = await _register(sec_client, "tenant@example.com")
@@ -482,16 +482,16 @@ async def test_legacy_ops_routes_accept_an_admin_operator_session(sec_client, se
     path = f"/api/v1/platform/billing/orgs/{org['id']}"
     assert (await sec_client.get(path, headers=auth_headers(ops_token))).status_code == 403
 
+    # H2/H4: every operator role reads (ops:read); changing billing needs ops:billing.
     await operators_svc.grant(session, email="admin-op@example.com", role="reviewer")
     await session.commit()
-    # A reviewer is not enough for billing knobs.
-    assert (await sec_client.get(path, headers=auth_headers(ops_token))).status_code == 403
+    assert (await sec_client.get(path, headers=auth_headers(ops_token))).status_code == 200
 
     await operators_svc.grant(session, email="admin-op@example.com", role="admin")
     await session.commit()
     assert (await sec_client.get(path, headers=auth_headers(ops_token))).status_code == 200
-    # The shared token still works for scripts.
+    # H4: the shared token is for machine callbacks only, not these console routes.
     from tests.conftest import TEST_PLATFORM_OPS_TOKEN
 
     r = await sec_client.get(path, headers={"X-Platform-Ops-Token": TEST_PLATFORM_OPS_TOKEN})
-    assert r.status_code == 200
+    assert r.status_code in (401, 403)

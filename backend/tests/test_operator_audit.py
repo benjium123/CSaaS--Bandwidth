@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import sqlalchemy as sa
 
 from app.models import OperatorAuditEntry
@@ -83,9 +85,10 @@ async def test_reviewers_cannot_read_the_log(ops, session):  # noqa: F811
 
 
 async def test_the_shared_ops_token_is_recorded_without_a_person(ops, session):  # noqa: F811
-    r = await ops.put(
-        "/api/v1/platform/billing/rates",
-        json={},
+    # H4: the token is kept only for machine callbacks such as registration status.
+    r = await ops.post(
+        f"/api/v1/registration/brands/{uuid.uuid4()}/status",
+        json={"status": "approved"},
         headers={"X-Platform-Ops-Token": TEST_PLATFORM_OPS_TOKEN},
     )
     rows = await _rows(session)

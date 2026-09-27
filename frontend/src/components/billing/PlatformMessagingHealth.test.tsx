@@ -1,6 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { PlatformMessagingHealth } from "./PlatformMessagingHealth";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
 
@@ -30,29 +29,11 @@ const PLATFORM_ROWS = {
 };
 
 describe("PlatformMessagingHealth", () => {
-  beforeEach(() => {
-    sessionStorage.clear();
-  });
-
-  it("is locked by default", () => {
-    const client = makeStubClient({});
-    renderWithProviders(<PlatformMessagingHealth />, client);
-
-    expect(screen.getByText("Messaging health (all workspaces)")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Unlock" })).toBeInTheDocument();
-    expect(
-      client.calls.some((c) => c.path === "/api/v1/platform/messaging/health?days=7"),
-    ).toBe(false);
-  });
-
-  it("renders mocked rows in the API order after entering a token", async () => {
+  it("renders mocked rows in the API order", async () => {
     const client = makeStubClient({
       "/api/v1/platform/messaging/health?days=7": PLATFORM_ROWS,
     });
     renderWithProviders(<PlatformMessagingHealth />, client);
-
-    await userEvent.type(screen.getByLabelText("Platform ops token"), "platform-token");
-    await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
 
     expect(await screen.findByText("Beta Workspace")).toBeInTheDocument();
     expect(screen.getByText("Alpha Workspace")).toBeInTheDocument();
@@ -68,15 +49,31 @@ describe("PlatformMessagingHealth", () => {
     expect(dataRows[1]).toHaveTextContent("Alpha Workspace");
   });
 
-  it("returns to locked state when the ops token gets a 403", async () => {
-    const client = makeStubClient({});
-    vi.spyOn(client, "request").mockRejectedValue({ status: 403 });
+  it("requests messaging health without the shared ops token header", async () => {
+    const client = makeStubClient({
+      "/api/v1/platform/messaging/health?days=7": PLATFORM_ROWS,
+    });
+    const request = vi.spyOn(client, "request");
     renderWithProviders(<PlatformMessagingHealth />, client);
 
-    await userEvent.type(screen.getByLabelText("Platform ops token"), "bad-token");
-    await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByText("Beta Workspace");
 
-    expect(await screen.findByText("That token was not accepted.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Unlock" })).toBeInTheDocument();
+    // The panel rides the signed-in operator's session, so the request is the bare path:
+    // no init (and therefore no X-Platform-Ops-Token header) is passed along.
+    expect(request).toHaveBeenCalledWith("/api/v1/platform/messaging/health?days=7");
+    const [, init] = request.mock.calls[0] as [string, RequestInit | undefined];
+    expect(init?.headers).toBeUndefined();
+  });
+
+  it("renders an alert when the request fails", async () => {
+    const client = makeStubClient({});
+    vi.spyOn(client, "request").mockRejectedValue(
+      Object.assign(new Error("Operator role required"), { status: 403 }),
+    );
+    renderWithProviders(<PlatformMessagingHealth />, client);
+
+    // Generous wait so the assertion still holds if the harness leaves react-query retries on.
+    const alert = await screen.findByRole("alert", {}, { timeout: 10_000 });
+    expect(alert.textContent?.trim()).not.toBe("");
   });
 });
