@@ -7,8 +7,8 @@ from alembic import op
 
 from app.db.types import GUID, PortableJSON
 
-revision = "0090_profile_support"
-down_revision = "0087_member_call_prefs"
+revision = "0091_profile_support"
+down_revision = "0090_member_call_prefs"
 branch_labels = None
 depends_on = None
 

@@ -442,10 +442,12 @@ async def test_me_router_does_not_shadow_auth_me(client, settings):
     assert me_paths == [
         "/api/v1/me/call-prefs",
         "/api/v1/me/capabilities",
+        "/api/v1/me/emergency-address",
         "/api/v1/me/inbox-order",
         "/api/v1/me/login-events",
         "/api/v1/me/notifications",
         "/api/v1/me/notifications/read",
+        "/api/v1/me/profile",
         "/api/v1/me/sessions",
         "/api/v1/me/sessions/revoke-all",
         "/api/v1/me/sessions/{sid}",
