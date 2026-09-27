@@ -441,7 +441,8 @@ async def save_topup_card(
     """After a paid Checkout top-up: keep the card it was paid with (saved on the workspace's
     Stripe customer by setup_future_usage) as a payment method, and on the workspace's first
     paid top-up switch auto-recharge on with the defaults unless it was already configured.
-    The same checks as adding a card in Billing apply (ban list, card risk); a refused card is detached and nothing is saved.
+    The same checks as adding a card in Billing apply (ban list, card risk); a refused card
+    is detached and nothing is saved.
     Never raises: the credit was already granted. Does not commit."""
     from app.errors import PermissionDeniedError
     from app.models import PaymentMethod
