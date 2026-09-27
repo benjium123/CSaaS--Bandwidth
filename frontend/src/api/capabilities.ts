@@ -63,6 +63,16 @@ export type Capabilities = {
 
 export const CAPABILITIES_QUERY_KEY = ["me", "capabilities"] as const;
 
+/** Individual accounts text only once their own 10DLC registration is approved (a hard
+ * gate; the server refuses too, backend compliance/registration.py). Unknown capabilities
+ * leave texting on: the server stays the authority. */
+export function textingLocked(org: OrgCapabilities | null | undefined): boolean {
+  return org?.account_type === "individual" && !org.messaging_ready;
+}
+
+export const TEXTING_LOCKED_NOTE =
+  "Texting turns on once your 10DLC registration is approved (Settings → Messaging).";
+
 export function useCapabilities(api: ApiClient) {
   return useQuery({
     queryKey: CAPABILITIES_QUERY_KEY,

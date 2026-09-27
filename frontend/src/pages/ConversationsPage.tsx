@@ -12,6 +12,7 @@ import {
   type ConversationFilter,
   type ConversationTab,
 } from "@/api/conversations";
+import { TEXTING_LOCKED_NOTE, textingLocked, useCapabilities } from "@/api/capabilities";
 import { useSoftphone } from "@/softphone/SoftphoneProvider";
 import { ConversationList } from "@/components/conversations/ConversationList";
 import { Timeline } from "@/components/conversations/Timeline";
@@ -247,7 +248,8 @@ export function ConversationsPage() {
     inboxes.find((inbox) => inbox.id === selectedInboxId) ??
     null;
   // T8: the only gate on this surface stays the per-inbox `my_role !== "viewer"` check
-  // (`canSend` / `canCompose`). Do NOT add useCapabilities / useGate here. The backend
+  // (`canSend` / `canCompose`). Do NOT add useCapabilities / useGate here (the one
+  // exception is the 10DLC texting lock below, which is not a role check). The backend
   // stays the authority; this page only decides what to render.
   // canSend defaults to false until we actually know the answer (inboxes still loading,
   // or the conversation resolved before its inbox did) - true only once we positively
@@ -273,6 +275,10 @@ export function ConversationsPage() {
     return options;
   }, [inboxes]);
   const canCompose = fromOptions.length > 0;
+  // Separate from the per-inbox role gate above: an individual account cannot text at all
+  // until its 10DLC registration is approved. Calls are unaffected.
+  const capabilitiesQuery = useCapabilities(api);
+  const textingOff = textingLocked(capabilitiesQuery.data?.org);
 
   // The rail is scope-only now (see InboxColumn): a filter no longer changes which rail
   // row looks current, because no rail row sets a filter.
@@ -535,7 +541,17 @@ export function ConversationsPage() {
         />
 
         <section className={cn("cx-thread min-h-0 min-w-0 flex-col", selectedConversation || composeMode ? "flex" : "hidden md:flex")}>
-          {composeMode === "message" ? (
+          {composeMode === "message" && textingOff ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+              <p className="text-sm text-muted-foreground">{TEXTING_LOCKED_NOTE}</p>
+              <Button type="button" variant="outline" onClick={() => navigate("/settings/messaging")}>
+                Open texting registration
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setComposeMode(null)}>
+                Cancel
+              </Button>
+            </div>
+          ) : composeMode === "message" ? (
             <NewConversationPanel
               // Load-bearing key: the panel seeds its state on mount, so without a
               // changing key a second `?compose=` for a different number would leave
@@ -603,12 +619,17 @@ export function ConversationsPage() {
                       Read-only inbox — you can view but not send
                     </p>
                   )}
+                  {canSend && textingOff && (
+                    <p className="border-t border-border px-3 pt-2 text-xs text-muted-foreground">
+                      {TEXTING_LOCKED_NOTE}
+                    </p>
+                  )}
                   <Composer
                     // Item 9: a fresh Composer instance per conversation - its internal
                     // draft/busy/error/needsReassign state must never survive a thread
                     // switch (a half-typed reply to Ada must not reappear addressed to Bob).
                     key={selectedConversation.contact_e164}
-                    disabled={!canSend}
+                    disabled={!canSend || textingOff}
                     threadId={selectedConversation.thread_id}
                     onNoted={() => {
                       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
