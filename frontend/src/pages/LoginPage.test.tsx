@@ -124,4 +124,45 @@ describe("LoginPage", () => {
     expect(await screen.findByLabelText("Email code")).toBeInTheDocument();
     expect(client.calls.filter((c) => c.path.endsWith("/2fa/email/login/send"))).toHaveLength(1);
   });
+  async function toSecondStep(login: Record<string, unknown>) {
+    const client = makeStubClient({
+      "/api/v1/auth/login": { access_token: null, requires_2fa: true, pending_token: "p", ...login },
+      "/api/v1/auth/2fa/email/login/send": { sent: true },
+      "/api/v1/auth/me": ME,
+    });
+    client.setAuth({ token: null, orgId: null });
+    renderWithProviders(<LoginPage />, client);
+    await userEvent.type(screen.getByLabelText("Email"), "a@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "correct-horse-battery");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    return client;
+  }
+
+  it("shows only the factors the account holds: email alone means no tabs and a hint", async () => {
+    await toSecondStep({ methods: ["email"], recovery_codes_available: true });
+    expect(await screen.findByLabelText("Email code")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByText(/Faster next time/)).toBeInTheDocument();
+    expect(screen.queryByText(/not turned on for this account/)).toBeNull();
+  });
+
+  it("offers a tab per held factor and no hint when passkey and app are both set", async () => {
+    await toSecondStep({ methods: ["totp", "passkey", "email"], recovery_codes_available: true });
+    await screen.findByRole("tablist");
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.queryByText(/Faster next time/)).toBeNull();
+  });
+
+  it("hides 'Use a recovery code' when the account holds none", async () => {
+    await toSecondStep({ methods: ["totp"], recovery_codes_available: false });
+    await screen.findByLabelText("Authenticator code");
+    expect(screen.queryByRole("button", { name: "Use a recovery code" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Lost access to your sign-in methods?" })).toBeInTheDocument();
+  });
+
+  it("shows 'Use a recovery code' when the account holds some", async () => {
+    await toSecondStep({ methods: ["totp"], recovery_codes_available: true });
+    await screen.findByLabelText("Authenticator code");
+    expect(screen.getByRole("button", { name: "Use a recovery code" })).toBeInTheDocument();
+  });
 });

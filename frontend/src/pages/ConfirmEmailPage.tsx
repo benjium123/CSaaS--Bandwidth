@@ -4,17 +4,19 @@ import { mutationErrorMessage } from "@/components/ui/primitives";
 import {
   AuthAlert,
   AuthButton,
+  AuthInput,
   AuthNotice,
   AuthPlate,
   AuthSurface,
+  Field,
   Lamp,
   StepRail,
 } from "@/components/auth/AuthShell";
 
 /** Matches the signup rail, so confirming reads as step two of the same form. */
 const STEPS = ["Account", "Confirm email", "Verify identity"];
-/** The server quietly skips a resend within 60s of the last one (services/email_verification.py). */
-const RESEND_SECONDS = 60;
+/** The server refuses a new code within 30s of the last one (services/email_code.py RESEND_AFTER). */
+const RESEND_SECONDS = 30;
 
 /** Webmail inboxes worth a one-click shortcut, by address domain. */
 const INBOXES: Record<string, { label: string; url: string }> = {
@@ -63,7 +65,7 @@ export function ConfirmEmailPage() {
   const [failed, setFailed] = React.useState(false);
   const [done, setDone] = React.useState(false);
   const [wait, setWait] = React.useState(0);
-  const token = new URLSearchParams(window.location.search).get("token");
+  const [code, setCode] = React.useState("");
   const inbox = inboxFor(me?.email);
 
   React.useEffect(() => {
@@ -72,23 +74,15 @@ export function ConfirmEmailPage() {
     return () => window.clearTimeout(t);
   }, [wait]);
 
-  async function act(confirm: boolean) {
+  async function confirm() {
     setPending(true);
     setMessage("");
     setFailed(false);
     try {
-      await api.request(`/api/v1/auth/${confirm ? "confirm-email" : "resend-confirmation"}`, {
-        method: "POST",
-        json: confirm ? { token } : {},
-      });
-      if (confirm) {
-        setDone(true);
-        window.history.replaceState(null, "", "/confirm-email");
-        await refreshMe();
-      } else {
-        setMessage("Sent. A new link is on its way, and the old one no longer works.");
-        setWait(RESEND_SECONDS);
-      }
+      await api.request("/api/v1/auth/confirm-email", { method: "POST", json: { code } });
+      setDone(true);
+      // The next wall (recovery codes) or the app takes over from here.
+      await refreshMe();
     } catch (error) {
       setFailed(true);
       setMessage(mutationErrorMessage(error));
@@ -97,7 +91,24 @@ export function ConfirmEmailPage() {
     }
   }
 
-  const state = done ? "done" : token ? "confirm" : "check";
+  async function resend() {
+    setPending(true);
+    setMessage("");
+    setFailed(false);
+    try {
+      await api.request("/api/v1/auth/resend-confirmation", { method: "POST", json: {} });
+      setCode("");
+      setMessage("Sent. A new code is on its way, and the old one no longer works.");
+      setWait(RESEND_SECONDS);
+    } catch (error) {
+      setFailed(true);
+      setMessage(mutationErrorMessage(error));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const state = done ? "done" : "check";
 
   return (
     <AuthSurface>
@@ -106,22 +117,18 @@ export function ConfirmEmailPage() {
         title={
           state === "done"
             ? "You're confirmed"
-            : state === "confirm"
-              ? "Confirm your email"
-              : "Check your inbox"
+            : "Check your inbox"
         }
         lede={
           state === "done" ? (
             "Your email address is confirmed. Next, verify your identity so we can approve your account."
-          ) : state === "confirm" ? (
-            "One click and your address is confirmed."
           ) : (
             <>
-              We sent a confirmation link to{" "}
+              We emailed a six-digit code to{" "}
               <b className="font-semibold text-[hsl(var(--ex-bone))] [overflow-wrap:anywhere]">
                 {me?.email ?? "your email address"}
               </b>
-              . Open it on any device to continue.
+              . Enter it here to confirm your address.
             </>
           )
         }
@@ -143,34 +150,49 @@ export function ConfirmEmailPage() {
           <div className="space-y-4">
             {me?.email_confirmation_sent === false && (
               <AuthNotice>
-                Your account is ready, but the email did not go out. Send it again below.
+                Your account is ready, but the email did not go out. Send a new code below.
               </AuthNotice>
             )}
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (code.length === 6 && !pending) void confirm();
+              }}
+            >
+              <Field label="Email code" hint="Six digits, from the email we just sent.">
+                <AuthInput
+                  code
+                  aria-label="Email code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                />
+              </Field>
+              <AuthButton type="submit" block disabled={pending || code.length < 6}>
+                {pending ? "Checking…" : "Confirm email"}
+              </AuthButton>
+            </form>
             {inbox && (
-              <a className="ex-btn ex-btn-primary w-full" href={inbox.url} target="_blank" rel="noreferrer">
+              <a className="ex-link block" href={inbox.url} target="_blank" rel="noreferrer">
                 {inbox.label}
               </a>
             )}
             <ul className="space-y-1.5 text-[0.8125rem] leading-relaxed text-muted-foreground">
-              <li>· The link works for 24 hours.</li>
+              <li>· The code works for 10 minutes.</li>
               <li>· Not there after a minute? Check spam or promotions.</li>
             </ul>
-            <AuthButton
+            <button
               type="button"
-              tone={inbox ? "quiet" : "primary"}
-              block
+              className="ex-link"
               disabled={pending || wait > 0}
-              onClick={() => void act(false)}
+              onClick={() => void resend()}
             >
-              {pending ? "Sending…" : wait > 0 ? `Send again in ${wait}s` : "Send the link again"}
-            </AuthButton>
+              {wait > 0 ? `Send a new code in ${wait}s` : "Send a new code"}
+            </button>
           </div>
-        )}
-
-        {state === "confirm" && (
-          <AuthButton type="button" block disabled={pending} onClick={() => void act(true)}>
-            {pending ? "Confirming…" : "Confirm email address"}
-          </AuthButton>
         )}
 
         {state === "done" && (

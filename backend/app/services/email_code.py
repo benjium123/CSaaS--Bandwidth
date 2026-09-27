@@ -20,7 +20,7 @@ from app.errors import UnauthenticatedError, ValidationFailedError
 from app.models import User
 from app.services import mailer
 
-Purpose = Literal["enrol", "login", "step_up"]
+Purpose = Literal["enrol", "login", "step_up", "verify"]
 
 EMAIL_CODE_TTL = timedelta(minutes=10)
 RESEND_AFTER = timedelta(seconds=30)
@@ -47,6 +47,7 @@ def _body(settings: Settings, code: str, purpose: Purpose) -> tuple[str, str]:
         "enrol": "turn on email codes for signing in",
         "login": "finish signing in",
         "step_up": "confirm a sensitive change",
+        "verify": "confirm your email address",
     }[purpose]
     subject = f"{code} is your {settings.app_name} code"
     body = (
@@ -59,10 +60,11 @@ def _body(settings: Settings, code: str, purpose: Purpose) -> tuple[str, str]:
     return subject, body
 
 
-async def issue(settings: Settings, user: User, purpose: Purpose) -> None:
+async def issue(settings: Settings, user: User, purpose: Purpose) -> bool:
     """Mint a fresh code for ``purpose``, store its digest on ``user`` and email it.
 
     The caller commits. Raises when the previous code was sent under RESEND_AFTER ago.
+    Returns whether the mailer accepted the message.
     """
     now = _now()
     expires = _aware(user.email_code_expires_at)
@@ -77,7 +79,7 @@ async def issue(settings: Settings, user: User, purpose: Purpose) -> None:
     user.email_code_expires_at = now + EMAIL_CODE_TTL
     user.email_code_attempts = 0
     subject, body = _body(settings, code, purpose)
-    await mailer.send(settings, [user.email], subject, body)
+    return await mailer.send(settings, [user.email], subject, body)
 
 
 def check(settings: Settings, user: User, purpose: Purpose, code: str) -> None:

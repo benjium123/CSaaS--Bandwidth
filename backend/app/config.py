@@ -135,6 +135,10 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("REQUIRE_2FA_PRIVILEGED_USERS", "REQUIRE_2FA_ALL_USERS"),
     )
+    #: Confirming the email address with its emailed code also turns email codes on as the
+    #: account's second factor (the inbox is proven). Production requires it; the test suite
+    #: turns it off so password-only helper logins keep working.
+    email_2fa_on_verify: bool = Field(default=True, validation_alias="EMAIL_2FA_ON_VERIFY")
     #: Telephony (texting, calling, number orders) is refused for an org whose business
     #: verification is not approved. Tests turn it off; see services/telephony_access.py.
     kyc_enforced: bool = True
@@ -655,6 +659,11 @@ class Settings(BaseSettings):
                     "true in production - owners, admins and anyone who can change access "
                     "or billing needs an authenticator app or passkey. Ordinary staff are "
                     "not obliged to hold one."
+                )
+            if not self.email_2fa_on_verify:
+                problems.append(
+                    "EMAIL_2FA_ON_VERIFY must be true in production - a confirmed email address "
+                    "is the default second factor for new accounts."
                 )
             if self.loopback_carrier_enabled:
                 problems.append(

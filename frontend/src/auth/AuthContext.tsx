@@ -116,11 +116,14 @@ export type Me = {
   /** P42: owner/admin/billing/operator - passkey sign-in required after the grace date. */
   passkey_required?: boolean;
   passkey_grace_until?: string | null;
+  /** This session just proved a second factor and the account has no unused recovery
+   * codes: App shows them once (RecoveryCodesPage). */
+  needs_recovery_codes?: boolean;
 };
 
 type LoginResult =
   | { kind: "ok" }
-  | { kind: "needs_2fa"; pendingToken: string; methods: string[] }
+  | { kind: "needs_2fa"; pendingToken: string; methods: string[]; recoveryCodes: boolean }
   /**
    * P42: `code` is the API's own `error.code`, carried through so a caller can offer the
    * right NEXT STEP - the one live use is `sso_required`, where the workspace enforces
@@ -243,6 +246,7 @@ export function AuthProvider({
           requires_2fa: boolean;
           pending_token: string | null;
           methods?: string[];
+          recovery_codes_available?: boolean;
         }>("/api/v1/auth/login", { method: "POST", json: { email, password } });
 
         if (res.requires_2fa && res.pending_token) {
@@ -250,6 +254,8 @@ export function AuthProvider({
             kind: "needs_2fa",
             pendingToken: res.pending_token,
             methods: res.methods ?? ["totp"],
+            // A missing field never hides a way in.
+            recoveryCodes: res.recovery_codes_available ?? true,
           };
         }
         if (res.access_token) api.setAuth({ token: res.access_token });

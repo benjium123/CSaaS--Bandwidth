@@ -41,11 +41,19 @@ import {
 /** Ties the passkey control to the sentence explaining why it cannot be used here. */
 const PASSKEY_NOTE_ID = "login-passkey-unsupported";
 
+/** Sign-in step 2 shows a tab only for the factors this account actually holds. */
+const FACTOR_TABS = [
+  ["email", "Email code"],
+  ["passkey", "Passkey"],
+  ["totp", "Authenticator app"],
+] as const;
+
 export function LoginPage() {
   const { login, verify2fa, verifyPasskey, recoverWithCode, sendLoginEmailCode, verifyEmailCode } =
     useAuth();
   const [factor, setFactor] = React.useState<"totp" | "email" | "passkey">("totp");
   const [emailAutoSent, setEmailAutoSent] = React.useState(false);
+  const [hasRecoveryCodes, setHasRecoveryCodes] = React.useState(true);
   const navigate = useNavigate();
   const [useRecoveryCode, setUseRecoveryCode] = React.useState(false);
   const [email, setEmail] = React.useState("");
@@ -74,6 +82,7 @@ export function LoginPage() {
     if (res.kind === "needs_2fa") {
       setPendingToken(res.pendingToken);
       setMethods(res.methods);
+      setHasRecoveryCodes(res.recoveryCodes);
       setFactor(
         res.methods.includes("totp") ? "totp" : res.methods.includes("passkey") ? "passkey" : "email",
       );
@@ -112,7 +121,7 @@ export function LoginPage() {
   const totpAllowed =
     !secondStep || useRecoveryCode || (factor === "totp" && methods.includes("totp"));
   const passkeyOffered = showTabs && factor === "passkey" && methods.includes("passkey");
-  const tabNotSetUp = showTabs && !methods.includes(factor);
+  const availableTabs = FACTOR_TABS.filter(([key]) => methods.includes(key));
   // The button stays visible when the browser has no WebAuthn - hiding the only named
   // route would be more confusing than explaining why it cannot be taken - but it is
   // disabled and accompanied by the reason and an alternative.
@@ -147,17 +156,19 @@ export function LoginPage() {
         footer={
           secondStep ? (
             <>
-              <button
-                type="button"
-                className="ex-link"
-                onClick={() => {
-                  setUseRecoveryCode((v) => !v);
-                  setCode("");
-                  setError(null);
-                }}
-              >
-                {useRecoveryCode ? "Use my passkey or authenticator app" : "Use a recovery code"}
-              </button>
+              {(hasRecoveryCodes || useRecoveryCode) && (
+                <button
+                  type="button"
+                  className="ex-link"
+                  onClick={() => {
+                    setUseRecoveryCode((v) => !v);
+                    setCode("");
+                    setError(null);
+                  }}
+                >
+                  {useRecoveryCode ? "Back to sign-in options" : "Use a recovery code"}
+                </button>
+              )}
               <button
                 type="button"
                 className="ex-link"
@@ -168,7 +179,7 @@ export function LoginPage() {
                   navigate("/recover");
                 }}
               >
-                Lost access to your passkey and authenticator app
+                Lost access to your sign-in methods?
               </button>
             </>
           ) : (
@@ -189,15 +200,14 @@ export function LoginPage() {
 
         {secondStep ? (
           <div className="space-y-4">
-            {showTabs && (
-              <div role="tablist" aria-label="Second factor" className="grid grid-cols-3 gap-2">
-                {(
-                  [
-                    ["email", "Email code"],
-                    ["passkey", "Passkey"],
-                    ["totp", "Authenticator app"],
-                  ] as const
-                ).map(([key, label]) => (
+            {showTabs && availableTabs.length > 1 && (
+              <div
+                role="tablist"
+                aria-label="Second factor"
+                className="grid gap-2"
+                style={{ gridTemplateColumns: `repeat(${availableTabs.length}, minmax(0, 1fr))` }}
+              >
+                {availableTabs.map(([key, label]) => (
                   <button
                     key={key}
                     type="button"
@@ -216,15 +226,11 @@ export function LoginPage() {
               </div>
             )}
 
-            {tabNotSetUp && !noMethodOffered ? (
-              <AuthNotice>
-                {factor === "email"
-                  ? "Email codes are not turned on for this account."
-                  : factor === "passkey"
-                    ? "This account has no passkey yet."
-                    : "This account has no authenticator app yet."}{" "}
-                Use another tab to finish signing in, then add it in Settings, Security.
-              </AuthNotice>
+            {showTabs && !(methods.includes("passkey") && methods.includes("totp")) ? (
+              <p className="text-xs text-muted-foreground">
+                Faster next time: add a passkey or an authenticator app in Settings, Security once
+                you are in.
+              </p>
             ) : null}
 
             {passkeyOffered && (
@@ -254,9 +260,9 @@ export function LoginPage() {
                 {passkeyUnsupported ? (
                   <div id={PASSKEY_NOTE_ID}>
                     <AuthNotice>
-                      This browser cannot use passkeys. Use a recovery code below, or open this
-                      page in a browser that supports them - your sign-in is still waiting either
-                      way.
+                      This browser cannot use passkeys. Use another sign-in option or a recovery
+                      code, or open this page in a browser that supports passkeys - your sign-in
+                      is still waiting either way.
                     </AuthNotice>
                   </div>
                 ) : null}
@@ -265,8 +271,9 @@ export function LoginPage() {
 
             {noMethodOffered ? (
               <AuthNotice>
-                This sign-in needs a second factor that is not available on this screen. Use one
-                of your recovery codes below, or recover your account.
+                {hasRecoveryCodes
+                  ? "This sign-in needs a second factor that is not available on this screen. Use one of your recovery codes below, or recover your account."
+                  : "This sign-in needs a second factor that is not available on this screen. Recover your account with the link below."}
               </AuthNotice>
             ) : null}
 

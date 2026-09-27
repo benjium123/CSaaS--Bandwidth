@@ -73,6 +73,9 @@ def make_settings(**overrides) -> Settings:
         "cors_origins": "http://localhost:5173",
         # The sweeper is an interim in-process loop; tests drive its functions directly.
         "sweeper_enabled": False,
+        # Confirming an address turns email codes on in production; most tests sign in with a
+        # password only, so they opt out. Tests of that flow pass email_2fa_on_verify=True.
+        "email_2fa_on_verify": False,
         "media_store_backend": "memory",
         # Individual rate-limit regression tests opt in explicitly.
         "rate_limit_enabled": False,
@@ -205,7 +208,7 @@ async def register_and_login(
         json={"email": email, "password": password, "full_name": email.split("@")[0]},
     )
     assert r.status_code == 201, r.text
-    await confirm_registered_email(client, email)
+    await confirm_registered_email(client, email, password)
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
@@ -456,21 +459,48 @@ async def create_tag(client: httpx.AsyncClient, token: str, org_id, name: str) -
     return r.json()
 
 
-async def confirm_registered_email(client, email):
+def latest_email_code(email: str) -> str:
+    """The six-digit code in the newest "<code> is your ... code" mail sent to ``email``."""
     import re
 
     from app.services import mailer
 
-    message = next(
-        m
-        for m in reversed(mailer.outbox)
-        if email in m["To"] and m["Subject"] == "Confirm your Ringlite email"
+    for message in reversed(mailer.outbox):
+        if email in message["To"]:
+            match = re.match(r"(\d{6}) is your ", message["Subject"])
+            if match:
+                return match.group(1)
+    raise AssertionError(f"no code email for {email}")
+
+
+async def confirm_registered_email(client, email, password="correct-horse-battery"):
+    """Confirm the address with the emailed code (signed in with the password, as the app is)."""
+    r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200 and r.json().get("access_token"), r.text
+    response = await client.post(
+        "/api/v1/auth/confirm-email",
+        json={"code": latest_email_code(email)},
+        headers=auth_headers(r.json()["access_token"]),
     )
-    token = re.search(
-        r"token=([A-Za-z0-9_-]+)", message.get_body(preferencelist=("plain",)).get_content()
-    ).group(1)
-    response = await client.post("/api/v1/auth/confirm-email", json={"token": token})
     assert response.status_code == 200, response.text
+    return response
+
+
+async def login_with_email_code(client, email, password="correct-horse-battery") -> str:
+    """Password, then the emailed sign-in code: returns the access token."""
+    r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["requires_2fa"] and "email" in body["methods"], body
+    pending = body["pending_token"]
+    r = await client.post("/api/v1/auth/2fa/email/login/send", json={"pending_token": pending})
+    assert r.status_code == 200, r.text
+    r = await client.post(
+        "/api/v1/auth/2fa/email/login/verify",
+        json={"pending_token": pending, "code": latest_email_code(email)},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
 
 
 async def approve_workspaces(email: str) -> None:

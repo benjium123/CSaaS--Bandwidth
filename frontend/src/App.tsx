@@ -2,6 +2,7 @@ import { LandingPage } from "@/pages/LandingPage";
 import { MarketingRoutes, isMarketingPath } from "@/marketing/routes";
 import { ChooseNumbersPage } from "@/pages/ChooseNumbersPage";
 import { ConfirmEmailPage } from "@/pages/ConfirmEmailPage";
+import { RecoveryCodesPage } from "@/pages/RecoveryCodesPage";
 import * as React from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
@@ -187,7 +188,6 @@ export function App() {
   // A setup link must remain reachable when this browser is signed into a customer account.
   if (location.pathname === "/reset-password") return <ResetPasswordPage />;
 
-  if (location.pathname === "/confirm-email") return <ConfirmEmailPage />;
   if (!me) {
     return (
       <Routes>
@@ -208,6 +208,9 @@ export function App() {
   // P41: an account without an authenticator app or passkey can do nothing else yet.
   if (me.email_verification_required) return <ConfirmEmailPage />;
   if (me.second_factor_required) return <SecureAccountPage />;
+  // Shown once, right after this session first proved a second factor, while the account
+  // holds no unused recovery codes (sign-up, first enrolment, or the next 2FA sign-in).
+  if (me.needs_recovery_codes) return <RecoveryCodesPage />;
 
   // The operator console is its own full-screen app (the Switchboard), never squeezed into
   // a workspace shell or behind the workspace picker.

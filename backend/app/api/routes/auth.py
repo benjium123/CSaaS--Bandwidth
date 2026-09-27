@@ -36,6 +36,7 @@ from app.services import (
     login_flow,
     passkey_policy,
     password_policy,
+    recovery_codes,
     second_factor,
 )
 from app.services import defaults as defaults_svc
@@ -48,42 +49,56 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 class ConfirmEmailIn(BaseModel):
-    token: str = Field(min_length=20, max_length=200)
+    code: str = Field(min_length=6, max_length=6)
 
 
 @router.post("/confirm-email")
 async def confirm_email(
     payload: ConfirmEmailIn,
     request: Request,
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
+    """Confirm the address with the six-digit code emailed at sign-up.
+
+    The inbox is now proven, so (EMAIL_2FA_ON_VERIFY) email codes become the account's
+    second factor and this session counts as 2FA-proven - which is what lets the one-time
+    recovery-codes screen generate codes straight after.
+    """
     from datetime import timezone
 
-    from app.services import email_verification
+    from app.auth.deps import current_identity_session
+    from app.services import account_security, email_code
 
-    await enforce_rate_limit(request, "email-confirm")
-    user = (
-        await session.execute(
-            sa.select(User)
-            .where(User.email_verification_hash == email_verification.digest(payload.token))
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if (
-        user is None
-        or not user.email_verification_expires_at
-        or user.email_verification_expires_at.replace(tzinfo=timezone.utc)
-        <= datetime.now(timezone.utc)
-    ):
-        raise ValidationFailedError(
-            "This confirmation link is invalid or expired. Request a new email."
-        )
-    user.email_verified_at = datetime.now(timezone.utc)
+    settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"email-confirm:{user.id}")
+    if not user.email_verification_required:
+        return {"confirmed": True, "email_2fa_enabled": user.email_2fa_enabled}
+    try:
+        email_code.check(settings, user, "verify", payload.code)
+    except UnauthenticatedError:
+        await session.commit()  # the miss counts toward the attempt cap
+        raise
+    now = datetime.now(timezone.utc)
+    user.email_verified_at = now
     user.email_verification_required = False
     user.email_verification_hash = None
     user.email_verification_expires_at = None
+    if settings.email_2fa_on_verify and not user.email_2fa_enabled:
+        had_factor = bool(user.has_second_factor)
+        user.email_2fa_enabled = True
+        account_security.audit(
+            session,
+            user.id,
+            "email_2fa.enabled",
+            request=request,
+            detail={"via": "email_verification"},
+        )
+        row = await current_identity_session(request, session)
+        if row is not None and not had_factor:
+            row.second_factor_at = now
     await session.commit()
-    return {"confirmed": True}
+    return {"confirmed": True, "email_2fa_enabled": user.email_2fa_enabled}
 
 
 @router.post("/resend-confirmation")
@@ -140,6 +155,9 @@ class TokenOut(BaseModel):
     methods: list[str] = []
     #: P41: signed in, but must add an authenticator app or passkey before anything else.
     requires_2fa_enrollment: bool = False
+    #: Whether the account holds unused recovery codes (only set beside `methods`, i.e.
+    #: after the password is proven) - the sign-in screen offers "Use a recovery code" only then.
+    recovery_codes_available: bool = False
 
 
 class MembershipOut(BaseModel):
@@ -175,6 +193,9 @@ class MeOut(BaseModel):
     operator_role: str | None = None
     #: P41: true while this account must still add an authenticator app or passkey.
     second_factor_required: bool = False
+    #: This session just proved a second factor and the account has no unused recovery
+    #: codes: the app shows them once (RecoveryCodesPage).
+    needs_recovery_codes: bool = False
     #: P42: privileged account that must use passkeys; grace end while it may still not.
     passkey_required: bool = False
     passkey_grace_until: datetime | None = None
@@ -515,6 +536,7 @@ async def _login(
             requires_2fa=True,
             pending_token=create_pending_2fa_token(user.id, settings.jwt_secret.get_secret_value()),
             methods=methods,
+            recovery_codes_available=await recovery_codes.remaining(session, user.id) > 0,
         )
 
     token = await login_flow.complete_login(
@@ -611,6 +633,22 @@ async def me(
                 ),
             )
         )
+    # Freshness uses the step-up window, so whenever this is True the recovery-codes
+    # screen's POST /recovery-codes (recent_2fa step-up) is guaranteed to pass.
+    needs_recovery_codes = False
+    if user.has_second_factor:
+        from datetime import timedelta, timezone
+
+        from app.auth.deps import current_identity_session
+
+        row = await current_identity_session(request, session)
+        proven = row.second_factor_at if row is not None else None
+        if proven is not None and proven.tzinfo is None:
+            proven = proven.replace(tzinfo=timezone.utc)
+        if proven is not None and datetime.now(timezone.utc) - proven <= timedelta(
+            minutes=request.app.state.settings.step_up_2fa_minutes
+        ):
+            needs_recovery_codes = await recovery_codes.remaining(session, user.id) == 0
     return MeOut(
         id=user.id,
         email=user.email,
@@ -623,6 +661,7 @@ async def me(
         is_platform_operator=operator is not None,
         operator_role=operator.role if operator is not None else None,
         second_factor_required=second_factor_required,
+        needs_recovery_codes=needs_recovery_codes,
         # Only platform operators are held to passkey sign-in (services/passkey_policy.py).
         passkey_required=bool(
             request.app.state.settings.require_passkey_for_privileged
