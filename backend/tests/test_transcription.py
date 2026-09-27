@@ -276,14 +276,19 @@ async def test_wanted_mode_off_returns_none(session):
     assert await transcription.wanted(session, org) is None
 
 
-async def test_wanted_after_call_no_entitlements_module(session, monkeypatch):
+async def test_wanted_after_call_needs_the_call_transcription_entitlement(session):
+    from app.services import entitlements
+
     org_id = await _org(session)
     set_org_context(session, org_id)
     org = await session.get(Org, org_id)
     org.calling_settings = {'transcription_mode': 'after_call'}
-
-    monkeypatch.delitem(sys.modules, 'app.services.entitlements', raising=False)
-
+    # The workspace's own mode is not enough: ops must enable call_transcription (P2).
+    assert await transcription.wanted(session, org) is None
+    await entitlements.set_feature(
+        session, org_id, 'call_transcription',
+        enabled=True, price_override_micros=None, actor_user_id=None,
+    )
     assert await transcription.wanted(session, org) == 'after_call'
 
 

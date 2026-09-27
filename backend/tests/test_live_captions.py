@@ -24,12 +24,27 @@ class DispatchSpy(FakeLiveKit):
         self.dispatches.append({"room": room, "agent_name": agent_name, "metadata": json.loads(metadata)})
 
 
+async def _entitle(session, org_id, key="call_transcription"):
+    """P2: transcription is an ops-controlled per-workspace feature (default off)."""
+    import uuid as _uuid
+
+    from app.services import entitlements
+
+    await entitlements.set_feature(
+        session, _uuid.UUID(str(org_id)), key,
+        enabled=True, price_override_micros=None, actor_user_id=None,
+    )
+    await session.commit()
+
+
 async def _live_org(session, mode="live", record=True):
     org_id = await _org(session)
     set_org_context(session, org_id)
     org = await session.get(Org, org_id)
     calling_settings.apply(org, record_calls=record, transcription_mode=mode)
     await session.commit()
+    await _entitle(session, org_id)
+    await _entitle(session, org_id, "call_recording")
     return org_id
 
 

@@ -15,6 +15,19 @@ from tests.conftest import auth_headers
 from tests.test_p29_voice_completeness import _org, p29_app  # noqa: F401
 
 
+async def _entitle(session, org_id, key="call_transcription"):
+    """P2: transcription is an ops-controlled per-workspace feature (default off)."""
+    import uuid as _uuid
+
+    from app.services import entitlements
+
+    await entitlements.set_feature(
+        session, _uuid.UUID(str(org_id)), key,
+        enabled=True, price_override_micros=None, actor_user_id=None,
+    )
+    await session.commit()
+
+
 async def test_settings_round_trip_record_calls_and_transcription_mode(p29_app):
     client, _fake, _app = p29_app
     token, _org_body, org_id = await _org(client, "stt-settings")
@@ -96,6 +109,7 @@ async def test_transcribe_queues_a_stereo_recording(p29_app, session, no_kick):
     client, _fake, app = p29_app
     app.state.settings = app.state.settings.model_copy(update={"stt_url": "http://stt:9100"})
     token, _org_body, org_id = await _org(client, "stt-on")
+    await _entitle(session, org_id)
     call = await _call_with_recording(session, org_id)
     headers = auth_headers(token, org_id)
 
@@ -112,6 +126,7 @@ async def test_transcribe_refuses_a_single_track_recording(p29_app, session, no_
     client, _fake, app = p29_app
     app.state.settings = app.state.settings.model_copy(update={"stt_url": "http://stt:9100"})
     token, _org_body, org_id = await _org(client, "stt-mono")
+    await _entitle(session, org_id)
     call = await _call_with_recording(session, org_id, provider_id="carrier-rec-1")
 
     r = await client.post(
