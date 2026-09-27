@@ -23,10 +23,10 @@ KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def active_contacts_filter() -> sa.ColumnElement:
-    """A merged loser row is kept for history but is hidden from every contact list,
-    search, phone lookup and conversation card. This is the ONE place that rule is
-    written; every query that reads contacts must apply it."""
-    return Contact.merged_into_contact_id.is_(None)
+    """A merged loser row (or a deleted contact) is kept for history but is hidden from
+    every contact list, search, phone lookup and conversation card. This is the ONE place
+    that rule is written; every query that reads contacts must apply it."""
+    return sa.and_(Contact.merged_into_contact_id.is_(None), Contact.deleted_at.is_(None))
 
 
 async def find_contact_by_phone(

@@ -12,6 +12,7 @@ re-parenting exercise rather than data repair.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -68,6 +69,14 @@ class Contact(Base, TenantScoped, TimestampMixin):
     # P36: keyed hash of the normalised primary phone / name for exact-match search once
     # PII columns are encrypted (full-text over message bodies is dropped by design).
     search_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    # Soft delete (0079): a deleted contact is hidden like a merged one and can be restored.
+    # Its contact_phones rows are released on delete; deleted_phones keeps the numbers
+    # ([{e164, label, is_primary}]) so restore can re-attach them.
+    deleted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    deleted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    deleted_phones: Mapped[list | None] = mapped_column(PortableJSON(), nullable=True)
 
 
 class ContactPhone(Base, TenantScoped, TimestampMixin):

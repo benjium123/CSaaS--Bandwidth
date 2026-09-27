@@ -106,6 +106,8 @@ async def perform_erasure(session, store, request_row) -> dict:
         .all()
     )
     e164s = [phone.e164 for phone in phones]
+    # A deleted contact's numbers live in its snapshot (contacts.deleted_phones).
+    e164s += [p["e164"] for p in (contact.deleted_phones or []) if p.get("e164")]
 
     thread_ids = list(
         (
@@ -240,6 +242,7 @@ async def perform_erasure(session, store, request_row) -> dict:
     for phone in phones:
         await session.delete(phone)
 
+    contact.deleted_phones = None
     contact.display_name = ERASED_NAME
     contact.first_name = None
     contact.last_name = None
@@ -359,6 +362,8 @@ async def build_my_data_bundle(session, contact) -> dict:
         .all()
     )
     e164s = [phone.e164 for phone in phones]
+    # A deleted contact's numbers live in its snapshot (contacts.deleted_phones).
+    e164s += [p["e164"] for p in (contact.deleted_phones or []) if p.get("e164")]
 
     contact_data = {
         "id": str(contact.id),

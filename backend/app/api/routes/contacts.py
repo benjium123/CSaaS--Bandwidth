@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 import sqlalchemy as sa
@@ -153,11 +153,16 @@ def _store(request: Request):
     return store
 
 
-async def _active_contact(ctx: OrgContext, contact_id: uuid.UUID) -> Contact:
+async def _active_contact(
+    ctx: OrgContext, contact_id: uuid.UUID, *, include_deleted: bool = False
+) -> Contact:
     """A merged contact is gone as far as the app is concerned: it is not in any
-    list, not in search, and cannot be opened."""
+    list, not in search, and cannot be opened. A deleted one is the same, except for
+    the routes that must still reach it (restore, erase, export-my-data)."""
     contact = await contact_visibility.get_visible_contact(ctx, contact_id)
     if contact.merged_into_contact_id is not None:
+        raise NotFoundError("Contact not found")
+    if contact.deleted_at is not None and not include_deleted:
         raise NotFoundError("Contact not found")
     return contact
 
@@ -772,7 +777,7 @@ async def erase_contact(
     contact_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
 ) -> dict:
-    contact = await _active_contact(ctx, contact_id)
+    contact = await _active_contact(ctx, contact_id, include_deleted=True)
 
     req = await privacy_svc.request_erasure(
         ctx.session,
@@ -796,7 +801,7 @@ async def export_my_data(
     contact_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
 ) -> dict:
-    contact = await _active_contact(ctx, contact_id)
+    contact = await _active_contact(ctx, contact_id, include_deleted=True)
     bundle = await privacy_svc.build_my_data_bundle(ctx.session, contact)
     csv_text = privacy_svc.my_data_csv(bundle)
     return {"contact_id": contact.id, "bundle": bundle, "csv": csv_text}
@@ -848,6 +853,34 @@ async def assign_contact_owner(
     return await _out(ctx, contact)
 
 
+@router.get("/contacts/deleted")
+async def list_deleted_contacts(
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:read"))],
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict]:
+    """Recently deleted contacts, newest first, within the caller's visibility scope."""
+    stmt = (
+        sa.select(Contact)
+        .where(Contact.deleted_at.is_not(None), Contact.merged_into_contact_id.is_(None))
+        .order_by(Contact.deleted_at.desc(), Contact.id.asc())
+        .limit(limit)
+    )
+    predicate = await contact_visibility.visible_contacts_filter_for(ctx)
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    rows = (await ctx.session.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": c.id,
+            "display_name": c.display_name,
+            "deleted_at": c.deleted_at,
+            "deleted_by_user_id": c.deleted_by_user_id,
+            "phones": c.deleted_phones or [],
+        }
+        for c in rows
+    ]
+
+
 @router.get("/contacts/{contact_id}", response_model=ContactOut)
 async def get_contact(
     contact_id: uuid.UUID,
@@ -889,9 +922,98 @@ async def delete_contact(
     ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
 ) -> None:
     contact = await _active_contact(ctx, contact_id)
-    # Threads keep their history: message_threads.contact_id is ON DELETE SET NULL.
-    await ctx.session.delete(contact)
+    # Soft delete: notes, tags, fields and history stay on the hidden row (restorable).
+    # The phone rows are released so the number can be added again or start a fresh
+    # contact on the next inbound text; the snapshot lets restore re-attach them.
+    phones = list(
+        (
+            await ctx.session.execute(
+                sa.select(ContactPhone).where(ContactPhone.contact_id == contact.id)
+            )
+        ).scalars().all()
+    )
+    contact.deleted_phones = [
+        {"e164": p.e164, "label": p.label, "is_primary": p.is_primary} for p in phones
+    ]
+    for phone in phones:
+        await ctx.session.delete(phone)
+    # Threads keep their history but are unlinked, as the old hard delete did.
+    await ctx.session.execute(
+        sa.update(MessageThread)
+        .where(MessageThread.contact_id == contact.id)
+        .values(contact_id=None)
+    )
+    contact.deleted_at = datetime.now(timezone.utc)
+    contact.deleted_by_user_id = ctx.actor_user_id
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="contact.delete",
+        target_type="contact",
+        target_id=str(contact.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+    )
     await ctx.session.commit()
+
+
+@router.post("/contacts/{contact_id}/restore")
+async def restore_contact(
+    contact_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("contacts:write"))],
+) -> dict:
+    """Bring a deleted contact back. Each number it had is re-attached unless a live
+    contact has taken it since; those are reported in ``phones_skipped``."""
+    contact = await _active_contact(ctx, contact_id, include_deleted=True)
+    if contact.deleted_at is None:
+        raise ConflictError("This contact is not deleted")
+
+    restored: list[str] = []
+    skipped: list[str] = []
+    for snap in contact.deleted_phones or []:
+        e164 = snap.get("e164")
+        if not e164:
+            continue
+        taken = (
+            await ctx.session.execute(
+                sa.select(ContactPhone.id).where(
+                    ContactPhone.org_id == ctx.org.id, ContactPhone.e164 == e164
+                )
+            )
+        ).scalar_one_or_none()
+        if taken is not None:
+            skipped.append(e164)
+            continue
+        ctx.session.add(
+            ContactPhone(
+                id=uuid.uuid4(),
+                org_id=ctx.org.id,
+                contact_id=contact.id,
+                e164=e164,
+                label=snap.get("label") or "mobile",
+                is_primary=bool(snap.get("is_primary", True)),
+            )
+        )
+        restored.append(e164)
+    await ctx.session.flush()
+    for e164 in restored:
+        await svc.link_threads_for_phone(ctx.session, ctx.org.id, e164, contact.id)
+
+    contact.deleted_at = None
+    contact.deleted_by_user_id = None
+    contact.deleted_phones = None
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="contact.restore",
+        target_type="contact",
+        target_id=str(contact.id),
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        detail={"phones_skipped": skipped},
+    )
+    await ctx.session.commit()
+    return {"contact": await _out(ctx, contact), "phones_skipped": skipped}
 
 
 # ----------------------------------------------------------------------------------
