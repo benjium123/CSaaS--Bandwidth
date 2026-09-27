@@ -22,7 +22,7 @@ describe("Public landing routes", () => {
     fireEvent.click(screen.getByRole("button", { name: "Messages" }));
     expect(screen.getByText("Texting after messaging registration approval")).toBeInTheDocument();
   });
-  it.each(["/pricing", "/faq", "/trust", "/legal/911", "/product/calling", "/solutions/real-estate", "/compare/quo", "/sales"])(
+  it.each(["/pricing", "/faq", "/trust", "/legal/911", "/legal/privacy", "/legal/terms", "/legal/refunds", "/privacy", "/terms", "/refunds", "/product/calling", "/solutions/real-estate", "/compare/quo", "/sales"])(
     "renders the public page %s without signing in", path => {
       open(path);
       expect(screen.getAllByRole("heading", { level: 1 }).length).toBe(1);
@@ -35,4 +35,3 @@ describe("Public landing routes", () => {
     expect(await screen.findByRole("heading", { name: "Signup destination" })).toBeInTheDocument();
   });
 });
-

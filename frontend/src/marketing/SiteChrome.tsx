@@ -228,13 +228,16 @@ export function SiteFooter() {
         <div>
           <h2>Legal</h2>
           <ul>
+            <li><Link to="/legal/privacy">Privacy policy</Link></li>
+            <li><Link to="/legal/terms">Terms of service</Link></li>
+            <li><Link to="/legal/refunds">Refunds &amp; cancellation</Link></li>
             <li><Link to="/legal/911">911 disclosure</Link></li>
             <li><Link to="/report">Report abuse</Link></li>
           </ul>
         </div>
       </div>
       <div className="ms-footer-bottom">
-        <small>© {new Date().getFullYear()} Ringlite</small>
+        <small>© {new Date().getFullYear()} Ringlite · Powered by Sabine Property Group LLC</small>
         <small>{COVERAGE}</small>
       </div>
     </div>
