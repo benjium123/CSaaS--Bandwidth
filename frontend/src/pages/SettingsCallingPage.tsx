@@ -27,6 +27,7 @@ export function SettingsCallingPage() {
   const dispositionsMutation = useUpdateCallingSettings(api);
 
   const [layoutDraft, setLayoutDraft] = React.useState<ChannelLayout | null>(null);
+  const [recordDraft, setRecordDraft] = React.useState<boolean | null>(null);
   const [announcementEnabledDraft, setAnnouncementEnabledDraft] = React.useState<boolean | null>(null);
   const [announcementTextDraft, setAnnouncementTextDraft] = React.useState<string | null>(null);
   const [dispositionsDraft, setDispositionsDraft] = React.useState<string[] | null>(null);
@@ -35,6 +36,9 @@ export function SettingsCallingPage() {
   React.useEffect(() => {
     if (calling.data && layoutDraft === null) {
       setLayoutDraft(calling.data.channel_layout);
+    }
+    if (calling.data && recordDraft === null) {
+      setRecordDraft(calling.data.record_calls);
     }
     if (calling.data && announcementEnabledDraft === null) {
       setAnnouncementEnabledDraft(calling.data.recording_announcement);
@@ -45,7 +49,7 @@ export function SettingsCallingPage() {
     if (calling.data && dispositionsDraft === null) {
       setDispositionsDraft([...calling.data.dispositions]);
     }
-  }, [calling.data, layoutDraft, announcementEnabledDraft, announcementTextDraft, dispositionsDraft]);
+  }, [calling.data, layoutDraft, recordDraft, announcementEnabledDraft, announcementTextDraft, dispositionsDraft]);
 
   if (calling.isLoading) {
     return <Spinner label="Loading calling settings" />;
@@ -73,6 +77,9 @@ export function SettingsCallingPage() {
 
   const settings = calling.data;
   const layoutValue = layoutDraft ?? settings.channel_layout;
+  const recordValue = recordDraft ?? settings.record_calls;
+  const recordingChanged =
+    layoutValue !== settings.channel_layout || recordValue !== settings.record_calls;
   const announcementEnabledValue =
     announcementEnabledDraft ?? settings.recording_announcement;
   const announcementTextValue = announcementTextDraft ?? "";
@@ -80,13 +87,18 @@ export function SettingsCallingPage() {
 
   function saveLayout(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canWrite || layoutValue === settings.channel_layout || layoutMutation.isPending) {
+    if (!canWrite || !recordingChanged || layoutMutation.isPending) {
       return;
     }
-    layoutMutation.mutate(
-      { channel_layout: layoutValue },
-      { onSuccess: (data) => setLayoutDraft(data.channel_layout) },
-    );
+    const patch: { channel_layout?: ChannelLayout; record_calls?: boolean } = {};
+    if (layoutValue !== settings.channel_layout) patch.channel_layout = layoutValue;
+    if (recordValue !== settings.record_calls) patch.record_calls = recordValue;
+    layoutMutation.mutate(patch, {
+      onSuccess: (data) => {
+        setLayoutDraft(data.channel_layout);
+        setRecordDraft(data.record_calls);
+      },
+    });
   }
 
   const normalizedAnnouncementText = announcementTextValue.trim() || null;
@@ -200,6 +212,24 @@ export function SettingsCallingPage() {
         <Section title="Recording">
           <SurfaceCard>
           <form onSubmit={saveLayout} className="space-y-[12px]">
+            <label className="flex items-start gap-[9px] text-[13.5px]">
+              <input
+                type="checkbox"
+                checked={recordValue}
+                aria-describedby="record-calls-help"
+                onChange={() => {
+                  layoutMutation.reset();
+                  setRecordDraft(!recordValue);
+                }}
+                disabled={!canWrite}
+              />
+              <span>Record every call made or answered in the app</span>
+            </label>
+            <p id="record-calls-help" className="pl-[25px] text-[11.5px] text-[hsl(var(--cx-muted))]">
+              The recording shows on the call about a minute after it ends. In headphones
+              you hear your side in the left ear and the caller in the right.
+            </p>
+
             {/* The helper is a description, not part of the name: a screen reader hears
                 "One file with both sides, radio button" and then the explanation. */}
             <div>
@@ -247,9 +277,8 @@ export function SettingsCallingPage() {
             </div>
 
             <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
-              Separate sides isn't being captured yet. You can choose it now, but
-              every recording is still saved as one file with both sides until it is
-              switched on.
+              Separate sides apply to calls made or answered in the app. Calls placed
+              through the API are saved as one file.
             </p>
 
             <div className="flex items-center gap-[11px]">
@@ -257,11 +286,7 @@ export function SettingsCallingPage() {
                 type="submit"
                 size="sm"
                 aria-label="Save recording"
-                disabled={
-                  !canWrite ||
-                  layoutValue === settings.channel_layout ||
-                  layoutMutation.isPending
-                }
+                disabled={!canWrite || !recordingChanged || layoutMutation.isPending}
               >
                 Save
               </Button>

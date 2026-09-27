@@ -53,6 +53,11 @@ def channel_layout_for(org) -> str:
     return DEFAULT_CHANNEL_LAYOUT
 
 
+def record_calls_for(org) -> bool:
+    """Whether the org records every call placed or answered in the app (off by default)."""
+    return _stored_settings(org).get("record_calls") is True
+
+
 def announcement_text_for(org) -> str:
     """Return the org's custom announcement, stripped, or the platform sentence."""
     raw = getattr(org, "recording_announcement_text", None)
@@ -116,7 +121,7 @@ def normalize_announcement_text(raw) -> str | None:
     return text
 
 
-def apply(org, *, dispositions=None, channel_layout=None) -> None:
+def apply(org, *, dispositions=None, channel_layout=None, record_calls=None) -> None:
     """Merge supplied calling settings into ``org.calling_settings``.
 
     SQLAlchemy JSON columns do not track in-place mutation of a dict, so assign a new
@@ -127,8 +132,10 @@ def apply(org, *, dispositions=None, channel_layout=None) -> None:
         next_settings["dispositions"] = dispositions
     if channel_layout is not None:
         next_settings["channel_layout"] = channel_layout
+    if record_calls is not None:
+        next_settings["record_calls"] = bool(record_calls)
 
-    if dispositions is not None or channel_layout is not None:
+    if dispositions is not None or channel_layout is not None or record_calls is not None:
         org.calling_settings = next_settings
 
 
@@ -139,5 +146,6 @@ def as_dict(org) -> dict:
         "recording_announcement_text": getattr(org, "recording_announcement_text", None),
         "announcement_text_effective": announcement_text_for(org),
         "channel_layout": channel_layout_for(org),
+        "record_calls": record_calls_for(org),
         "dispositions": dispositions_for(org),
     }

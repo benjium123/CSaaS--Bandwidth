@@ -11,6 +11,8 @@ export interface CallingSettings {
   recording_announcement_text: string | null;
   announcement_text_effective: string;
   channel_layout: ChannelLayout;
+  /** Record every call placed or answered in the app. */
+  record_calls: boolean;
   dispositions: string[];
 }
 
@@ -20,6 +22,7 @@ export type CallingSettingsPatch = Partial<
     | "recording_announcement"
     | "recording_announcement_text"
     | "channel_layout"
+    | "record_calls"
     | "dispositions"
   >
 >;

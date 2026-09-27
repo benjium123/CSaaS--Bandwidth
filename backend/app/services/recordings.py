@@ -268,6 +268,8 @@ async def fetch_pending_recordings(
 
     stmt = (
         sa.select(CallRecording)
+        # lkrec rows are our own capture, finalized by services/customer_recording.py.
+        .where(sa.not_(CallRecording.provider_recording_id.startswith("lkrec:")))
         .where(
             sa.or_(
                 CallRecording.status == "pending",

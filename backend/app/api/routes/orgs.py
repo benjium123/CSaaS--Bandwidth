@@ -84,6 +84,7 @@ class CallingSettingsIn(BaseModel):
     recording_announcement: bool | None = None
     recording_announcement_text: str | None = None
     channel_layout: str | None = None
+    record_calls: bool | None = None
     dispositions: list[str] | None = None
 
 
@@ -207,11 +208,23 @@ async def update_calling_settings(
         )
         changed.append("channel_layout")
 
-    if normalized_dispositions is not None or normalized_channel_layout is not None:
+    record_calls = None
+    if "record_calls" in payload.model_fields_set:
+        if payload.record_calls is None:
+            raise ValidationFailedError("Record calls must be true or false")
+        record_calls = payload.record_calls
+        changed.append("record_calls")
+
+    if (
+        normalized_dispositions is not None
+        or normalized_channel_layout is not None
+        or record_calls is not None
+    ):
         calling_settings_svc.apply(
             ctx.org,
             dispositions=normalized_dispositions,
             channel_layout=normalized_channel_layout,
+            record_calls=record_calls,
         )
 
     audit_svc.record(

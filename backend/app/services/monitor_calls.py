@@ -846,11 +846,12 @@ def _carrier_spam_codes() -> tuple[str, ...]:
 
 
 async def on_livekit_event(session: AsyncSession, api, settings: Settings, event: dict) -> None:  # noqa: ANN001
-    """When the phone side of a room call joins, monitored calls get the listener.
+    """When the phone side of a room call joins, monitored calls get the listener, and
+    calls of an org that records every call get the recorder (customer recording).
 
     Outbound softphone calls were marked when they were placed; inbound room calls are
     chosen here, as they arrive. AI assistant calls already produce a transcript."""
-    if not settings.monitor_enforced or event.get("event") != "participant_joined":
+    if event.get("event") != "participant_joined":
         return
     participant = event.get("participant") or {}
     sip_call_id = (participant.get("attributes") or {}).get("sip.callID") or ""
@@ -887,41 +888,71 @@ async def on_livekit_event(session: AsyncSession, api, settings: Settings, event
     if call is None or (call.extra or {}).get("via") != "livekit":
         return
     set_org_context(session, call.org_id)
-    reason = (call.extra or {}).get("monitor")
-    if reason is None and call.direction == "inbound":
-        reason = await choose(session, settings, call.org_id)
-        if reason is None:
-            return
-        mark(call, reason, record=False)
-        await queue_review(session, call, reason)
-    if reason is None:
+    reason = None
+    if settings.monitor_enforced:
+        reason = (call.extra or {}).get("monitor")
+        if reason is None and call.direction == "inbound":
+            reason = await choose(session, settings, call.org_id)
+            if reason is not None:
+                mark(call, reason, record=False)
+                await queue_review(session, call, reason)
+    assistant = bool(((call.extra or {}).get("assistant") or {}).get("profile_id"))
+    customer = False
+    if not assistant and not (call.extra or {}).get("emergency"):
+        from app.models import Org
+        from app.services import customer_recording
+
+        org = await session.get(Org, call.org_id)
+        customer = org is not None and await customer_recording.wanted(session, org)
+    if reason is None and not customer:
         return
-    if not ((call.extra or {}).get("assistant") or {}).get("profile_id"):
-        if not await start_recorder(session, settings, call, room):
+    if not assistant:
+        started = await start_recorder(
+            session, settings, call, room,
+            monitored=reason is not None, customer=customer, leg=leg,
+        )
+        if not started and reason is not None:
             await dispatch_listener(session, api, settings, call)
     await session.commit()
 
 
-async def start_recorder(session: AsyncSession, settings: Settings, call: Call, room: str) -> bool:
-    """Record a monitored room call with lkrec (announcement first). False = not handled
-    (recorder off or unreachable, announcement unavailable): the caller falls back to the
-    live listener, so a monitored call is never left unwatched."""
+async def start_recorder(
+    session: AsyncSession,
+    settings: Settings,
+    call: Call,
+    room: str,
+    *,
+    monitored: bool = True,
+    customer: bool = False,
+    leg=None,  # noqa: ANN001 - CallLeg | None
+) -> bool:
+    """Record a room call with lkrec. False = not handled (recorder off or unreachable,
+    announcement unavailable): a monitored call then falls back to the live listener, so
+    it is never left unwatched. A monitored call always hears the announcement first; a
+    call recorded only for the customer hears it when the org turned it on. With
+    `customer`, a pending CallRecording is queued; customer_recording finalizes it after
+    hangup."""
     from app.models import Org
-    from app.services import lkrec
+    from app.services import calling_settings, customer_recording, lkrec
 
     if not lkrec.enabled(settings) or not room:
         return False
     if (call.extra or {}).get("recorder"):
         return True  # participant_joined fires more than once per call
     org = await session.get(Org, call.org_id)
-    try:
-        announcement = await lkrec.ensure_announcement(settings, org)
-    except lkrec.AnnouncementUnavailable:
-        log.warning("recorder_announcement_unavailable", call_id=str(call.id))
-        return False
+    announcement = ""
+    if monitored or calling_settings.announcement_enabled(org):
+        try:
+            announcement = await lkrec.ensure_announcement(settings, org)
+        except lkrec.AnnouncementUnavailable:
+            # Fail closed: an org that promised an announcement is never recorded without it.
+            log.warning("recorder_announcement_unavailable", call_id=str(call.id))
+            return False
     if not await lkrec.start(settings, room, announcement=announcement):
         return False
     extra = dict(call.extra or {})
     extra["recorder"] = {"room": room, "announcement": announcement}
     call.extra = extra
+    if customer:
+        customer_recording.queue(session, call, leg_id=leg.id if leg is not None else None)
     return True

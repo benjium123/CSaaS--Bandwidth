@@ -11,6 +11,7 @@ const DEFAULT_CALLING: CallingSettings = {
   recording_announcement_text: null,
   announcement_text_effective: "This call may be recorded for quality and training.",
   channel_layout: "mixed",
+  record_calls: false,
   dispositions: [
     "Interested",
     "Not interested",
@@ -67,7 +68,7 @@ function renderPage({
 }
 
 describe("SettingsCallingPage", () => {
-  it("loads sections, shows the honest dual note, and never claims dual recording is active", async () => {
+  it("loads sections and says which calls get separate sides", async () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "Recording" })).toBeInTheDocument();
@@ -77,9 +78,28 @@ describe("SettingsCallingPage", () => {
     expect(await screen.findByRole("heading", { name: "Call results" })).toBeInTheDocument();
 
     expect(
-      screen.getByText(/Separate sides isn't being captured yet\./),
+      screen.getByText(/Separate sides apply to calls made or answered in the app\./),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/separate sides is on|now recording separately|is active/i)).not.toBeInTheDocument();
+  });
+
+  it("turning on record calls sends only record_calls", async () => {
+    const { client } = renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("checkbox", {
+        name: /Record every call made or answered in the app/i,
+      }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save recording" }));
+
+    await waitFor(() => {
+      const patchCall = client.calls.find(
+        (c) =>
+          c.path === "/api/v1/orgs/current/calling" &&
+          c.init.method === "PATCH",
+      );
+      expect(patchCall?.init.json).toEqual({ record_calls: true });
+    });
   });
 
   it("saving the layout sends only channel_layout", async () => {

@@ -324,6 +324,21 @@ async def _run_once_locked(app) -> dict[str, int]:
     if getattr(app.state.settings, "monitor_enforced", False):
         await _monitoring_jobs(app, results)
 
+    # Customer recordings: every pass (not the 2-minute monitoring cadence) so a recording
+    # is playable about a minute after hangup. Ingest first, so the finalize sees the sides.
+    from app.services import customer_recording, lkrec
+
+    if lkrec.enabled(app.state.settings) and store is not None:
+        try:
+            async with get_sessionmaker()() as session:
+                await lkrec.ingest_tick(session, app.state.settings, store)
+            async with get_sessionmaker()() as session:
+                counts = await customer_recording.finalize_tick(session, app.state.settings, store)
+            if counts.get("stored"):
+                results["customer_recordings_stored"] = counts["stored"]
+        except Exception:
+            log.exception("sweeper_customer_recordings_failed")
+
     if carrier is not None:
         try:
             async with get_sessionmaker()() as session:
