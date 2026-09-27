@@ -213,6 +213,42 @@ export function SoftphonePanel() {
       setHoldBusy(false);
     }
   }
+  // Do Not Disturb + where my rings go meanwhile (GET/PUT /me/call-prefs). Forwarding is
+  // teammates only - calls never leave the workspace.
+  const [callPrefs, setCallPrefs] = React.useState<{
+    dnd: boolean;
+    forward_to: string | null;
+    teammates: { user_id: string; name: string }[];
+  } | null>(null);
+  const [prefsError, setPrefsError] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!me || !orgId) return;
+    let cancelled = false;
+    api
+      .request<{ dnd: boolean; forward_to: string | null; teammates: { user_id: string; name: string }[] }>(
+        "/api/v1/me/call-prefs",
+      )
+      .then((res) => {
+        if (!cancelled) setCallPrefs(res);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [api, me, orgId]);
+  async function saveCallPrefs(dnd: boolean, forwardTo: string | null) {
+    if (!callPrefs) return;
+    setPrefsError(null);
+    try {
+      const saved = await api.request<{ dnd: boolean; forward_to: string | null }>("/api/v1/me/call-prefs", {
+        method: "PUT",
+        json: { dnd, forward_to: dnd ? forwardTo : null },
+      });
+      setCallPrefs({ ...callPrefs, ...saved });
+    } catch (err) {
+      setPrefsError(err instanceof Error ? err.message : "Could not save");
+    }
+  }
   const [pickupError, setPickupError] = React.useState<string | null>(null);
   async function handlePickup(callId: string) {
     setPickupError(null);
@@ -629,6 +665,45 @@ export function SoftphonePanel() {
           </Button>
         )}
       </div>
+
+      {callPrefs && canPlaceCalls && (
+        <div className="space-y-1 border-b border-border px-3 py-2 text-xs">
+          <label className="flex items-center justify-between gap-2">
+            <span className={callPrefs.dnd ? "font-medium text-destructive" : "text-muted-foreground"}>
+              {callPrefs.dnd ? "Do not disturb is on" : "Do not disturb"}
+            </span>
+            <input
+              type="checkbox"
+              aria-label="Do not disturb"
+              checked={callPrefs.dnd}
+              onChange={(e) => saveCallPrefs(e.target.checked, callPrefs.forward_to)}
+            />
+          </label>
+          {callPrefs.dnd && (
+            <label className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Send my calls to</span>
+              <select
+                aria-label="Send my calls to"
+                className="max-w-[10rem] rounded border border-border bg-background px-1 py-0.5"
+                value={callPrefs.forward_to ?? ""}
+                onChange={(e) => saveCallPrefs(true, e.target.value || null)}
+              >
+                <option value="">Nobody</option>
+                {callPrefs.teammates.map((t) => (
+                  <option key={t.user_id} value={t.user_id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {prefsError && (
+            <p role="alert" className="text-destructive">
+              {prefsError}
+            </p>
+          )}
+        </div>
+      )}
 
       {answerError && (
         <p role="alert" className="border-b border-border px-3 py-2 text-xs text-destructive">

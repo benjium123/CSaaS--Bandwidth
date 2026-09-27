@@ -818,6 +818,17 @@ async def _offer_to_ring_group(
     if ring_group is not None and ring_group.member_user_ids:
         if ring_group.strategy == "sequential":
             nxt = _next_sequential_member(ring_group, entry.offered_user_id)
+            # Skip members on Do Not Disturb who forward nowhere (a forwarding one stays:
+            # the softphone gate rings their teammate instead).
+            from app.services import call_prefs
+
+            dnd = await call_prefs.dnd_users(session, entry.org_id)
+            for _ in range(len(ring_group.member_user_ids)):
+                if nxt is None or not (nxt in dnd and dnd[nxt] is None):
+                    break
+                nxt = _next_sequential_member(ring_group, uuid.UUID(nxt))
+            if nxt and nxt in dnd and dnd[nxt] is None:
+                nxt = None  # everyone is on DND
             if nxt:
                 ring_user_ids = [nxt]
                 offered_user_id = uuid.UUID(nxt)

@@ -476,6 +476,19 @@ async def _event_visible(
         recipient = event.get("user_id")
         return bool(recipient) and str(recipient) == str(user_id)
 
+    if event_type == "call.ring":
+        # Do Not Disturb (services/call_prefs.py) applies to admins too; a DND teammate's
+        # forward target is rung for rings addressed to that teammate.
+        from app.services import call_prefs
+
+        verdict = call_prefs.ring_visible(
+            await call_prefs.dnd_users_cached(org_id), user_id, event.get("ring_user_ids")
+        )
+        if verdict is False:
+            return False
+        if verdict is True:
+            return access.is_admin or event.get("to") in access.member_e164s
+
     if access.is_admin:
         return True
 

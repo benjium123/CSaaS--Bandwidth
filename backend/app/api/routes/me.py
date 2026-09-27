@@ -311,3 +311,38 @@ async def set_my_inbox_order(
             ordered.append(str(inbox_id))
     ctx.membership.inbox_order = ordered
     await ctx.session.commit()
+
+
+class CallPrefsIn(BaseModel):
+    dnd: bool
+    forward_to: uuid.UUID | None = None
+
+
+@router.get("/call-prefs")
+async def get_my_call_prefs(ctx: Annotated[OrgContext, Depends(get_current_org)]) -> dict:
+    """Do Not Disturb and where my rings go while I'm on it (a teammate, never outside)."""
+    from app.services import call_prefs
+
+    prefs = call_prefs.get(ctx.membership)
+    teammates = (
+        await call_prefs.teammates(ctx.session, ctx.org.id, exclude=ctx.actor_user_id)
+        if ctx.membership is not None
+        else []
+    )
+    return {**prefs, "teammates": teammates}
+
+
+@router.put("/call-prefs")
+async def set_my_call_prefs(
+    payload: CallPrefsIn,
+    ctx: Annotated[OrgContext, Depends(get_current_org)],
+) -> dict:
+    from app.services import call_prefs
+
+    if ctx.membership is None:
+        raise ValidationFailedError("Only workspace members have calling preferences")
+    prefs = await call_prefs.set_prefs(
+        ctx.session, ctx.membership, dnd=payload.dnd, forward_to=payload.forward_to
+    )
+    await ctx.session.commit()
+    return prefs

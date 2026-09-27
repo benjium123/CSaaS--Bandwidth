@@ -160,6 +160,9 @@ class OrgMembership(Base, TenantScoped, TimestampMixin):
     #: NULL (never customized) falls back to a computed default; an id no longer visible
     #: to this member (access revoked) is simply skipped when the list is rendered.
     inbox_order: Mapped[list | None] = mapped_column(PortableJSON(), nullable=True)
+    #: Calling preferences (services/call_prefs.py): {"dnd": bool, "forward_to": user id
+    #: str | None}. NULL = available, no forwarding. Forwarding never leaves the workspace.
+    call_prefs: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
 
     def __repr__(self) -> str:
         return f"<OrgMembership user={self.user_id} org={self.org_id}>"
