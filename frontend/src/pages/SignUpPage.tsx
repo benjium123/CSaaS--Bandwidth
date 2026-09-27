@@ -11,6 +11,7 @@ import {
   Field,
   StepRail,
 } from "@/components/auth/AuthShell";
+import { PasswordChecklist, passwordApproved } from "@/components/auth/PasswordChecklist";
 
 export function SignUpPage() {
   const { api, login } = useAuth();
@@ -93,6 +94,7 @@ export function SignUpPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+            <PasswordChecklist password={password} email={email} />
           </Field>
 
           {error && <AuthAlert>{error}</AuthAlert>}
@@ -100,7 +102,7 @@ export function SignUpPage() {
           <AuthButton
             type="submit"
             block
-            disabled={busy || !email || !password || !fullName.trim()}
+            disabled={busy || !email || !passwordApproved(password, email) || !fullName.trim()}
           >
             {busy ? "Working..." : "Create account"}
           </AuthButton>
