@@ -229,7 +229,7 @@ async def test_set_price_route_resolves_the_alert(session, ops, ops_settings):
     r = await ops.put(
         f"/api/v1/ops/console/prices/{METRIC}",
         json={"price_micros": 40_000},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "price%20unset%20test"},
     )
     assert r.status_code == 200, r.text
 
@@ -270,7 +270,7 @@ async def test_enable_call_recording_blocked_until_priced(session, ops, ops_sett
     r = await ops.put(
         f"/api/v1/ops/console/orgs/{org_id}/features/call_recording",
         json={"enabled": True},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "price%20unset%20test"},
     )
     assert r.status_code == 409, r.text
     assert "price_unset" in r.text
@@ -281,7 +281,7 @@ async def test_enable_call_recording_blocked_until_priced(session, ops, ops_sett
     r = await ops.put(
         f"/api/v1/ops/console/orgs/{org_id}/features/call_recording",
         json={"enabled": True},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "price%20unset%20test"},
     )
     assert r.status_code == 200, r.text
 
@@ -294,14 +294,14 @@ async def test_enable_voicemail_transcription_opens_alert(session, ops, ops_sett
     r = await ops.put(
         f"/api/v1/ops/console/orgs/{org_id}/features/voicemail_transcription",
         json={"enabled": False},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "price%20unset%20test"},
     )
     assert r.status_code == 200, r.text
 
     r = await ops.put(
         f"/api/v1/ops/console/orgs/{org_id}/features/voicemail_transcription",
         json={"enabled": True},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "price%20unset%20test"},
     )
     assert r.status_code == 200, r.text
 
@@ -338,6 +338,6 @@ async def test_enable_with_price_override_is_allowed_while_unset(session, ops, o
     r = await ops.put(
         f"/api/v1/ops/console/orgs/{org_id}/features/call_recording",
         json={"enabled": True, "price_override_micros": 30_000},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "price%20unset%20test"},
     )
     assert r.status_code == 200, r.text
