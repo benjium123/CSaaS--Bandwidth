@@ -127,10 +127,33 @@ export function createClient(baseUrl = ""): ApiClient {
       if (res.status === 204) return undefined as T;
 
       const text = await res.text();
-      const payload = text ? JSON.parse(text) : null;
+      let payload: any = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        // A proxy error page (HTML 502/503/504 while the API restarts) is not JSON.
+        if (!res.ok) {
+          throw new ApiError(
+            res.status,
+            "http_error",
+            res.status >= 502 && res.status <= 504
+              ? "The server is restarting or briefly unreachable. Try again in a moment."
+              : `Request failed with ${res.status}`,
+          );
+        }
+        throw new ApiError(res.status, "bad_response", "The server sent an unreadable response.");
+      }
 
       if (!res.ok) {
         const err = payload?.error;
+        // FastAPI request-validation errors arrive as {"detail": [{msg, loc}, ...]}.
+        const detail = payload?.detail;
+        const detailMessage =
+          typeof detail === "string"
+            ? detail
+            : Array.isArray(detail) && detail.length > 0 && typeof detail[0]?.msg === "string"
+              ? String(detail[0].msg).replace(/^Value error, /, "")
+              : undefined;
         if (
           (err?.code === "step_up_required" || err?.code === "passkey_required") &&
           client.onStepUpRequired
@@ -144,7 +167,7 @@ export function createClient(baseUrl = ""): ApiClient {
         throw new ApiError(
           res.status,
           err?.code ?? "http_error",
-          err?.message ?? `Request failed with ${res.status}`,
+          err?.message ?? detailMessage ?? `Request failed with ${res.status}`,
           err,
         );
       }
