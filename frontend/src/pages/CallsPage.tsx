@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/auth/AuthContext";
+import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { fetchAuthedBlob, type ApiClient } from "@/api/client";
 import {
   useCall,
@@ -20,6 +20,7 @@ import { fetchInboxes } from "@/api/conversations";
 import { dispositionOf, useTranscribeCall } from "@/api/calls";
 import { getErrorMessage } from "@/api/contacts";
 import { DispositionPicker } from "@/components/calls/DispositionPicker";
+import { LiveCallsSupervisor } from "@/components/calls/LiveCallsSupervisor";
 import { RecordingDownloads } from "@/components/calls/RecordingDownloads";
 import {
   ConsoleEmpty,
@@ -88,7 +89,8 @@ function statusBadgeClass(status: string): string {
 }
 
 export function CallsPage() {
-  const { api } = useAuth();
+  const { api, me, orgId } = useAuth();
+  const canSupervise = hasPermission(me, orgId, "calls:supervise");
   const navigate = useNavigate();
   const { data: numbers } = useNumbers(api);
   const [status, setStatus] = React.useState("");
@@ -134,6 +136,7 @@ export function CallsPage() {
       <aside className={`${panes.list} min-h-0 flex-col border-r border-[hsl(var(--cx-line))]`}>
         <div className="space-y-[14px] border-b border-[hsl(var(--cx-line))] p-[18px]">
           <PageHeader title="Calls" />
+          {canSupervise ? <LiveCallsSupervisor /> : null}
           <SurfaceCard className="space-y-[11px]">
             <SectionLabel>Place a call</SectionLabel>
             <form className="space-y-[11px]" onSubmit={dial}>

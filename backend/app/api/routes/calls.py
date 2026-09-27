@@ -637,6 +637,19 @@ class CallbackOut(BaseModel):
     dialing: bool
 
 
+@router.get("/calls/parked")
+async def list_parked_calls(
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+) -> dict:
+    """Parked calls this person can pick up (numbers they may take calls on)."""
+    from app.services import call_park
+
+    access = await inbox_access_svc.resolve_access(
+        ctx.session, ctx.actor_user_id, ctx.role.permissions or []
+    )
+    return {"parked": await call_park.list_parked(ctx.session, access)}
+
+
 @router.get("/calls/callbacks", response_model=list[CallbackOut])
 async def list_callbacks(
     ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
@@ -1049,6 +1062,67 @@ async def join_invited_call(
     await _access_or_404(ctx, call, require_use=True)
     settings = request.app.state.settings
     room = await call_invites.accept(
+        ctx.session,
+        request.app.state.event_bus,
+        getattr(request.app.state, "livekit", None),
+        settings,
+        call,
+        user=user,
+    )
+    token = mint_access_token(
+        api_key=settings.livekit_api_key,
+        api_secret=settings.livekit_api_secret.get_secret_value(),
+        identity=f"user-{user.id}",
+        name=user.email,
+        room=room,
+        ttl_seconds=120,
+    )
+    return SoftphoneAnswerOut(
+        url=settings.livekit_public_url or settings.livekit_url, token=token, room=room
+    )
+
+
+@router.post("/calls/{call_id}/park", response_model=CallDetailOut)
+async def park_call(
+    call_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+    user: Annotated[User, Depends(get_current_user)],
+) -> CallDetailOut:
+    """Park the call: the caller hears hold music until a teammate on this number picks up."""
+    from app.services import call_park
+
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
+    await call_park.park(
+        ctx.session,
+        request.app.state.event_bus,
+        getattr(request.app.state, "livekit", None),
+        request.app.state.settings,
+        call,
+        user=user,
+    )
+    return await _detail_out(ctx.session, request, call)
+
+
+@router.post("/calls/{call_id}/pickup", response_model=SoftphoneAnswerOut)
+async def pickup_parked_call(
+    call_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+    user: Annotated[User, Depends(get_current_user)],
+) -> SoftphoneAnswerOut:
+    """Pick up a parked call on a number this person may take calls on."""
+    from app.services import call_park
+
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
+    settings = request.app.state.settings
+    room = await call_park.pickup(
         ctx.session,
         request.app.state.event_bus,
         getattr(request.app.state, "livekit", None),

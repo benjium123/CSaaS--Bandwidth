@@ -74,6 +74,9 @@ export type SoftphoneStatus =
 
 export type ActiveCall = { id: string; room: string; contact: string };
 
+/** A call a teammate parked (caller on hold music) that this user may pick up. */
+export type ParkedCall = { callId: string; from: string; to: string; by: string; at: string | null };
+
 export type IncomingRing = {
   callId: string;
   room: string;
@@ -150,6 +153,12 @@ export type SoftphoneValue = {
    * reset local state, but never POST /hangup. Used both by the "Leave" control once a
    * teammate has been added, and automatically when a transfer we initiated is accepted. */
   leave(): Promise<void>;
+  /** Parked calls on numbers this user may take calls on (call park). */
+  parked: ParkedCall[];
+  /** Park the active call (caller hears hold music), then leave it. */
+  park(): Promise<void>;
+  /** Pick up a parked call: POST /pickup, then join its room. */
+  pickup(callId: string): Promise<void>;
   sendDtmf(digits: string): Promise<void>;
   setMuted(muted: boolean): Promise<void>;
   /** Hold with music: the caller hears music, and neither side hears the other. */
@@ -203,6 +212,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = React.useState<SoftphoneStatus>("idle");
   const [activeCall, setActiveCall] = React.useState<ActiveCall | null>(null);
   const [incoming, setIncoming] = React.useState<IncomingRing[]>([]);
+  const [parked, setParked] = React.useState<ParkedCall[]>([]);
   const [muted, setMutedState] = React.useState(false);
   const [onHold, setOnHold] = React.useState(false);
   const [captions, setCaptions] = React.useState<Caption[]>([]);
@@ -580,6 +590,61 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     if (room) await room.disconnect().catch(() => undefined);
   }, []);
 
+  const park = React.useCallback(async () => {
+    const current = activeCallRef.current;
+    if (!current) return;
+    await api.request(`/api/v1/calls/${current.id}/park`, { method: "POST" });
+    await leave();
+    pushToast({ message: "Call parked" });
+  }, [api, leave, pushToast]);
+
+  const pickup = React.useCallback(
+    async (callId: string) => {
+      const entry = parked.find((p) => p.callId === callId);
+      setStatus("connecting");
+      try {
+        const result = await api.request<AnswerOut>(`/api/v1/calls/${callId}/pickup`, {
+          method: "POST",
+        });
+        setParked((prev) => prev.filter((p) => p.callId !== callId));
+        await joinRoom(
+          result.url,
+          result.token,
+          result.room,
+          { id: callId, contact: entry?.from ?? "" },
+          "in-call",
+        );
+      } catch (err) {
+        setStatus("idle");
+        // Someone else got it first (409) - drop the stale entry.
+        setParked((prev) => prev.filter((p) => p.callId !== callId));
+        throw err;
+      }
+    },
+    [api, parked, joinRoom],
+  );
+
+  // Seed the parked list on sign-in / org switch; call.parked events keep it current.
+  React.useEffect(() => {
+    setParked([]);
+    if (!me || !orgId) return;
+    let cancelled = false;
+    api
+      .request<{ parked: { call_id: string; from: string; to: string; by: string | null; at: string | null }[] }>(
+        "/api/v1/calls/parked",
+      )
+      .then((res) => {
+        if (cancelled) return;
+        setParked(
+          (res.parked ?? []).map((p) => ({ callId: p.call_id, from: p.from, to: p.to, by: p.by ?? "", at: p.at })),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [api, me, orgId]);
+
   const sendDtmf = React.useCallback(async (digits: string) => {
     const room = roomRef.current;
     if (!room || !DTMF_SUPPORTED) return;
@@ -720,6 +785,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
           invitee?: string;
           invitee_name?: string;
           state?: string;
+          at?: string;
         };
         try {
           msg = JSON.parse(event.data as string);
@@ -823,10 +889,25 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
           } else if (msg.state === "declined") {
             pushToast({ message: `${name} declined` });
           }
+        } else if (msg.type === "call.parked" && msg.call_id) {
+          const callId = msg.call_id;
+          if (msg.state === "parked") {
+            const entry: ParkedCall = {
+              callId,
+              from: msg.from ?? "",
+              to: msg.to ?? "",
+              by: msg.by ?? "",
+              at: msg.at ?? null,
+            };
+            setParked((prev) => (prev.some((p) => p.callId === callId) ? prev : [...prev, entry]));
+          } else {
+            setParked((prev) => prev.filter((p) => p.callId !== callId));
+          }
         } else if (msg.type === "call.status" && msg.call_id && msg.status) {
           const terminal = isTerminalCallStatus(msg.status);
           if (terminal) {
             setIncoming((prev) => prev.filter((r) => r.callId !== msg.call_id));
+            setParked((prev) => prev.filter((p) => p.callId !== msg.call_id));
           }
           const current = activeCallRef.current;
           if (current && current.id === msg.call_id) {
@@ -909,6 +990,9 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       joinInvite,
       declineInvite,
       leave,
+      parked,
+      park,
+      pickup,
       sendDtmf,
       setMuted,
       onHold,
@@ -937,6 +1021,9 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       joinInvite,
       declineInvite,
       leave,
+      parked,
+      park,
+      pickup,
       sendDtmf,
       setMuted,
       onHold,

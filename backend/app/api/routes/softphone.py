@@ -479,7 +479,8 @@ async def _event_visible(
     if access.is_admin:
         return True
 
-    if event_type == "call.ring":
+    if event_type in ("call.ring", "call.parked"):
+        # call.parked (park / picked up) goes to everyone who could pick it up.
         to = event.get("to")
         if not to:
             return False

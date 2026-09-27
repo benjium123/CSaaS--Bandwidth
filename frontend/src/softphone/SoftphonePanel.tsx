@@ -16,6 +16,7 @@ import {
   PhoneIncoming,
   PhoneOff,
   Play,
+  SquareParking,
   UserPlus,
   X,
 } from "lucide-react";
@@ -199,6 +200,26 @@ export function SoftphonePanel() {
       setHoldError(err instanceof Error ? err.message : "Hold failed");
     } finally {
       setHoldBusy(false);
+    }
+  }
+  async function handlePark() {
+    setHoldBusy(true);
+    setHoldError(null);
+    try {
+      await softphone.park();
+    } catch (err) {
+      setHoldError(err instanceof Error ? err.message : "Park failed");
+    } finally {
+      setHoldBusy(false);
+    }
+  }
+  const [pickupError, setPickupError] = React.useState<string | null>(null);
+  async function handlePickup(callId: string) {
+    setPickupError(null);
+    try {
+      await softphone.pickup(callId);
+    } catch (err) {
+      setPickupError(err instanceof Error ? err.message : "Pick up failed");
     }
   }
   const [expanded, setExpanded] = React.useState(false);
@@ -631,6 +652,28 @@ export function SoftphonePanel() {
         </p>
       )}
 
+      {!softphone.activeCall && canPlaceCalls && softphone.parked.length > 0 && (
+        <div className="space-y-1 border-b border-border px-3 py-2 text-xs" aria-label="Parked calls">
+          <p className="font-medium">Parked calls</p>
+          {pickupError && (
+            <p role="alert" className="text-destructive">
+              {pickupError}
+            </p>
+          )}
+          {softphone.parked.map((p) => (
+            <div key={p.callId} className="flex items-center justify-between gap-2">
+              <span className="truncate">
+                {formatPhone(p.from)}
+                {p.by ? <span className="text-muted-foreground"> · parked by {p.by}</span> : null}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() => handlePickup(p.callId)}>
+                Pick up
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {softphone.incoming.map((ring, index) =>
         ring.kind === "handoff" ? (
           <div
@@ -878,6 +921,19 @@ export function SoftphonePanel() {
                 onClick={() => toggleTeamPanel("add")}
               >
                 <UserPlus className="h-4 w-4" />
+              </Button>
+            )}
+            {softphone.status === "in-call" && (
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                aria-label="Park"
+                title="Park: the caller hears hold music until a teammate picks up"
+                disabled={holdBusy}
+                onClick={handlePark}
+              >
+                <SquareParking className="h-4 w-4" />
               </Button>
             )}
             {hasAddedTeammate && (
