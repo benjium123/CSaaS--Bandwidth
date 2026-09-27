@@ -928,11 +928,30 @@ async def transfer_call(
     # P43 (audit): the workspace's own region, not always US - a UK workspace dialling a
     # bare national number would otherwise place a call to a different real number.
     to_norm = to_e164(payload.to, await phone_region.for_org(ctx.session, ctx.org.id))
-    # Transfers never leave the workspace: only its own active numbers (teammates are
-    # brought in with /invite instead).
-    from app.services import call_invites
+    # Transfers stay inside the workspace (its own active numbers; teammates are brought in
+    # with /invite) unless it has external_transfer: then an outside number is dialled as a
+    # new, billed outbound call bridged into the same room (option A, 2026-09-28).
+    from app.services import call_invites, entitlements
 
-    await call_invites.require_own_number(ctx.session, ctx.org.id, to_norm)
+    try:
+        await call_invites.require_own_number(ctx.session, ctx.org.id, to_norm)
+    except ValidationFailedError:
+        if not await entitlements.has(ctx.session, ctx.org.id, "external_transfer"):
+            raise
+        if (call.extra or {}).get("via") != "livekit":
+            raise ValidationFailedError(
+                "Only calls in the Ringlite phone can be transferred to an outside number"
+            ) from None
+        await voice_service.bridge_external_transfer(
+            ctx.session,
+            getattr(request.app.state, "livekit", None),
+            request.app.state.settings,
+            request.app.state.event_bus,
+            call,
+            to_norm,
+            user_id=ctx.actor_user_id,
+        )
+        return await _detail_out(ctx.session, request, call)
 
     if (call.extra or {}).get("via") == "livekit":
         api = getattr(request.app.state, "livekit", None)

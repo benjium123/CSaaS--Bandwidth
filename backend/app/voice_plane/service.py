@@ -386,12 +386,28 @@ async def _apply_dial_outcome(
         return call
 
 
+#: External transfer (option A, 2026-09-28): the outside number is dialled as a NEW
+#: outbound call into the original call's room. The new call names that room under
+#: BRIDGE_ROOM_KEY, never "room" - room-keyed services (monitor, captions, hold, invites,
+#: the inbound room-label lookup) must keep seeing exactly one call per room. The original
+#: call names the new one under BRIDGED_TO_KEY.
+BRIDGE_ROOM_KEY = "bridge_room"
+BRIDGED_TO_KEY = "bridged_to"
+
+
+def room_of(call: Call) -> str | None:
+    """The LiveKit room carrying this call: its own, or the one it was bridged into."""
+    extra = call.extra or {}
+    return extra.get("room") or extra.get(BRIDGE_ROOM_KEY)
+
+
 async def end_room_call(api: LiveKitApi | None, call: Call) -> None:
     """Best-effort room teardown. Never raises - a delete failure must not block a hangup
-    the state machine has already recorded."""
+    the state machine has already recorded. For a bridged transfer call this ends the
+    whole bridged conversation (both phone parties share the room)."""
     if api is None:
         return
-    room = (call.extra or {}).get("room")
+    room = room_of(call)
     if not room:
         return
     try:
@@ -415,7 +431,7 @@ async def hangup_room_call(
     legs = await calls_svc.load_legs(session, call.id)
     leg = calls_svc.active_leg(legs)
     sip_identity = (leg.extra or {}).get("sip_identity") if leg is not None else None
-    room = (call.extra or {}).get("room")
+    room = room_of(call)
 
     if api is not None and room and sip_identity:
         try:
@@ -472,6 +488,187 @@ async def transfer_room_call(
         bus.publish(
             call.org_id, {"type": "call.status", "call_id": str(call.id), "status": call.status}
         )
+
+
+async def bridge_external_transfer(
+    session: AsyncSession,
+    api: LiveKitApi | None,
+    settings: Settings,
+    bus: EventBus,
+    call: Call,
+    to: str,
+    *,
+    user_id: uuid.UUID | None,
+) -> Call:
+    """External transfer (option A, 2026-09-28): dial ``to`` as a NEW outbound call into
+    this call's own room, then drop the transferring user once it answers.
+
+    The new call passes every gate an ordinary outbound call does (owned caller ID, E911,
+    destination/fraud access, call slot, prepaid credit) and is billed by the same
+    per-minute tick; the original call keeps billing too, as both phone legs are live. The
+    customer never leaves the room, so a failed dial loses nothing: the user is still
+    with them. Returns the new call (its dial runs in the background)."""
+    if api is None:
+        raise FeatureUnavailableError("LiveKit is not configured")
+    extra = call.extra or {}
+    room = extra.get("room")
+    legs = await calls_svc.load_legs(session, call.id)
+    if room is None or calls_svc.active_leg(legs) is None:
+        raise ConflictError("This call has no active leg to transfer")
+    if extra.get(BRIDGED_TO_KEY):
+        raise ConflictError("This call has already been transferred")
+
+    from_e164 = call.our_e164
+    from_number = (
+        await session.execute(sa.select(OrgNumber.carrier).where(OrgNumber.e164 == from_e164))
+    ).first()
+    route = trunk_for_carrier(
+        settings, from_number.carrier if from_number is not None else DEFAULT_TRUNK_CARRIER
+    )
+    trunk_carrier, trunk_id = route or (DEFAULT_TRUNK_CARRIER, "")
+    bridged = Call(
+        id=uuid.uuid4(),
+        org_id=call.org_id,
+        direction="outbound",
+        contact_e164=to,
+        our_e164=from_e164,
+        carrier=trunk_carrier,
+        status="queued",
+        tag="transfer",
+    )
+    from app.services import e911, exposure
+
+    await calls_svc.require_owned_caller_ids(session, call.org_id, [from_e164])
+    await e911.require_e911(session, settings, call.org_id, from_e164, to)
+    await telephony_access.require_telephony_allowed(session, call.org_id, "call", to_e164=to)
+    await exposure.require_call_slot(
+        session, settings, call.org_id, from_e164=from_e164, user_id=user_id
+    )
+    await telephony_billing.require_call_credit(session, call.org_id, bridged)
+
+    sip_identity = f"{SIP_IDENTITY_PREFIX}{bridged.id}"
+    bridged.extra = {
+        "via": "livekit",
+        BRIDGE_ROOM_KEY: room,
+        "transfer_of": str(call.id),
+        **({"placed_by": str(user_id)} if user_id else {}),
+    }
+    leg = CallLeg(
+        id=uuid.uuid4(),
+        org_id=call.org_id,
+        call_id=bridged.id,
+        provider_call_id=f"lk-{bridged.id}",
+        to_e164=to,
+        from_e164=from_e164,
+        status="created",
+        reason="original",
+        extra={"sip_identity": sip_identity},
+    )
+    session.add(bridged)
+    session.add(leg)
+    await session.flush()
+    calls_svc.advance_leg(leg, "dialing")
+    calls_svc.derive_call_status(bridged, [leg])
+    call.extra = {**extra, BRIDGED_TO_KEY: str(bridged.id)}
+    await session.commit()
+
+    _spawn_dial_task(
+        _bridge_dial(
+            api=api,
+            settings=settings,
+            bus=bus,
+            org_id=call.org_id,
+            call_id=call.id,
+            bridged_id=bridged.id,
+            leg_id=leg.id,
+            room=room,
+            to=to,
+            from_e164=from_e164,
+            sip_identity=sip_identity,
+            trunk_id=trunk_id,
+            user_identity=f"user-{user_id}" if user_id else "",
+        ),
+        name=f"bridge-{bridged.id}",
+    )
+    return bridged
+
+
+async def _bridge_dial(
+    *,
+    api: LiveKitApi,
+    settings: Settings,
+    bus: EventBus,
+    org_id: uuid.UUID,
+    call_id: uuid.UUID,
+    bridged_id: uuid.UUID,
+    leg_id: uuid.UUID,
+    room: str,
+    to: str,
+    from_e164: str,
+    sip_identity: str,
+    trunk_id: str | None,
+    user_identity: str,
+) -> None:
+    """The background half of ``bridge_external_transfer``. Unlike ``_dial_and_await_answer``
+    a failed dial never tears the room down (the customer is still in it); the original
+    call is freed for another transfer attempt and the user is told."""
+    try:
+        await api.create_sip_participant(
+            trunk_id=trunk_id or settings.livekit_sip_outbound_trunk_id,
+            call_to=to,
+            room=room,
+            from_number=from_e164,
+            identity=sip_identity,
+            wait_until_answered=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - background task: must never crash the loop
+        if isinstance(exc, LiveKitApiError):
+            terminal_status, hangup_cause = _dial_error_leg_status(exc)
+        else:
+            log.exception("livekit_bridge_dial_unexpected_error", call_id=str(bridged_id))
+            terminal_status, hangup_cause = "failed", ""
+        await _apply_dial_outcome(
+            org_id=org_id,
+            call_id=bridged_id,
+            leg_id=leg_id,
+            bus=bus,
+            error_detail=str(exc),
+            terminal_status=terminal_status,
+            hangup_cause=hangup_cause,
+        )
+        from app.db.session import get_sessionmaker
+
+        async with get_sessionmaker()() as session:
+            set_org_context(session, org_id)
+            call = await session.get(Call, call_id)
+            if call is not None:
+                extra = dict(call.extra or {})
+                extra.pop(BRIDGED_TO_KEY, None)
+                call.extra = extra
+                await session.commit()
+        bus.publish(
+            org_id,
+            {
+                "type": "call.transfer_failed",
+                "call_id": str(call_id),
+                "to": to,
+                "reason": hangup_cause or terminal_status,
+            },
+        )
+        return
+
+    await _apply_dial_outcome(
+        org_id=org_id, call_id=bridged_id, leg_id=leg_id, bus=bus, answered=True
+    )
+    # Answered: the customer and the outside party now share the room; the user leaves.
+    if user_identity:
+        try:
+            await api.remove_participant(room, user_identity)
+        except LiveKitApiError:
+            log.warning("livekit_bridge_remove_user_failed", room=room, call_id=str(call_id))
+    bus.publish(
+        org_id, {"type": "call.transferred", "call_id": str(call_id), "to": to}
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -728,7 +925,14 @@ async def handle_livekit_event(
         call_uuid = None
 
     created_inbound = False
-    if call_uuid is not None:
+    bridged = (
+        await _resolve_bridged_leg(session, room=room, identity=identity)
+        if is_pstn_participant
+        else (None, None)
+    )
+    if bridged[0] is not None:
+        call, leg = bridged
+    elif call_uuid is not None:
         call, leg = await _resolve_outbound_room_leg(session, call_uuid)
     else:
         call, leg = await _resolve_inbound_room_call(session, room=room, sip_call_id=sip_call_id)
@@ -808,4 +1012,59 @@ async def handle_livekit_event(
         bus.publish(
             call.org_id,
             {"type": "call.status", "call_id": str(call.id), "status": call.status},
+        )
+
+    extra = call.extra or {}
+    if event_type == "room_finished" and extra.get(BRIDGED_TO_KEY):
+        await _finish_bridged_call(session, bus, call)
+    elif (
+        leg_changed
+        and is_pstn_participant
+        and event_type in ("participant_left", "participant_connection_aborted")
+        and (extra.get(BRIDGED_TO_KEY) or extra.get(BRIDGE_ROOM_KEY))
+    ):
+        # A bridged transfer is two phone parties and nobody else: when either one hangs
+        # up, end the room so the other is not left on a silent, still-billing line.
+        await end_room_call(api, call)
+
+
+async def _resolve_bridged_leg(
+    session: AsyncSession, *, room: str, identity: str
+) -> tuple[Call | None, CallLeg | None]:
+    """The bridged transfer call (``bridge_external_transfer``) a PSTN participant in this
+    room belongs to. The participant is already classified as PSTN by its attributes; the
+    identity (which WE minted, ``sip-<bridged call id>``) only picks which call it is, and
+    the call must name this exact room, so no other room's call can be reached."""
+    if not identity.startswith(SIP_IDENTITY_PREFIX):
+        return None, None
+    try:
+        bridged_id = uuid.UUID(identity[len(SIP_IDENTITY_PREFIX) :])
+    except ValueError:
+        return None, None
+    call = await session.get(Call, bridged_id, execution_options={ALLOW_UNSCOPED_KEY: True})
+    if call is None or (call.extra or {}).get(BRIDGE_ROOM_KEY) != room:
+        return None, None
+    return await _resolve_outbound_room_leg(session, bridged_id)
+
+
+async def _finish_bridged_call(session: AsyncSession, bus: EventBus, call: Call) -> None:
+    """The room is gone: the bridged transfer call in it is over too."""
+    try:
+        bridged_id = uuid.UUID(str((call.extra or {}).get(BRIDGED_TO_KEY)))
+    except ValueError:
+        return
+    bridged = await session.get(Call, bridged_id)
+    if bridged is None:
+        return
+    legs = await calls_svc.load_legs(session, bridged.id)
+    changed = False
+    for leg_row in legs:
+        if leg_row.status not in TERMINAL_LEG_STATUSES:
+            changed = calls_svc.advance_leg(leg_row, "hungup") or changed
+    status_changed = calls_svc.derive_call_status(bridged, legs) or changed
+    await session.commit()
+    if status_changed:
+        bus.publish(
+            bridged.org_id,
+            {"type": "call.status", "call_id": str(bridged.id), "status": bridged.status},
         )

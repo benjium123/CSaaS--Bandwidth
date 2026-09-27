@@ -836,6 +836,66 @@ describe("SoftphonePanel", () => {
     expect(screen.queryByText("Our numbers")).toBeNull();
   });
 
+  it("an outside-number transfer keeps us on the call until call.transferred (external_transfer on)", async () => {
+    const transferBodies: unknown[] = [];
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/me/capabilities": { permissions: [], org: {}, features: { external_transfer: true } },
+      "/api/v1/calls/call-9/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { url: "wss://lk.example.com", token: "tok-inbound", room: "call-9" };
+        }
+        throw new Error("unexpected request");
+      },
+      "/api/v1/calls/call-9/transfer-targets": { teammates: [], numbers: [] },
+      "/api/v1/calls/call-9/transfer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        transferBodies.push(init.json);
+        return {};
+      },
+    });
+
+    await answerAndGetInCall(client);
+    await userEvent.click(screen.getByRole("button", { name: "Transfer" }));
+    await userEvent.type(await screen.findByLabelText("Outside number"), "+15551234567");
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(transferBodies).toEqual([]);
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(transferBodies).toEqual([{ to: "+15551234567" }]));
+    // Bridged: still on the call with the caller while the outside number rings.
+    expect(await screen.findByText(/drop off when they answer/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Hang up/ })).toBeInTheDocument();
+
+    act(() => {
+      latestWs().onmessage?.({
+        data: JSON.stringify({ type: "call.transferred", call_id: "call-9", to: "+15551234567" }),
+      });
+    });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Hang up/ })).toBeNull());
+    expect(client.calls.some((c) => c.path === "/api/v1/calls/call-9/hangup")).toBe(false);
+  });
+
+  it("hides the outside-number field when external_transfer is off", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/me/capabilities": { permissions: [], org: {}, features: { external_transfer: false } },
+      "/api/v1/calls/call-9/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { url: "wss://lk.example.com", token: "tok-inbound", room: "call-9" };
+        }
+        throw new Error("unexpected request");
+      },
+      "/api/v1/calls/call-9/transfer-targets": { teammates: [], numbers: [] },
+    });
+
+    await answerAndGetInCall(client);
+    await userEvent.click(screen.getByRole("button", { name: "Transfer" }));
+    await screen.findByText("No teammates can take calls on this number");
+    expect(screen.queryByLabelText("Outside number")).toBeNull();
+  });
+
   it("a number transfer posts /transfer only after confirming, not on the first click", async () => {
     const transferBodies: unknown[] = [];
     const client = makeStubClient({

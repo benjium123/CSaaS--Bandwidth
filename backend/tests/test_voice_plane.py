@@ -810,7 +810,7 @@ async def test_transfer_room_call_success_ends_the_call(app_with_room_calls):
     await voice_service.wait_for_pending_dial_tasks()
 
     r = await client.post(
-        f"/api/v1/calls/{call_id}/transfer", json={"to": "+19725550111"}, headers=h
+        f"/api/v1/calls/{call_id}/transfer", json={"to": OUR}, headers=h
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -823,7 +823,7 @@ async def test_transfer_room_call_success_ends_the_call(app_with_room_calls):
     assert len(xfer_calls) == 1
     payload = json.loads(xfer_calls[0].content)
     assert payload["participant_identity"] == f"sip-{call_id}"
-    assert payload["transfer_to"] == "+19725550111"
+    assert payload["transfer_to"] == OUR
 
 
 async def test_transfer_room_call_livekit_error_is_502(engine):
@@ -856,10 +856,155 @@ async def test_transfer_room_call_livekit_error_is_502(engine):
         await voice_service.wait_for_pending_dial_tasks()
 
         r = await client.post(
-            f"/api/v1/calls/{call_id}/transfer", json={"to": "+19725550111"}, headers=h
+            f"/api/v1/calls/{call_id}/transfer", json={"to": OUR}, headers=h
         )
         assert r.status_code == 502
     await lk_client.aclose()
+
+
+OUTSIDE = "+19725550111"
+
+
+async def _enable_external_transfer(org_id: str) -> None:
+    from app.db.session import get_sessionmaker
+    from app.services import entitlements
+
+    async with get_sessionmaker()() as s:
+        await entitlements.set_feature(
+            s,
+            uuid.UUID(org_id),
+            "external_transfer",
+            enabled=True,
+            price_override_micros=None,
+            actor_user_id=None,
+        )
+        await s.commit()
+
+
+async def _calls_of(org_id: str) -> list[Call]:
+    from app.db.session import get_sessionmaker
+
+    async with get_sessionmaker()() as s:
+        set_org_context(s, uuid.UUID(org_id))
+        stmt = sa.select(Call).where(Call.org_id == uuid.UUID(org_id))
+        return list((await s.execute(stmt)).scalars())
+
+
+async def test_transfer_to_an_outside_number_needs_external_transfer(app_with_room_calls):
+    """Transfers stay inside the workspace unless external_transfer is on."""
+    client, _application, _fake_voice, requests = app_with_room_calls
+    token, org, _ = await make_org_with_room_number(client, "xout0@example.com", "Org XO0", OUR)
+    h = auth_headers(token, org["id"])
+    created = await client.post("/api/v1/calls", json={"to": THEIRS, "via": "room"}, headers=h)
+    call_id = created.json()["id"]
+    await voice_service.wait_for_pending_dial_tasks()
+
+    r = await client.post(f"/api/v1/calls/{call_id}/transfer", json={"to": OUTSIDE}, headers=h)
+    assert r.status_code == 422
+    assert "own numbers" in r.json()["error"]["message"]
+    assert not [req for req in requests if "TransferSIPParticipant" in req.url.path]
+
+
+async def test_external_transfer_bridges_a_new_billed_call_into_the_room(app_with_room_calls):
+    """Option A (2026-09-28): the outside number is a NEW outbound call dialled into the
+    SAME room; the original call stays live, and the user drops off once it answers."""
+    client, _application, _fake_voice, requests = app_with_room_calls
+    token, org, _ = await make_org_with_room_number(client, "xout1@example.com", "Org XO1", OUR)
+    await _enable_external_transfer(org["id"])
+    h = auth_headers(token, org["id"])
+    created = await client.post("/api/v1/calls", json={"to": THEIRS, "via": "room"}, headers=h)
+    call_id, room = created.json()["id"], created.json()["room"]
+    await voice_service.wait_for_pending_dial_tasks()
+
+    r = await client.post(f"/api/v1/calls/{call_id}/transfer", json={"to": OUTSIDE}, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "answered"  # the customer is still on the call
+    await voice_service.wait_for_pending_dial_tasks()
+
+    calls = await _calls_of(org["id"])
+    parent = next(c for c in calls if str(c.id) == call_id)
+    bridged = next(c for c in calls if str(c.id) != call_id)
+    assert parent.extra[voice_service.BRIDGED_TO_KEY] == str(bridged.id)
+    assert bridged.direction == "outbound"
+    assert bridged.contact_e164 == OUTSIDE
+    assert bridged.our_e164 == OUR
+    assert bridged.tag == "transfer"
+    assert bridged.status == "answered"
+    assert bridged.answered_at is not None  # billed per minute like any outbound call
+    assert bridged.extra[voice_service.BRIDGE_ROOM_KEY] == room
+    assert "room" not in bridged.extra  # one call per room for room-keyed services
+
+    dials = [json.loads(q.content) for q in requests if "CreateSIPParticipant" in q.url.path]
+    bridge_dial = dials[-1]
+    assert bridge_dial["room_name"] == room
+    assert bridge_dial["sip_call_to"] == OUTSIDE
+    assert bridge_dial["participant_identity"] == f"sip-{bridged.id}"
+
+    removed = [json.loads(q.content) for q in requests if "RemoveParticipant" in q.url.path]
+    user_id = jwt.decode(token, options={"verify_signature": False})["sub"]
+    assert [p["identity"] for p in removed] == [f"user-{user_id}"]
+    assert not [q for q in requests if "DeleteRoom" in q.url.path]
+    assert not [q for q in requests if "TransferSIPParticipant" in q.url.path]
+
+    # A second transfer of the same call is refused while the first stands.
+    again = await client.post(
+        f"/api/v1/calls/{call_id}/transfer", json={"to": OUTSIDE}, headers=h
+    )
+    assert again.status_code == 409
+
+
+async def test_failed_external_transfer_keeps_the_customer_and_frees_the_call(engine):
+    settings = make_livekit_settings(
+        bandwidth_webhook_username=WEBHOOK_USER, bandwidth_webhook_password=WEBHOOK_PASS
+    )
+    application = create_app(settings)
+    install_voice_carrier(application, FakeVoiceCarrier())
+    requests: list[httpx.Request] = []
+    # The failing dial is held until the transfer request has returned (the test DB is one
+    # shared SQLite connection; same reason as test_livekit_webhooks' livekit_dial_gate).
+    gate = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if "CreateSIPParticipant" in request.url.path and OUTSIDE in request.content.decode():
+            await gate.wait()
+            return httpx.Response(500, text="busy")
+        return httpx.Response(200, json={})
+
+    lk_client = mock_livekit_client(handler)
+    application.state.livekit = LiveKitApi(
+        url="ws://127.0.0.1:7880", api_key=LK_KEY, api_secret=LK_SECRET, client=lk_client
+    )
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        token, org, _ = await make_org_with_room_number(
+            client, "xout2@example.com", "Org XO2", OUR
+        )
+        await _enable_external_transfer(org["id"])
+        h = auth_headers(token, org["id"])
+        created = await client.post(
+            "/api/v1/calls", json={"to": THEIRS, "via": "room"}, headers=h
+        )
+        call_id = created.json()["id"]
+        await voice_service.wait_for_pending_dial_tasks()
+
+        r = await client.post(
+            f"/api/v1/calls/{call_id}/transfer", json={"to": OUTSIDE}, headers=h
+        )
+        assert r.status_code == 200, r.text
+        gate.set()  # only now: the request's own session is closed
+        await voice_service.wait_for_pending_dial_tasks()
+    await lk_client.aclose()
+
+    calls = await _calls_of(org["id"])
+    parent = next(c for c in calls if str(c.id) == call_id)
+    bridged = next(c for c in calls if str(c.id) != call_id)
+    assert bridged.status == "failed"
+    assert parent.status == "answered"
+    assert voice_service.BRIDGED_TO_KEY not in (parent.extra or {})
+    # The room (and the customer in it) is untouched, and the user was never removed.
+    assert not [q for q in requests if "DeleteRoom" in q.url.path]
+    assert not [q for q in requests if "RemoveParticipant" in q.url.path]
 
 
 async def test_gather_room_call_is_409(app_with_room_calls):

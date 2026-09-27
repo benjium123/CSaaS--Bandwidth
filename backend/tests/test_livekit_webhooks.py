@@ -284,6 +284,114 @@ async def test_room_finished_finalizes_a_leg_that_never_answered(app_with_liveki
     assert call.status == "no_answer"
 
 
+async def _bridge_into(session, parent_id: str, room: str) -> uuid.UUID:
+    """The rows bridge_external_transfer writes: a new outbound call, answered, whose SIP
+    participant sits in the PARENT's room; the parent names it under bridged_to."""
+    from app.db.base import set_org_context
+    from app.services import calls as calls_svc
+
+    parent = next(c for c in await _unscoped(session, Call) if str(c.id) == parent_id)
+    set_org_context(session, parent.org_id)
+    bridged = Call(
+        id=uuid.uuid4(),
+        org_id=parent.org_id,
+        direction="outbound",
+        contact_e164="+19725550111",
+        our_e164=OUR,
+        carrier="telnyx",
+        status="queued",
+        tag="transfer",
+        extra={"via": "livekit", voice_service.BRIDGE_ROOM_KEY: room, "transfer_of": parent_id},
+    )
+    leg = CallLeg(
+        id=uuid.uuid4(),
+        org_id=parent.org_id,
+        call_id=bridged.id,
+        provider_call_id=f"lk-{bridged.id}",
+        to_e164="+19725550111",
+        from_e164=OUR,
+        status="created",
+        reason="original",
+        extra={"sip_identity": f"sip-{bridged.id}"},
+    )
+    session.add(bridged)
+    session.add(leg)
+    await session.flush()
+    calls_svc.advance_leg(leg, "answered")
+    calls_svc.derive_call_status(bridged, [leg])
+    parent.extra = {**(parent.extra or {}), voice_service.BRIDGED_TO_KEY: str(bridged.id)}
+    bridged_id = bridged.id
+    await session.commit()
+    return bridged_id
+
+
+async def test_bridged_leg_events_go_to_its_own_call_and_end_the_room(
+    app_with_livekit, session, monkeypatch
+):
+    """External transfer (option A): the outside party's events belong to the bridged call,
+    never the original; when either phone party leaves, the room ends, and room_finished
+    closes both calls."""
+    client, application = app_with_livekit
+    created = await _make_outbound_room_call(client, "lkbridge1@example.com", "Org BR1")
+    room, call_id = created["room"], created["id"]
+    application.state.livekit_dial_gate.set()
+    await voice_service.wait_for_pending_dial_tasks()
+    bridged_id = await _bridge_into(session, call_id, room)
+
+    deleted: list[str] = []
+
+    async def spy_delete_room(name):
+        deleted.append(name)
+        return {}
+
+    monkeypatch.setattr(application.state.livekit, "delete_room", spy_delete_room)
+
+    r = await post_lk(
+        client,
+        sip_event(
+            "participant_left", room, event_id="e-br-left", identity=f"sip-{bridged_id}",
+            sip_call_id="SCL_outside",
+        ),
+    )
+    assert r.status_code == 200
+    session.expire_all()
+    legs = await _unscoped(session, CallLeg)
+    parent_leg = next(lg for lg in legs if str(lg.call_id) == call_id)
+    bridged_leg = next(lg for lg in legs if lg.call_id == bridged_id)
+    assert bridged_leg.status == "hungup"
+    assert parent_leg.status == "answered", "the outside party's event must not touch the original"
+    assert deleted == [room]
+
+    r = await post_lk(client, lk_event("room_finished", room, event_id="e-br-finished"))
+    assert r.status_code == 200
+    session.expire_all()
+    calls = {str(c.id): c for c in await _unscoped(session, Call)}
+    assert calls[call_id].status == "completed"
+    assert calls[str(bridged_id)].status == "completed"
+
+
+async def test_a_spoofed_bridge_identity_in_another_room_is_not_routed(app_with_livekit, session):
+    """The identity only picks the bridged call when that call names THIS room."""
+    client, application = app_with_livekit
+    created = await _make_outbound_room_call(client, "lkbridge2@example.com", "Org BR2")
+    room, call_id = created["room"], created["id"]
+    application.state.livekit_dial_gate.set()
+    await voice_service.wait_for_pending_dial_tasks()
+    bridged_id = await _bridge_into(session, call_id, "call-some-other-room")
+
+    r = await post_lk(
+        client,
+        sip_event(
+            "participant_left", room, event_id="e-br-spoof", identity=f"sip-{bridged_id}",
+            sip_call_id="SCL_spoof",
+        ),
+    )
+    assert r.status_code == 200
+    session.expire_all()
+    legs = await _unscoped(session, CallLeg)
+    assert next(lg for lg in legs if lg.call_id == bridged_id).status == "answered"
+
+
 async def test_duplicate_event_id_applies_once(app_with_livekit, session):
     client, _application = app_with_livekit
     created = await _make_outbound_room_call(client, "lkdup1@example.com", "Org D1")

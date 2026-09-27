@@ -585,7 +585,7 @@ async def _run_once_locked(app) -> dict[str, int]:
     app.state._calls_room_missing = missing_now
 
     async def _call_is_live(session, call) -> bool | None:  # noqa: ANN001, ARG001
-        room = (call.extra or {}).get("room")
+        room = voice_service.room_of(call)
         api = getattr(app.state, "livekit", None)
         if (call.extra or {}).get("via") != "livekit" or not room or api is None:
             return None

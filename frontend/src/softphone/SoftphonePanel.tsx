@@ -188,6 +188,9 @@ export function SoftphonePanel() {
   const capabilities = useCapabilities(api);
   // Shown only to workspaces with transcription turned on (ops entitlement).
   const captionsAllowed = capabilities.data?.features?.call_transcription === true;
+  // External transfers (option A): an outside number is dialled into this call's room as a
+  // new, billed call; this user drops off only once it answers.
+  const externalTransferAllowed = capabilities.data?.features?.external_transfer === true;
   const [holdBusy, setHoldBusy] = React.useState(false);
   const [holdError, setHoldError] = React.useState<string | null>(null);
 
@@ -288,6 +291,9 @@ export function SoftphonePanel() {
   const [confirmNumber, setConfirmNumber] = React.useState<string | null>(null);
   const [inviteError, setInviteError] = React.useState<string | null>(null);
   const [transferError, setTransferError] = React.useState<string | null>(null);
+  const [outsideNumber, setOutsideNumber] = React.useState("");
+  // The outside number being rung for an external transfer, until it answers or fails.
+  const [externalPending, setExternalPending] = React.useState<string | null>(null);
   const [pendingInvite, setPendingInvite] = React.useState<PendingInvite | null>(null);
   // Set once an "add" invite is accepted for the current call - shows the Leave control
   // alongside Hang up, since hanging up now would end the call for the added teammate too.
@@ -389,12 +395,27 @@ export function SoftphonePanel() {
     setTransferError(null);
     setPendingInvite(null);
     setHasAddedTeammate(false);
+    setOutsideNumber("");
+    setExternalPending(null);
   }, [activeCallId]);
 
   // Clears the pending invite (and, for an accepted "add", flags a teammate as now on the
   // call) as soon as the inviter's call.invite.update for it comes back over the socket -
   // the toast itself is shown by the provider, this just clears this panel's own "Ringing
   // Sam..." UI so it doesn't keep showing a resolved invite as still ringing.
+  React.useEffect(() => {
+    return softphone.subscribe((event) => {
+      if (event.call_id !== activeCallId) return;
+      if (event.type === "call.transferred") {
+        setExternalPending(null);
+        void softphone.leave();
+      } else if (event.type === "call.transfer_failed") {
+        setExternalPending(null);
+        setTransferError(`Transfer to ${formatPhone(String(event.to ?? ""))} did not connect`);
+      }
+    });
+  }, [softphone, activeCallId]);
+
   React.useEffect(() => {
     return softphone.subscribe((event) => {
       if (event.type !== "call.invite.update") return;
@@ -586,6 +607,7 @@ export function SoftphonePanel() {
   async function confirmTransferNumber(e164: string) {
     if (!softphone.activeCall) return;
     setTransferError(null);
+    const external = !(targets?.numbers ?? []).some((n) => n.e164 === e164);
     try {
       await api.request(`/api/v1/calls/${softphone.activeCall.id}/transfer`, {
         method: "POST",
@@ -593,6 +615,12 @@ export function SoftphonePanel() {
       });
       setTeamPanelMode(null);
       setConfirmNumber(null);
+      if (external) {
+        // Bridged: stay with the caller while it rings; the server drops us on answer.
+        setOutsideNumber("");
+        setExternalPending(e164);
+        return;
+      }
       // The call leaves the app on a blind transfer - treat it like the call ending for
       // us: disconnect the room and go back to idle, but never POST /hangup (the call is
       // still live, just no longer on this leg).
@@ -1021,6 +1049,16 @@ export function SoftphonePanel() {
             </Button>
           </div>
 
+          {externalPending && (
+            <p role="status" className="px-3 text-sm text-muted-foreground">
+              Calling {formatPhone(externalPending)}… you'll drop off when they answer.
+            </p>
+          )}
+          {!teamPanelMode && transferError && (
+            <p role="alert" className="px-3 text-sm text-destructive">
+              {transferError}
+            </p>
+          )}
           {teamPanelMode && (
             <div className="space-y-2 rounded-md border border-border p-2 text-xs">
               <p className="font-medium">
@@ -1092,6 +1130,33 @@ export function SoftphonePanel() {
                         </ul>
                       )}
                     </div>
+                    {teamPanelMode === "transfer" && externalTransferAllowed && (
+                      <form
+                        className="space-y-1"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const to = outsideNumber.trim();
+                          if (to) setConfirmNumber(to);
+                        }}
+                      >
+                        <label htmlFor="outside-number" className="font-medium text-muted-foreground">
+                          Outside number
+                        </label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="outside-number"
+                            inputMode="tel"
+                            value={outsideNumber}
+                            onChange={(e) => setOutsideNumber(e.target.value)}
+                            placeholder="+1 555 123 4567"
+                          />
+                          <Button type="submit" size="sm" disabled={!outsideNumber.trim()}>
+                            Next
+                          </Button>
+                        </div>
+                        <p className="text-muted-foreground">Billed as an outbound call.</p>
+                      </form>
+                    )}
                     {teamPanelMode === "transfer" && targets.numbers.length > 0 && (
                       <div>
                         <p className="font-medium text-muted-foreground">Our numbers</p>

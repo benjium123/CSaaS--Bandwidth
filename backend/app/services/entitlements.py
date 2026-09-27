@@ -86,6 +86,14 @@ CATALOG: dict[str, Feature] = {
     "ring_groups": Feature(
         "ring_groups", "Ring groups", "Calling", True, None, "Ring several people at once"
     ),
+    "external_transfer": Feature(
+        "external_transfer",
+        "External transfers",
+        "Calling",
+        False,
+        None,
+        "Transfer calls to outside numbers (billed as outbound minutes)",
+    ),
     "call_queues": Feature(
         "call_queues", "Call queues", "Calling", True, None, "Queue callers for agents"
     ),
