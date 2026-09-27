@@ -370,9 +370,10 @@ function Approved({
   // only `ready` reaches the inbox - anything else disables it.
   const step = gate.org?.onboarding_step;
   const stepKnown = !gate.isLoading && gate.org != null && isOnboardingStep(step);
+  const toFunding = stepKnown && step === "funding";
   const toNumbers = stepKnown && step === "numbers";
   const toInbox = stepKnown && step === "ready";
-  const failClosed = !toNumbers && !toInbox;
+  const failClosed = !toFunding && !toNumbers && !toInbox;
 
   return (
     <AuthSurface>
@@ -426,6 +427,11 @@ function Approved({
           {/* The next act comes from the server's progression, not a messaging-registration
               flag: 10DLC gates SMS, not calling or the inbox. Fail CLOSED - only `ready`
               reaches the inbox, anything else disables the button. */}
+          {toFunding && (
+            <AuthButton type="button" block onClick={() => navigate("/add-credit")}>
+              Add credit
+            </AuthButton>
+          )}
           {toNumbers && (
             <AuthButton type="button" block onClick={() => navigate("/settings/numbers")}>
               Choose a number

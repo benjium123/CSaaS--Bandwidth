@@ -1,5 +1,6 @@
 import { LandingPage } from "@/pages/LandingPage";
 import { MarketingRoutes, isMarketingPath } from "@/marketing/routes";
+import { AddCreditPage } from "@/pages/AddCreditPage";
 import { ChooseNumbersPage } from "@/pages/ChooseNumbersPage";
 import { ConfirmEmailPage } from "@/pages/ConfirmEmailPage";
 import { RecoveryCodesPage } from "@/pages/RecoveryCodesPage";
@@ -315,6 +316,8 @@ export function App() {
         <VerificationPage />
       ) : location.pathname === "/onboarding" ? (
         <div className="ringlite-onboarding"><OnboardingPage /></div>
+      ) : location.pathname === "/add-credit" ? (
+        <AddCreditPage />
       ) : location.pathname === "/choose-numbers" ? (
         <ChooseNumbersPage />
       ) : location.pathname === "/plans" ? (

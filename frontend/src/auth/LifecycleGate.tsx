@@ -57,6 +57,11 @@ const SETUP_ROUTE_RULES: Readonly<Record<string, SetupRouteRules>> = {
     landingRoute: "/verification",
     allowedRoutes: ["/verification", "/onboarding", "/settings/verification", "/plans"],
   },
+  // Signup: the first credit top-up comes before numbers.
+  funding: {
+    landingRoute: "/add-credit",
+    allowedRoutes: ["/add-credit", "/plans"],
+  },
   numbers: {
     landingRoute: "/choose-numbers",
     allowedRoutes: ["/choose-numbers", "/plans"],

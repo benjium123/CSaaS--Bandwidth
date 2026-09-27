@@ -21,6 +21,7 @@ export type OnboardingStep =
   | "verification"
   | "awaiting_review"
   | "remediation"
+  | "funding"
   | "numbers"
   | "ready";
 
@@ -33,6 +34,7 @@ export function isOnboardingStep(value: unknown): value is OnboardingStep {
     value === "verification" ||
     value === "awaiting_review" ||
     value === "remediation" ||
+    value === "funding" ||
     value === "numbers" ||
     value === "ready"
   );
@@ -79,7 +81,7 @@ export function useCapabilities(api: ApiClient) {
     queryFn: () => api.request<Capabilities>("/api/v1/me/capabilities"),
     retry: false,
     staleTime: 30_000,
-    refetchInterval: (query) => ["awaiting_review", "numbers", "remediation"].includes(query.state.data?.org.onboarding_step ?? "") ? 5_000 : false,
+    refetchInterval: (query) => ["awaiting_review", "funding", "numbers", "remediation"].includes(query.state.data?.org.onboarding_step ?? "") ? 5_000 : false,
   });
 }
 
