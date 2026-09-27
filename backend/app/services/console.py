@@ -14,6 +14,13 @@ Money definitions (integer micros):
 - usage_discount  = what workspace discounts took off usage/number charges (ledger)
 - discount_given  = discount + usage_discount (bundle discounts incl. volume, and usage)
 - profit_before_discount = cash_profit + discount_given; cash_profit is AFTER discounts
+- accrual_revenue = what we CHARGED in the window (P46 "what we charged" headline):
+    usage_revenue + bundle_revenue_consumed + direct_revenue, where
+    bundle_revenue_consumed = bundle units used x the org's average paid price per unit
+    of that bundle kind, and direct_revenue = payments that are not prepayments
+    (plan / numbers subscription invoices, 10DLC and other fees). Top-ups and bundle
+    purchases are prepayments: counted when consumed, never when bought.
+- accrual_profit  = accrual_revenue - stripe_fees - provider_cost (cash beside it)
 """
 
 from __future__ import annotations
@@ -201,6 +208,7 @@ async def org_metrics(
             m[f"{kind}s_bought"] += int(units)
 
     # --- bundle usage -----------------------------------------------------------------
+    used_by_kind: dict[tuple[uuid.UUID, str], int] = {}
     for org_id, kind, used in await _rows(
         session,
         sa.select(
@@ -217,6 +225,31 @@ async def org_metrics(
         .group_by(BundleLedgerEntry.org_id, BundleLedgerEntry.kind),
     ):
         out[org_id][f"{kind}_bundle_units_used"] += int(used)
+        used_by_kind[(org_id, kind)] = int(used)
+
+    # Bundle units consumed, valued at what the org paid per unit for that kind (average of
+    # every paid purchase up to the window's end).
+    if used_by_kind:
+        for org_id, bundle_kind, paid_sum, units_sum in await _rows(
+            session,
+            sa.select(
+                BillingPayment.org_id,
+                BillingPayment.kind,
+                sa.func.coalesce(sa.func.sum(BillingPayment.paid_micros), 0),
+                sa.func.coalesce(sa.func.sum(BillingPayment.units_credited), 0),
+            )
+            .where(
+                BillingPayment.state == "paid",
+                BillingPayment.kind.in_(("sms_bundle", "mms_bundle", "voice_bundle")),
+                BillingPayment.paid_at < hi,
+                scope(BillingPayment.org_id),
+            )
+            .group_by(BillingPayment.org_id, BillingPayment.kind),
+        ):
+            kind = bundle_kind[: -len("_bundle")]
+            used = used_by_kind.get((org_id, kind), 0)
+            if used > 0 and int(units_sum) > 0:
+                out[org_id]["bundle_revenue_consumed"] += used * int(paid_sum) // int(units_sum)
 
     # --- blocked: compliance (DNC/opt-out/quiet hours...), credit refusals -------------
     for org_id, reason, n in await _rows(
@@ -319,6 +352,14 @@ def finish(m: dict[str, int]) -> dict[str, int]:
     m["discount"] = m.get("discount", 0)
     m["discount_given"] = m["discount"] + m["usage_discount"]
     m["profit_before_discount"] = m["cash_profit"] + m["discount_given"]
+    # Accrual view: prepayments (top-ups, bundles) are not revenue until consumed.
+    prepaid = m.get("paid_topup", 0) + m.get("paid_auto_recharge", 0) + sum(
+        v for k, v in list(m.items()) if k.startswith("paid_") and k.endswith("_bundle")
+    )
+    m["direct_revenue"] = m["paid"] - prepaid
+    m["bundle_revenue_consumed"] = m.get("bundle_revenue_consumed", 0)
+    m["accrual_revenue"] = m["usage_revenue"] + m["bundle_revenue_consumed"] + m["direct_revenue"]
+    m["accrual_profit"] = m["accrual_revenue"] - m["stripe_fees"] - m["provider_cost"]
     return m
 
 
@@ -477,6 +518,9 @@ async def orgs_table(session: AsyncSession, start: date | None, end: date | None
         totals["cash_profit"] - platform["fixed_costs"] - platform["unattributed_carrier_cost"]
     )
     totals["net_profit_before_discount"] = totals["net_profit"] + totals["discount_given"]
+    totals["net_accrual_profit"] = (
+        totals["accrual_profit"] - platform["fixed_costs"] - platform["unattributed_carrier_cost"]
+    )
     return {
         "start": s.isoformat(),
         "end": e.isoformat(),

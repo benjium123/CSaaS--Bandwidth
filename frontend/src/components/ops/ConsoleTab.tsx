@@ -159,6 +159,16 @@ function KpiGrid({
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <KpiCard
+        label="Charged (accrual)"
+        value={formatMicros(totals.accrual_revenue ?? 0)}
+        sub={`Cash received ${formatMicros(totals.paid ?? 0)} · Usage ${formatMicros(totals.usage_revenue ?? 0)} · Bundles used ${formatMicros(totals.bundle_revenue_consumed ?? 0)} · Plans/fees ${formatMicros(totals.direct_revenue ?? 0)}`}
+      />
+      <KpiCard
+        label="Net profit (accrual)"
+        value={formatMicros(totals.net_accrual_profit ?? 0)}
+        sub="Charged − Stripe fees − carrier/AI cost − fixed − unattributed"
+      />
+      <KpiCard
         label="Net profit"
         value={formatMicros(totals.net_profit ?? totals.cash_profit ?? 0)}
         sub={`After discounts. Workspaces ${formatMicros(totals.cash_profit ?? 0)} − fixed ${formatMicros(totals.fixed_costs ?? 0)} − unattributed ${formatMicros(totals.unattributed_carrier_cost ?? 0)}`}
@@ -618,6 +628,16 @@ function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): J
 
       <div className="grid gap-3 sm:grid-cols-3">
         <KpiCard label="Balance" value={formatMicros(org.balance_micros)} />
+        <KpiCard
+          label="Charged (accrual)"
+          value={formatMicros(metrics.accrual_revenue ?? 0)}
+          sub={`Cash received ${formatMicros(metrics.paid ?? 0)}`}
+        />
+        <KpiCard
+          label="Provider cost"
+          value={formatMicros(metrics.provider_cost ?? 0)}
+          sub={`Carrier ${formatMicros(metrics.carrier_cost ?? 0)} · AI ${formatMicros(metrics.ai_cost ?? 0)}`}
+        />
         <KpiCard label="Profit after discounts" value={formatMicros(metrics.cash_profit ?? 0)} />
         <KpiCard
           label="Profit before discounts"

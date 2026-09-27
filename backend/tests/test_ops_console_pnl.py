@@ -260,3 +260,58 @@ async def test_reviewer_cannot_write_fixed_costs(ops, session, ops_settings):
 
     r = await ops.get("/api/v1/ops/console/fixed-costs", headers=auth_headers(reviewer))
     assert r.status_code == 200, r.text
+
+
+async def test_accrual_revenue_counts_consumption_not_prepayment(ops, session, ops_settings):
+    """P46 P&L part 2: accrual = usage + bundle units consumed (at the paid unit price) +
+    direct payments (plan/fees); top-ups and bundle purchases are prepayments."""
+    from app.models import BundleLedgerEntry
+    from app.services import credits
+
+    token = await _operator(ops, session)
+    A = await _new_org(session, "Accrual Customer")
+    now = datetime.now(timezone.utc)
+    set_org_context(session, A)
+
+    def pay(kind, paid, units=0):
+        session.add(
+            BillingPayment(
+                id=uuid.uuid4(), org_id=A, kind=kind, state="paid", quantity=1,
+                list_micros=paid, paid_micros=paid, discount_micros=0, stripe_fee_micros=0,
+                units_credited=units, paid_at=now,
+                stripe_payment_intent_id=f"pi_acc_{uuid.uuid4().hex[:12]}",
+            )
+        )
+
+    pay("sms_bundle", 13_000_000, units=1000)  # $0.013 per SMS
+    pay("topup", 5_000_000)  # prepayment: not revenue until used
+    pay("plan", 29_000_000)  # subscription invoice: revenue when paid
+    session.add_all(
+        [
+            BundleLedgerEntry(org_id=A, kind="sms", entry_type="purchase", seq=1,
+                              delta_units=1000, balance_after_units=1000, reference="p1"),
+            BundleLedgerEntry(org_id=A, kind="sms", entry_type="usage", seq=2,
+                              delta_units=-100, balance_after_units=900, reference="u1"),
+        ]
+    )
+    await session.commit()
+    set_org_context(session, A)
+    await credits.charge_usage(session, A, 200_000, reference="acc-usage-1", note="t")
+    await session.commit()
+
+    r = await ops.get("/api/v1/ops/console/orgs", headers=auth_headers(token))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    m = next(o for o in body["orgs"] if o["org_id"] == str(A))["metrics"]
+
+    assert m["bundle_revenue_consumed"] == 1_300_000  # 100 units x $0.013
+    assert m["direct_revenue"] == 29_000_000
+    assert m["usage_revenue"] == 200_000
+    assert m["accrual_revenue"] == 200_000 + 1_300_000 + 29_000_000
+    assert m["paid"] == 47_000_000  # cash beside it: everything received
+    assert m["accrual_profit"] == m["accrual_revenue"] - m["stripe_fees"] - m["provider_cost"]
+    totals = body["totals"]
+    assert totals["accrual_revenue"] >= m["accrual_revenue"]
+    assert totals["net_accrual_profit"] == (
+        totals["accrual_profit"] - totals["fixed_costs"] - totals["unattributed_carrier_cost"]
+    )
