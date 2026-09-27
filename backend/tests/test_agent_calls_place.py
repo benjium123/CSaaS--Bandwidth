@@ -21,7 +21,7 @@ import sqlalchemy as sa
 
 from app.db.base import set_org_context
 from app.main import create_app
-from app.models import OrgMembership, Role
+from app.models import KycProfile, Org, OrgMembership, Role
 from app.models.rbac import SYSTEM_ROLES
 from app.repositories import users as users_repo
 from tests.conftest import (
@@ -88,15 +88,41 @@ async def _inbox_id_for(client, headers, e164: str) -> str:
     return next(i["id"] for i in listed.json() if i["e164"] == e164)
 
 
+async def _approve_kyc_for_calls(session, org_id: uuid.UUID, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py create_org) - is_individual alone forces the KYC gate in
+    telephony_access.refusal regardless of settings.kyc_enforced. Mirrors what
+    conftest.make_org_with_number and test_p41_kyc.py's _approved_org do for tests
+    built before that gate existed, so numbers/calls aren't refused with
+    account_not_verified / subscription_required."""
+    from datetime import datetime, timezone
+
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    owner = await users_repo.get_by_email(session, owner_email)
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
 @pytest.mark.anyio
 async def test_agent_dials_only_from_a_line_it_holds(app_with_voice_carrier, session):
     client, fake, _app = app_with_voice_carrier
     owner_token = await register_and_login(client, "ap-owner@example.com")
     org = await create_org(client, owner_token, "Org AgentPlace")
     org_id = uuid.UUID(org["id"])
+    await _approve_kyc_for_calls(session, org_id, "ap-owner@example.com")
     h_owner = auth_headers(owner_token, str(org_id))
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
-    await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
+    added_a = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added_a.status_code == 201, added_a.text
+    added_b = await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
+    assert added_b.status_code == 201, added_b.text
 
     agent_token, agent_user_id = await _agent_in_org(client, session, org_id, "ap-agent@example.com")
     h_agent = auth_headers(agent_token, str(org_id))
@@ -132,8 +158,10 @@ async def test_viewer_grant_stays_read_only_for_calls(app_with_voice_carrier, se
     owner_token = await register_and_login(client, "ap2-owner@example.com")
     org = await create_org(client, owner_token, "Org AgentPlace2")
     org_id = uuid.UUID(org["id"])
+    await _approve_kyc_for_calls(session, org_id, "ap2-owner@example.com")
     h_owner = auth_headers(owner_token, str(org_id))
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    added_a = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added_a.status_code == 201, added_a.text
 
     agent_token, agent_user_id = await _agent_in_org(client, session, org_id, "ap2-agent@example.com")
     h_agent = auth_headers(agent_token, str(org_id))

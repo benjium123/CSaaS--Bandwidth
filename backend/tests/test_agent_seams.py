@@ -428,9 +428,14 @@ async def test_transcript_scoped_to_the_calls_org(app_with_agent, session):
     """Segments land under the CALL's org - posting to org A's call must be invisible to
     org B, even though the same worker identity can name any call id at all."""
     client, _app = app_with_agent
-    _token_a, org_a, call_a = await _place_call(client, "scopeA@example.com", "Org Scope A")
+    # conftest.make_org_with_number looks a user up by exact-case email
+    # (`User.email == email`) while registration normalizes/lowercases what it stores
+    # (users_repo.create_user -> normalize_email); an uppercase letter here (as in the
+    # original "scopeA@example.com") makes that lookup raise NoResultFound. Lowercase to
+    # match what actually lands in the row, per the other emails already in this file.
+    _token_a, org_a, call_a = await _place_call(client, "scopea@example.com", "Org Scope A")
     _token_b, org_b, _call_b = await _place_call(
-        client, "scopeB@example.com", "Org Scope B", "+12145550101"
+        client, "scopeb@example.com", "Org Scope B", "+12145550101"
     )
     org_a_id = uuid.UUID(org_a["id"])
     org_b_id = uuid.UUID(org_b["id"])
