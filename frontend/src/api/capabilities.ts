@@ -56,6 +56,9 @@ export type OrgCapabilities = {
 export type Capabilities = {
   permissions: string[];
   org: OrgCapabilities;
+  /** Per-workspace feature switches (backend services/entitlements.py): key -> on/off.
+   * Optional so an older API without it still type-checks; treat missing as "ask the server". */
+  features?: Record<string, boolean>;
 };
 
 export const CAPABILITIES_QUERY_KEY = ["me", "capabilities"] as const;
