@@ -160,15 +160,40 @@ async def test_follow_up_pending_unconfirmed(monkeypatch):
 
     await email_delivery._follow_up(settings, "msg", ["a@b.c"], "s", "b", 1)
 
-    # Still pending after every check: retried once like a failure, not dropped.
+    # Still pending after every check: most likely still in transit, so it is NOT re-sent
+    # (that would duplicate it); operators are told instead.
     assert fetch_count == 3
-    assert len(retry_calls) == 1
-    assert alert_calls == []
-
-    # The retry also never confirms: operators are alerted.
-    await email_delivery._follow_up(settings, "msg2", ["a@b.c"], "s", "b", 2)
-    assert len(retry_calls) == 1
+    assert retry_calls == []
     assert len(alert_calls) == 1 and alert_calls[0][3] == ["unconfirmed"]
+
+
+async def test_deferred_is_in_transit_never_resent(monkeypatch):
+    """The 2026-09-28 duplicate: a 'deferred' recipient status was read as a failure and
+    re-sent, then the deferred original arrived too."""
+    settings = make_settings()
+    assert email_delivery.classify(
+        {"events": [{"type": "sent"}], "recipient_statuses": {"deferred": ["a@b.c"]}}
+    ) == ("pending", [])
+
+    async def fake_fetch(settings, message_id):
+        return {"events": [{"type": "sent"}], "recipient_statuses": {"deferred": ["a@b.c"]}}
+
+    retry_calls, alert_calls = [], []
+
+    async def fake_retry(*args, **kwargs):
+        retry_calls.append(args)
+
+    async def fake_alert(*args, **kwargs):
+        alert_calls.append(args)
+
+    monkeypatch.setattr(email_delivery, "fetch_message", fake_fetch)
+    monkeypatch.setattr(email_delivery, "_retry", fake_retry)
+    monkeypatch.setattr(email_delivery, "_alert_operators", fake_alert)
+    monkeypatch.setattr(email_delivery, "CHECK_DELAYS_SECONDS", (0, 0, 0))
+
+    await email_delivery._follow_up(settings, "msg", ["a@b.c"], "s", "b", 1)
+    assert retry_calls == []
+    assert len(alert_calls) == 1
 
 
 async def test_follow_up_failed_attempt1_telnyx(monkeypatch):

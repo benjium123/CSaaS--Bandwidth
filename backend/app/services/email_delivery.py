@@ -23,7 +23,9 @@ log = structlog.get_logger("email_delivery")
 
 CHECK_DELAYS_SECONDS = (15, 45, 120)
 ALERT_COOLDOWN_SECONDS = 1800
-PENDING_STATUSES = frozenset({"queued", "sending", "sent"})
+#: "deferred" = the receiving server asked to try later; the mail is still in transit and
+#: normally arrives, so it is never re-sent (a re-send is a guaranteed duplicate).
+PENDING_STATUSES = frozenset({"queued", "sending", "sent", "deferred"})
 FAILED_EVENT_TYPES = frozenset(
     {"failed", "bounced", "dropped", "rejected", "injection_timeout", "undeliverable"}
 )
@@ -132,8 +134,9 @@ async def _follow_up(
             if verdict == "failed":
                 break
         else:
-            # Never confirmed delivered: treat like a failure (retry once, then alert)
-            # rather than dropping it silently.
+            # Never confirmed delivered (still queued/sent/deferred): it is most likely still
+            # on its way, so it is NOT re-sent - that would reach the person twice. Operators
+            # get one (rate-limited) notice instead of the mail being dropped silently.
             log.warning(
                 "email_delivery_unconfirmed",
                 message_id=message_id,
@@ -141,7 +144,8 @@ async def _follow_up(
             )
             if not seen:
                 return  # the status API never answered: no evidence either way
-            reasons = ["unconfirmed"]
+            await _alert_operators(settings, recipients, subject, ["unconfirmed"])
+            return
 
         log.warning(
             "email_delivery_failed",
