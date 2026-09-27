@@ -32,6 +32,7 @@ from app.api.routes import inboxes as inboxes_routes
 from app.api.routes import kyc as kyc_routes
 from app.api.routes import links as links_routes
 from app.api.routes import me as me_routes
+from app.api.routes import profile_support as profile_support_routes
 from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
 from app.api.routes import monitoring as monitoring_routes
@@ -268,6 +269,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(billing_routes.router)
     app.include_router(org_routes.router)
     app.include_router(me_routes.router)
+    app.include_router(profile_support_routes.router)
     # P25 enterprise identity. me_router shares the /api/v1/me prefix with me_routes
     # (distinct paths); org_router hangs off /api/v1/orgs/current alongside org_routes.
     app.include_router(identity_routes.me_router)

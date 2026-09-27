@@ -34,3 +34,8 @@ class EmergencyAddress(Base, TenantScoped, TimestampMixin):
     #: P44e (migration 0070): SignalWire's id for this address, created the first time a
     #: SignalWire number is registered at it.
     signalwire_address_id: Mapped[str | None] = mapped_column(sa.String(64))
+    #: A PERSON's own 911 address (their profile), applied to every number assigned to
+    #: them. NULL = a workspace address (office) managed on the Numbers page.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )

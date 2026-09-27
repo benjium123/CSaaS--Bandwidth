@@ -767,3 +767,60 @@ async def console_audit(
             for r in rows
         ]
     }
+
+
+# --- Support (Help menu requests + contact details) -------------------------------------
+
+
+class SupportReplyIn(BaseModel):
+    reply: str = Field(min_length=1, max_length=10_000)
+    close: bool = False
+
+
+class SupportContactsIn(BaseModel):
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=32)
+    knowledge_base_url: str | None = Field(default=None, max_length=500)
+    whats_new_url: str | None = Field(default=None, max_length=500)
+    status_url: str | None = Field(default=None, max_length=500)
+    terms_url: str | None = Field(default=None, max_length=500)
+    privacy_url: str | None = Field(default=None, max_length=500)
+
+
+@router.get("/support")
+async def console_support_requests(op: Reader, status: str | None = None) -> dict:
+    from app.services import support
+
+    return {"requests": await support.ops_list(op.session, status)}
+
+
+@router.post("/support/{request_id}/reply")
+async def console_support_reply(
+    request_id: uuid.UUID, payload: SupportReplyIn, request: Request, op: AdminOp
+) -> dict:
+    """Answer a support request; the answer is emailed to the person who asked."""
+    from app.services import support
+
+    return await support.ops_reply(
+        op.session, request.app.state.settings, request_id,
+        reply=payload.reply, actor_user_id=op.user.id, close=payload.close,
+    )
+
+
+@router.get("/support-contacts")
+async def console_support_contacts(op: Reader) -> dict:
+    from app.services import support
+
+    return await support.contacts(op.session)
+
+
+@router.put("/support-contacts")
+async def console_set_support_contacts(payload: SupportContactsIn, op: AdminOp) -> dict:
+    from app.services import support
+
+    value = await support.set_contacts(
+        op.session, payload.model_dump(), actor_user_id=op.user.id
+    )
+    log.info("support_contacts_updated", operator_user_id=str(op.user.id))
+    await op.session.commit()
+    return value
