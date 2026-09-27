@@ -11,7 +11,13 @@ from pydantic import BaseModel, Field
 
 from app.api.routes import flows as flow_routes
 from app.api.routes.numbers import to_e164
-from app.auth.deps import OrgContext, get_current_org, get_current_user, require_permission
+from app.auth.deps import (
+    OrgContext,
+    get_current_org,
+    get_current_user,
+    require_permission,
+    requires_feature,
+)
 from app.errors import (
     CarrierNotConfiguredError,
     ConflictError,
@@ -487,8 +493,14 @@ async def create_call(
     if e911.is_emergency(payload.to) and ctx.api_key is None:
         return await _emergency_call(payload, request, ctx, user)
     await require_permission("calls:place")(request, ctx)
+    # Feature gates come AFTER the emergency branch above: 911/933 is never gated.
+    from app.services import entitlements
+
+    await entitlements.require(ctx.session, ctx.org.id, "voice")
     if payload.machine_detection not in _MACHINE_DETECTION_MODES:
         raise ValidationFailedError("machine_detection must be 'off' or 'async'")
+    if payload.machine_detection != "off":
+        await entitlements.require(ctx.session, ctx.org.id, "amd")
     if payload.via not in _VIA_MODES:
         raise ValidationFailedError("via must be 'carrier' or 'room'")
 
@@ -656,7 +668,11 @@ async def list_callbacks(
     ]
 
 
-@router.post("/calls/callbacks/{entry_id}/dial-now", response_model=flow_routes.QueueEntryOut)
+@router.post(
+    "/calls/callbacks/{entry_id}/dial-now",
+    response_model=flow_routes.QueueEntryOut,
+    dependencies=[Depends(requires_feature("voice"))],
+)
 async def dial_callback(
     entry_id: uuid.UUID,
     request: Request,

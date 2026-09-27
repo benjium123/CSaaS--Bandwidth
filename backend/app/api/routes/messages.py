@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app import routing
 from app.api.routes.numbers import to_e164
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_permission, requires_feature
 from app.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import Message, MessageThread
 from app.providers.base import get_carrier
@@ -139,7 +139,12 @@ def _out(m: Message, links: list | None = None) -> MessageOut:
     )
 
 
-@router.post("/messages", response_model=MessageOut, status_code=201)
+@router.post(
+    "/messages",
+    response_model=MessageOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("sms"))],
+)
 async def send(
     payload: SendIn,
     request: Request,
@@ -208,6 +213,10 @@ async def send(
     settings = request.app.state.settings
     # The carrier fetches MMS media from a URL, so attachments become long-lived signed
     # links rather than being uploaded twice.
+    if payload.media_ids:
+        from app.services import entitlements
+
+        await entitlements.require(ctx.session, ctx.org.id, "mms")
     media_urls = [
         media_svc.signed_url(
             settings.public_base_url or "",

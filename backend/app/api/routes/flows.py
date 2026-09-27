@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
-from app.auth.deps import OrgContext, get_current_user, require_permission
+from app.auth.deps import OrgContext, get_current_user, require_permission, requires_feature
 from app.compliance import quiet_hours as qh
 from app.compliance import service as compliance_svc
 from app.compliance.gate import _contact_timezone as _gate_contact_timezone
@@ -79,7 +79,12 @@ async def list_flows(
     return [_flow_out(r) for r in await flows_svc.list_flows(ctx.session)]
 
 
-@router.post("/flows", response_model=FlowOut, status_code=201)
+@router.post(
+    "/flows",
+    response_model=FlowOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("ivr_flows"))],
+)
 async def create_flow(
     payload: FlowIn,
     ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
@@ -113,7 +118,12 @@ class VersionIn(BaseModel):
     definition: dict
 
 
-@router.post("/flows/{flow_id}/versions", response_model=FlowOut, status_code=201)
+@router.post(
+    "/flows/{flow_id}/versions",
+    response_model=FlowOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("ivr_flows"))],
+)
 async def create_flow_version(
     flow_id: uuid.UUID,
     payload: VersionIn,
@@ -126,7 +136,11 @@ async def create_flow_version(
     return _flow_out(row)
 
 
-@router.post("/flows/{flow_id}/activate", response_model=FlowOut)
+@router.post(
+    "/flows/{flow_id}/activate",
+    response_model=FlowOut,
+    dependencies=[Depends(requires_feature("ivr_flows"))],
+)
 async def activate_flow(
     flow_id: uuid.UUID,
     request: Request,
@@ -169,7 +183,11 @@ class NumberBindingOut(BaseModel):
     call_flow_id: uuid.UUID | None
 
 
-@router.post("/flows/bind", response_model=NumberBindingOut)
+@router.post(
+    "/flows/bind",
+    response_model=NumberBindingOut,
+    dependencies=[Depends(requires_feature("ivr_flows"))],
+)
 async def bind_flow(
     payload: BindFlowIn, ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))]
 ) -> NumberBindingOut:
@@ -228,7 +246,12 @@ async def list_ring_groups(
     return [_ring_group_out(r) for r in await flows_svc.list_ring_groups(ctx.session)]
 
 
-@router.post("/ring-groups", response_model=RingGroupOut, status_code=201)
+@router.post(
+    "/ring-groups",
+    response_model=RingGroupOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("ring_groups"))],
+)
 async def create_ring_group(
     payload: RingGroupIn, ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))]
 ) -> RingGroupOut:
@@ -283,7 +306,12 @@ async def list_queues(
     return [_queue_out(q) for q in await flows_svc.list_queues(ctx.session)]
 
 
-@router.post("/queues", response_model=QueueOut, status_code=201)
+@router.post(
+    "/queues",
+    response_model=QueueOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("call_queues"))],
+)
 async def create_queue(
     payload: QueueIn, ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))]
 ) -> QueueOut:
@@ -346,7 +374,11 @@ async def list_queue_entries(
     return out
 
 
-@router.post("/queues/{queue_id}/claim-next", response_model=QueueEntryOut)
+@router.post(
+    "/queues/{queue_id}/claim-next",
+    response_model=QueueEntryOut,
+    dependencies=[Depends(requires_feature("call_queues"))],
+)
 async def claim_next(
     queue_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
@@ -358,7 +390,11 @@ async def claim_next(
     return _entry_out(entry)
 
 
-@router.post("/queue-entries/{entry_id}/claim", response_model=QueueEntryOut)
+@router.post(
+    "/queue-entries/{entry_id}/claim",
+    response_model=QueueEntryOut,
+    dependencies=[Depends(requires_feature("call_queues"))],
+)
 async def claim_entry(
     entry_id: uuid.UUID,
     request: Request,
@@ -374,7 +410,11 @@ async def claim_entry(
     return _entry_out(entry)
 
 
-@router.post("/queue-entries/{entry_id}/dial-now", response_model=QueueEntryOut)
+@router.post(
+    "/queue-entries/{entry_id}/dial-now",
+    response_model=QueueEntryOut,
+    dependencies=[Depends(requires_feature("call_queues"))],
+)
 async def dial_callback_now(
     entry_id: uuid.UUID,
     request: Request,
@@ -531,7 +571,12 @@ async def list_business_hours(
     return [_hours_out(h) for h in await flows_svc.list_business_hours(ctx.session)]
 
 
-@router.post("/business-hours", response_model=BusinessHoursOut, status_code=201)
+@router.post(
+    "/business-hours",
+    response_model=BusinessHoursOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("ivr_flows"))],
+)
 async def create_business_hours(
     payload: BusinessHoursIn,
     ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
@@ -646,7 +691,11 @@ async def _get_call(ctx: OrgContext, call_id: uuid.UUID, *, require_use: bool = 
     return call
 
 
-@router.post("/calls/{call_id}/monitor", response_model=SupervisorTokenOut)
+@router.post(
+    "/calls/{call_id}/monitor",
+    response_model=SupervisorTokenOut,
+    dependencies=[Depends(requires_feature("supervisor"))],
+)
 async def supervise_monitor(
     call_id: uuid.UUID,
     request: Request,
@@ -682,7 +731,11 @@ async def supervise_monitor(
     )
 
 
-@router.post("/calls/{call_id}/whisper", response_model=SupervisorTokenOut)
+@router.post(
+    "/calls/{call_id}/whisper",
+    response_model=SupervisorTokenOut,
+    dependencies=[Depends(requires_feature("supervisor"))],
+)
 async def supervise_whisper(
     call_id: uuid.UUID,
     request: Request,
@@ -720,7 +773,11 @@ async def supervise_whisper(
     )
 
 
-@router.post("/calls/{call_id}/barge", response_model=SupervisorTokenOut)
+@router.post(
+    "/calls/{call_id}/barge",
+    response_model=SupervisorTokenOut,
+    dependencies=[Depends(requires_feature("supervisor"))],
+)
 async def supervise_barge(
     call_id: uuid.UUID,
     request: Request,

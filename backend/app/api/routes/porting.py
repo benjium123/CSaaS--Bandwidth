@@ -10,7 +10,13 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from starlette.datastructures import UploadFile
 
-from app.auth.deps import OperatorContext, OrgContext, require_operator, require_permission
+from app.auth.deps import (
+    OperatorContext,
+    OrgContext,
+    require_operator,
+    require_permission,
+    requires_feature,
+)
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import NotFoundError, ValidationFailedError
 from app.models import OrgNumber, PortRequest
@@ -47,7 +53,7 @@ class CheckIn(BaseModel):
     numbers: list[str] = Field(min_length=1, max_length=porting_svc.MAX_NUMBERS)
 
 
-@router.post("/check")
+@router.post("/check", dependencies=[Depends(requires_feature("porting"))])
 async def check(
     payload: CheckIn,
     request: Request,
@@ -80,7 +86,7 @@ async def _doc(form, name: str) -> tuple[bytes, str]:  # noqa: ANN001
     return data, ctype
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(requires_feature("porting"))])
 async def create_port(
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],

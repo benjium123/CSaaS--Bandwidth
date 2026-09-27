@@ -22,6 +22,7 @@ from app.auth.deps import (
     check_org_selfie_step_up,
     check_step_up,
     require_permission,
+    requires_feature,
 )
 from app.errors import NotFoundError, PermissionDeniedError
 from app.models import OrgDomain, ScimToken, User
@@ -129,7 +130,12 @@ async def list_domains(
     return [_domain_out(row) for row in rows]
 
 
-@router.post("/domains", response_model=DomainOut, status_code=201)
+@router.post(
+    "/domains",
+    response_model=DomainOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("enterprise_sso"))],
+)
 async def add_domain(
     payload: DomainIn,
     ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
@@ -162,7 +168,11 @@ async def _get_domain(ctx: OrgContext, domain_id: uuid.UUID) -> OrgDomain:
     return row
 
 
-@router.post("/domains/{domain_id}/verify", response_model=DomainOut)
+@router.post(
+    "/domains/{domain_id}/verify",
+    response_model=DomainOut,
+    dependencies=[Depends(requires_feature("enterprise_sso"))],
+)
 async def verify_domain(
     domain_id: uuid.UUID,
     request: Request,
@@ -253,7 +263,12 @@ async def list_scim_tokens(
     return [_token_out(row) for row in rows]
 
 
-@router.post("/scim-tokens", response_model=ScimTokenCreatedOut, status_code=201)
+@router.post(
+    "/scim-tokens",
+    response_model=ScimTokenCreatedOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("enterprise_sso"))],
+)
 async def create_scim_token(
     payload: ScimTokenIn,
     request: Request,

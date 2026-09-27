@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.api.routes.numbers import to_e164
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_permission, requires_feature
 from app.db.session import get_sessionmaker
 from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import (
@@ -418,7 +418,11 @@ async def create_contact(
 # ----------------------------------------------------------------------------------
 # Export jobs
 # ----------------------------------------------------------------------------------
-@router.post("/contacts/export", status_code=202)
+@router.post(
+    "/contacts/export",
+    status_code=202,
+    dependencies=[Depends(requires_feature("contact_export"))],
+)
 async def create_contact_export(
     payload: ExportIn,
     request: Request,

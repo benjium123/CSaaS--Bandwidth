@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_permission, requires_feature
 from app.errors import ConflictError
 from app.models import Appointment
 from app.services import agent as agent_svc
@@ -117,7 +117,12 @@ async def list_kb_documents(
     return [KbDocumentOut(id=d.id, title=d.title, source=d.source) for d in rows]
 
 
-@router.post("/kb/documents", response_model=KbDocumentOut, status_code=201)
+@router.post(
+    "/kb/documents",
+    response_model=KbDocumentOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("ai_kb"))],
+)
 async def create_kb_document(
     payload: KbDocumentIn,
     ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],

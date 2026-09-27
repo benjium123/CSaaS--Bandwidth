@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_permission, requires_feature
 from app.compliance import registration
 from app.errors import (
     CarrierNotConfiguredError,
@@ -142,7 +142,12 @@ async def _bulk_order_step_up(request: Request, ctx: OrgContext) -> None:
         raise StepUpRequiredError(kind="recent_selfie", action="bulk_number_order")
 
 
-@router.post("", response_model=NumberOut, status_code=201)
+@router.post(
+    "",
+    response_model=NumberOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("numbers"))],
+)
 async def add_number(
     payload: NumberIn,
     request: Request,
@@ -631,7 +636,12 @@ async def persist_ordered_number(
     return number
 
 
-@router.post("/order", response_model=NumberOut, status_code=201)
+@router.post(
+    "/order",
+    response_model=NumberOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("numbers"))],
+)
 async def order(
     payload: OrderIn,
     request: Request,

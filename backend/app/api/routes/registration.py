@@ -65,7 +65,12 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
-from app.auth.deps import OrgContext, require_permission, require_platform_operator
+from app.auth.deps import (
+    OrgContext,
+    require_permission,
+    require_platform_operator,
+    requires_feature,
+)
 from app.compliance import telnyx_approval
 from app.errors import (
     ConflictError,
@@ -523,7 +528,7 @@ async def texting_registration(
     }
 
 
-@router.post("/texting/checkout")
+@router.post("/texting/checkout", dependencies=[Depends(requires_feature("tendlc"))])
 async def texting_checkout(
     payload: TextingCheckoutIn,
     request: Request,
@@ -594,7 +599,12 @@ async def texting_resend_otp(
     return await _texting_out(ctx, reg)
 
 
-@router.post("/brands", response_model=BrandOut, status_code=201)
+@router.post(
+    "/brands",
+    response_model=BrandOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("tendlc"))],
+)
 async def create_brand(
     payload: BrandIn,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
@@ -729,7 +739,12 @@ async def list_campaigns(
     return [await _campaign_out(ctx.session, c) for c in rows]
 
 
-@router.post("/campaigns", response_model=CampaignOut, status_code=201)
+@router.post(
+    "/campaigns",
+    response_model=CampaignOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("tendlc"))],
+)
 async def create_campaign(
     payload: CampaignIn,
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],

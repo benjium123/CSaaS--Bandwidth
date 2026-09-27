@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from app.auth.deps import OrgContext, get_current_user, require_permission
+from app.auth.deps import OrgContext, get_current_user, require_permission, requires_feature
 from app.db.session import get_sessionmaker
 from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import (
@@ -93,7 +93,12 @@ def _list_out(lst: ContactList) -> ListOut:
     )
 
 
-@router.post("/lists", response_model=ListPreviewOut, status_code=201)
+@router.post(
+    "/lists",
+    response_model=ListPreviewOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("power_dialer"))],
+)
 async def upload_list(
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("campaigns:manage"))],
@@ -167,7 +172,12 @@ class CommitIn(BaseModel):
     assign_department: uuid.UUID | None = None
 
 
-@router.post("/lists/{list_id}/commit", response_model=ListOut, status_code=202)
+@router.post(
+    "/lists/{list_id}/commit",
+    response_model=ListOut,
+    status_code=202,
+    dependencies=[Depends(requires_feature("power_dialer"))],
+)
 async def commit_list(
     list_id: uuid.UUID,
     payload: CommitIn,
@@ -373,7 +383,12 @@ def _campaign_out(c: OutboundCampaign) -> CampaignOut:
     )
 
 
-@router.post("/campaigns", response_model=CampaignOut, status_code=201)
+@router.post(
+    "/campaigns",
+    response_model=CampaignOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("power_dialer"))],
+)
 async def create_campaign(
     payload: CampaignIn,
     request: Request,
@@ -458,7 +473,11 @@ async def get_campaign(
     return _campaign_out(campaign)
 
 
-@router.post("/campaigns/{campaign_id}/start", response_model=CampaignOut)
+@router.post(
+    "/campaigns/{campaign_id}/start",
+    response_model=CampaignOut,
+    dependencies=[Depends(requires_feature("power_dialer"))],
+)
 async def start_campaign(
     campaign_id: uuid.UUID,
     ctx: Annotated[OrgContext, Depends(require_permission("campaigns:manage"))],
@@ -552,7 +571,11 @@ def _dial_attempt_out(row: DialAttempt) -> DialAttemptOut:
     )
 
 
-@router.post("/campaigns/{campaign_id}/dial-next", response_model=DialAttemptOut | None)
+@router.post(
+    "/campaigns/{campaign_id}/dial-next",
+    response_model=DialAttemptOut | None,
+    dependencies=[Depends(requires_feature("power_dialer"))],
+)
 async def dial_next(
     campaign_id: uuid.UUID,
     request: Request,

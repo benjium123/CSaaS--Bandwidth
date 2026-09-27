@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_permission, requires_feature
 from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import NotFoundError, UnauthenticatedError, ValidationFailedError
@@ -68,7 +68,7 @@ async def list_faxes(
     }
 
 
-@router.post("/fax")
+@router.post("/fax", dependencies=[Depends(requires_feature("fax"))])
 async def send_fax(
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("inbox:send"))],
@@ -134,7 +134,7 @@ class FaxModeIn(BaseModel):
     enabled: bool
 
 
-@router.patch("/numbers/{number_id}/fax-mode")
+@router.patch("/numbers/{number_id}/fax-mode", dependencies=[Depends(requires_feature("fax"))])
 async def number_fax_mode(
     number_id: uuid.UUID,
     payload: FaxModeIn,

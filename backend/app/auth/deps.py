@@ -394,6 +394,21 @@ def require_permission(permission: str):
     return _check
 
 
+def requires_feature(key: str):
+    """Dependency factory: 403 feature_disabled unless the workspace has ``key`` switched on
+    (services/entitlements.py). Used as ``dependencies=[Depends(requires_feature("fax"))]``
+    on action routes; reads stay open so switching a feature off never hides history."""
+    from app.services import entitlements
+
+    if key not in entitlements.CATALOG:
+        raise ValueError(f"unknown feature: {key}")
+
+    async def _check(ctx: Annotated[OrgContext, Depends(get_current_org)]) -> None:
+        await entitlements.require(ctx.session, ctx.org.id, key)
+
+    return _check
+
+
 async def require_owner(ctx: Annotated[OrgContext, Depends(get_current_org)]) -> OrgContext:
     """The workspace OWNER. A plain dependency, used as ``Depends(require_owner)`` — not a
     factory, because it takes no argument.

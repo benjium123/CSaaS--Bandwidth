@@ -26,6 +26,7 @@ from app.auth.deps import (
     check_org_selfie_step_up,
     require_permission,
     require_platform_operator,
+    requires_feature,
 )
 from app.db.base import set_org_context
 from app.db.session import get_session
@@ -102,7 +103,12 @@ async def _get_key(ctx: OrgContext, key_id: uuid.UUID) -> ApiKey:
     return row
 
 
-@router.post("/api-keys", response_model=ApiKeyCreatedOut, status_code=201)
+@router.post(
+    "/api-keys",
+    response_model=ApiKeyCreatedOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("api_access"))],
+)
 async def create_api_key(
     payload: ApiKeyIn,
     request: Request,
@@ -153,7 +159,11 @@ async def revoke_api_key(
     return _key_out(row)
 
 
-@router.post("/api-keys/{key_id}/rotate", response_model=ApiKeyCreatedOut)
+@router.post(
+    "/api-keys/{key_id}/rotate",
+    response_model=ApiKeyCreatedOut,
+    dependencies=[Depends(requires_feature("api_access"))],
+)
 async def rotate_api_key(
     key_id: uuid.UUID,
     request: Request,
@@ -219,7 +229,12 @@ async def _get_endpoint(ctx: OrgContext, endpoint_id: uuid.UUID) -> WebhookEndpo
     return row
 
 
-@router.post("/webhook-endpoints", response_model=WebhookEndpointCreatedOut, status_code=201)
+@router.post(
+    "/webhook-endpoints",
+    response_model=WebhookEndpointCreatedOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("api_access"))],
+)
 async def create_webhook_endpoint(
     payload: WebhookEndpointIn,
     request: Request,

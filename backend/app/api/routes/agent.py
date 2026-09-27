@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
 from app.api.routes.numbers import to_e164
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_permission, requires_feature
 from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import (
@@ -590,7 +590,12 @@ async def list_agent_profiles(
     return [_profile_out(p) for p in rows]
 
 
-@router.post("/profiles", response_model=ProfileOut, status_code=201)
+@router.post(
+    "/profiles",
+    response_model=ProfileOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("ai_agent"))],
+)
 async def create_agent_profile(
     payload: ProfileIn,
     ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
@@ -678,7 +683,11 @@ async def set_default_agent_profile(
 # ==================================================================================
 # P23a: go-live readiness, in-app simulator, worker config and server-side tools.
 # ==================================================================================
-@router.post("/profiles/{profile_id}/go-live", response_model=None)
+@router.post(
+    "/profiles/{profile_id}/go-live",
+    response_model=None,
+    dependencies=[Depends(requires_feature("ai_agent"))],
+)
 async def go_live_agent_profile(
     profile_id: uuid.UUID,
     request: Request,
@@ -754,7 +763,11 @@ class SimulateOut(BaseModel):
     kb_hits: list[dict]
 
 
-@router.post("/profiles/{profile_id}/simulate", response_model=SimulateOut)
+@router.post(
+    "/profiles/{profile_id}/simulate",
+    response_model=SimulateOut,
+    dependencies=[Depends(requires_feature("ai_agent"))],
+)
 async def simulate_agent_profile(
     profile_id: uuid.UUID,
     payload: SimulateIn,
@@ -814,7 +827,7 @@ class CallMeIn(BaseModel):
     to_e164: str = Field(min_length=3, max_length=32)
 
 
-@router.post("/profiles/{profile_id}/call-me")
+@router.post("/profiles/{profile_id}/call-me", dependencies=[Depends(requires_feature("ai_agent"))])
 async def call_me_agent_profile(
     profile_id: uuid.UUID,
     payload: CallMeIn,
@@ -1037,7 +1050,12 @@ def _kb_document_out(doc: KbDocument) -> KbDocumentOut:
     )
 
 
-@router.post("/kb/documents", response_model=KbDocumentOut, status_code=201)
+@router.post(
+    "/kb/documents",
+    response_model=KbDocumentOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("ai_kb"))],
+)
 async def create_kb_document(
     request: Request,
     ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],

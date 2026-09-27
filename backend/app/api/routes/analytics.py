@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_permission, requires_feature
 from app.errors import ValidationFailedError
 from app.services import analytics as analytics_svc
 from app.services import inbox_access as inbox_access_svc
@@ -77,7 +77,11 @@ class AssistantAnalyticsOut(BaseModel):
     range: OverviewRangeOut
 
 
-@router.get("/analytics/overview", response_model=OverviewOut)
+@router.get(
+    "/analytics/overview",
+    response_model=OverviewOut,
+    dependencies=[Depends(requires_feature("analytics"))],
+)
 async def analytics_overview(
     ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
     days: int = Query(14, ge=1, le=90),
@@ -85,7 +89,11 @@ async def analytics_overview(
     return OverviewOut(**await analytics_svc.overview(ctx.session, ctx.org.id, days))
 
 
-@router.get("/analytics/assistant", response_model=AssistantAnalyticsOut)
+@router.get(
+    "/analytics/assistant",
+    response_model=AssistantAnalyticsOut,
+    dependencies=[Depends(requires_feature("analytics"))],
+)
 async def analytics_assistant(
     ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
     from_: str = Query("", alias="from"),
@@ -134,7 +142,11 @@ class TranscriptSearchResultOut(BaseModel):
     segments: list[TranscriptSegmentOut]
 
 
-@router.get("/search/transcripts", response_model=list[TranscriptSearchResultOut])
+@router.get(
+    "/search/transcripts",
+    response_model=list[TranscriptSearchResultOut],
+    dependencies=[Depends(requires_feature("analytics"))],
+)
 async def search_transcripts(
     ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
     q: str = Query(..., min_length=1),
@@ -169,7 +181,11 @@ class MessagingHealthOut(BaseModel):
     thresholds: dict[str, float]
 
 
-@router.get("/analytics/health", response_model=MessagingHealthOut)
+@router.get(
+    "/analytics/health",
+    response_model=MessagingHealthOut,
+    dependencies=[Depends(requires_feature("analytics"))],
+)
 async def analytics_messaging_health(
     ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
     days: int = Query(7, ge=1, le=90),
