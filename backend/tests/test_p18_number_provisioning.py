@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -15,7 +16,7 @@ from cryptography.fernet import Fernet
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import FeatureUnavailableError, ValidationFailedError
 from app.main import create_app
-from app.models import Org, OrgMembership, OrgNumber, ProviderAccount, Role
+from app.models import KycProfile, Org, OrgMembership, OrgNumber, ProviderAccount, Role, User
 from app.providers.bandwidth.numbers import BandwidthNumberProviderMixin, _xml_escape
 from app.providers.numbers import AvailableNumber, NumberSearch, OrderResult, parse_cost_cents
 from app.providers.plivo.numbers import PlivoNumberProviderMixin
@@ -895,15 +896,38 @@ async def app_with_number_carrier(engine):
         yield c, fake, application
 
 
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py) - POST /numbers/order refuses with number_checkout_required /
+    account_not_verified otherwise. Mirrors tests/conftest.py's make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
 async def test_order_route_env_carrier_persists_costs_and_leaves_provider_account_null(
-    app_with_number_carrier,
+    app_with_number_carrier, session,
 ):
     """A carrier with NO order_status (unpollable) that reports "pending" keeps the
     pre-P18 routable default (is_active True) - there is no sweeper path that will ever
     resolve it, so marking it inactive would strand the number forever."""
     client, fake, _application = app_with_number_carrier
-    token = await register_and_login(client, "p18-order-env@example.com")
+    email = "p18-order-env@example.com"
+    token = await register_and_login(client, email)
     org = await create_org(client, token, "Org P18 Env")
+    await _approve_kyc(session, org["id"], email)
     headers = auth_headers(token, org["id"])
 
     fake.order_result = OrderResult(
@@ -935,7 +959,7 @@ async def test_order_route_env_carrier_persists_costs_and_leaves_provider_accoun
     assert body["is_active"] is True
 
 
-async def test_order_route_pollable_carrier_pending_result_is_not_active(engine):
+async def test_order_route_pollable_carrier_pending_result_is_not_active(engine, session):
     """The mirror case: a carrier that DOES implement order_status (Bandwidth/Telnyx
     shaped) reporting "pending" is genuinely not yet routable - is_active must be False,
     since the sweeper (services/number_orders.py) can and will resolve it later."""
@@ -946,8 +970,10 @@ async def test_order_route_pollable_carrier_pending_result_is_not_active(engine)
     transport = httpx.ASGITransport(app=application)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        token = await register_and_login(client, "p18-order-pollable@example.com")
+        email = "p18-order-pollable@example.com"
+        token = await register_and_login(client, email)
         org = await create_org(client, token, "Org P18 Pollable")
+        await _approve_kyc(session, org["id"], email)
         headers = auth_headers(token, org["id"])
 
         fake.order_result = OrderResult(
@@ -971,11 +997,13 @@ async def test_order_route_pollable_carrier_pending_result_is_not_active(engine)
 
 
 async def test_order_route_active_result_has_no_order_detail_and_is_active(
-    app_with_number_carrier,
+    app_with_number_carrier, session,
 ):
     client, fake, _application = app_with_number_carrier
-    token = await register_and_login(client, "p18-order-active@example.com")
+    email = "p18-order-active@example.com"
+    token = await register_and_login(client, email)
     org = await create_org(client, token, "Org P18 Active")
+    await _approve_kyc(session, org["id"], email)
     headers = auth_headers(token, org["id"])
 
     fake.order_result = OrderResult(
@@ -1001,14 +1029,16 @@ async def test_order_route_active_result_has_no_order_detail_and_is_active(
 
 
 async def test_order_route_uses_client_supplied_cost_when_carrier_reports_none(
-    app_with_number_carrier,
+    app_with_number_carrier, session,
 ):
     """OrderIn.monthly_cost_cents/setup_cost_cents (the cost row the client selected
     from GET /numbers/available) is used ONLY as a fallback - here the carrier's order
     response reports no cost at all, so the client-supplied figures must be persisted."""
     client, fake, _application = app_with_number_carrier
-    token = await register_and_login(client, "p18-order-fallback@example.com")
+    email = "p18-order-fallback@example.com"
+    token = await register_and_login(client, email)
     org = await create_org(client, token, "Org P18 Fallback")
+    await _approve_kyc(session, org["id"], email)
     headers = auth_headers(token, org["id"])
 
     fake.order_result = OrderResult(
@@ -1037,14 +1067,16 @@ async def test_order_route_uses_client_supplied_cost_when_carrier_reports_none(
 
 
 async def test_order_route_carrier_cost_wins_over_client_supplied_cost(
-    app_with_number_carrier,
+    app_with_number_carrier, session,
 ):
     """The mirror case: when the carrier DOES report a cost, it wins over whatever the
     client sent - a stale search-time quote must never override the carrier's own
     order-time figure."""
     client, fake, _application = app_with_number_carrier
-    token = await register_and_login(client, "p18-order-carrier-wins@example.com")
+    email = "p18-order-carrier-wins@example.com"
+    token = await register_and_login(client, email)
     org = await create_org(client, token, "Org P18 Carrier Wins")
+    await _approve_kyc(session, org["id"], email)
     headers = auth_headers(token, org["id"])
 
     fake.order_result = OrderResult(
@@ -1114,7 +1146,7 @@ async def test_order_route_rejects_oversized_monthly_cost_cents(app_with_number_
 
 
 async def test_order_route_db_backed_carrier_sets_provider_account_id_and_label(
-    engine, monkeypatch
+    engine, session, monkeypatch
 ):
     key = Fernet.generate_key().decode()
     app_settings = make_settings(credentials_master_key=key)
@@ -1122,8 +1154,10 @@ async def test_order_route_db_backed_carrier_sets_provider_account_id_and_label(
     transport = httpx.ASGITransport(app=application)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        token = await register_and_login(client, "p18-order-db@example.com")
+        email = "p18-order-db@example.com"
+        token = await register_and_login(client, email)
         org = await create_org(client, token, "Org P18 DB")
+        await _approve_kyc(session, org["id"], email)
         headers = auth_headers(token, org["id"])
 
         created = await client.post(
@@ -1198,9 +1232,11 @@ async def _add_member_with_role(
 
 async def test_rbac_numbers_manage_gates_order_search_release(app_with_number_carrier, session):
     client, fake, _application = app_with_number_carrier
-    owner_token = await register_and_login(client, "p18-rbac-owner@example.com")
+    owner_email = "p18-rbac-owner@example.com"
+    owner_token = await register_and_login(client, owner_email)
     org = await create_org(client, owner_token, "Org P18 RBAC")
     org_id = uuid.UUID(org["id"])
+    await _approve_kyc(session, org_id, owner_email)
     owner_headers = auth_headers(owner_token, org["id"])
 
     fake.search_result = [
@@ -1253,14 +1289,16 @@ async def test_rbac_numbers_manage_gates_order_search_release(app_with_number_ca
 
 
 async def test_release_via_bandwidth_and_signalwire_mixins_called_by_route(
-    app_with_number_carrier,
+    app_with_number_carrier, session,
 ):
     """Not the mixin unit tests above (those hit the mixin directly) - this proves the
     numbers route's release endpoint actually reaches release_number() on a carrier
     that only implements NumberProvider (no send_message), for both new providers."""
     client, fake, application = app_with_number_carrier
-    token = await register_and_login(client, "p18-release@example.com")
+    email = "p18-release@example.com"
+    token = await register_and_login(client, email)
     org = await create_org(client, token, "Org P18 Release")
+    await _approve_kyc(session, org["id"], email)
     headers = auth_headers(token, org["id"])
 
     for extra_name in ("bandwidth", "signalwire"):

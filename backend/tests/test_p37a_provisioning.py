@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -19,7 +20,7 @@ from cryptography.fernet import Fernet
 from app.db.base import set_org_context
 from app.errors import FeatureUnavailableError
 from app.main import create_app
-from app.models import OrgNumber, ProviderAccount
+from app.models import KycProfile, Org, OrgNumber, ProviderAccount, User
 from app.models.telephony import TelephonyAccount
 from app.services import credentials as credential_svc
 from app.services import credits
@@ -31,10 +32,12 @@ SUB_KEY = "KEY-sub-account-abc123"
 MANAGED_ID = "managed-acct-1"
 PROFILE_ID = "msg-profile-1"
 
-#: telnyx number_mrc (1_000_000) + number_setup (1_000_000), each x the 30% default
-#: traffic markup telephony_billing applies when an org has no explicit rate price.
-NUMBER_MRC = 1_300_000
-NUMBER_SETUP = 1_300_000
+#: commit 14b9341 "feat(billing): phone numbers are $15.00/month" made number_mrc/
+#: number_setup flat PLATFORM_PRICE_MICROS entries (app/services/telephony_billing.py) -
+#: unit_price returns these directly and never reaches the per-carrier rate-card markup
+#: this file used to compute from.
+NUMBER_MRC = 15_000_000
+NUMBER_SETUP = 0
 
 
 # ======================================================================================
@@ -121,10 +124,39 @@ async def http(telnyx: FakeTelnyx):
 async def _org_row(session, name: str = "Managed Org"):
     from app.models import Org
 
-    org = Org(id=uuid.uuid4(), name=name, slug=f"mt-{uuid.uuid4().hex[:16]}")
+    # Migration 0059 (Sep 20) made Org.kyc_required default True for every NEW row -
+    # only orgs that predate open registration are grandfathered to False. A hand-built
+    # row here is about the managed-provisioning service, not business verification (that
+    # is telephony_access.require_telephony_allowed's own concern, covered elsewhere), so
+    # it opts out explicitly the way a pre-existing org would read.
+    org = Org(
+        id=uuid.uuid4(), name=name, slug=f"mt-{uuid.uuid4().hex[:16]}", kyc_required=False
+    )
     session.add(org)
     await session.commit()
     return org
+
+
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py) - telephony_access.require_telephony_allowed (which provision()/order_number()
+    call) refuses with account_not_verified otherwise. Mirrors tests/conftest.py's
+    make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 async def _account(session, org_id) -> TelephonyAccount | None:
@@ -380,7 +412,9 @@ async def test_funded_order_uses_the_sub_account_key_and_charges_the_first_month
 ):
     settings = managed_settings()
     org = await _provisioned_org(session, settings, telnyx)
-    await _enable_prepaid(session, org.id, balance=10_000_000)
+    # Balance must clear NUMBER_MRC + NUMBER_SETUP ($15.00 flat, commit 14b9341) with
+    # headroom to spare.
+    await _enable_prepaid(session, org.id, balance=20_000_000)
 
     async with httpx.AsyncClient(transport=telnyx.transport()) as c:
         number = await provisioning_svc.order_number(
@@ -395,7 +429,7 @@ async def test_funded_order_uses_the_sub_account_key_and_charges_the_first_month
     assert order_calls and order_calls[-1][2] == SUB_KEY
     assert telnyx.last_order_body["messaging_profile_id"] == PROFILE_ID
 
-    assert await credits.balance(session, org.id) == 10_000_000 - NUMBER_MRC - NUMBER_SETUP
+    assert await credits.balance(session, org.id) == 20_000_000 - NUMBER_MRC - NUMBER_SETUP
     # The Inbox rides the same transaction, exactly as api/routes/numbers.py::order does.
     from app.models import Inbox
 
@@ -483,15 +517,17 @@ async def test_routes_are_503_when_the_master_key_is_empty(engine):
             assert "master API key" in r.text
 
 
-async def test_status_never_leaks_a_key_or_a_raw_telnyx_id(engine, telnyx, monkeypatch):
+async def test_status_never_leaks_a_key_or_a_raw_telnyx_id(engine, session, telnyx, monkeypatch):
     settings = managed_settings()
     monkeypatch.setattr(
         provisioning_svc.TelnyxManagedClient, "http", _mock_client_factory(telnyx)
     )
 
     async with await _client(engine, settings) as c:
-        token = await register_and_login(c, "mt-status@example.com")
+        email = "mt-status@example.com"
+        token = await register_and_login(c, email)
         org = await create_org(c, token, "MT Status")
+        await _approve_kyc(session, org["id"], email)
         h = auth_headers(token, org["id"])
 
         r = await c.post("/api/v1/telephony/setup", headers=h)
@@ -508,15 +544,17 @@ async def test_status_never_leaks_a_key_or_a_raw_telnyx_id(engine, telnyx, monke
             assert secret not in raw, f"{secret} leaked into the status response"
 
 
-async def test_org_b_cannot_read_or_order_into_org_a(engine, telnyx, monkeypatch):
+async def test_org_b_cannot_read_or_order_into_org_a(engine, session, telnyx, monkeypatch):
     settings = managed_settings()
     monkeypatch.setattr(
         provisioning_svc.TelnyxManagedClient, "http", _mock_client_factory(telnyx)
     )
 
     async with await _client(engine, settings) as c:
-        token_a = await register_and_login(c, "mt-a@example.com")
+        email_a = "mt-a@example.com"
+        token_a = await register_and_login(c, email_a)
         org_a = await create_org(c, token_a, "MT A")
+        await _approve_kyc(session, org_a["id"], email_a)
         assert (
             await c.post("/api/v1/telephony/setup", headers=auth_headers(token_a, org_a["id"]))
         ).status_code == 200

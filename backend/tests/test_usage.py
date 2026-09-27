@@ -441,7 +441,12 @@ async def test_usage_tick_rolls_up_yesterday_and_today(client, session):
     org_id = await _org_id(client, "us8@example.com", "Org US8")
     now = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
     counts = await usage_svc.usage_tick(session, now=now)
-    assert counts["orgs"] == 2  # one org, rolled up twice (yesterday + today)
+    # Since commit 1fb0006, POST /auth/register (register_and_login, inside _org_id) gives
+    # the new account its OWN individual workspace before the test's explicit create_org
+    # makes a second one - two orgs in the DB, each rolled up twice (yesterday + today).
+    # usage_tick sweeps every org unscoped (rollup_day(session, None, day)), so it is not
+    # just this test's org.
+    assert counts["orgs"] == 4
 
     set_org_context(session, org_id)
     rows = (

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
+import sqlalchemy as sa
+
+from app.db.base import set_org_context
+from app.models import KycProfile, Org, User
 from app.providers.domain import CarrierError, SendResult
 from tests.conftest import auth_headers, create_org, make_org_with_number, register_and_login
 
@@ -159,11 +164,31 @@ async def test_permission_denied_without_inbox_send(app_with_carrier, session):
     assert fake.sent == []
 
 
-async def test_number_is_globally_unique(app_with_carrier):
+async def test_number_is_globally_unique(app_with_carrier, session):
     client, _, _ = app_with_carrier
     await make_org_with_number(client, "u1@example.com", "Org A", OUR)
-    token_b = await register_and_login(client, "u2@example.com")
+    email_b = "u2@example.com"
+    token_b = await register_and_login(client, email_b)
     org_b = await create_org(client, token_b, "Org B")
+    org_b_id = uuid.UUID(org_b["id"])
+    # POST /orgs (create_org) always makes an 'individual' account_type org with
+    # number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    # orgs.py) - POST /numbers refuses with number_checkout_required otherwise, before
+    # ever reaching the duplicate-number check this test is actually about. Mirrors
+    # tests/conftest.py's make_org_with_number.
+    set_org_context(session, org_b_id)
+    org_b_row = await session.get(Org, org_b_id)
+    org_b_row.number_subscription_required = False
+    owner_b = (
+        await session.execute(sa.select(User).where(User.email == email_b))
+    ).scalar_one()
+    profile_b = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_b_id))
+    ).scalar_one()
+    profile_b.status = "approved"
+    profile_b.decided_by = owner_b.id
+    profile_b.decided_at = datetime.now(timezone.utc)
+    await session.commit()
     r = await client.post(
         "/api/v1/numbers", json={"e164": OUR}, headers=auth_headers(token_b, org_b["id"])
     )

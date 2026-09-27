@@ -8,6 +8,7 @@ Do not delete one without killing the mutation it pins.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
@@ -21,11 +22,13 @@ from app.models import (
     DepartmentMember,
     Inbox,
     InboxGrant,
+    KycProfile,
     MessageThread,
     Org,
     OrgMembership,
     OrgNumber,
     Role,
+    User,
 )
 from app.repositories import users as users_repo
 from app.services import contact_visibility
@@ -256,16 +259,38 @@ async def test_owner_policy_by_id_routes_all_404_never_403_or_200(client, sessio
 # ==================================================================================
 # 3. Machine path: /agent/contact/{e164}
 # ==================================================================================
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py) - POST /numbers refuses with number_checkout_required / account_not_verified
+    otherwise. Mirrors tests/conftest.py's make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
 async def _agent_lookup_fixture(client, session, monkeypatch, *, policy, contact_kwargs, phone):
-    owner_token = await register_and_login(
-        client, f"mach-{uuid.uuid4().hex[:8]}@example.com"
-    )
+    owner_email = f"mach-{uuid.uuid4().hex[:8]}@example.com"
+    owner_token = await register_and_login(client, owner_email)
     org = await create_org(client, owner_token, f"Machine {uuid.uuid4().hex[:6]}")
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id, owner_email)
     await _set_policy(client, h_owner, policy)
 
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    added = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added.status_code == 201, added.text
     support = await client.post("/api/v1/departments", json={"name": "Support"}, headers=h_owner)
     sales = await client.post("/api/v1/departments", json={"name": "Sales"}, headers=h_owner)
     support_id = uuid.UUID(support.json()["id"])
@@ -369,13 +394,16 @@ async def test_agent_lookup_sees_unowned_unteamed_contact(client, session, monke
 async def test_agent_lookup_never_honours_read_all(client, session, monkeypatch):
     """A contact that is reachable ONLY via contacts:read_all (owned by a human, in a
     foreign department) must stay hidden from the worker."""
-    owner_token = await register_and_login(client, "mach-readall@example.com")
+    owner_email = "mach-readall@example.com"
+    owner_token = await register_and_login(client, owner_email)
     org = await create_org(client, owner_token, "Machine ReadAll")
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, org["id"])
+    await _approve_kyc(session, org_id, owner_email)
     await _set_policy(client, h_owner, "owner")
 
-    await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    added = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
+    assert added.status_code == 201, added.text
     support = await client.post("/api/v1/departments", json={"name": "Support"}, headers=h_owner)
     sales = await client.post("/api/v1/departments", json={"name": "Sales"}, headers=h_owner)
     support_id = uuid.UUID(support.json()["id"])
@@ -457,11 +485,14 @@ async def test_agent_lookup_never_honours_read_all(client, session, monkeypatch)
 async def test_department_for_inbox_number_ignores_non_department_grants(client, session):
     """The grantee_type == 'department' filter is load-bearing: grantee_id is a bare
     UUID column shared by user and department grants."""
-    owner_token = await register_and_login(client, "grantee-type@example.com")
+    owner_email = "grantee-type@example.com"
+    owner_token = await register_and_login(client, owner_email)
     org = await create_org(client, owner_token, "Grantee Type")
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, org["id"])
-    await client.post("/api/v1/numbers", json={"e164": C}, headers=h_owner)
+    await _approve_kyc(session, org_id, owner_email)
+    added = await client.post("/api/v1/numbers", json={"e164": C}, headers=h_owner)
+    assert added.status_code == 201, added.text
     dept = await client.post("/api/v1/departments", json={"name": "Ghost"}, headers=h_owner)
     dept_id = uuid.UUID(dept.json()["id"])
 

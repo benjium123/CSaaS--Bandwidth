@@ -255,9 +255,9 @@ async def test_alert_is_idempotent_per_number_per_utc_day(org, session):
 # Sweeper tick: per-org commit
 # ==================================================================================
 async def test_reputation_tick_covers_every_org_and_commits_per_org(client, session):
-    token_a, org_a, _ = await make_org_with_number(client, "repA@example.com", "Org A", OUR)
+    token_a, org_a, _ = await make_org_with_number(client, "repa@example.com", "Org A", OUR)
     token_b, org_b, _ = await make_org_with_number(
-        client, "repB@example.com", "Org B", "+12145550101"
+        client, "repb@example.com", "Org B", "+12145550101"
     )
     org_a_id = uuid.UUID(org_a["id"])
     org_b_id = uuid.UUID(org_b["id"])
@@ -301,9 +301,9 @@ async def test_reputation_endpoint_returns_derived_stats(client, session, org):
 
 
 async def test_reputation_endpoint_is_org_scoped(client, session):
-    token_a, org_a, _ = await make_org_with_number(client, "repC@example.com", "Org C", OUR)
+    token_a, org_a, _ = await make_org_with_number(client, "repc@example.com", "Org C", OUR)
     token_b, org_b, _ = await make_org_with_number(
-        client, "repD@example.com", "Org D", "+12145550102"
+        client, "repd@example.com", "Org D", "+12145550102"
     )
 
     await _seed(session, uuid.UUID(org_a["id"]), from_e164=OUR, delivered=10)

@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 from app.db.base import set_org_context
 from app.main import create_app
-from app.models import Message, MonitorSignal, Org, OrgMonitoring, TextVerdict
+from app.models import KycProfile, Message, MonitorSignal, Org, OrgMonitoring, TextVerdict
 from app.services import messaging as messaging_svc
 from app.services import monitor_score, monitor_text
 from tests.conftest import (
@@ -177,6 +177,17 @@ async def test_ai_outage_holds_new_accounts_but_not_established_ones(guard, sess
     token2, org2 = await _org(client, "+15125550101")
     org_row = await session.get(Org, uuid.UUID(org2["id"]))
     org_row.created_at = datetime.now(timezone.utc) - timedelta(days=400)
+    # is_new_account (app/services/monitor_score.py) prefers the KYC decision time over
+    # org.created_at when a profile exists - since commit 1fb0006, make_org_with_number
+    # always sets one to now(), so an "established" org in this test must backdate the
+    # profile's decided_at too, or it is still treated as new regardless of created_at.
+    set_org_context(session, uuid.UUID(org2["id"]))
+    profile = (
+        await session.execute(
+            sa.select(KycProfile).where(KycProfile.org_id == uuid.UUID(org2["id"]))
+        )
+    ).scalar_one()
+    profile.decided_at = org_row.created_at
     await session.commit()
     r = await _send(client, token2, org2, "Your order is ready for pickup today.", from_="+15125550101")
     assert r.status_code == 201

@@ -16,14 +16,15 @@ spending money.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import pytest
 import sqlalchemy as sa
 
-from app.db.base import ALLOW_UNSCOPED_KEY
+from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.main import create_app
-from app.models import OrgNumber
+from app.models import KycProfile, Org, OrgNumber, User
 from app.providers.registry import CarrierRegistry
 from app.services import telephony_billing
 from tests.conftest import FakeCarrier, auth_headers, create_org, register_and_login
@@ -106,12 +107,35 @@ async def _persisted(session, e164: str) -> list[OrgNumber]:
     )
 
 
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py) - POST /numbers and /numbers/order refuse with number_checkout_required /
+    account_not_verified otherwise. Mirrors tests/conftest.py's make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
 async def test_a_telnyx_order_with_a_campaign_id_is_refused_before_any_charge_or_purchase(
     app_with_telnyx_provisioning, session, monkeypatch
 ):
     client, telnyx = app_with_telnyx_provisioning
-    token = await register_and_login(client, "telnyx-order-guard@example.com")
+    email = "telnyx-order-guard@example.com"
+    token = await register_and_login(client, email)
     org = await create_org(client, token, "Org Telnyx Guard")
+    await _approve_kyc(session, org["id"], email)
     h = auth_headers(token, org["id"])
 
     seeded = await client.post("/api/v1/numbers", json={"e164": SEEDED_E164}, headers=h)
@@ -159,7 +183,7 @@ async def test_a_telnyx_order_with_a_campaign_id_is_refused_before_any_charge_or
 
 
 async def test_a_telnyx_order_without_a_campaign_id_is_not_refused_by_the_guard(
-    app_with_telnyx_provisioning,
+    app_with_telnyx_provisioning, session,
 ):
     """The guard is keyed on ``campaign_id``, not on the carrier.
 
@@ -167,8 +191,10 @@ async def test_a_telnyx_order_without_a_campaign_id_is_not_refused_by_the_guard(
     duplicate-number pre-check, which itself runs BEFORE the credit gate and the purchase.
     """
     client, telnyx = app_with_telnyx_provisioning
-    token = await register_and_login(client, "telnyx-no-campaign@example.com")
+    email = "telnyx-no-campaign@example.com"
+    token = await register_and_login(client, email)
     org = await create_org(client, token, "Org Telnyx No Campaign")
+    await _approve_kyc(session, org["id"], email)
     h = auth_headers(token, org["id"])
     seeded = await client.post("/api/v1/numbers", json={"e164": SEEDED_E164}, headers=h)
     assert seeded.status_code == 201, seeded.text

@@ -9,11 +9,12 @@ poll_pending_number_orders / DELETE numbers route with trunk_sync patched out.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.models import Org, OrgNumber
+from app.models import KycProfile, Org, OrgNumber, User
 from app.providers.registry import CarrierRegistry
 from app.services.number_orders import poll_pending_number_orders
 from app.voice_plane import trunk_sync
@@ -335,10 +336,29 @@ async def test_number_order_poll_pending_never_triggers_ensure_number(session, m
 # Hook: DELETE /numbers/{id} (release)
 # ======================================================================================
 async def test_release_route_triggers_remove_number_and_a_failure_does_not_error_response(
-    client, monkeypatch
+    client, session, monkeypatch
 ):
-    token = await register_and_login(client, "p42-release@example.com")
+    email = "p42-release@example.com"
+    token = await register_and_login(client, email)
     org = await create_org(client, token, "P42 Release Org")
+    org_id = uuid.UUID(org["id"])
+    # POST /orgs always makes an 'individual' account_type org with
+    # number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    # orgs.py) - POST /numbers refuses with number_checkout_required otherwise. Mirrors
+    # tests/conftest.py's make_org_with_number.
+    set_org_context(session, org_id)
+    org_row = await session.get(Org, org_id)
+    org_row.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
     h = auth_headers(token, org["id"])
 
     r = await client.post(

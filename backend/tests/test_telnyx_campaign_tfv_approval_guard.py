@@ -9,14 +9,18 @@ Every test drives the real route over an ``httpx.MockTransport`` installed on
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
+from app.db.base import set_org_context
 from app.db.session import get_sessionmaker
 from app.main import create_app
+from app.models import KycProfile, Org, User
 from app.models.numbers import Campaign, TollFreeVerification
-from tests.conftest import TEST_PLATFORM_OPS_TOKEN, make_settings
+from tests.conftest import TEST_PLATFORM_OPS_TOKEN, confirm_registered_email, make_settings
 
 #: Header the operator guard compares against ``settings.platform_ops_token``.
 OPS_HEADER = "X-Platform-Ops-Token"
@@ -79,6 +83,10 @@ async def _register_and_org(client: httpx.AsyncClient, email: str) -> tuple[str,
         json={"email": email, "password": PASSWORD, "full_name": "Tester"},
     )
     assert r.status_code == 201, r.text
+    # Registration now requires confirming the emailed code before anything but
+    # /api/v1/auth/* is reachable (app/auth/deps.py email_verification_required gate,
+    # commit 1fb0006) - unconfirmed, every call below 403s with email_verification_required.
+    await confirm_registered_email(client, email, PASSWORD)
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
     assert r.status_code == 200, r.text
     token = r.json()["access_token"]
@@ -87,6 +95,27 @@ async def _register_and_org(client: httpx.AsyncClient, email: str) -> tuple[str,
     )
     assert r.status_code == 201, r.text
     return token, r.json()
+
+
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py) - POST /numbers refuses with number_checkout_required / account_not_verified
+    otherwise. Mirrors tests/conftest.py's make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 async def _create_campaign(client, application, token: str, org: dict) -> dict:
@@ -104,7 +133,10 @@ async def _create_campaign(client, application, token: str, org: dict) -> dict:
     return r.json()
 
 
-async def _create_tollfree(client, application, token: str, org: dict) -> dict:
+async def _create_tollfree(
+    client, application, session, token: str, org: dict, owner_email: str
+) -> dict:
+    await _approve_kyc(session, org["id"], owner_email)
     h = _headers(application, token, org["id"])
     r = await client.post("/api/v1/numbers", json={"e164": "+18005550100"}, headers=h)
     assert r.status_code == 201, r.text
@@ -206,7 +238,7 @@ async def test_campaign_carrier_confirmed_approval_succeeds(telnyx_app, session)
 async def test_tfv_verified_confirmed_approval_succeeds(telnyx_app, session):
     client, application, install = telnyx_app
     token, org = await _register_and_org(client, "tfv-ok@example.com")
-    tfv = await _create_tollfree(client, application, token, org)
+    tfv = await _create_tollfree(client, application, session, token, org, "tfv-ok@example.com")
     await _seed_ref(session, TollFreeVerification, tfv["id"], TELNYX_REF, org["id"])
     install({"id": TELNYX_REF, "verificationStatus": "Verified"})
     r = await _approve_tfv(client, application, token, org, tfv["id"])
@@ -217,7 +249,7 @@ async def test_tfv_verified_confirmed_approval_succeeds(telnyx_app, session):
 async def test_tfv_status_field_alone_refuses_approval(telnyx_app, session):
     client, application, install = telnyx_app
     token, org = await _register_and_org(client, "tfv-status-only@example.com")
-    tfv = await _create_tollfree(client, application, token, org)
+    tfv = await _create_tollfree(client, application, session, token, org, "tfv-status-only@example.com")
     await _seed_ref(session, TollFreeVerification, tfv["id"], TELNYX_REF, org["id"])
     # ``status`` is NOT the documented toll-free field; only ``verificationStatus``
     # counts, so an unrelated ``status: approved`` must confirm nothing.
@@ -230,7 +262,7 @@ async def test_tfv_status_field_alone_refuses_approval(telnyx_app, session):
 async def test_tfv_mismatched_id_refuses_approval(telnyx_app, session):
     client, application, install = telnyx_app
     token, org = await _register_and_org(client, "tfv-mismatch@example.com")
-    tfv = await _create_tollfree(client, application, token, org)
+    tfv = await _create_tollfree(client, application, session, token, org, "tfv-mismatch@example.com")
     await _seed_ref(session, TollFreeVerification, tfv["id"], TELNYX_REF, org["id"])
     install({"id": OTHER_REF, "verificationStatus": "Verified"})
     r = await _approve_tfv(client, application, token, org, tfv["id"])

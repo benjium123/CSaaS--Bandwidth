@@ -14,12 +14,18 @@ import hmac
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import pytest
+import sqlalchemy as sa
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from app.compliance import telnyx_approval
+from app.db.base import set_org_context
 from app.main import create_app
+from app.models import OrgNumber
+from app.models.numbers import Brand, Campaign
 from app.providers.domain import CarrierError, SendResult
 from app.providers.health import COOLDOWN_SECONDS, FAILURE_THRESHOLD, Breaker
 from app.providers.registry import CarrierRegistry
@@ -50,13 +56,63 @@ async def multi(engine, webhook_settings):
         yield c, registry, bandwidth, telnyx
 
 
-async def _org_with_numbers(client) -> tuple[str, dict]:
-    """One org holding a bandwidth number, a second bandwidth number, and a telnyx one."""
+async def _register_telnyx_campaign(session, org_id, number_e164: str) -> None:
+    """Commit 81df130 "feat(telnyx): enforce carrier-backed registration" made an
+    unregistered Telnyx number a hard refusal (app/compliance/registration.py
+    _local_registration_state's must_register_here) for EVERY send path - explicit
+    carrier, explicit from, and automatic failover alike - not just the ones this test
+    file exercised when it was written (P21, before that commit). Build the same approved,
+    carrier-confirmed campaign a real registration + Telnyx refresh would leave behind, so
+    the Telnyx number here is eligible to send."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    number = (
+        await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == number_e164))
+    ).scalar_one()
+    carrier_ref = f"CR-{uuid.uuid4().hex[:12]}"
+    evidence = telnyx_approval.build_evidence(
+        state=telnyx_approval.STATE_APPROVED,
+        carrier_id=carrier_ref,
+        checked_at=datetime.now(timezone.utc),
+        source=telnyx_approval.SOURCE_STATUS_DECISION,
+    )
+    brand = Brand(id=uuid.uuid4(), name=f"Brand {number_e164}")
+    session.add(brand)
+    await session.flush()
+    campaign = Campaign(
+        id=uuid.uuid4(),
+        brand_id=brand.id,
+        name=f"Campaign {number_e164}",
+        status="approved",
+        carrier_refs={"telnyx": carrier_ref, telnyx_approval.TELNYX_APPROVAL_KEY: evidence},
+    )
+    session.add(campaign)
+    await session.flush()
+    number.campaign_id = campaign.id
+    number.provisioning = {
+        **(number.provisioning or {}),
+        "telnyx_campaign_assignment": {
+            "state": "assigned",
+            "campaign_id": str(campaign.id),
+            "carrier_id": carrier_ref,
+        },
+    }
+    await session.commit()
+
+
+async def _org_with_numbers(client, session=None) -> tuple[str, dict]:
+    """One org holding a bandwidth number, a second bandwidth number, and a telnyx one.
+
+    ``session`` is optional: pass it only for a test that actually sends through the
+    Telnyx number, to register its 10DLC campaign (see ``_register_telnyx_campaign``).
+    """
     token, org, _ = await make_org_with_number(client, "r1@example.com", "Org R", BW)
     h = auth_headers(token, org["id"])
     for e164, carrier in ((BW2, "bandwidth"), (TX, "telnyx")):
         r = await client.post("/api/v1/numbers", json={"e164": e164, "carrier": carrier}, headers=h)
         assert r.status_code == 201, r.text
+    if session is not None:
+        await _register_telnyx_campaign(session, org["id"], TX)
     return token, org
 
 
@@ -69,9 +125,9 @@ async def _set_policy(client, h, **fields) -> dict:
 # ==================================================================================
 # Precedence
 # ==================================================================================
-async def test_explicit_from_pins_its_owning_carrier(multi):
+async def test_explicit_from_pins_its_owning_carrier(multi, session):
     client, _, bandwidth, telnyx = multi
-    token, org = await _org_with_numbers(client)
+    token, org = await _org_with_numbers(client, session)
     h = auth_headers(token, org["id"])
 
     r = await client.post(
@@ -83,9 +139,9 @@ async def test_explicit_from_pins_its_owning_carrier(multi):
     assert bandwidth.sent == []
 
 
-async def test_explicit_carrier_picks_a_number_on_that_carrier(multi):
+async def test_explicit_carrier_picks_a_number_on_that_carrier(multi, session):
     client, _, bandwidth, telnyx = multi
-    token, org = await _org_with_numbers(client)
+    token, org = await _org_with_numbers(client, session)
     h = auth_headers(token, org["id"])
 
     r = await client.post(
@@ -108,9 +164,9 @@ async def test_default_send_uses_the_primary_carrier(multi):
     assert telnyx.sent == []
 
 
-async def test_preference_order_moves_traffic(multi):
+async def test_preference_order_moves_traffic(multi, session):
     client, _, bandwidth, telnyx = multi
-    token, org = await _org_with_numbers(client)
+    token, org = await _org_with_numbers(client, session)
     h = auth_headers(token, org["id"])
 
     await _set_policy(client, h, preference=["telnyx", "bandwidth"])
@@ -119,9 +175,9 @@ async def test_preference_order_moves_traffic(multi):
     assert len(telnyx.sent) == 1, "preference must actually change the carrier"
 
 
-async def test_pinned_carrier_overrides_preference(multi):
+async def test_pinned_carrier_overrides_preference(multi, session):
     client, _, bandwidth, telnyx = multi
-    token, org = await _org_with_numbers(client)
+    token, org = await _org_with_numbers(client, session)
     h = auth_headers(token, org["id"])
 
     await _set_policy(client, h, preference=["bandwidth", "telnyx"], pinned_carrier="telnyx")
@@ -215,9 +271,9 @@ async def test_a_permanent_rejection_is_not_retried_elsewhere(multi):
     assert telnyx.sent == []
 
 
-async def test_cross_carrier_failover_when_opted_in_for_new_outreach(multi):
+async def test_cross_carrier_failover_when_opted_in_for_new_outreach(multi, session):
     client, _, bandwidth, telnyx = multi
-    token, org = await _org_with_numbers(client)
+    token, org = await _org_with_numbers(client, session)
     h = auth_headers(token, org["id"])
     await _set_policy(
         client, h, allow_cross_carrier_failover=True, allow_intra_carrier_failover=False
@@ -266,7 +322,7 @@ async def test_the_carrier_that_sent_is_recorded(multi, session):
     from app.models import Message
 
     client, _, _, telnyx = multi
-    token, org = await _org_with_numbers(client)
+    token, org = await _org_with_numbers(client, session)
     h = auth_headers(token, org["id"])
 
     r = await client.post(

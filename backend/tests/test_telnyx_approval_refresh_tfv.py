@@ -15,12 +15,15 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
 from app.compliance import telnyx_approval
+from app.db.base import set_org_context
 from app.db.session import get_sessionmaker
 from app.main import create_app
+from app.models import KycProfile, Org, User
 from app.models.numbers import TollFreeVerification
-from tests.conftest import TEST_PLATFORM_OPS_TOKEN, make_settings
+from tests.conftest import TEST_PLATFORM_OPS_TOKEN, confirm_registered_email, make_settings
 
 #: Header the operator guard compares against ``settings.platform_ops_token``.
 OPS_HEADER = "X-Platform-Ops-Token"
@@ -92,6 +95,10 @@ async def _register_and_org(client: httpx.AsyncClient, email: str) -> tuple[str,
         json={"email": email, "password": PASSWORD, "full_name": "Tester"},
     )
     assert r.status_code == 201, r.text
+    # Registration now requires confirming the emailed code before anything but
+    # /api/v1/auth/* is reachable (app/auth/deps.py email_verification_required gate,
+    # commit 1fb0006) - unconfirmed, every call below 403s with email_verification_required.
+    await confirm_registered_email(client, email, PASSWORD)
     r = await client.post(
         "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
     )
@@ -104,7 +111,29 @@ async def _register_and_org(client: httpx.AsyncClient, email: str) -> tuple[str,
     return token, r.json()
 
 
-async def _create_tollfree(client, token: str, org: dict) -> dict:
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py) - POST /numbers refuses with number_checkout_required / account_not_verified
+    otherwise. Mirrors tests/conftest.py's make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
+async def _create_tollfree(client, session, token: str, org: dict, owner_email: str) -> dict:
+    await _approve_kyc(session, org["id"], owner_email)
     r = await client.post(
         "/api/v1/numbers",
         json={"e164": "+18005550100"},
@@ -177,7 +206,7 @@ async def _refresh(client, token, org, tfv_id: str):
 async def test_status_approval_records_bound_evidence(telnyx_app, session):
     client, _app, install, _calls = telnyx_app
     token, org = await _register_and_org(client, "tfv-evidence@example.com")
-    tfv = await _create_tollfree(client, token, org)
+    tfv = await _create_tollfree(client, session, token, org, "tfv-evidence@example.com")
     await _seed(session, tfv["id"], {"telnyx": TELNYX_REF}, org["id"])
     install(VERIFIED)
 
@@ -196,7 +225,7 @@ async def test_status_approval_records_bound_evidence(telnyx_app, session):
 async def test_status_replay_conflicts_without_replacing_evidence(telnyx_app, session):
     client, _app, install, _calls = telnyx_app
     token, org = await _register_and_org(client, "tfv-replay@example.com")
-    tfv = await _create_tollfree(client, token, org)
+    tfv = await _create_tollfree(client, session, token, org, "tfv-replay@example.com")
     await _seed(session, tfv["id"], {"telnyx": TELNYX_REF}, org["id"])
     install(VERIFIED)
 
@@ -218,7 +247,7 @@ async def test_status_replay_conflicts_without_replacing_evidence(telnyx_app, se
 async def test_verified_refresh_updates_approved_evidence(telnyx_app, session):
     client, _app, install, _calls = telnyx_app
     token, org = await _register_and_org(client, "tfv-refresh-verified@example.com")
-    tfv = await _create_tollfree(client, token, org)
+    tfv = await _create_tollfree(client, session, token, org, "tfv-refresh-verified@example.com")
     stale = telnyx_approval.build_evidence(
         state=telnyx_approval.STATE_APPROVED,
         carrier_id=TELNYX_REF,
@@ -248,7 +277,7 @@ async def test_verified_refresh_updates_approved_evidence(telnyx_app, session):
 async def test_non_verified_refresh_revokes_evidence(telnyx_app, session):
     client, _app, install, _calls = telnyx_app
     token, org = await _register_and_org(client, "tfv-refresh-revoke@example.com")
-    tfv = await _create_tollfree(client, token, org)
+    tfv = await _create_tollfree(client, session, token, org, "tfv-refresh-revoke@example.com")
     await _seed(session, tfv["id"], {"telnyx": TELNYX_REF}, org["id"], status="approved")
     install({"id": TELNYX_REF, "verificationStatus": "Pending"})
 
@@ -265,7 +294,7 @@ async def test_non_verified_refresh_revokes_evidence(telnyx_app, session):
 async def test_refresh_failures_conflict_and_leave_refs_untouched(telnyx_app, session):
     client, _app, install, _calls = telnyx_app
     token, org = await _register_and_org(client, "tfv-refresh-fail@example.com")
-    tfv = await _create_tollfree(client, token, org)
+    tfv = await _create_tollfree(client, session, token, org, "tfv-refresh-fail@example.com")
     await _seed(session, tfv["id"], {"telnyx": TELNYX_REF}, org["id"], status="approved")
 
     install(error=httpx.ConnectError("carrier unreachable"))
@@ -285,7 +314,7 @@ async def test_refresh_failures_conflict_and_leave_refs_untouched(telnyx_app, se
 async def test_refresh_is_operator_and_compliance_guarded(telnyx_app, session):
     client, _app, install, _calls = telnyx_app
     token, org = await _register_and_org(client, "tfv-guard@example.com")
-    tfv = await _create_tollfree(client, token, org)
+    tfv = await _create_tollfree(client, session, token, org, "tfv-guard@example.com")
     await _seed(session, tfv["id"], {"telnyx": TELNYX_REF}, org["id"])
     install(VERIFIED)
     url = f"/api/v1/registration/tollfree/{tfv['id']}/refresh-telnyx"
@@ -307,7 +336,7 @@ async def test_refresh_is_operator_and_compliance_guarded(telnyx_app, session):
 async def test_carrier_calls_are_get_only(telnyx_app, session):
     client, _app, install, calls = telnyx_app
     token, org = await _register_and_org(client, "tfv-getonly@example.com")
-    tfv = await _create_tollfree(client, token, org)
+    tfv = await _create_tollfree(client, session, token, org, "tfv-getonly@example.com")
     await _seed(session, tfv["id"], {"telnyx": TELNYX_REF}, org["id"])
     install(VERIFIED)
 

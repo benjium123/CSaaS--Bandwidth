@@ -11,11 +11,13 @@ from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import AccountNotVerifiedError, PermissionDeniedError
 from app.models import (
     SUBSCRIPTION_STATUSES,
+    KycProfile,
     Org,
     OrgMembership,
     Plan,
     Role,
     Subscription,
+    User,
     is_entitled,
 )
 from app.repositories import users as users_repo
@@ -51,10 +53,34 @@ async def _post_event(client, monkeypatch, event):
     return r
 
 
-async def _api_org(client, email, name="Subscription Org") -> uuid.UUID:
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with an
+    unapproved KycProfile (app/api/routes/orgs.py) - telephony_access.refusal forces
+    account_not_verified for it regardless of settings.kyc_enforced (is_individual),
+    which would mask every subscription-gate code this file asserts on. Mirrors
+    tests/conftest.py's make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
+async def _api_org(client, session, email, name="Subscription Org") -> uuid.UUID:
     token = await register_and_login(client, email)
     org = await create_org(client, token, name)
-    return uuid.UUID(org["id"])
+    org_id = uuid.UUID(org["id"])
+    await _approve_kyc(session, org_id, email)
+    return org_id
 
 
 async def _seed_plans(session):
@@ -321,7 +347,7 @@ async def test_checkout_requires_authentication(client):
 async def test_checkout_session_completed_creates_active_subscription_and_links_org_plan(
     client, session, monkeypatch
 ):
-    org_id = await _api_org(client, "webhook-active@example.com", "Webhook Active Org")
+    org_id = await _api_org(client, session, "webhook-active@example.com", "Webhook Active Org")
     await _seed_plans(session)
 
     event = _sub_event(
@@ -363,7 +389,7 @@ async def test_checkout_session_completed_creates_active_subscription_and_links_
 async def test_checkout_session_completed_unpaid_is_incomplete(
     client, session, monkeypatch
 ):
-    org_id = await _api_org(client, "webhook-unpaid@example.com", "Webhook Unpaid Org")
+    org_id = await _api_org(client, session, "webhook-unpaid@example.com", "Webhook Unpaid Org")
     await _seed_plans(session)
 
     event = _sub_event(
@@ -393,7 +419,7 @@ async def test_customer_subscription_created_trialing_stores_period_and_plan(
     client, session, monkeypatch
 ):
     org_id = await _api_org(
-        client, "webhook-created@example.com", "Webhook Created Org"
+        client, session, "webhook-created@example.com", "Webhook Created Org"
     )
     await _seed_plans(session)
 
@@ -423,7 +449,7 @@ async def test_customer_subscription_updated_moves_trialing_to_past_due(
     client, session, monkeypatch
 ):
     org_id = await _api_org(
-        client, "webhook-updated@example.com", "Webhook Updated Org"
+        client, session, "webhook-updated@example.com", "Webhook Updated Org"
     )
     await _seed_plans(session)
 
@@ -468,7 +494,7 @@ async def test_customer_subscription_deleted_marks_canceled(
     client, session, monkeypatch
 ):
     org_id = await _api_org(
-        client, "webhook-deleted@example.com", "Webhook Deleted Org"
+        client, session, "webhook-deleted@example.com", "Webhook Deleted Org"
     )
     sub = await _give_subscription(session, org_id, "active")
 
@@ -488,7 +514,7 @@ async def test_invoice_payment_failed_moves_active_to_past_due(
     client, session, monkeypatch
 ):
     org_id = await _api_org(
-        client, "webhook-invoice-failed@example.com", "Webhook Invoice Failed Org"
+        client, session, "webhook-invoice-failed@example.com", "Webhook Invoice Failed Org"
     )
     sub = await _give_subscription(session, org_id, "active")
 
@@ -508,7 +534,7 @@ async def test_invoice_payment_failed_does_not_resurrect_a_canceled_subscription
     client, session, monkeypatch
 ):
     org_id = await _api_org(
-        client,
+        client, session,
         "webhook-invoice-failed-canceled@example.com",
         "Webhook Invoice Failed Canceled Org",
     )
@@ -530,7 +556,7 @@ async def test_the_same_event_id_is_applied_only_once(
     client, session, monkeypatch
 ):
     org_id = await _api_org(
-        client, "webhook-dupe@example.com", "Webhook Duplicate Org"
+        client, session, "webhook-dupe@example.com", "Webhook Duplicate Org"
     )
     sub = await _give_subscription(session, org_id, "active")
 
@@ -566,7 +592,7 @@ async def test_a_different_event_id_does_apply_the_new_status(
     client, session, monkeypatch
 ):
     org_id = await _api_org(
-        client, "webhook-distinct@example.com", "Webhook Distinct Org"
+        client, session, "webhook-distinct@example.com", "Webhook Distinct Org"
     )
     sub = await _give_subscription(session, org_id, "active")
 
@@ -646,7 +672,7 @@ async def test_with_the_flag_off_an_org_with_no_subscription_is_unaffected(
 ):
     """THE REGRESSION PIN: telephony access must remain unchanged when the flag is off."""
     settings = make_settings()
-    org_id = await _api_org(client, "gate-off@example.com", "Gate Off Org")
+    org_id = await _api_org(client, session, "gate-off@example.com", "Gate Off Org")
 
     assert settings.require_subscription_for_telephony is False
 
@@ -656,7 +682,7 @@ async def test_with_the_flag_off_an_org_with_no_subscription_is_unaffected(
 
 async def test_with_the_flag_on_no_subscription_is_refused(client, session):
     settings = make_settings(require_subscription_for_telephony=True)
-    org_id = await _api_org(client, "gate-no-sub@example.com", "Gate No Sub Org")
+    org_id = await _api_org(client, session, "gate-no-sub@example.com", "Gate No Sub Org")
 
     assert (
         await telephony_access.refusal(session, settings, org_id, "sms")
@@ -669,7 +695,7 @@ async def test_with_the_flag_on_a_canceled_subscription_is_refused(
 ):
     settings = make_settings(require_subscription_for_telephony=True)
     org_id = await _api_org(
-        client, "gate-canceled-sub@example.com", "Gate Canceled Sub Org"
+        client, session, "gate-canceled-sub@example.com", "Gate Canceled Sub Org"
     )
     await _give_subscription(session, org_id, "canceled")
 
@@ -682,7 +708,7 @@ async def test_with_the_flag_on_a_canceled_subscription_is_refused(
 async def test_with_the_flag_on_an_active_subscription_passes(client, session):
     settings = make_settings(require_subscription_for_telephony=True)
     org_id = await _api_org(
-        client, "gate-active-sub@example.com", "Gate Active Sub Org"
+        client, session, "gate-active-sub@example.com", "Gate Active Sub Org"
     )
     await _give_subscription(session, org_id, "active")
 
@@ -692,7 +718,7 @@ async def test_with_the_flag_on_an_active_subscription_passes(client, session):
 async def test_the_refusal_is_its_own_code_not_the_kyc_one(client, session):
     settings = make_settings(require_subscription_for_telephony=True)
     org_id = await _api_org(
-        client, "gate-own-code@example.com", "Gate Own Code Org"
+        client, session, "gate-own-code@example.com", "Gate Own Code Org"
     )
 
     with pytest.raises(PermissionDeniedError) as exc_info:
@@ -713,7 +739,7 @@ async def test_the_refusal_is_its_own_code_not_the_kyc_one(client, session):
 async def test_past_due_still_has_access(client, session):
     settings = make_settings(require_subscription_for_telephony=True)
     org_id = await _api_org(
-        client, "gate-past-due@example.com", "Gate Past Due Org"
+        client, session, "gate-past-due@example.com", "Gate Past Due Org"
     )
     await _give_subscription(session, org_id, "past_due")
 
@@ -729,7 +755,7 @@ async def test_cancellation_stops_the_plan_allowance_and_keeps_started_at(
     """Deleting the subscription that owns the plan must stop granting the plan's
     allowances, while the historical anniversary anchor stays put."""
     org_id = await _api_org(
-        client, "reconcile-cancel@example.com", "Reconcile Cancel Org"
+        client, session, "reconcile-cancel@example.com", "Reconcile Cancel Org"
     )
     await _seed_plans(session)
 
@@ -772,7 +798,7 @@ async def test_unpaid_stops_the_plan_allowance(client, session, monkeypatch):
     """A subscription Stripe moves to `unpaid` (dunning exhausted) must stop granting the
     plan's allowances even though the row still exists."""
     org_id = await _api_org(
-        client, "reconcile-unpaid@example.com", "Reconcile Unpaid Org"
+        client, session, "reconcile-unpaid@example.com", "Reconcile Unpaid Org"
     )
     await _seed_plans(session)
 
@@ -821,7 +847,7 @@ async def test_a_remaining_entitled_subscription_keeps_the_org_on_its_plan(
     """When one subscription ends but another still entitles the org, the org must keep a
     valid plan - pointed at the surviving subscription, not cleared."""
     org_id = await _api_org(
-        client, "reconcile-remaining@example.com", "Reconcile Remaining Org"
+        client, session, "reconcile-remaining@example.com", "Reconcile Remaining Org"
     )
     await _seed_plans(session)
 

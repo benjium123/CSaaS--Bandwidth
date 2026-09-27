@@ -23,9 +23,12 @@ from app.models import (
     Contact,
     ContactList,
     ContactListRow,
+    KycProfile,
     Message,
+    Org,
     ProviderAccount,
     ProviderRate,
+    User,
 )
 from app.models.routing import RoutingPolicy
 from app.models.voice import Call
@@ -44,6 +47,7 @@ from tests.conftest import (
     make_org_with_number,
     register_and_login,
 )
+from tests.test_carrier_routing import _register_telnyx_campaign
 from tests.test_voice_webhooks import FakeVoiceCarrier
 
 CONTACT = "+19725559999"
@@ -100,14 +104,57 @@ async def voice_app(engine, webhook_settings):
         yield client, registry, bandwidth, telnyx
 
 
-async def _org(client, email: str, numbers: list[tuple[str, str]]) -> tuple[str, dict]:
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py) - POST /numbers refuses with number_checkout_required / account_not_verified
+    otherwise. Mirrors tests/conftest.py's make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
+async def _org(
+    client, session, email: str, numbers: list[tuple[str, str]]
+) -> tuple[str, dict]:
     token = await register_and_login(client, email)
     org = await create_org(client, token, f"Org {email}")
+    await _approve_kyc(session, org["id"], email)
     h = auth_headers(token, org["id"])
     for e164, carrier in numbers:
         r = await client.post("/api/v1/numbers", json={"e164": e164, "carrier": carrier}, headers=h)
         assert r.status_code == 201, r.text
     return token, org
+
+
+async def _org_with_room_number(
+    client, session, email: str, org_name: str, e164: str
+) -> tuple[str, dict, dict]:
+    """Local stand-in for tests.test_voice_plane.make_org_with_room_number - that helper
+    lives in a test file outside this batch's scope, and it predates the KYC gate the
+    same way conftest's make_org_with_number once did, so it 403s with
+    number_checkout_required unmodified. Same shape, plus the approval step."""
+    token = await register_and_login(client, email)
+    org = await create_org(client, token, org_name)
+    await _approve_kyc(session, org["id"], email)
+    r = await client.post(
+        "/api/v1/numbers",
+        json={"e164": e164, "carrier": "telnyx"},
+        headers=auth_headers(token, org["id"]),
+    )
+    assert r.status_code == 201, r.text
+    return token, org, r.json()
 
 
 # ==================================================================================
@@ -119,10 +166,10 @@ async def test_rank_never_returns_another_orgs_numbers_or_uses_its_rate_card(sms
     not change the answer."""
     client, registry, _carriers = sms_app
     _ta, org_a = await _org(
-        client, "ten-a@example.com", [("+12145550401", "bandwidth"), ("+19725550401", "telnyx")]
+        client, session, "ten-a@example.com", [("+12145550401", "bandwidth"), ("+19725550401", "telnyx")]
     )
     _tb, org_b = await _org(
-        client, "ten-b@example.com", [("+14155550402", "twilio"), ("+13035550402", "bandwidth")]
+        client, session, "ten-b@example.com", [("+14155550402", "twilio"), ("+13035550402", "bandwidth")]
     )
     a_id, b_id = uuid.UUID(org_a["id"]), uuid.UUID(org_b["id"])
 
@@ -165,10 +212,10 @@ async def test_provider_account_suspension_is_scoped_to_the_org_that_suspended_i
 ):
     client, registry, _carriers = sms_app
     _ta, org_a = await _org(
-        client, "ten-c@example.com", [("+12145550403", "bandwidth"), ("+19725550403", "telnyx")]
+        client, session, "ten-c@example.com", [("+12145550403", "bandwidth"), ("+19725550403", "telnyx")]
     )
     _tb, org_b = await _org(
-        client, "ten-d@example.com", [("+12145550404", "bandwidth"), ("+19725550404", "telnyx")]
+        client, session, "ten-d@example.com", [("+12145550404", "bandwidth"), ("+19725550404", "telnyx")]
     )
     a_id, b_id = uuid.UUID(org_a["id"]), uuid.UUID(org_b["id"])
 
@@ -198,7 +245,7 @@ async def test_ranking_reads_no_unmapped_count_shape(sms_app, session, query_cou
     `count(*) FROM <model>` without an org predicate."""
     client, registry, _carriers = sms_app
     _t, org = await _org(
-        client, "ten-e@example.com", [("+12145550405", "bandwidth"), ("+19725550405", "telnyx")]
+        client, session, "ten-e@example.com", [("+12145550405", "bandwidth"), ("+19725550405", "telnyx")]
     )
     org_id = uuid.UUID(org["id"])
     set_org_context(session, org_id)
@@ -237,7 +284,7 @@ async def test_ranking_is_identical_across_20_calls_and_ties_break_by_provider_n
 ):
     client, registry, _carriers = sms_app
     _t, org = await _org(
-        client,
+        client, session,
         "det@example.com",
         [
             ("+19725550501", "telnyx"),
@@ -297,8 +344,9 @@ async def test_reply_send_penalises_but_keeps_a_breached_number(sms_app, session
     below the clean one."""
     client, registry, _carriers = sms_app
     bad, clean = "+12145550601", "+19725550601"
-    token, org = await _org(client, "rep-a@example.com", [(bad, "bandwidth"), (clean, "telnyx")])
+    token, org = await _org(client, session, "rep-a@example.com", [(bad, "bandwidth"), (clean, "telnyx")])
     org_id = uuid.UUID(org["id"])
+    await _register_telnyx_campaign(session, org_id, clean)
     await _breach_number(client, session, token, org_id, bad)
 
     set_org_context(session, org_id)
@@ -463,8 +511,9 @@ async def test_sms_pin_first_and_walk_stops_after_the_pin_unless_cross_is_on(
     pinned_num = "+12145550700" if cross else "+12145550701"
     other_num = "+19725550700" if cross else "+19725550701"
     email = f"pin-sms-{int(cross)}@example.com"
-    _t, org = await _org(client, email, [(pinned_num, "bandwidth"), (other_num, "telnyx")])
+    _t, org = await _org(client, session, email, [(pinned_num, "bandwidth"), (other_num, "telnyx")])
     org_id = uuid.UUID(org["id"])
+    await _register_telnyx_campaign(session, org_id, other_num)
     policy = await _pin(session, org_id, carrier="bandwidth", cross=cross)
 
     set_org_context(session, org_id)
@@ -495,7 +544,7 @@ async def test_voice_pin_walk_stops_after_the_pin_unless_cross_is_on(voice_app, 
     pinned_num = "+12145550710" if cross else "+12145550711"
     other_num = "+19725550710" if cross else "+19725550711"
     email = f"pin-voice-{int(cross)}@example.com"
-    token, org = await _org(client, email, [(pinned_num, "bandwidth"), (other_num, "telnyx")])
+    token, org = await _org(client, session, email, [(pinned_num, "bandwidth"), (other_num, "telnyx")])
     org_id = uuid.UUID(org["id"])
     await _pin(session, org_id, carrier="bandwidth", cross=cross)
 
@@ -524,7 +573,7 @@ async def test_voice_pin_walk_stops_after_the_pin_unless_cross_is_on(voice_app, 
 # ==================================================================================
 async def test_policy_patch_422_leaves_the_row_byte_identical(sms_app, session):
     client, _registry, _carriers = sms_app
-    token, org = await _org(client, "policy@example.com", [("+12145550800", "bandwidth")])
+    token, org = await _org(client, session, "policy@example.com", [("+12145550800", "bandwidth")])
     org_id = uuid.UUID(org["id"])
     h = auth_headers(token, org_id)
 
@@ -574,9 +623,10 @@ async def test_sms_route_reason_is_plain_and_names_only_dialled_providers(sms_ap
     client, registry, carriers = sms_app
     first, second = "+12145550900", "+19725550900"
     token, org = await _org(
-        client, "reason@example.com", [(first, "bandwidth"), (second, "telnyx")]
+        client, session, "reason@example.com", [(first, "bandwidth"), (second, "telnyx")]
     )
     org_id = uuid.UUID(org["id"])
+    await _register_telnyx_campaign(session, org_id, second)
     h = auth_headers(token, org_id)
 
     from app.providers.domain import SendResult
@@ -668,7 +718,6 @@ async def test_room_call_reason_is_derived_and_the_column_stays_null(session):
     from tests.test_voice_plane import (
         default_lk_handler,
         make_livekit_settings,
-        make_org_with_room_number,
         mock_livekit_client,
     )
     from tests.test_voice_webhooks import install_voice_carrier
@@ -686,8 +735,8 @@ async def test_room_call_reason_is_derived_and_the_column_stays_null(session):
     )
     transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        token, org, _ = await make_org_with_room_number(
-            client, "p21-room@example.com", "Org Room", "+12145551000"
+        token, org, _ = await _org_with_room_number(
+            client, session, "p21-room@example.com", "Org Room", "+12145551000"
         )
         h = auth_headers(token, org["id"])
         r = await client.post("/api/v1/calls", json={"to": CONTACT, "via": "room"}, headers=h)
@@ -878,7 +927,7 @@ async def test_invalid_request_on_a_real_voice_dial_stops_the_walk_and_leaves_br
     """The adapter taxonomy wired all the way through the real dial path."""
     client, registry, bandwidth, telnyx = voice_app
     token, org = await _org(
-        client, "walkstop@example.com", [("+12145551200", "bandwidth"), ("+19725551200", "telnyx")]
+        client, session, "walkstop@example.com", [("+12145551200", "bandwidth"), ("+19725551200", "telnyx")]
     )
     bandwidth.scripted_results = [
         CreateCallResult("rejected", None, "Invalid request",
@@ -910,7 +959,7 @@ async def test_rank_routes_binds_the_org_itself_before_reading_the_policy(
 
     client, registry, _carriers = sms_app
     _t, org = await _org(
-        client, "ctx@example.com", [("+12145551300", "bandwidth"), ("+19725551300", "telnyx")]
+        client, session, "ctx@example.com", [("+12145551300", "bandwidth"), ("+19725551300", "telnyx")]
     )
     org_id = uuid.UUID(org["id"])
 
@@ -937,7 +986,7 @@ async def test_rank_routes_binds_the_org_itself_before_reading_the_policy(
 async def test_timeline_message_event_carries_the_stored_route_reason(sms_app, session):
     client, _registry, carriers = sms_app
     ours = "+12145551400"
-    token, org = await _org(client, "tl-msg@example.com", [(ours, "bandwidth")])
+    token, org = await _org(client, session, "tl-msg@example.com", [(ours, "bandwidth")])
     org_id = uuid.UUID(org["id"])
     h = auth_headers(token, org_id)
 
@@ -971,7 +1020,6 @@ async def test_timeline_room_call_event_shows_the_trunk_sentence_with_a_null_col
     from tests.test_voice_plane import (
         default_lk_handler,
         make_livekit_settings,
-        make_org_with_room_number,
         mock_livekit_client,
     )
     from tests.test_voice_webhooks import install_voice_carrier
@@ -990,8 +1038,8 @@ async def test_timeline_room_call_event_shows_the_trunk_sentence_with_a_null_col
     ours = "+12145551401"
     transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        token, org, _ = await make_org_with_room_number(
-            client, "tl-room@example.com", "Org TL Room", ours
+        token, org, _ = await _org_with_room_number(
+            client, session, "tl-room@example.com", "Org TL Room", ours
         )
         h = auth_headers(token, org["id"])
         r = await client.post("/api/v1/calls", json={"to": CONTACT, "via": "room"}, headers=h)

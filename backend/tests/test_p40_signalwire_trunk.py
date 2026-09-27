@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
 from app.db.base import set_org_context
 from app.events.bus import EventBus
 from app.main import create_app
-from app.models import Call
+from app.models import Call, KycProfile, Org, User
 from app.voice_plane import service as voice_service
 from app.voice_plane.livekit_api import LiveKitApi
 from tests.conftest import (
@@ -47,9 +49,33 @@ async def _no_leaked_dial_tasks():
     await voice_service.wait_for_pending_dial_tasks()
 
 
-async def _org_with_numbers(client, email: str, numbers: dict[str, str]) -> tuple[str, dict]:
+async def _approve_kyc(session, org_id, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py) - POST /numbers refuses with number_checkout_required / account_not_verified
+    otherwise. Mirrors tests/conftest.py's make_org_with_number."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    org = await session.get(Org, org_uuid)
+    org.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == owner_email))
+    ).scalar_one()
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_uuid))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
+async def _org_with_numbers(
+    client, session, email: str, numbers: dict[str, str]
+) -> tuple[str, dict]:
     token = await register_and_login(client, email)
     org = await create_org(client, token, f"Org {email}")
+    await _approve_kyc(session, org["id"], email)
     for e164, carrier in numbers.items():
         r = await client.post(
             "/api/v1/numbers",
@@ -115,7 +141,7 @@ async def test_start_room_call_from_a_signalwire_number_dials_the_signalwire_tru
     client, session
 ):
     _token, org = await _org_with_numbers(
-        client, "p40-unit@example.com", {SW_NUMBER: "signalwire", TX_NUMBER: "telnyx"}
+        client, session, "p40-unit@example.com", {SW_NUMBER: "signalwire", TX_NUMBER: "telnyx"}
     )
     org_id = uuid.UUID(org["id"])
     requests: list[httpx.Request] = []
@@ -153,10 +179,10 @@ async def test_start_room_call_from_a_signalwire_number_dials_the_signalwire_tru
     [{"livekit_sip_outbound_trunk_id": "", "livekit_sip_signalwire_trunk_id": "trunk-sw"}],
     indirect=True,
 )
-async def test_a_signalwire_only_deploy_can_place_a_room_call(room_app):
+async def test_a_signalwire_only_deploy_can_place_a_room_call(room_app, session):
     client, requests = room_app
     token, org = await _org_with_numbers(
-        client, "p40-route1@example.com", {TX_NUMBER: "bandwidth", SW_NUMBER: "signalwire"}
+        client, session, "p40-route1@example.com", {TX_NUMBER: "bandwidth", SW_NUMBER: "signalwire"}
     )
     h = auth_headers(token, org["id"])
 
@@ -176,10 +202,10 @@ async def test_a_signalwire_only_deploy_can_place_a_room_call(room_app):
     [{"livekit_sip_outbound_trunk_id": "", "livekit_sip_signalwire_trunk_id": "trunk-sw"}],
     indirect=True,
 )
-async def test_softphone_token_is_available_with_only_the_signalwire_trunk(room_app):
+async def test_softphone_token_is_available_with_only_the_signalwire_trunk(room_app, session):
     client, _requests = room_app
     token, org = await _org_with_numbers(
-        client, "p40-route2@example.com", {SW_NUMBER: "signalwire"}
+        client, session, "p40-route2@example.com", {SW_NUMBER: "signalwire"}
     )
     h = auth_headers(token, org["id"])
     r = await client.post("/api/v1/softphone/token", json={"room": "call-anything"}, headers=h)
@@ -190,10 +216,10 @@ async def test_softphone_token_is_available_with_only_the_signalwire_trunk(room_
 @pytest.mark.parametrize(
     "room_app", [{"livekit_sip_signalwire_trunk_id": "trunk-sw"}], indirect=True
 )
-async def test_explicit_from_on_a_carrier_without_a_trunk_is_refused(room_app):
+async def test_explicit_from_on_a_carrier_without_a_trunk_is_refused(room_app, session):
     client, requests = room_app
     token, org = await _org_with_numbers(
-        client, "p40-route3@example.com", {TX_NUMBER: "bandwidth"}
+        client, session, "p40-route3@example.com", {TX_NUMBER: "bandwidth"}
     )
     h = auth_headers(token, org["id"])
 
@@ -213,7 +239,7 @@ async def test_inbound_room_call_on_a_signalwire_number_is_recorded_as_signalwir
     room_app, session
 ):
     client, _requests = room_app
-    await _org_with_numbers(client, "p40-in@example.com", {SW_NUMBER: "signalwire"})
+    await _org_with_numbers(client, session, "p40-in@example.com", {SW_NUMBER: "signalwire"})
 
     event = sip_event(
         "participant_joined",
