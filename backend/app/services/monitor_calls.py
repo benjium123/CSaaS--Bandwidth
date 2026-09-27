@@ -55,7 +55,6 @@ from app.services import ai_guard, monitor_score, monitor_text
 log = structlog.get_logger("monitor_calls")
 
 MONITOR_AGENT_NAME_DEFAULT = "call-monitor"
-DEEPGRAM_URL = "https://api.deepgram.com/v1/listen"
 REVIEW_DELAY = timedelta(minutes=2)
 TICK_BUDGET_SECONDS = 90
 #: Reviews wait for the night window (transcription.in_night_window), so allow a day and a half.
@@ -190,31 +189,6 @@ async def _segments(session: AsyncSession, call_id: uuid.UUID) -> list[CallTrans
         .scalars()
         .all()
     )
-
-
-def _utterances_to_segments(call: Call, payload: dict) -> list[tuple[str, str, int]]:
-    """Deepgram diarized utterances -> (role, text, at_ms). On an outbound call the first
-    voice is almost always the person answering ("Hello?"), so that speaker is "user"."""
-    utterances = (payload.get("results") or {}).get("utterances") or []
-    if not utterances:
-        alt = (
-            ((payload.get("results") or {}).get("channels") or [{}])[0].get("alternatives") or [{}]
-        )[0]
-        text = (alt.get("transcript") or "").strip()
-        return [("agent", text, 0)] if text else []
-    first_speaker = utterances[0].get("speaker")
-    out = []
-    for u in utterances:
-        text = (u.get("transcript") or "").strip()
-        if not text:
-            continue
-        is_first = u.get("speaker") == first_speaker
-        if call.direction == "outbound":
-            role = "user" if is_first else "agent"
-        else:
-            role = "agent" if is_first else "user"
-        out.append((role, text, int(float(u.get("start") or 0) * 1000)))
-    return out
 
 
 class _SttFailed(Exception):
@@ -354,30 +328,6 @@ async def transcribe_recording(
     rows.sort(key=lambda r: r.at_ms)
     await agent_svc.upsert_transcript_segments(session, call, rows)
     return "done"
-
-
-async def _meter_deepgram(session: AsyncSession, call: Call, resp, *, side: str) -> None:  # noqa: ANN001
-    """Record one Deepgram request as OUR cost (source "platform": never charged to the
-    customer, shows in the P&L). Deepgram bills every 200, even if we fail to parse it."""
-    from app.services import ai_usage
-
-    try:
-        seconds = float(((resp.json() or {}).get("metadata") or {}).get("duration") or 0)
-    except ValueError:
-        seconds = 0.0
-    try:
-        await ai_usage.record(
-            session,
-            call.org_id,
-            provider="deepgram",
-            kind="stt",
-            metric="stt_seconds",
-            quantity=max(1, math.ceil(seconds)),
-            source="platform",
-            idempotency_key=f"monitor-stt:{call.id}:{side}",
-        )
-    except Exception:  # noqa: BLE001 - metering must never break the review
-        log.warning("monitor_transcribe_meter_failed", call_id=str(call.id))
 
 
 async def _transcribe_sides(

@@ -311,24 +311,3 @@ async def test_transcribe_sides_labels_roles_and_offsets(
     assert rows == [("agent", "hi there", 500), ("user", "hello", 1500)]
 
 
-@pytest.mark.asyncio
-async def test_monitor_deepgram_request_is_metered_as_platform_cost(session, mon_settings):
-    """Each Deepgram 200 in the safety review is OUR cost: source "platform", price 0."""
-    from app.models import AiUsageEvent
-
-    org_id = await _org(session)
-    call = await _finished_call(session, org_id)
-    set_org_context(session, org_id)
-    resp = httpx.Response(200, json={"metadata": {"duration": 12.3}})
-
-    await monitor_calls._meter_deepgram(session, call, resp, side="agent")
-    await monitor_calls._meter_deepgram(session, call, resp, side="agent")  # same key: once
-    await session.commit()
-
-    rows = (await session.execute(sa.select(AiUsageEvent))).scalars().all()
-    assert len(rows) == 1
-    assert rows[0].source == "platform"
-    assert rows[0].provider == "deepgram"
-    assert rows[0].quantity == 13
-    assert rows[0].price_micros == 0
-    assert rows[0].idempotency_key == f"monitor-stt:{call.id}:agent"
