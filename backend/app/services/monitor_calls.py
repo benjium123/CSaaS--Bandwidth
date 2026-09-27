@@ -24,6 +24,7 @@ carrier spam flags.
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 import uuid
@@ -263,6 +264,7 @@ async def transcribe_recording(
             # 429/5xx are worth retrying; any other 4xx will fail the same way every time.
             retryable = resp.status_code in (408, 429) or resp.status_code >= 500
             return "failed" if retryable else "rejected"
+        await _meter_deepgram(session, call, resp, side="mixed")
         payload = resp.json()
     except (httpx.HTTPError, ValueError):
         return "failed"
@@ -277,6 +279,30 @@ async def transcribe_recording(
     rows = [_Seg(*s) for s in _utterances_to_segments(call, payload)]
     await agent_svc.upsert_transcript_segments(session, call, rows)
     return "done"
+
+
+async def _meter_deepgram(session: AsyncSession, call: Call, resp, *, side: str) -> None:  # noqa: ANN001
+    """Record one Deepgram request as OUR cost (source "platform": never charged to the
+    customer, shows in the P&L). Deepgram bills every 200, even if we fail to parse it."""
+    from app.services import ai_usage
+
+    try:
+        seconds = float(((resp.json() or {}).get("metadata") or {}).get("duration") or 0)
+    except ValueError:
+        seconds = 0.0
+    try:
+        await ai_usage.record(
+            session,
+            call.org_id,
+            provider="deepgram",
+            kind="stt",
+            metric="stt_seconds",
+            quantity=max(1, math.ceil(seconds)),
+            source="platform",
+            idempotency_key=f"monitor-stt:{call.id}:{side}",
+        )
+    except Exception:  # noqa: BLE001 - metering must never break the review
+        log.warning("monitor_transcribe_meter_failed", call_id=str(call.id))
 
 
 async def _transcribe_sides(
@@ -312,7 +338,7 @@ async def _transcribe_sides(
     owns = client is None
     client = client or httpx.AsyncClient(timeout=120.0)
     try:
-        for side, data, offset_ms in sides:
+        for part, (side, data, offset_ms) in enumerate(sides):
             resp = await client.post(
                 DEEPGRAM_URL,
                 params={"model": "nova-2", "smart_format": "true", "utterances": "true"},
@@ -322,6 +348,8 @@ async def _transcribe_sides(
             if resp.status_code >= 400:
                 retryable = resp.status_code in (408, 429) or resp.status_code >= 500
                 return "failed" if retryable else "rejected"
+            # A recorder restart splits a side into parts: each part is its own request.
+            await _meter_deepgram(session, call, resp, side=side if part < 2 else f"{side}:{part}")
             role = "user" if side == "customer" else "agent"
             for u in (resp.json().get("results") or {}).get("utterances") or []:
                 text = str(u.get("transcript") or "").strip()
