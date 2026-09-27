@@ -373,6 +373,10 @@ async def make_org_with_number(
         setup_session.info["org_id"] = uuid.UUID(org["id"])
         workspace = await setup_session.get(Org, uuid.UUID(org["id"]))
         workspace.number_subscription_required = False
+        # Individual accounts text only from a number with an approved 10DLC registration
+        # (compliance/registration.py, tests/test_individual_10dlc_gate.py); these fixtures
+        # model a business customer so they can send without registering first.
+        workspace.account_type = "business"
         owner = (
             await setup_session.execute(sa.select(User).where(User.email == email))
         ).scalar_one()

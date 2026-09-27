@@ -113,6 +113,8 @@ async def _approve_kyc(session, org_id, owner_email: str) -> None:
     set_org_context(session, org_uuid)
     org = await session.get(Org, org_uuid)
     org.number_subscription_required = False
+    # Individual accounts need an approved 10DLC registration to text; as in conftest.
+    org.account_type = "business"
     owner = (
         await session.execute(sa.select(User).where(User.email == owner_email))
     ).scalar_one()

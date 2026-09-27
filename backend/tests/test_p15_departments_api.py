@@ -75,6 +75,8 @@ async def _approve_kyc(session, org_id: uuid.UUID) -> None:
     set_org_context(session, org_id)
     org = await session.get(Org, org_id)
     org.number_subscription_required = False
+    # Individual accounts need an approved 10DLC registration to text; as in conftest.
+    org.account_type = "business"
     profile = (
         await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
     ).scalar_one()

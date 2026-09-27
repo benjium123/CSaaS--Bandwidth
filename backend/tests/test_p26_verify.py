@@ -521,6 +521,8 @@ async def test_probe5_first_response_stamped_once_and_not_by_bulk_or_ai(
     set_org_context(session, org_id)
     org_row = await session.get(Org, org_id)
     org_row.number_subscription_required = False
+    # Individual accounts need an approved 10DLC registration to text; as in conftest.
+    org_row.account_type = "business"
     owner_user = await users_repo.get_by_email(session, "v5a@example.com")
     profile = (
         await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
