@@ -154,7 +154,9 @@ export interface ConsoleOrgDetail {
 
 export interface ConsolePrice {
   metric: string;
-  price_micros: number;
+  /** null = unset: a per-minute feature price not set yet (meters at $0, ops alert open). */
+  price_micros: number | null;
+  unset?: boolean;
   default_micros: number | null;
   note: string | null;
   updated_at: string | null;
@@ -426,7 +428,7 @@ const PRICE_UNIT_LABELS: Record<string, string> = {
  * per-provider variants), so they are matched by prefix rather than listed one by one. */
 export function priceUnitLabel(metric: string): string {
   if (metric in PRICE_UNIT_LABELS) return PRICE_UNIT_LABELS[metric];
-  if (metric.startsWith("voice_min_")) return "per minute";
+  if (metric.startsWith("voice_min_") || metric.endsWith("_min")) return "per minute";
   if (metric.startsWith("fax_page_")) return "per page";
   return "";
 }

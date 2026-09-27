@@ -848,14 +848,16 @@ function PriceRow({ price }: { price: ConsolePrice }): JSX.Element {
   const { api } = useAuth();
   const update = useUpdateConsolePrice(api);
   const [editing, setEditing] = React.useState(false);
-  const [value, setValue] = React.useState(() => priceMicrosToDollarsString(price.price_micros));
+  const [value, setValue] = React.useState(() =>
+    price.price_micros === null ? "" : priceMicrosToDollarsString(price.price_micros),
+  );
   const [note, setNote] = React.useState(price.note ?? "");
 
   const parsedMicros = priceDollarsStringToMicros(value);
   const valid = parsedMicros !== null;
 
   function startEdit() {
-    setValue(priceMicrosToDollarsString(price.price_micros));
+    setValue(price.price_micros === null ? "" : priceMicrosToDollarsString(price.price_micros));
     setNote(price.note ?? "");
     setEditing(true);
   }
@@ -881,6 +883,13 @@ function PriceRow({ price }: { price: ConsolePrice }): JSX.Element {
             onChange={(e) => setValue(e.target.value)}
             className="w-28"
           />
+        ) : price.price_micros === null ? (
+          <span
+            className="rounded bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
+            title="No price set: usage is charged $0 and an alert is open in Alerts"
+          >
+            Unset
+          </span>
         ) : (
           `$${priceMicrosToDollarsString(price.price_micros)}`
         )}

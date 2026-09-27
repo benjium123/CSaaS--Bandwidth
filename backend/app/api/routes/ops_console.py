@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.deps import OperatorContext, require_operator_permission
 from app.db.base import set_org_context
-from app.errors import NotFoundError, ValidationFailedError
+from app.errors import ConflictError, NotFoundError, ValidationFailedError
 from app.models import FixedCost, Org, PlatformPrice
 from app.services import console
 
@@ -91,18 +91,20 @@ async def console_payments(op: Reader, start: Start = None, end: End = None) -> 
 
 @router.get("/prices")
 async def console_prices(op: Reader) -> dict:
-    from app.services.telephony_billing import PLATFORM_PRICE_MICROS
+    from app.services.telephony_billing import PLATFORM_PRICE_MICROS, PRICED_METRICS
 
     rows = {
         r.metric: r for r in (await op.session.execute(sa.select(PlatformPrice))).scalars()
     }
     out = []
-    for metric in sorted(set(PLATFORM_PRICE_MICROS) | set(rows)):
+    for metric in sorted(set(PLATFORM_PRICE_MICROS) | set(PRICED_METRICS) | set(rows)):
         r = rows.get(metric)
         out.append(
             {
                 "metric": metric,
-                "price_micros": int(r.price_micros) if r else PLATFORM_PRICE_MICROS[metric],
+                # None = unset (a per-minute feature metric with no price yet: meters at $0).
+                "price_micros": int(r.price_micros) if r else PLATFORM_PRICE_MICROS.get(metric),
+                "unset": r is None and metric in PRICED_METRICS,
                 "default_micros": PLATFORM_PRICE_MICROS.get(metric),
                 "note": r.note if r else None,
                 "updated_at": r.updated_at.isoformat() if r and r.updated_at else None,
@@ -118,12 +120,13 @@ class PriceIn(BaseModel):
 
 @router.put("/prices/{metric}")
 async def console_set_price(metric: str, payload: PriceIn, op: Billing) -> dict:
-    from app.services.telephony_billing import PLATFORM_PRICE_MICROS
+    from app.services import price_alerts
+    from app.services.telephony_billing import PLATFORM_PRICE_MICROS, PRICED_METRICS
 
-    if metric not in PLATFORM_PRICE_MICROS:
+    if metric not in PLATFORM_PRICE_MICROS and metric not in PRICED_METRICS:
         raise ValidationFailedError(f"Unknown price: {metric}")
     row = await op.session.get(PlatformPrice, metric)
-    old = int(row.price_micros) if row else PLATFORM_PRICE_MICROS[metric]
+    old = int(row.price_micros) if row else PLATFORM_PRICE_MICROS.get(metric)
     if row is None:
         row = PlatformPrice(metric=metric, price_micros=payload.price_micros)
         op.session.add(row)
@@ -141,6 +144,7 @@ async def console_set_price(metric: str, payload: PriceIn, op: Billing) -> dict:
         new_micros=payload.price_micros,
         operator_user_id=str(op.user.id),
     )
+    await price_alerts.resolve(op.session, metric, actor_user_id=op.user.id)
     await op.session.commit()
     return {"metric": metric, "price_micros": payload.price_micros, "previous_micros": old}
 
@@ -201,6 +205,18 @@ async def console_set_org_feature(
         raise ValidationFailedError(f"Unknown feature: {key}")
     await _org_or_404(op, org_id)
     before = await entitlements.has(op.session, org_id, key)
+    metric = entitlements.CATALOG[key].price_metric
+    if payload.enabled and not before and metric and payload.price_override_micros is None:
+        from app.services import price_alerts
+
+        if await price_alerts.is_unset(op.session, metric):
+            if key in price_alerts.BLOCK_ENABLE_WHEN_UNSET:
+                raise ConflictError(
+                    f"Set the {metric} price before switching this on", code="price_unset"
+                )
+            await price_alerts.raise_unset(
+                op.session, metric, org_id=org_id, reason="feature_enabled"
+            )
     await entitlements.set_feature(
         op.session,
         org_id,

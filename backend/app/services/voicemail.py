@@ -167,6 +167,19 @@ async def transcribe_pending(
             ok = await _transcribe_one(
                 session, store, client, deepgram_api_key, voicemail, recording
             )
+            if ok:
+                # Voicemail transcript minutes at transcription_min (P46 P2b).
+                from app.services import telephony_billing
+
+                await telephony_billing.charge_feature_minutes(
+                    session,
+                    voicemail.org_id,
+                    "transcription_min",
+                    recording.duration_seconds or 0,
+                    reference=f"vmstt:{voicemail.id}",
+                    note=f"{recording.duration_seconds or 0}s voicemail transcript",
+                    feature="voicemail_transcription",
+                )
             await session.commit()
             counts["done" if ok else "failed"] += 1
     finally:

@@ -167,4 +167,11 @@ async def hourly(settings, app_state=None) -> dict:  # noqa: ANN001
             )
     except Exception:
         log.exception("billing_ops.thresholds_failed")
+    try:
+        from app.services import price_alerts
+
+        async with get_sessionmaker()() as session:
+            results["prices_unset"] = await price_alerts.sweep(session)
+    except Exception:
+        log.exception("billing_ops.price_unset_sweep_failed")
     return results

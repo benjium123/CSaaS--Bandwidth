@@ -382,6 +382,19 @@ async def finalize_tick(
             row.duration_seconds = duration_seconds(parts_meta)
             row.status = "stored"
 
+            # Recording minutes, once per call (P46 P2b): $0 + a price_unset alert while unset.
+            from app.services import telephony_billing
+
+            await telephony_billing.charge_feature_minutes(
+                session,
+                row.org_id,
+                "recording_min",
+                row.duration_seconds or 0,
+                reference=f"rec:{row.id}",
+                note=f"{row.duration_seconds or 0}s call recording",
+                feature="call_recording",
+            )
+
             if not (call.extra or {}).get("monitor"):
                 for _, key, _, _ in parts_meta:
                     try:

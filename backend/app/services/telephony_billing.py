@@ -77,6 +77,15 @@ PLATFORM_PRICE_MICROS: dict[str, int] = {
     "mms_bundle": 3_000_000,
     "voice_bundle": 10_000_000,
 }
+#: Per-minute feature prices with NO compiled default (P46 P2b). Until ops sets a
+#: ``platform_prices`` row the metric is UNSET: usage meters at $0 and one price_unset
+#: alert stays open (services/price_alerts.py). Maps each metric to the features it bills.
+PRICED_METRICS: dict[str, tuple[str, ...]] = {
+    "recording_min": ("call_recording",),
+    "transcription_min": ("call_transcription", "voicemail_transcription"),
+}
+#: ``provider`` for platform features billed per minute (no carrier involved).
+FEATURE_PROVIDER = "platform"
 #: An inbound call is billed from arrival (LiveKit builds the room as soon as it rings),
 #: with this minimum even when nobody answers.
 INBOUND_MIN_SECONDS = 60
@@ -177,6 +186,11 @@ async def list_unit_price(
     ).first()
     if row is not None and row.price_micros is not None:
         return int(row.price_micros)
+    if metric in PRICED_METRICS:
+        from app.models import PlatformPrice
+
+        priced = await session.get(PlatformPrice, metric)
+        return int(priced.price_micros) if priced is not None else 0
     if metric in PLATFORM_PRICE_MICROS:
         return await platform_price(session, metric)
     cost, _is_override, is_known = await spend.resolve_rate(session, provider, metric)
@@ -791,6 +805,17 @@ async def bill_finished_calls(session: AsyncSession, *, now: datetime | None = N
                     note=f"{seconds}s {call.direction} call",
                     discount_micros=listed - price,
                 )
+            if (call.extra or {}).get("live_captions"):
+                # Live transcript (the captions) of the answered talk time (P46 P2b).
+                await charge_feature_minutes(
+                    session,
+                    org_id,
+                    "transcription_min",
+                    int(call.duration_seconds or 0),
+                    reference=f"call:{call.id}:transcript",
+                    note="live call transcript",
+                    feature="call_transcription",
+                )
             await _release_call_holds(session, org_id, call.id)
             call.billed_at = _now()
             await session.commit()
@@ -1176,3 +1201,66 @@ async def telephony_tick(
         ),
         "number_rentals_charged": await renew_number_rentals(session, today=(now or _now()).date()),
     }
+
+
+async def charge_feature_minutes(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    metric: str,
+    seconds: int,
+    *,
+    reference: str,
+    note: str,
+    feature: str | None = None,
+) -> int:
+    """Charge ``seconds`` of a per-minute feature (``PRICED_METRICS``: recording_min,
+    transcription_min) in WHOLE minutes, rounded up, at the workspace's discounted price.
+
+    ``feature`` (an entitlements key) lets the workspace's ``org_features``
+    price_override_micros replace the platform list price for this workspace; the usage
+    discount still applies on top, as for a per-org provider_rates override.
+    An UNSET price (and no override) charges $0 and opens/updates that metric's
+    price_unset alert (the minutes are counted on the alert); nothing is blocked.
+    Idempotent on ``reference`` (the credit ledger's unique key). Returns the net charge.
+    """
+    from app.services import discounts, price_alerts
+
+    seconds = int(seconds or 0)
+    if seconds <= 0:
+        return 0
+    minutes = (seconds + 59) // 60
+    override = await _feature_price_override(session, org_id, feature) if feature else None
+    if override is None and await price_alerts.is_unset(session, metric):
+        await price_alerts.raise_unset(
+            session, metric, org_id=org_id, reason="metered", minutes=minutes
+        )
+        return 0
+    if override is not None:
+        bps = await discounts.active_bps(session, org_id, discounts.category_for_metric(metric))
+        price = discounts.apply(override, bps) * minutes
+        discount = max(override * minutes - price, 0)
+    else:
+        price = await unit_price(session, org_id, FEATURE_PROVIDER, metric) * minutes
+        discount = await discount_on(session, org_id, FEATURE_PROVIDER, metric, minutes)
+    if price > 0 or discount > 0:
+        await credits.charge_usage(
+            session, org_id, price, reference=reference, note=note, discount_micros=discount
+        )
+    return price
+
+
+async def _feature_price_override(
+    session: AsyncSession, org_id: uuid.UUID, feature: str
+) -> int | None:
+    """The workspace's per-feature list price (``org_features.price_override_micros``)."""
+    from app.models import OrgFeature
+
+    set_org_context(session, org_id)
+    value = (
+        await session.execute(
+            sa.select(OrgFeature.price_override_micros).where(
+                OrgFeature.org_id == org_id, OrgFeature.feature_key == feature
+            )
+        )
+    ).scalar_one_or_none()
+    return int(value) if value is not None else None

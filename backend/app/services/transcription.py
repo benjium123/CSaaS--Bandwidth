@@ -427,6 +427,18 @@ async def tick(session, settings, store, *, now=None, client=None, loadavg=None,
                 job.cpu_ms = int(float(data.get('cpu_sec', 0)) * 1000)
                 job.finished_at = _db_now(session, now)
                 job.error = None
+                # Transcript minutes (P46 P2b): $0 + a price_unset alert while unset.
+                from app.services import telephony_billing
+
+                await telephony_billing.charge_feature_minutes(
+                    session,
+                    job.org_id,
+                    'transcription_min',
+                    job.audio_seconds,
+                    reference=f'stt:{job.id}',
+                    note=f'{job.audio_seconds}s call transcript',
+                    feature='call_transcription',
+                )
                 await session.commit()
                 counts['done'] = counts.get('done', 0) + 1
 
