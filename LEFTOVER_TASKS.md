@@ -33,7 +33,13 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
    on file), then check Ops → Console → workspace → Invoices, Stripe, and `billing_payments`
    (kind='invoice', state='paid'). Files: `backend/app/services/custom_invoices.py`, `tests/test_custom_invoices.py`.
    Since 6839fa0 the form also has "Email a pay link" (Stripe `send_invoice` to a workspace OWNER
-   only, due in N days; granted on the `invoice.paid` webhook). Smoke-test both modes ($1.50 planned).
+   only, due in N days; granted on the `invoice.paid` webhook).
+   **Pay link PASSED live 2026-09-27**: $1.50 item, Sabine Property Group, billing_payments
+   2ea056ce-f438-42f5-8651-c35267670185 / Stripe TESZJMFV-0001, paid, webhook 204, row paid.
+   **Charge-card still untested**: that workspace has no card on file — user adds one first.
+   Since 6d1fb0a (DEPLOYED 2026-09-28) package lines take exact `units` (e.g. 760 call minutes)
+   and/or a price, optional `rate_micros`; default rate = pay-as-you-go (sms_out, mms_out,
+   voice_min_out), not the bundle price.
 6b. **[USER] Email code latency** — measured: app → Telnyx 1-3 s, Telnyx → Gmail delivered +18-66 s
    (Zoho +372 s). Not our code. SPF `~al` typo fixed by the user. Fix = transactional provider
    (Postmark or Resend) as primary for codes: user creates the account, adds DNS for
