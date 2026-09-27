@@ -160,9 +160,15 @@ async def test_follow_up_pending_unconfirmed(monkeypatch):
 
     await email_delivery._follow_up(settings, "msg", ["a@b.c"], "s", "b", 1)
 
+    # Still pending after every check: retried once like a failure, not dropped.
     assert fetch_count == 3
-    assert retry_calls == []
+    assert len(retry_calls) == 1
     assert alert_calls == []
+
+    # The retry also never confirms: operators are alerted.
+    await email_delivery._follow_up(settings, "msg2", ["a@b.c"], "s", "b", 2)
+    assert len(retry_calls) == 1
+    assert len(alert_calls) == 1 and alert_calls[0][3] == ["unconfirmed"]
 
 
 async def test_follow_up_failed_attempt1_telnyx(monkeypatch):

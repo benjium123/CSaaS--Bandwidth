@@ -117,11 +117,13 @@ async def _follow_up(
     attempt: int,
 ) -> None:
     try:
+        seen = False
         for delay in CHECK_DELAYS_SECONDS:
             await asyncio.sleep(delay)
             message = await fetch_message(settings, message_id)
             if message is None:
                 continue
+            seen = True
 
             verdict, reasons = classify(message)
             if verdict == "delivered":
@@ -130,12 +132,16 @@ async def _follow_up(
             if verdict == "failed":
                 break
         else:
+            # Never confirmed delivered: treat like a failure (retry once, then alert)
+            # rather than dropping it silently.
             log.warning(
                 "email_delivery_unconfirmed",
                 message_id=message_id,
                 attempt=attempt,
             )
-            return
+            if not seen:
+                return  # the status API never answered: no evidence either way
+            reasons = ["unconfirmed"]
 
         log.warning(
             "email_delivery_failed",
