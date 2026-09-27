@@ -6368,6 +6368,8 @@ export interface components {
             tag: string | null;
             /** Transcript */
             transcript?: components["schemas"]["app__api__routes__calls__TranscriptSegmentOut"][] | null;
+            /** Transcription Status */
+            transcription_status?: string | null;
         };
         /** CallDispositionsOut */
         CallDispositionsOut: {

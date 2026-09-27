@@ -10,6 +10,7 @@ import {
   useUpdateCallingSettings,
   validateDispositions,
   type ChannelLayout,
+  type TranscriptionMode,
 } from "@/api/calls";
 import { useAuth } from "@/auth/AuthContext";
 import { Button, Input, MutationStatus, Section, Spinner, Textarea } from "@/components/ui/primitives";
@@ -28,6 +29,7 @@ export function SettingsCallingPage() {
 
   const [layoutDraft, setLayoutDraft] = React.useState<ChannelLayout | null>(null);
   const [recordDraft, setRecordDraft] = React.useState<boolean | null>(null);
+  const [transcriptDraft, setTranscriptDraft] = React.useState<TranscriptionMode | null>(null);
   const [announcementEnabledDraft, setAnnouncementEnabledDraft] = React.useState<boolean | null>(null);
   const [announcementTextDraft, setAnnouncementTextDraft] = React.useState<string | null>(null);
   const [dispositionsDraft, setDispositionsDraft] = React.useState<string[] | null>(null);
@@ -40,6 +42,9 @@ export function SettingsCallingPage() {
     if (calling.data && recordDraft === null) {
       setRecordDraft(calling.data.record_calls);
     }
+    if (calling.data && transcriptDraft === null) {
+      setTranscriptDraft(calling.data.transcription_mode);
+    }
     if (calling.data && announcementEnabledDraft === null) {
       setAnnouncementEnabledDraft(calling.data.recording_announcement);
     }
@@ -49,7 +54,7 @@ export function SettingsCallingPage() {
     if (calling.data && dispositionsDraft === null) {
       setDispositionsDraft([...calling.data.dispositions]);
     }
-  }, [calling.data, layoutDraft, recordDraft, announcementEnabledDraft, announcementTextDraft, dispositionsDraft]);
+  }, [calling.data, layoutDraft, recordDraft, transcriptDraft, announcementEnabledDraft, announcementTextDraft, dispositionsDraft]);
 
   if (calling.isLoading) {
     return <Spinner label="Loading calling settings" />;
@@ -78,8 +83,11 @@ export function SettingsCallingPage() {
   const settings = calling.data;
   const layoutValue = layoutDraft ?? settings.channel_layout;
   const recordValue = recordDraft ?? settings.record_calls;
+  const transcriptValue = transcriptDraft ?? settings.transcription_mode;
   const recordingChanged =
-    layoutValue !== settings.channel_layout || recordValue !== settings.record_calls;
+    layoutValue !== settings.channel_layout ||
+    recordValue !== settings.record_calls ||
+    transcriptValue !== settings.transcription_mode;
   const announcementEnabledValue =
     announcementEnabledDraft ?? settings.recording_announcement;
   const announcementTextValue = announcementTextDraft ?? "";
@@ -90,13 +98,21 @@ export function SettingsCallingPage() {
     if (!canWrite || !recordingChanged || layoutMutation.isPending) {
       return;
     }
-    const patch: { channel_layout?: ChannelLayout; record_calls?: boolean } = {};
+    const patch: {
+      channel_layout?: ChannelLayout;
+      record_calls?: boolean;
+      transcription_mode?: TranscriptionMode;
+    } = {};
     if (layoutValue !== settings.channel_layout) patch.channel_layout = layoutValue;
     if (recordValue !== settings.record_calls) patch.record_calls = recordValue;
+    if (transcriptValue !== settings.transcription_mode) {
+      patch.transcription_mode = transcriptValue;
+    }
     layoutMutation.mutate(patch, {
       onSuccess: (data) => {
         setLayoutDraft(data.channel_layout);
         setRecordDraft(data.record_calls);
+        setTranscriptDraft(data.transcription_mode);
       },
     });
   }
@@ -228,6 +244,28 @@ export function SettingsCallingPage() {
             <p id="record-calls-help" className="pl-[25px] text-[11.5px] text-[hsl(var(--cx-muted))]">
               The recording shows on the call about a minute after it ends. In headphones
               you hear your side in the left ear and the caller in the right.
+            </p>
+
+            <label className="block text-[13.5px]">
+              <span className="mb-[6px] block">Transcripts of recorded calls</span>
+              <select
+                aria-describedby="transcription-mode-help"
+                className="rounded-[8px] border border-[hsl(var(--cx-border))] bg-transparent px-[9px] py-[6px] text-[13.5px]"
+                value={transcriptValue}
+                onChange={(event) => {
+                  layoutMutation.reset();
+                  setTranscriptDraft(event.target.value as TranscriptionMode);
+                }}
+                disabled={!canWrite}
+              >
+                <option value="off">Off</option>
+                <option value="after_call">A few minutes after each call</option>
+                <option value="overnight">Overnight, after calling hours</option>
+              </select>
+            </label>
+            <p id="transcription-mode-help" className="text-[11.5px] text-[hsl(var(--cx-muted))]">
+              Overnight transcripts are ready by 8 am Eastern. Either way, anyone can press
+              Transcribe on a single call to get it right away.
             </p>
 
             {/* The helper is a description, not part of the name: a screen reader hears

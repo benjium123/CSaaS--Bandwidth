@@ -30,6 +30,8 @@ services:
       # instead of the live listener. Empty = listener. The dir is shared with lkrec.
       MONITOR_RECORDER_URL: http://lkrec:9099
       MONITOR_RECORDER_DIR: /app/var/lkrec
+      # Transcription worker (deploy/livekit compose, stt/). Empty = transcription off.
+      STT_URL: http://stt:9100
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_started}

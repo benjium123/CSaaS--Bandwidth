@@ -12,6 +12,7 @@ const DEFAULT_CALLING: CallingSettings = {
   announcement_text_effective: "This call may be recorded for quality and training.",
   channel_layout: "mixed",
   record_calls: false,
+  transcription_mode: "off",
   dispositions: [
     "Interested",
     "Not interested",

@@ -163,6 +163,34 @@ _tendlc_last_run: float | None = None
 _SWEEPER_ADVISORY_LOCK_KEY = 872341995
 
 
+def kick_transcription(app) -> None:  # noqa: ANN001
+    """Start the transcription scheduler in the background unless it is already running.
+    It keeps picking jobs until the scheduler says nothing more may run right now."""
+    from app.services import transcription
+
+    if not transcription.enabled(app.state.settings):
+        return
+    task = getattr(app.state, "_transcription_task", None)
+    if task is not None and not task.done():
+        return
+
+    async def _run() -> None:
+        from app.db.session import get_sessionmaker
+
+        try:
+            for _ in range(50):
+                async with get_sessionmaker()() as session:
+                    counts = await transcription.tick(
+                        session, app.state.settings, app.state.media_store
+                    )
+                if not (counts.get("done") or counts.get("failed")):
+                    break
+        except Exception:
+            log.exception("transcription_tick_failed")
+
+    app.state._transcription_task = asyncio.create_task(_run())
+
+
 async def run_once(app) -> dict[str, int]:
     """Acquires a Postgres advisory lock for the WHOLE pass before running it, so a
     second sweeper worker/process cannot double-run the same pass concurrently - every
@@ -323,6 +351,9 @@ async def _run_once_locked(app) -> dict[str, int]:
 
     if getattr(app.state.settings, "monitor_enforced", False):
         await _monitoring_jobs(app, results)
+
+    # Transcription: runs beside the sweeper (a job can take minutes), never inside it.
+    kick_transcription(app)
 
     # Customer recordings: every pass (not the 2-minute monitoring cadence) so a recording
     # is playable about a minute after hangup. Ingest first, so the finalize sees the sides.

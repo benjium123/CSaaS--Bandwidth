@@ -21,6 +21,8 @@ DEFAULT_DISPOSITIONS: tuple[str, ...] = (
 )
 CHANNEL_LAYOUTS: frozenset[str] = frozenset({"mixed", "dual"})
 DEFAULT_CHANNEL_LAYOUT = "mixed"
+#: off | after_call (minutes after the call) | overnight (after calling hours, cheaper)
+TRANSCRIPTION_MODES: frozenset[str] = frozenset({"off", "after_call", "overnight"})
 #: Plain English, no legalese, no product name. Played before connecting.
 DEFAULT_ANNOUNCEMENT_TEXT = "This call may be recorded for quality and training."
 MAX_DISPOSITIONS = 25
@@ -56,6 +58,18 @@ def channel_layout_for(org) -> str:
 def record_calls_for(org) -> bool:
     """Whether the org records every call placed or answered in the app (off by default)."""
     return _stored_settings(org).get("record_calls") is True
+
+
+def transcription_mode_for(org) -> str:
+    """How the org's recorded calls are transcribed, falling back to ``off``."""
+    raw = _stored_settings(org).get("transcription_mode")
+    return raw if isinstance(raw, str) and raw in TRANSCRIPTION_MODES else "off"
+
+
+def normalize_transcription_mode(value) -> str:
+    if not isinstance(value, str) or value not in TRANSCRIPTION_MODES:
+        raise ValidationFailedError("Transcripts must be off, after_call or overnight")
+    return value
 
 
 def announcement_text_for(org) -> str:
@@ -121,7 +135,9 @@ def normalize_announcement_text(raw) -> str | None:
     return text
 
 
-def apply(org, *, dispositions=None, channel_layout=None, record_calls=None) -> None:
+def apply(
+    org, *, dispositions=None, channel_layout=None, record_calls=None, transcription_mode=None
+) -> None:
     """Merge supplied calling settings into ``org.calling_settings``.
 
     SQLAlchemy JSON columns do not track in-place mutation of a dict, so assign a new
@@ -134,8 +150,15 @@ def apply(org, *, dispositions=None, channel_layout=None, record_calls=None) -> 
         next_settings["channel_layout"] = channel_layout
     if record_calls is not None:
         next_settings["record_calls"] = bool(record_calls)
+    if transcription_mode is not None:
+        next_settings["transcription_mode"] = transcription_mode
 
-    if dispositions is not None or channel_layout is not None or record_calls is not None:
+    if (
+        dispositions is not None
+        or channel_layout is not None
+        or record_calls is not None
+        or transcription_mode is not None
+    ):
         org.calling_settings = next_settings
 
 
@@ -147,5 +170,6 @@ def as_dict(org) -> dict:
         "announcement_text_effective": announcement_text_for(org),
         "channel_layout": channel_layout_for(org),
         "record_calls": record_calls_for(org),
+        "transcription_mode": transcription_mode_for(org),
         "dispositions": dispositions_for(org),
     }

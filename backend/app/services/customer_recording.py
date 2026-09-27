@@ -392,6 +392,15 @@ async def finalize_tick(
                 extra["monitor_recordings_purged"] = True
                 call.extra = extra
 
+            # Queue the transcript the org pays for: minutes after the call, or overnight.
+            from app.services import transcription
+
+            if transcription.enabled(settings) and org is not None:
+                mode = await transcription.wanted(session, org)
+                if mode is not None:
+                    tier = "soon" if mode == "after_call" else "night"
+                    await transcription.enqueue(session, call, row, tier=tier, now=now)
+
             await session.commit()
             counts["stored"] += 1
 

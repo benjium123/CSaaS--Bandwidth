@@ -414,4 +414,158 @@ describe("CallsPage", () => {
     expect(screen.queryByText("Legs")).not.toBeInTheDocument();
     expect(screen.queryByText(/Hangup cause/i)).not.toBeInTheDocument();
   });
+
+  it("clicking Transcribe queues transcription and shows the waiting message", async () => {
+    const recording = {
+      id: "r1",
+      status: "stored",
+      content_type: "audio/wav",
+      duration_seconds: 12,
+      size_bytes: 100,
+      url: "https://app.test/api/v1/calls/call-1/recordings/r1",
+      channel_layout: "mixed",
+      files: [{ layout: "mixed", url: "https://app.test/api/v1/calls/call-1/recordings/r1?layout=mixed" }],
+    };
+    const detail = {
+      ...NEW_CALL_DETAIL,
+      id: "call-1",
+      status: "completed",
+      recordings: [recording],
+      transcript: null,
+      transcription_status: null,
+    };
+    const queued = { ...detail, transcription_status: "queued" };
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      // Registered as its own key so it wins over the shorter "/api/v1/calls" prefix
+      // (makeStubClient picks the longest matching prefix).
+      "/api/v1/calls/call-1/transcribe": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") return queued;
+        throw new Error(`unexpected method ${init.method}`);
+      },
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [CALL_1] : detail,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Transcribe" }));
+
+    expect(
+      await screen.findByText("Transcribing. The text appears here when it's ready."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Transcribe" })).not.toBeInTheDocument();
+  });
+
+  it("shows the waiting message and no button while transcription_status is queued", async () => {
+    const recording = {
+      id: "r1",
+      status: "stored",
+      content_type: "audio/wav",
+      duration_seconds: 12,
+      size_bytes: 100,
+      url: "https://app.test/api/v1/calls/call-1/recordings/r1",
+      channel_layout: "mixed",
+      files: [],
+    };
+    const detail = {
+      ...NEW_CALL_DETAIL,
+      id: "call-1",
+      status: "completed",
+      recordings: [recording],
+      transcript: null,
+      transcription_status: "queued",
+    };
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [CALL_1] : detail,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+
+    expect(
+      await screen.findByText("Transcribing. The text appears here when it's ready."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Transcribe" })).not.toBeInTheDocument();
+  });
+
+  it("shows no Transcribe button when the call already has transcript segments", async () => {
+    const recording = {
+      id: "r1",
+      status: "stored",
+      content_type: "audio/wav",
+      duration_seconds: 12,
+      size_bytes: 100,
+      url: "https://app.test/api/v1/calls/call-1/recordings/r1",
+      channel_layout: "mixed",
+      files: [],
+    };
+    const detail = {
+      ...NEW_CALL_DETAIL,
+      id: "call-1",
+      status: "completed",
+      recordings: [recording],
+      transcript: [{ role: "agent", text: "Hello, how can I help?", at_ms: 0 }],
+    };
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [CALL_1] : detail,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+
+    await screen.findByText("Recordings");
+    expect(screen.queryByRole("button", { name: "Transcribe" })).not.toBeInTheDocument();
+  });
+
+  it("shows the Transcribe button and a failure note when the last attempt failed", async () => {
+    const recording = {
+      id: "r1",
+      status: "stored",
+      content_type: "audio/wav",
+      duration_seconds: 12,
+      size_bytes: 100,
+      url: "https://app.test/api/v1/calls/call-1/recordings/r1",
+      channel_layout: "mixed",
+      files: [],
+    };
+    const detail = {
+      ...NEW_CALL_DETAIL,
+      id: "call-1",
+      status: "completed",
+      recordings: [recording],
+      transcript: null,
+      transcription_status: "failed",
+    };
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [CALL_1] : detail,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+
+    expect(await screen.findByRole("button", { name: "Transcribe" })).toBeInTheDocument();
+    expect(screen.getByText("The last attempt failed.")).toBeInTheDocument();
+  });
+
+  it("shows no Transcribe button without a stored recording", async () => {
+    const client = makeStubClient({
+      "/api/v1/numbers": [],
+      "/api/v1/calls": (path: string) =>
+        /^\/api\/v1\/calls(\?|$)/.test(path) ? [CALL_1] : NEW_CALL_DETAIL,
+    });
+    renderWithProviders(<CallsPage />, client);
+
+    await selectCallRow("(972) 555-0199");
+
+    await screen.findByText("Recordings");
+    expect(screen.queryByRole("button", { name: "Transcribe" })).not.toBeInTheDocument();
+  });
 });

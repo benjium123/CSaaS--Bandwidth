@@ -191,3 +191,43 @@ class CallRecording(Base, TenantScoped, TimestampMixin):
             "provider_recording_id", name="uq_call_recordings_provider_id"
         ),
     )
+
+
+TRANSCRIPTION_TIERS: tuple[str, ...] = ("on_request", "soon", "night")
+TRANSCRIPTION_STATUSES: tuple[str, ...] = ("queued", "running", "done", "failed", "skipped")
+
+
+class TranscriptionJob(Base, TenantScoped, TimestampMixin):
+    """One call's transcription, queued for services/transcription.py's scheduler.
+
+    One row per call (a re-request moves the same row back to `queued`). `tier` decides when it
+    may run: on_request (a person clicked Transcribe) > soon (minutes after the call) > night
+    (after calling hours, or whenever the machine is idle)."""
+
+    __tablename__ = "transcription_jobs"
+    __table_args__ = (
+        sa.UniqueConstraint("call_id", name="uq_transcription_jobs_call"),
+        sa.Index("ix_transcription_jobs_status_tier", "status", "tier", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    call_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), sa.ForeignKey("calls.id", ondelete="CASCADE"), nullable=False
+    )
+    recording_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("call_recordings.id", ondelete="CASCADE"), nullable=True
+    )
+    tier: Mapped[str] = mapped_column(sa.String(12), nullable=False)
+    status: Mapped[str] = mapped_column(
+        sa.String(12), nullable=False, default="queued", server_default="queued"
+    )
+    #: The engine that produced the transcript: parakeet | zipformer | deepgram.
+    engine: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
+    not_before: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    deadline: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    audio_seconds: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    cpu_ms: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)

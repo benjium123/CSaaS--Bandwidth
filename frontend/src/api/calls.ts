@@ -5,6 +5,7 @@ import type { CallDetailOut, RecordingOut } from "@/api/hooks";
 
 export type RecordingLayout = "mixed" | "agent" | "customer";
 export type ChannelLayout = "mixed" | "dual";
+export type TranscriptionMode = "off" | "after_call" | "overnight";
 
 export interface CallingSettings {
   recording_announcement: boolean;
@@ -13,6 +14,7 @@ export interface CallingSettings {
   channel_layout: ChannelLayout;
   /** Record every call placed or answered in the app. */
   record_calls: boolean;
+  transcription_mode: TranscriptionMode;
   dispositions: string[];
 }
 
@@ -23,6 +25,7 @@ export type CallingSettingsPatch = Partial<
     | "recording_announcement_text"
     | "channel_layout"
     | "record_calls"
+    | "transcription_mode"
     | "dispositions"
   >
 >;
@@ -192,4 +195,16 @@ export function useCanUseCallNumber(
   }
 
   return { canUse, isLoading };
+}
+
+/** Queue this call's recording for transcription now; the transcript appears on the call. */
+export function useTranscribeCall(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (callId: string) =>
+      api.request<CallDetailOut>(`/api/v1/calls/${callId}/transcribe`, { method: "POST" }),
+    onSuccess: (data, callId) => {
+      qc.setQueryData(["call", callId], data);
+    },
+  });
 }

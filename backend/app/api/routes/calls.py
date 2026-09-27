@@ -27,6 +27,7 @@ from app.models import (
     CallTranscriptSegment,
     OrgNumber,
     QueueEntry,
+    TranscriptionJob,
     User,
 )
 from app.models.voice import TERMINAL_CALL_STATUSES, TERMINAL_LEG_STATUSES
@@ -150,6 +151,8 @@ class CallDetailOut(CallOut):
     #: there is nothing to show, so the console's transcript panel has a single clean
     #: "no transcript" gate instead of an always-present empty array.
     transcript: list[TranscriptSegmentOut] | None = None
+    #: queued | running | done | failed | skipped - None when never queued for transcription.
+    transcription_status: str | None = None
 
 
 def _livekit_route_reason(c: Call) -> str | None:
@@ -268,12 +271,20 @@ async def _detail_out(
             if transcript_rows
             else None
         )
+    transcription_status = None
+    if include_transcript:
+        transcription_status = (
+            await session.execute(
+                sa.select(TranscriptionJob.status).where(TranscriptionJob.call_id == call.id)
+            )
+        ).scalar_one_or_none()
     base_url = request.app.state.settings.public_base_url or ""
     return CallDetailOut(
         **_call_out(call).model_dump(),
         legs=[_leg_out(leg) for leg in legs],
         recordings=[_recording_out(rec, base_url, call.id) for rec in recordings],
         transcript=transcript,
+        transcription_status=transcription_status,
     )
 
 
@@ -984,6 +995,46 @@ async def gather_call(
         raise ValidationFailedError(str(exc)) from exc
     except ConflictError:
         raise
+    return await _detail_out(ctx.session, request, call)
+
+
+@router.post("/calls/{call_id}/transcribe")
+async def transcribe_call(
+    call_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:read"))],
+) -> CallDetailOut:
+    """Queue this call's recording for transcription now (ahead of scheduled work)."""
+    from app.services import sweeper as sweeper_svc
+    from app.services import transcription as transcription_svc
+
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=False)
+    if not transcription_svc.enabled(request.app.state.settings):
+        raise FeatureUnavailableError("Transcription is not available")
+    if not await transcription_svc.entitled(ctx.session, ctx.org):
+        raise FeatureUnavailableError("Transcripts are not included in your plan")
+    recording = (
+        await ctx.session.execute(
+            sa.select(CallRecording)
+            .where(CallRecording.call_id == call.id, CallRecording.status == "stored")
+            .order_by(CallRecording.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if recording is None:
+        raise ConflictError("This call has no recording to transcribe")
+    # A single-track recording has both people in one channel: it cannot say who spoke.
+    if not (
+        recording.provider_recording_id.startswith("lkrec:")
+        or recording.channel_layout == "dual"
+    ):
+        raise ConflictError("This recording has both sides in one track, so it can't be transcribed yet")
+    await transcription_svc.enqueue(ctx.session, call, recording, tier="on_request")
+    await ctx.session.commit()
+    sweeper_svc.kick_transcription(request.app)
     return await _detail_out(ctx.session, request, call)
 
 

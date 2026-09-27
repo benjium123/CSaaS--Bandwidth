@@ -85,6 +85,7 @@ class CallingSettingsIn(BaseModel):
     recording_announcement_text: str | None = None
     channel_layout: str | None = None
     record_calls: bool | None = None
+    transcription_mode: str | None = None
     dispositions: list[str] | None = None
 
 
@@ -215,16 +216,25 @@ async def update_calling_settings(
         record_calls = payload.record_calls
         changed.append("record_calls")
 
+    transcription_mode = None
+    if "transcription_mode" in payload.model_fields_set:
+        transcription_mode = calling_settings_svc.normalize_transcription_mode(
+            payload.transcription_mode
+        )
+        changed.append("transcription_mode")
+
     if (
         normalized_dispositions is not None
         or normalized_channel_layout is not None
         or record_calls is not None
+        or transcription_mode is not None
     ):
         calling_settings_svc.apply(
             ctx.org,
             dispositions=normalized_dispositions,
             channel_layout=normalized_channel_layout,
             record_calls=record_calls,
+            transcription_mode=transcription_mode,
         )
 
     audit_svc.record(

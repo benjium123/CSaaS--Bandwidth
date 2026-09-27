@@ -226,7 +226,7 @@ from app.models.subscriptions import (
 from app.models.telephony import TELEPHONY_ACCOUNT_STATUSES, TelephonyAccount
 from app.models.trust import STATUS_COMPONENTS, STATUS_SEVERITIES, OrgDataKey, StatusIncident
 from app.models.user import User
-from app.models.voice import Call, CallLeg, CallRecording, VoiceEvent
+from app.models.voice import Call, CallLeg, CallRecording, TranscriptionJob, VoiceEvent
 
 __all__ = [
     "OrgDomain",
@@ -329,6 +329,7 @@ __all__ = [
     "Call",
     "CallLeg",
     "CallRecording",
+    "TranscriptionJob",
     "VoiceEvent",
     "RoutingPolicy",
     "Appointment",

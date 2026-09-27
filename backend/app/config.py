@@ -531,6 +531,8 @@ class Settings(BaseSettings):
     #: recorded (announcement first) and reviewed from the recording instead of getting the
     #: live listener above. Empty = off (listener). Shared dir: recorder writes, sweeper ingests.
     monitor_recorder_url: str = ""
+    #: Private sherpa-onnx transcription worker (stt/), e.g. http://stt:9100. "" = transcription off.
+    stt_url: str = ""
     monitor_recorder_dir: str = "var/lkrec"
     #: Monitoring audio of calls reviewed "ok" (or skipped) is deleted after this many days.
     monitor_recording_keep_days: int = 7

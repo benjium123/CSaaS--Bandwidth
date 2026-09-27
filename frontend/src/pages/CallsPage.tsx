@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchAuthedBlob, type ApiClient } from "@/api/client";
 import {
@@ -17,7 +17,8 @@ import {
   type RecordingOut,
 } from "@/api/hooks";
 import { fetchInboxes } from "@/api/conversations";
-import { dispositionOf } from "@/api/calls";
+import { dispositionOf, useTranscribeCall } from "@/api/calls";
+import { getErrorMessage } from "@/api/contacts";
 import { DispositionPicker } from "@/components/calls/DispositionPicker";
 import { RecordingDownloads } from "@/components/calls/RecordingDownloads";
 import {
@@ -507,7 +508,57 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
             ))}
           </ul>
         )}
+        <TranscriptControl api={api} call={call} />
       </SurfaceCard>
+    </div>
+  );
+}
+
+/** "Transcribe" for a recorded call without a transcript; "Transcribing…" while it is queued. */
+function TranscriptControl({ api, call }: { api: ApiClient; call: CallDetailOut }) {
+  const qc = useQueryClient();
+  const transcribe = useTranscribeCall(api);
+  const status = call.transcription_status ?? null;
+  const waiting = status === "queued" || status === "running";
+
+  // The scheduler may take a while (it waits for a quiet machine); refresh until it lands.
+  React.useEffect(() => {
+    if (!waiting) return;
+    const timer = window.setInterval(() => {
+      void qc.invalidateQueries({ queryKey: ["call", call.id] });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [waiting, call.id, qc]);
+
+  const hasTranscript = Boolean(call.transcript && call.transcript.length > 0);
+  const stored = call.recordings.some((rec) => rec.status === "stored");
+  if (hasTranscript || !stored) return null;
+  if (waiting) {
+    return (
+      <p className="mt-[11px] text-[12px] text-[hsl(var(--cx-muted))]" role="status">
+        Transcribing. The text appears here when it's ready.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-[11px] flex flex-wrap items-center gap-[11px]">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => transcribe.mutate(call.id)}
+        disabled={transcribe.isPending}
+      >
+        Transcribe
+      </Button>
+      {status === "failed" ? (
+        <span className="text-[12px] text-[hsl(var(--cx-muted))]">The last attempt failed.</span>
+      ) : null}
+      {transcribe.error ? (
+        <p role="alert" className="text-[12px] text-[hsl(var(--cx-danger))]">
+          {getErrorMessage(transcribe.error)}
+        </p>
+      ) : null}
     </div>
   );
 }

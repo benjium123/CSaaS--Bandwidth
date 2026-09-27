@@ -148,6 +148,24 @@ services:
     depends_on: [livekit]
     logging: *default-logging
 
+  # Transcription worker (stt/): sherpa-onnx Parakeet + Zipformer on CPU. Private (no port);
+  # the api reaches it as http://stt:9100 with a token derived from LIVEKIT_API_SECRET. The
+  # api's scheduler decides when it runs, so the cpus cap is the most transcription can
+  # ever take from live calls. Models live under var/ (never touched by deploy's rsync).
+  stt:
+    build:
+      context: ../stt
+    restart: unless-stopped
+    environment:
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
+      MODELS_DIR: /models
+      STT_THREADS: "2"
+      STT_CONCURRENCY: "1"
+    volumes: ["../var/stt-models:/models:ro"]
+    cpus: "2"
+    mem_limit: 2g
+    logging: *default-logging
+
   # P43 call-monitor: the silent listener that transcribes softphone calls chosen for
   # safety monitoring (backend services/monitor_calls.py dispatches it by agent name). Same
   # image as the AI worker; it only needs LiveKit, the backend, Deepgram and ElevenLabs
