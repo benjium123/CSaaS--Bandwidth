@@ -830,6 +830,14 @@ async def get_rates(
     return out
 
 
+@router.get("/invoices")
+async def list_invoices(ctx: Annotated[OrgContext, Depends(require_owner)]) -> dict:
+    """Invoices Ringlite sent this workspace (packages, credit, custom items)."""
+    from app.services import custom_invoices
+
+    return {"invoices": await custom_invoices.for_org(ctx.session, ctx.org.id)}
+
+
 @router.get("/payment-methods")
 async def list_payment_methods(
     ctx: Annotated[OrgContext, Depends(require_owner)],

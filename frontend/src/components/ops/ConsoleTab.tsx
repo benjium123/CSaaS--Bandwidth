@@ -1,6 +1,7 @@
 import * as React from "react";
 import { FixedCostsSection } from "@/components/ops/FixedCostsSection";
 import { OrgDiscountsPanel } from "@/components/ops/OrgDiscountsPanel";
+import { OrgInvoicesPanel } from "@/components/ops/OrgInvoicesPanel";
 import { OrgFeaturesPanel } from "@/components/ops/OrgFeaturesPanel";
 import { ViewAsButton } from "@/components/ops/ViewAsButton";
 import { useAuth } from "@/auth/AuthContext";
@@ -784,6 +785,7 @@ function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): J
 
       <SurfaceCard>
         <OrgDiscountsPanel orgId={orgId} canEdit={Boolean(me?.operator_permissions?.includes("ops:billing"))} />
+        <OrgInvoicesPanel orgId={orgId} canEdit={Boolean(me?.operator_permissions?.includes("ops:billing"))} />
       </SurfaceCard>
     </div>
   );

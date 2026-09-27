@@ -373,6 +373,94 @@ async def console_remove_org_discount(
     return await _discounts_payload(op, org_id, stripe=stripe)
 
 
+class InvoiceLineIn(BaseModel):
+    type: str = Field(pattern="^(package|credit|item|discount)$")
+    description: str | None = Field(default=None, max_length=200)
+    amount_cents: int | None = Field(default=None, ge=0, le=10_000_000)
+    package: str | None = None
+    quantity: int | None = Field(default=None, ge=1, le=500)
+    percent: float | None = Field(default=None, gt=0, le=100)
+
+
+class InvoiceIn(BaseModel):
+    lines: list[InvoiceLineIn] = Field(min_length=1, max_length=20)
+    memo: str | None = Field(default=None, max_length=500)
+
+
+@router.get("/orgs/{org_id}/invoices")
+async def console_org_invoices(org_id: uuid.UUID, op: Reader) -> dict:
+    from app.services import custom_invoices
+
+    await _org_or_404(op, org_id)
+    return {"invoices": await custom_invoices.for_org(op.session, org_id)}
+
+
+@router.post("/orgs/{org_id}/invoices/preview")
+async def console_preview_invoice(org_id: uuid.UUID, payload: InvoiceIn, op: Billing) -> dict:
+    from app.services import custom_invoices
+
+    await _org_or_404(op, org_id)
+    lines = await custom_invoices.price_lines(
+        op.session, [ln.model_dump() for ln in payload.lines]
+    )
+    return {"lines": lines, **custom_invoices.totals(lines)}
+
+
+@router.post("/orgs/{org_id}/invoices", status_code=201)
+async def console_send_invoice(
+    org_id: uuid.UUID, payload: InvoiceIn, op: Billing, request: Request
+) -> dict:
+    from app.services import custom_invoices
+
+    org = await _org_or_404(op, org_id)
+    row = await custom_invoices.create_and_charge(
+        op.session,
+        request.app.state.settings,
+        org,
+        lines=[ln.model_dump() for ln in payload.lines],
+        memo=payload.memo,
+        actor_user_id=op.user.id,
+    )
+    _audit(
+        op,
+        org_id,
+        "custom_invoice.sent",
+        {"payment_id": str(row.id), "state": row.state, "total_micros": int(row.paid_micros)},
+    )
+    await op.session.commit()
+    return custom_invoices.to_dict(row)
+
+
+@router.post("/orgs/{org_id}/invoices/{payment_id}/retry")
+async def console_retry_invoice(
+    org_id: uuid.UUID, payment_id: uuid.UUID, op: Billing, request: Request
+) -> dict:
+    from app.services import custom_invoices
+
+    await _org_or_404(op, org_id)
+    row = await custom_invoices.get(op.session, org_id, payment_id)
+    if row.state not in ("failed", "pending"):
+        raise ValidationFailedError("Only an unpaid invoice can be charged again")
+    row = await custom_invoices.charge(op.session, request.app.state.settings, row)
+    _audit(op, org_id, "custom_invoice.retried", {"payment_id": str(row.id), "state": row.state})
+    await op.session.commit()
+    return custom_invoices.to_dict(row)
+
+
+@router.post("/orgs/{org_id}/invoices/{payment_id}/void")
+async def console_void_invoice(
+    org_id: uuid.UUID, payment_id: uuid.UUID, op: Billing, request: Request
+) -> dict:
+    from app.services import custom_invoices
+
+    await _org_or_404(op, org_id)
+    row = await custom_invoices.get(op.session, org_id, payment_id)
+    row = await custom_invoices.void(op.session, request.app.state.settings, row)
+    _audit(op, org_id, "custom_invoice.voided", {"payment_id": str(row.id)})
+    await op.session.commit()
+    return custom_invoices.to_dict(row)
+
+
 class FixedCostIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     monthly_micros: int = Field(ge=0, le=100_000_000_000)

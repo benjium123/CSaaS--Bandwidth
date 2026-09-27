@@ -895,6 +895,13 @@ async def stripe_webhook(
     if await tendlc.handle_event(session, event):
         return Response(status_code=204)
 
+    if event_type in ("invoice.paid", "invoice.payment_failed", "invoice.voided"):
+        from app.services import custom_invoices
+
+        # Invoices an operator sent from the console: grant what they contain once paid.
+        if await custom_invoices.handle_event(session, event):
+            return Response(status_code=204)
+
     if event_type == "invoice.paid":
         from app.services import payments
 

@@ -2,6 +2,7 @@ import { PlanCard } from "./PlanCard";
 import { BalanceCard } from "./BalanceCard";
 import { BundlesCard } from "./BundlesCard";
 import { BillingLedger } from "./BillingLedger";
+import { InvoicesCard } from "./InvoicesCard";
 import { PaymentMethods } from "./PaymentMethods";
 import { RateSheet } from "./RateSheet";
 import { UsageTable } from "./UsageTable";
@@ -31,6 +32,7 @@ export function CreditsSection() {
       <UsageTable />
       <RateSheet />
       <PaymentMethods />
+      <InvoicesCard />
       <Collapsible storageKey="settings.billing.ledger" title="Credit history" defaultOpen={false}>
         <BillingLedger />
       </Collapsible>
