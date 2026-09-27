@@ -5,6 +5,10 @@ Merged from three sessions: 04 (transcripts/profile/help), 2b (monitoring/billin
 `deploy/docker-compose.prod.yml`, deploy = `bash deploy/deploy.sh` from a clean worktree
 (its 30s health check can falsely say ABORT; the API needs ~40s — check `/healthz` by hand).
 Live head after this deploy: **650ab15** (includes 0608257 auto-pause). Alembic head 0091.
+**Update 2026-09-27 (Ringlite):** box verified = origin/main 5b86129 (file hashes). main is now
+**6839fa0** (invoice pay-link, no migration) — pushed, deploy pending (run by the user).
+Uncommitted, owner unknown (not 04's): `csaas_ship` softphone Panel/Provider + tests;
+`csaas_site` StartCallDialog/ConversationsPage/format.ts. Not in main, not deployed.
 
 Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to build · **[OPS]** box work.
 
@@ -28,6 +32,13 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
    happens before finalize). With the user's OK: $1 "item" invoice to the user's own workspace (card
    on file), then check Ops → Console → workspace → Invoices, Stripe, and `billing_payments`
    (kind='invoice', state='paid'). Files: `backend/app/services/custom_invoices.py`, `tests/test_custom_invoices.py`.
+   Since 6839fa0 the form also has "Email a pay link" (Stripe `send_invoice` to a workspace OWNER
+   only, due in N days; granted on the `invoice.paid` webhook). Smoke-test both modes ($1.50 planned).
+6b. **[USER] Email code latency** — measured: app → Telnyx 1-3 s, Telnyx → Gmail delivered +18-66 s
+   (Zoho +372 s). Not our code. SPF `~al` typo fixed by the user. Fix = transactional provider
+   (Postmark or Resend) as primary for codes: user creates the account, adds DNS for
+   `mail.ringlite.io`, puts the key in `/opt/csaas/.env`; then [CODE] reorder `services/mailer.py`
+   `send()` so codes try that provider first, Telnyx fallback, and re-measure.
 7. **[USER] Stripe webhook events** — add `invoice.payment_failed` and `invoice.voided` to
    `https://ringlite.io/api/v1/webhooks/stripe` in the Stripe dashboard (code already handles them).
 8. **[USER] Refund claw-back decision** — refunding a custom invoice does not take back granted
