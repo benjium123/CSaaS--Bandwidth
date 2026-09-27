@@ -49,6 +49,9 @@ class OrgSummaryOut(BaseModel):
 class CapabilitiesOut(BaseModel):
     permissions: list[str]
     org: OrgSummaryOut
+    #: Per-workspace feature switches (services/entitlements.py): key -> on/off. The UI
+    #: hides or greys what is off; the server gates are the authority.
+    features: dict[str, bool] = {}
 
 
 class NotificationOut(BaseModel):
@@ -191,8 +194,11 @@ async def capabilities(
     calling_ready = onboarding_step == "ready"
     messaging_ready = onboarding_step == "ready" and registration_state == "approved"
 
+    from app.services import entitlements
+
     return CapabilitiesOut(
         permissions=permissions,
+        features=await entitlements.for_org(ctx.session, ctx.org.id),
         org=OrgSummaryOut(
             id=ctx.org.id,
             name=ctx.org.name,

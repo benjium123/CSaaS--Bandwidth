@@ -143,6 +143,74 @@ async def console_set_price(metric: str, payload: PriceIn, op: Admin) -> dict:
     return {"metric": metric, "price_micros": payload.price_micros, "previous_micros": old}
 
 
+class FeatureIn(BaseModel):
+    enabled: bool
+    price_override_micros: int | None = Field(default=None, ge=0, le=1_000_000_000)
+
+
+async def _org_or_404(op: OperatorContext, org_id: uuid.UUID) -> Org:
+    org = (
+        await op.session.execute(
+            sa.select(Org).where(Org.id == org_id).execution_options(allow_unscoped=True)
+        )
+    ).scalar_one_or_none()
+    if org is None:
+        raise NotFoundError("Workspace not found")
+    return org
+
+
+@router.get("/orgs/{org_id}/features")
+async def console_org_features(org_id: uuid.UUID, op: Reviewer) -> dict:
+    from app.services import entitlements
+
+    await _org_or_404(op, org_id)
+    values = await entitlements.for_org(op.session, org_id)
+    return {
+        "org_id": str(org_id),
+        "features": [
+            {
+                "key": f.key,
+                "label": f.label,
+                "group": f.group,
+                "description": f.description,
+                "default_enabled": f.default_enabled,
+                "enabled": values[f.key],
+                "price_metric": f.price_metric,
+            }
+            for f in entitlements.CATALOG.values()
+        ],
+    }
+
+
+@router.put("/orgs/{org_id}/features/{key}")
+async def console_set_org_feature(
+    org_id: uuid.UUID, key: str, payload: FeatureIn, op: Admin
+) -> dict:
+    from app.services import entitlements
+
+    if key not in entitlements.CATALOG:
+        raise ValidationFailedError(f"Unknown feature: {key}")
+    await _org_or_404(op, org_id)
+    before = await entitlements.has(op.session, org_id, key)
+    await entitlements.set_feature(
+        op.session,
+        org_id,
+        key,
+        enabled=payload.enabled,
+        price_override_micros=payload.price_override_micros,
+        actor_user_id=op.user.id,
+    )
+    _audit(
+        op,
+        org_id,
+        "org_feature.updated",
+        {"feature": key, "from": before, "to": payload.enabled,
+         "price_override_micros": payload.price_override_micros},
+    )
+    await op.session.commit()
+    return {"org_id": str(org_id), "key": key, "enabled": payload.enabled}
+
+
 class FixedCostIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     monthly_micros: int = Field(ge=0, le=100_000_000_000)

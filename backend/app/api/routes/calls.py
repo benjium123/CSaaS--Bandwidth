@@ -564,6 +564,10 @@ async def create_call(
         for c in routes
         if access.can_use(c.e164) and _voice_failover_allowed(policy, _carrier_name, c)
     ]
+    if payload.record:
+        from app.services import entitlements
+
+        await entitlements.require(ctx.session, ctx.org.id, "call_recording")
     call, _leg = await calls_svc.create_outbound_call(
         ctx.session,
         registry,

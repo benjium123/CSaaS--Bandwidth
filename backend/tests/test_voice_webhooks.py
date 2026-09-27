@@ -527,6 +527,25 @@ async def test_outbound_answer_bxml_includes_start_recording_when_record_is_set(
     client, _, _, _ = app_with_real_bandwidth_voice_and_mock_transport
     token, org, _ = await make_org_with_number(client, "outans2@example.com", "Org O", OUR)
 
+    # Call recording is a per-workspace feature (off by default): refused until switched on.
+    refused = await client.post(
+        "/api/v1/calls",
+        json={"to": THEIRS, "record": True},
+        headers=auth_headers(token, org["id"]),
+    )
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "feature_disabled"
+
+    import uuid as _uuid
+
+    from app.services import entitlements
+
+    await entitlements.set_feature(
+        session, _uuid.UUID(org["id"]), "call_recording",
+        enabled=True, price_override_micros=None, actor_user_id=None,
+    )
+    await session.commit()
+
     created = await client.post(
         "/api/v1/calls",
         json={"to": THEIRS, "record": True},

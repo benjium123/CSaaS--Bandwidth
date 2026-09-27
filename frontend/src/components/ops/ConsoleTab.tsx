@@ -1,5 +1,6 @@
 import * as React from "react";
 import { FixedCostsSection } from "@/components/ops/FixedCostsSection";
+import { OrgFeaturesPanel } from "@/components/ops/OrgFeaturesPanel";
 import { useAuth } from "@/auth/AuthContext";
 import { formatMicros, lastNDaysRange } from "@/api/spend";
 import {
@@ -569,7 +570,7 @@ function PrepaidToggle({ orgId, enabled }: { orgId: string; enabled: boolean }):
 }
 
 function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): JSX.Element {
-  const { api } = useAuth();
+  const { api, me } = useAuth();
   const detail = useConsoleOrg(api, orgId, range);
 
   if (detail.isPending) return <Spinner label="Loading workspace" />;
@@ -721,6 +722,10 @@ function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): J
         <AdjustmentForm orgId={orgId} />
         <BundleForm orgId={orgId} />
         <PrepaidToggle orgId={orgId} enabled={org.prepaid} />
+      </SurfaceCard>
+
+      <SurfaceCard>
+        <OrgFeaturesPanel orgId={orgId} canEdit={me?.operator_role === "admin"} />
       </SurfaceCard>
     </div>
   );

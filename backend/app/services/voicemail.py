@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.models.callflow import Voicemail
 from app.models.voice import Call, CallRecording
-from app.services import outbox
+from app.services import entitlements, outbox
 from app.services import recordings as recordings_svc
 
 log = structlog.get_logger("voicemail")
@@ -155,6 +155,12 @@ async def transcribe_pending(
     try:
         for voicemail in pending:
             set_org_context(session, voicemail.org_id)
+            if not await entitlements.has(session, voicemail.org_id, "voicemail_transcription"):
+                # Switched off for this workspace: never sent to Deepgram, never charged.
+                voicemail.transcript_status = "disabled"
+                await session.commit()
+                counts["disabled"] += 1
+                continue
             recording = await session.get(CallRecording, voicemail.recording_id)
             if recording is None or recording.status != "stored":
                 continue  # still waiting on recordings.fetch_pending_recordings - try next pass

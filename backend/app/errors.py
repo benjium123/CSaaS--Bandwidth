@@ -164,6 +164,14 @@ class InsufficientCreditsError(CsaasError):
     message = "Add credits to keep your assistant answering"
 
 
+class FeatureDisabledError(CsaasError):
+    """The workspace's plan or an operator switched this feature off (services/entitlements)."""
+
+    code = "feature_disabled"
+    http_status = 403
+    message = "This feature is not enabled for your workspace"
+
+
 class FeatureUnavailableError(CsaasError):
     """A feature is correctly implemented but its prerequisite config is absent."""
 
