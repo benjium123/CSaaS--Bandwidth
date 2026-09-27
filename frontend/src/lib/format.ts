@@ -2,7 +2,22 @@
 
 export function formatPhone(e164: string): string {
   const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(e164);
-  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : e164;
+  if (m) return `(${m[1]}) ${m[2]}-${m[3]}`;
+
+  // A bare 10-digit number, or an 11-digit number starting with "1" - no "+", no
+  // punctuation, just digits. This is the shape a stray un-prefixed value shows up in
+  // (a contact_e164/our_e164 that lost its country code somewhere) and it used to render
+  // raw ("4694617576") right next to a properly formatted number elsewhere on the same
+  // screen. Anything else - already-punctuated input, a non-NANP length, a foreign
+  // number - is returned unchanged, same as before.
+  if (/^\d{10}$/.test(e164)) {
+    return `(${e164.slice(0, 3)}) ${e164.slice(3, 6)}-${e164.slice(6)}`;
+  }
+  if (/^1\d{10}$/.test(e164)) {
+    const national = e164.slice(1);
+    return `(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}`;
+  }
+  return e164;
 }
 
 /** Only digits and common phone-number punctuation - rejects free text with embedded

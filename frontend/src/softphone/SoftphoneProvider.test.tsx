@@ -238,6 +238,8 @@ function Harness() {
         HangUp
       </button>
       <button onClick={() => sp.setMuted(!sp.muted).catch(() => {})}>ToggleMute</button>
+      <div data-testid="on-hold">{String(sp.onHold)}</div>
+      <button onClick={() => sp.setHold(!sp.onHold).catch(() => {})}>ToggleHold</button>
       {sp.incoming.map((r) => (
         <button
           key={r.callId}
@@ -747,6 +749,35 @@ describe("SoftphoneProvider", () => {
       expect(screen.getByTestId("device-error").textContent).toBe("mic permission revoked"),
     );
     expect(screen.getByTestId("muted").textContent).toBe("false");
+  });
+
+  it("holds via the API and never plays the hold-music track locally", async () => {
+    const holdBodies: unknown[] = [];
+    const client = makeStubClient(
+      dialRoutes({
+        "/api/v1/calls/call-1/hold": (_path: string, init: RequestInit & { json?: unknown }) => {
+          holdBodies.push(init.json);
+          return { id: "call-1", contact_e164: "+19725550199", status: "answered", ...CALL_DETAIL_BASE };
+        },
+      }),
+    );
+    renderSoftphone(client);
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).not.toBe(""));
+
+    await userEvent.click(screen.getByText("ToggleHold"));
+    await waitFor(() => expect(screen.getByTestId("on-hold").textContent).toBe("true"));
+    expect(holdBodies).toEqual([{ on: true }]);
+
+    const room = FakeRoom.instances.at(-1)!;
+    room.emit("trackSubscribed", new FakeRemoteTrack("audio", "track-music"), { trackName: "hold-music" });
+    expect(document.querySelectorAll("audio")).toHaveLength(0);
+
+    await userEvent.click(screen.getByText("ToggleHold"));
+    await waitFor(() => expect(screen.getByTestId("on-hold").textContent).toBe("false"));
+    expect(holdBodies).toEqual([{ on: true }, { on: false }]);
   });
 
   // Item 17

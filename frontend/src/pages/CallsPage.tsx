@@ -139,7 +139,7 @@ export function CallsPage() {
             <form className="space-y-[11px]" onSubmit={dial}>
             <Input
               aria-label="Number to call"
-              placeholder="+19725550199"
+              placeholder="(972) 555-0199"
               className="h-10 rounded-[12px] px-[14px]"
               value={to}
               onChange={(e) => setTo(e.target.value)}
@@ -436,7 +436,7 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
           <form className="flex items-end gap-[11px]" onSubmit={doTransfer}>
             <Input
               aria-label="Transfer to"
-              placeholder="+19725550199"
+              placeholder="(972) 555-0199"
               className="h-10 rounded-[12px] px-[14px]"
               value={transferTo}
               onChange={(e) => setTransferTo(e.target.value)}

@@ -2,10 +2,33 @@ import { describe, expect, it } from "vitest";
 import {
   AVATAR_HUE_COUNT,
   avatarHueIndex,
+  formatPhone,
   initialsOf,
   normalizePhoneToE164,
   shortRelativeTime,
 } from "./format";
+
+describe("formatPhone", () => {
+  it("formats an exact +1XXXXXXXXXX E.164 number", () => {
+    expect(formatPhone("+14694617576")).toBe("(469) 461-7576");
+  });
+
+  it("formats a bare 10-digit number with no country code", () => {
+    expect(formatPhone("4694617576")).toBe("(469) 461-7576");
+  });
+
+  it("formats an 11-digit number starting with 1 and no '+'", () => {
+    expect(formatPhone("14694617576")).toBe("(469) 461-7576");
+  });
+
+  it("leaves other input unchanged", () => {
+    expect(formatPhone("+447911123456")).toBe("+447911123456");
+    expect(formatPhone("12345")).toBe("12345");
+    expect(formatPhone("(469) 461-7576")).toBe("(469) 461-7576");
+    expect(formatPhone("24694617576")).toBe("24694617576"); // 11 digits, not leading "1"
+    expect(formatPhone("")).toBe("");
+  });
+});
 
 // The conversation list's furniture, from docs/design/console-reference.html.
 describe("shortRelativeTime", () => {

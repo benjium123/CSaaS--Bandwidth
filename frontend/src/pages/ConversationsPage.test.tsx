@@ -916,10 +916,14 @@ describe("ConversationsPage", () => {
     await screen.findByText("Ada Lovelace");
 
     await userEvent.click(screen.getByRole("button", { name: "New call" }));
-    expect(screen.getByRole("heading", { name: "New call" })).toBeInTheDocument();
+    // Item: "New call" now opens the floating Start-a-call dialog, not the inline panel.
+    expect(screen.getByRole("dialog", { name: "Start a call" })).toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText("To"), "9725550999");
-    await userEvent.click(screen.getByRole("button", { name: "Call" }));
+    await userEvent.type(
+      screen.getByLabelText("Enter a name or phone number"),
+      "9725550999",
+    );
+    await userEvent.keyboard("{Enter}");
 
     await waitFor(() =>
       expect(
@@ -932,7 +936,7 @@ describe("ConversationsPage", () => {
     expect(dialCall?.init.json).toEqual({ to: "+19725550999", from: "+14694617576", via: "room" });
 
     await waitFor(() =>
-      expect(screen.queryByRole("heading", { name: "New call" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("dialog", { name: "Start a call" })).not.toBeInTheDocument(),
     );
   });
 });

@@ -138,6 +138,9 @@ export type SoftphoneValue = {
   hangUp(): Promise<void>;
   sendDtmf(digits: string): Promise<void>;
   setMuted(muted: boolean): Promise<void>;
+  /** Hold with music: the caller hears music, and neither side hears the other. */
+  onHold: boolean;
+  setHold(on: boolean): Promise<void>;
   setAudioDevices(inputId: string | null, outputId: string | null): Promise<void>;
   refreshDevices(): Promise<void>;
   /** item 2: subscribe to every raw event off the realtime websocket (the provider
@@ -187,6 +190,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const [activeCall, setActiveCall] = React.useState<ActiveCall | null>(null);
   const [incoming, setIncoming] = React.useState<IncomingRing[]>([]);
   const [muted, setMutedState] = React.useState(false);
+  const [onHold, setOnHold] = React.useState(false);
   const [captions, setCaptions] = React.useState<Caption[]>([]);
   const [wsConnected, setWsConnected] = React.useState(false);
   const [devices, setDevices] = React.useState<{ inputs: DeviceOption[]; outputs: DeviceOption[] }>(
@@ -306,8 +310,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       );
       // Item 3.11: one <audio> element PER remote audio track, not one shared element
       // for the whole call - see audioContainerRef above.
-      room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+      room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication: RemoteTrackPublication) => {
         if (track.kind !== Track.Kind.Audio) return;
+        // The hold music is for the caller only - never play it here.
+        if (publication?.trackName === "hold-music") return;
         const el = track.attach();
         el.autoplay = true;
         audioContainerRef.current?.appendChild(el);
@@ -535,6 +541,21 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       throw err;
     }
   }, []);
+
+  const setHold = React.useCallback(
+    async (on: boolean) => {
+      const call = activeCallRef.current;
+      if (!call) return;
+      await api.request(`/api/v1/calls/${call.id}/hold`, { method: "POST", json: { on } });
+      setOnHold(on);
+    },
+    [api],
+  );
+
+  // A new call (or none) never starts on hold.
+  React.useEffect(() => {
+    setOnHold(false);
+  }, [activeCall?.id]);
 
   const setAudioDevices = React.useCallback(
     async (inputId: string | null, outputId: string | null) => {
@@ -770,6 +791,8 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       hangUp,
       sendDtmf,
       setMuted,
+      onHold,
+      setHold,
       setAudioDevices,
       refreshDevices,
       subscribe,
@@ -793,6 +816,8 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       hangUp,
       sendDtmf,
       setMuted,
+      onHold,
+      setHold,
       setAudioDevices,
       refreshDevices,
       subscribe,

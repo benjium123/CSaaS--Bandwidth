@@ -22,6 +22,7 @@ import {
   type FromOption,
   type NewConversationKind,
 } from "@/components/conversations/NewConversationPanel";
+import { StartCallDialog } from "@/components/conversations/StartCallDialog";
 import { Composer } from "@/components/inbox/Composer";
 import { InboxColumn, lineInitials, type InboxColumnSelection } from "@/components/conversations/InboxColumn";
 import { ScheduledDrawer } from "@/components/conversations/ScheduledDrawer";
@@ -448,6 +449,22 @@ export function ConversationsPage() {
       data-panel={contactPanelOpen ? "open" : "closed"}
       data-rail-collapsed={!isBelowSm && railCollapsed}
     >
+      {/* Floats over the whole inbox (it's `fixed`-positioned) rather than replacing the
+          selected conversation's pane the way NewConversationPanel does for a text
+          message - the reference's "Start a call" is a dialog, not an inline panel. */}
+      {composeMode === "call" && (
+        <StartCallDialog
+          fromOptions={fromOptions}
+          initialTo={composeSeed?.to ?? null}
+          initialFrom={composeSeed?.from ?? null}
+          onCancel={() => {
+            setComposeSeed(null);
+            setComposeMode(null);
+          }}
+          onCall={handleComposeCall}
+        />
+      )}
+
       {isBelowSm ? (
         <>
           <div className="sm:hidden bg-background p-2">
@@ -518,7 +535,7 @@ export function ConversationsPage() {
         />
 
         <section className={cn("cx-thread min-h-0 min-w-0 flex-col", selectedConversation || composeMode ? "flex" : "hidden md:flex")}>
-          {composeMode ? (
+          {composeMode === "message" ? (
             <NewConversationPanel
               // Load-bearing key: the panel seeds its state on mount, so without a
               // changing key a second `?compose=` for a different number would leave
