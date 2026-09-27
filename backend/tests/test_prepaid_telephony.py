@@ -45,6 +45,14 @@ async def _new_org(session, name: str = "Prepaid Org") -> Org:
     return org
 
 
+async def _business(session, org_id) -> None:
+    # Individual accounts text only from a registered number (compliance/registration.py);
+    # these tests are about prepaid credit, not account type, so use a business account.
+    org = await session.get(Org, uuid.UUID(str(org_id)))
+    org.account_type = "business"
+    await session.commit()
+
+
 async def _enable(session, org_id, *, balance: int = 0, since: datetime | None = None) -> Org:
     org = await session.get(Org, uuid.UUID(str(org_id)))
     org.telephony_prepaid = True
@@ -95,6 +103,7 @@ async def test_outbound_sms_refused_when_prepaid_balance_is_empty(app_with_carri
     token, org, _n = await make_org_with_number(
         client, "pp-empty@example.com", "PP Empty", "+12145550901"
     )
+    await _business(session, org["id"])
     await _enable(session, org["id"])
 
     r = await client.post(
@@ -116,6 +125,7 @@ async def test_outbound_sms_is_charged_once_on_acceptance(app_with_carrier, sess
     token, org, _n = await make_org_with_number(
         client, "pp-charge@example.com", "PP Charge", "+12145550902"
     )
+    await _business(session, org["id"])
     await _enable(session, org["id"], balance=1_000_000)
 
     r = await client.post(
@@ -145,6 +155,7 @@ async def test_carrier_rejected_sms_is_not_charged(app_with_carrier, session):
     token, org, _n = await make_org_with_number(
         client, "pp-rej@example.com", "PP Rejected", "+12145550903"
     )
+    await _business(session, org["id"])
     await _enable(session, org["id"], balance=1_000_000)
     fake.scripted.append(type(fake.default_result)("rejected", None, None))
 
@@ -164,6 +175,7 @@ async def test_org_without_the_gate_is_never_charged_or_refused(app_with_carrier
     token, org, _n = await make_org_with_number(
         client, "pp-off@example.com", "PP Off", "+12145550904"
     )
+    await _business(session, org["id"])
     # No _enable: telephony_prepaid stays false, balance stays 0.
 
     r = await client.post(
@@ -184,6 +196,7 @@ async def test_scheduled_sms_is_refused_at_release_when_credit_ran_out(app_with_
     token, org, _n = await make_org_with_number(
         client, "pp-later@example.com", "PP Later", "+12145550905"
     )
+    await _business(session, org["id"])
     await _enable(session, org["id"], balance=SMS_OUT)
     when = _now() + timedelta(hours=1)
 
