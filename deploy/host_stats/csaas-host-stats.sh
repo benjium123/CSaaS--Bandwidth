@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Write a one-shot `docker stats` snapshot to /opt/csaas/run/host_stats.json so the api
+# Write a one-shot `docker stats` snapshot to /opt/csaas/var/host_stats/host_stats.json so the api
 # container (which has no access to the docker socket) can show per-app usage in the ops
 # console "Server" page. Run by csaas-host-stats.timer every 15 s.
 set -euo pipefail
 
-OUT_DIR="/opt/csaas/run"
+OUT_DIR="/opt/csaas/var/host_stats"
 OUT_FILE="${OUT_DIR}/host_stats.json"
 TMP_FILE="${OUT_DIR}/host_stats.json.tmp"
 

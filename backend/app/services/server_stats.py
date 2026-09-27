@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 PROC_ROOT = os.environ.get("SERVER_STATS_PROC_ROOT", "/proc")
 DISK_PATH = os.environ.get("SERVER_STATS_DISK_PATH", "/")
-HOST_STATS_PATH = os.environ.get("SERVER_STATS_HOST_FILE", "/opt/csaas/run/host_stats.json")
+HOST_STATS_PATH = os.environ.get("SERVER_STATS_HOST_FILE", "/app/var/host_stats/host_stats.json")
 HOST_STATS_STALE_SECONDS = 60
 
 # (monotonic_time, idle_all, total) of the last CPU sample we took, so a frequent caller (the

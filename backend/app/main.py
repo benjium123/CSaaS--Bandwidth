@@ -276,6 +276,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.api.routes import ops_console as ops_console_routes
 
     app.include_router(ops_console_routes.router)
+    from app.api.routes import ops_server as ops_server_routes
+
+    app.include_router(ops_server_routes.router)
     from app.api.routes import fax as fax_routes
 
     app.include_router(fax_routes.router)

@@ -40,7 +40,9 @@ services:
     ports: ["127.0.0.1:8080:8080"]
     # 8.1: named volume for MMS media, call recordings, voicemail, transcripts
     # (MEDIA_LOCAL_ROOT=var/media) - previously unmounted, so every deploy wiped it.
-    volumes: ["csaas_media:/app/var/media", "../var/lkrec:/app/var/lkrec"]
+    # host_stats: read-only docker-stats snapshot from the host timer (deploy/host_stats/);
+    # never mount the docker socket instead.
+    volumes: ["csaas_media:/app/var/media", "../var/lkrec:/app/var/lkrec", "../var/host_stats:/app/var/host_stats:ro"]
     # Addendum to 8.16: deploy/livekit/docker-compose.livekit.yml's `livekit` service
     # now runs network_mode: host, so it is off this compose network entirely and the
     # "livekit" DNS name (used by .env's LIVEKIT_URL=ws://livekit:7880 on the box) would
