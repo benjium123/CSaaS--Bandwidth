@@ -54,6 +54,9 @@ async def app_with_agent(engine):
         require_2fa_privileged_users=False,
         # Confirming the email would otherwise turn email codes on (production default).
         email_2fa_on_verify=False,
+        # Like make_settings(): register + confirm-email login + login per test would
+        # otherwise trip the per-IP auth rate limit partway through the file.
+        rate_limit_enabled=False,
         kyc_enforced=False,
         # P42: these tests authenticate with bearer tokens and weak test passwords.
         auth_bearer_compat=True,
