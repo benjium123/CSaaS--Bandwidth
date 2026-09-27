@@ -929,7 +929,14 @@ async def stripe_webhook(
         await session.commit()
         return Response(status_code=204)
 
-    from app.services import card_risk
+    from app.services import card_risk, refunds
+
+    if event_type in refunds.HANDLED_EVENT_TYPES:
+        # A refund issued in Stripe takes back the unused part of what the payment granted
+        # (services/refunds.py). Replay-safe: StripeEvent ledger + per-reference guards.
+        await refunds.handle_charge_refunded(session, event)
+        await session.commit()
+        return Response(status_code=204)
 
     if event_type in card_risk.HANDLED_EVENT_TYPES:
         # P44c: early fraud warnings and chargebacks. Replay-safe through the StripeEvent

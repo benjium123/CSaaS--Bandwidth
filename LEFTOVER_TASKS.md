@@ -7,8 +7,12 @@ Merged from three sessions: 04 (transcripts/profile/help), 2b (monitoring/billin
 Live head after this deploy: **650ab15** (includes 0608257 auto-pause). Alembic head 0091.
 **Update 2026-09-27 (Ringlite):** box verified = origin/main 5b86129 (file hashes). main is now
 **6839fa0** (invoice pay-link, no migration) — DEPLOYED 2026-09-27 (live head 5563bad, healthz 200).
-Uncommitted edits in `csaas_ship` and `csaas_site` are STALE snapshots (2b checked: main is ahead;
-committing them would regress). Do not ship; the user decides whether to discard them.
+~~Uncommitted edits in `csaas_ship` / `csaas_site`~~ DISCARDED 2026-09-28 (user): both content-equal
+to main (a6dc07c, 85cc38d); both worktrees reset to origin/main, branches deleted.
+**Update 2026-09-28 (session 19):** branch `feat/summary-billing-ext-transfer` (worktree `csaas_site`,
+on top of Ringlite's undeployed 6d1fb0a) — NOT pushed/deployed, waiting for the user's go:
+4faa3eb AI summaries paid (`summary_min`, feature `call_summary`), af95ace external transfers
+(feature `external_transfer`, bridged outbound call), eba3258 dead Deepgram helpers removed.
 
 Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to build · **[OPS]** box work.
 
@@ -16,17 +20,27 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
 
 ## A. Needs the user (do these first — nothing to code until answered)
 
-1. **[USER] Transcription price $0.0025/min** — Switchboard → Console → Prices → `transcription_min`.
+1. **[USER] Prices DECIDED 2026-09-28** (industry −20%, user-set): `recording_min` **$0.0025**,
+   `transcription_min` **$0.02**, `summary_min` **$0.0035** (per call minute). Set them in
+   Switchboard → Console → Prices after the deploy (summary_min exists only after 4faa3eb ships),
+   then switch on `call_summary` / `external_transfer` per workspace. Our cost: recording ≈ $0 (own
+   box), Groq ≈ $0.0013/call-min (both sides), DeepSeek summary ≈ $0.0001/min.
+   (old text) Transcription price — Switchboard → Console → Prices → `transcription_min`.
    Claude's DB write was denied by the classifier; do not retry via SQL. Until set, minutes are
    charged $0 and a `price_unset` alert accumulates the minutes.
-2. **[USER] Recording price** — `recording_min` unanswered. Suggested $0.005/min (tier-3/4 peer average).
+2. ~~Recording price~~ — decided above.
 3. **[USER] Rotate the Groq key** — it was pasted in chat. New key → `/opt/csaas/.env` `GROQ_API_KEY=`
    (backup `.env.bak-groq-20260927` exists), then `docker compose ... up -d api worker`.
 4. **[USER] Support contact details** — email, phone, KB links for the Help menu / Support tab
    (`frontend/src/components/HelpMenu.tsx`, `SupportTab.tsx`, backend `services/support.py`).
-5. **[USER] Live test call** — recording notice timing, hold, transfer/add (internal only), leave,
-   park/pickup. Do it with the user on the phone.
-6. **[USER] Custom invoices live Stripe smoke test** (Ringlite) — shipped ec4a173, tested only
+5. **[USER] Live test call** — recording notice timing, hold, transfer/add, leave, park/pickup,
+   and (after af95ace ships) an EXTERNAL transfer: outside party answers → agent drops, both
+   calls bill, either hang-up ends the room. Unverified: does the recording capture the outside
+   party? Do it with the user on the phone.
+6. **[USER] Custom invoices live Stripe smoke test** (Ringlite) — 2026-09-28: pay-link half DONE
+   and PASSED ($1.50, Sabine Property Group, TESZJMFV-0001, paid via webhook). Charge-card half
+   BLOCKED: Sabine has no card on file — user adds one, then run the $1 item test.
+   Original note: — shipped ec4a173, tested only
    against a fake Stripe. Risk: API 2026-08-26.dahlia may reject `InvoiceItem.create(amount=..., invoice=...)`
    or `Invoice.create(pending_invoice_items_behavior="exclude")` → row shows "failed" in Ops (no charge
    happens before finalize). With the user's OK: $1 "item" invoice to the user's own workspace (card
@@ -47,7 +61,8 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
    `send()` so codes try that provider first, Telnyx fallback, and re-measure.
 7. **[USER] Stripe webhook events** — add `invoice.payment_failed` and `invoice.voided` to
    `https://ringlite.io/api/v1/webhooks/stripe` in the Stripe dashboard (code already handles them).
-8. **[USER] Refund claw-back decision** — refunding a custom invoice does not take back granted
+8. ~~Refund claw-back decision~~ DECIDED + BUILT 2026-09-28 (services/refunds.py, `charge.refunded`): a Stripe refund takes back only the UNUSED part of what the payment granted (top-up credit, bundle units, invoice lines), pro rata, never below zero; any excess raises a `refund_shortfall` ops alert. Used service is never refunded. [USER] add `charge.refunded` to the Stripe webhook.
+   Original note: **Refund claw-back decision** — refunding a custom invoice does not take back granted
    packages/credit (reference `invoice:<id>:<line>`). Needs a `charge.refunded` handler if wanted.
 9. **[USER] Invoiced packages roll-over?** — today they expire at monthly renewal like bought bundles
    (entry_type "purchase"). Roll-over = new entry_type in `custom_invoices.apply_paid` + 2b's `expire_unused` rule.
@@ -76,9 +91,9 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
 
 ## C. Ready to code (no user input needed)
 
-1. **[CODE] 2 pre-existing failures** `tests/test_voice_plane.py::transfer_room_call_*` — tests still
-   expect external transfer; the rule is internal-only transfers. Update the tests (not the rule).
-2. **[CODE] Remove dead Deepgram helpers** in `backend/app/services/monitor_calls.py`
+1. ~~2 pre-existing failures `transfer_room_call_*`~~ DONE af95ace: external transfers now exist
+   (bridged, opt-in, billed); the REFER tests use an own number.
+2. ~~Remove dead Deepgram helpers~~ DONE eba3258. in `backend/app/services/monitor_calls.py`
    (`DEEPGRAM_URL`, `_utterances_to_segments`, `_meter_deepgram`) and their test
    `tests/test_lkrec_wiring.py::test_monitor_deepgram_request_is_metered_as_platform_cost`.
    Keep `deepgram_api_key` in config (the live call-monitor worker still uses nova-3 as lkrec fallback).
@@ -87,7 +102,8 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
 
 ## D. Box cleanup
 
-1. **[OPS] Delete the Parakeet model dir** `/opt/csaas/var/stt-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8`
+1. ~~Delete the Parakeet model dir~~ DONE 2026-09-28 (user OK). Zipformer punctuation verified live
+   (sherpa punct model loads; both batch and live paths add punctuation + casing). `/opt/csaas/var/stt-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8`
    (user asked to remove Parakeet; code no longer loads it). Deletion — confirm with the user first.
 
 ## Reference

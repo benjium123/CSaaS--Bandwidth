@@ -227,6 +227,40 @@ async def take(
     return covered
 
 
+async def claw_back(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    kind: str,
+    wanted: int,
+    *,
+    reference: str,
+    note: str,
+) -> int:
+    """Take back up to `wanted` UNUSED units after a refund (services/refunds.py); return
+    how many were taken. Never goes below zero: used units are not refundable. Idempotent
+    on `reference`."""
+    if wanted <= 0:
+        return 0
+    set_org_context(session, org_id)
+    await credits._lock(session, org_id)
+    existing = await _existing(session, kind, "refund", reference)
+    if existing is not None:
+        return -int(existing.delta_units)
+    taken = min(await units(session, org_id, kind), int(wanted))
+    if taken <= 0:
+        return 0
+    await _append(
+        session,
+        org_id,
+        kind=kind,
+        entry_type="refund",
+        delta_units=-taken,
+        reference=reference,
+        note=note,
+    )
+    return taken
+
+
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
