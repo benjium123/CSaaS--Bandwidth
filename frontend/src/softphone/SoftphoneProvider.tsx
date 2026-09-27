@@ -80,10 +80,15 @@ export type IncomingRing = {
   from: string;
   to: string;
   /** "handoff" is a P9 AI warm-transfer ring (call.handoff) - the room call already
-   * exists, so `answer` joins it exactly the same way as a plain inbound ring. */
-  kind?: "ring" | "handoff";
+   * exists, so `answer` joins it exactly the same way as a plain inbound ring. "invite" is
+   * a call.invite (add/transfer teammate invite) - it joins via `joinInvite`/`declineInvite`
+   * (POST /join, POST /invite/cancel) instead of the plain-ring /answer, /hangup routes. */
+  kind?: "ring" | "handoff" | "invite";
   reason?: string;
   summary?: string;
+  /** Present only when kind is "invite": who invited this user, and whether it's an add
+   * (3-way) or a transfer (the inviter leaves once this is accepted). */
+  invite?: { mode: "add" | "transfer"; by: string };
   /** Item 3.12: the backend's `call.ring` event on a ring-group/queue offer carries
    * which member(s) it's actually meant for - absent/empty means "everyone with access"
    * (a plain inbound ring, or an AI handoff). Item 3.10 also reads this to decide whether
@@ -136,6 +141,15 @@ export type SoftphoneValue = {
   answer(callId: string): Promise<void>;
   decline(callId: string): Promise<void>;
   hangUp(): Promise<void>;
+  /** Join a call.invite ring (POST /join, unlike answer()'s POST /answer). */
+  joinInvite(callId: string): Promise<void>;
+  /** Decline a call.invite ring - POST /invite/cancel with my own user id (unlike
+   * decline()'s hangup route, this never ends the call for anyone else). */
+  declineInvite(callId: string): Promise<void>;
+  /** Leave the current call without ending it for anyone else: disconnect the room and
+   * reset local state, but never POST /hangup. Used both by the "Leave" control once a
+   * teammate has been added, and automatically when a transfer we initiated is accepted. */
+  leave(): Promise<void>;
   sendDtmf(digits: string): Promise<void>;
   setMuted(muted: boolean): Promise<void>;
   /** Hold with music: the caller hears music, and neither side hears the other. */
@@ -513,6 +527,59 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     setMutedState(false);
   }, [api]);
 
+  // Mirrors answer() but posts /join instead of /answer - the route a call.invite (add or
+  // transfer) ring uses to actually join the live room.
+  const joinInvite = React.useCallback(
+    async (callId: string) => {
+      const ring = incoming.find((r) => r.callId === callId);
+      setStatus("connecting");
+      try {
+        const result = await api.request<AnswerOut>(`/api/v1/calls/${callId}/join`, {
+          method: "POST",
+        });
+        setIncoming((prev) => prev.filter((r) => r.callId !== callId));
+        await joinRoom(
+          result.url,
+          result.token,
+          result.room,
+          { id: callId, contact: ring?.from ?? "" },
+          "in-call",
+        );
+      } catch (err) {
+        setStatus("idle");
+        throw err;
+      }
+    },
+    [api, incoming, joinRoom],
+  );
+
+  // Unlike decline() (which may hang up the whole room for a positively-solo plain ring),
+  // declining a call.invite never ends the call for anyone else - it only cancels this
+  // user's own invite.
+  const declineInvite = React.useCallback(
+    async (callId: string) => {
+      if (!me) return;
+      await api.request(`/api/v1/calls/${callId}/invite/cancel`, {
+        method: "POST",
+        json: { user_id: me.id },
+      });
+      setIncoming((prev) => prev.filter((r) => r.callId !== callId));
+    },
+    [api, me],
+  );
+
+  // Leave a call without ending it for whoever else is still on it: disconnect the room
+  // and reset local state, but never POST /hangup. Mirrors the "no room" branch of hangUp,
+  // minus the hangup API call.
+  const leave = React.useCallback(async () => {
+    const room = roomRef.current;
+    roomRef.current = null;
+    setActiveCall(null);
+    setStatus("idle");
+    setMutedState(false);
+    if (room) await room.disconnect().catch(() => undefined);
+  }, []);
+
   const sendDtmf = React.useCallback(async (digits: string) => {
     const room = roomRef.current;
     if (!room || !DTMF_SUPPORTED) return;
@@ -648,6 +715,11 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
           thread_id?: string;
           queue_id?: string;
           ring_user_ids?: string[];
+          mode?: string;
+          by?: string;
+          invitee?: string;
+          invitee_name?: string;
+          state?: string;
         };
         try {
           msg = JSON.parse(event.data as string);
@@ -706,6 +778,51 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
           // incoming list too so a claimed card doesn't linger on every other
           // operator's softphone.
           setIncoming((prev) => prev.filter((r) => r.callId !== msg.call_id));
+        } else if (msg.type === "call.invite" && msg.call_id) {
+          // Sent ONLY to the invited user (backend _PERSONAL_EVENT_TYPES) - shown as an
+          // incoming card exactly like a plain ring, labelled with who's inviting and why.
+          const callId = msg.call_id;
+          const invite: IncomingRing = {
+            callId,
+            room: msg.room ?? "",
+            from: msg.from ?? "",
+            to: msg.to ?? "",
+            kind: "invite",
+            invite: { mode: msg.mode === "add" ? "add" : "transfer", by: msg.by ?? "" },
+            receivedAt: Date.now(),
+          };
+          setIncoming((prev) => (prev.some((r) => r.callId === callId) ? prev : [...prev, invite]));
+          // The backend's own invite TTL is 60s (call_invites.INVITE_TTL) - drop the card
+          // here too so a card whose invite quietly expired doesn't sit there forever.
+          setTimeout(() => {
+            setIncoming((prev) => prev.filter((r) => r.callId !== callId));
+          }, 60_000);
+        } else if (msg.type === "call.invite.update" && msg.call_id) {
+          const name = msg.invitee_name ?? "Teammate";
+          if (msg.state === "cancelled") {
+            // The inviter cancelled - drop OUR incoming invite card (this goes to the
+            // invitee, per backend call_invites.cancel).
+            setIncoming((prev) => prev.filter((r) => r.callId !== msg.call_id));
+          } else if (msg.state === "accepted") {
+            if (msg.mode === "transfer") {
+              // We initiated a transfer and it was just accepted: leave the call for
+              // real (disconnect the room) but never hang it up - the teammate who
+              // accepted is now on it instead of us.
+              if (activeCallRef.current?.id === msg.call_id) {
+                const room = roomRef.current;
+                roomRef.current = null;
+                setActiveCall(null);
+                setStatus("idle");
+                setMutedState(false);
+                teardownRoom(room);
+              }
+              pushToast({ message: `Transferred to ${name}` });
+            } else {
+              pushToast({ message: `${name} joined` });
+            }
+          } else if (msg.state === "declined") {
+            pushToast({ message: `${name} declined` });
+          }
         } else if (msg.type === "call.status" && msg.call_id && msg.status) {
           const terminal = isTerminalCallStatus(msg.status);
           if (terminal) {
@@ -789,6 +906,9 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       answer,
       decline,
       hangUp,
+      joinInvite,
+      declineInvite,
+      leave,
       sendDtmf,
       setMuted,
       onHold,
@@ -814,6 +934,9 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       answer,
       decline,
       hangUp,
+      joinInvite,
+      declineInvite,
+      leave,
       sendDtmf,
       setMuted,
       onHold,

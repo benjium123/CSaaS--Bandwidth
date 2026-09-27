@@ -750,4 +750,160 @@ describe("SoftphonePanel", () => {
 
     expect(screen.queryByRole("log", { name: "Live captions" })).toBeNull();
   });
+
+  // Transfer/add-teammate (P54).
+  async function answerAndGetInCall(
+    client: ReturnType<typeof makeStubClient>,
+    callId = "call-9",
+  ) {
+    renderWithProviders(
+      <SoftphoneProvider>
+        <SoftphonePanel />
+      </SoftphoneProvider>,
+      client,
+    );
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.ring",
+          call_id: callId,
+          room: callId,
+          from: "+19725550111",
+          to: "+12145550100",
+        }),
+      });
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Answer" }));
+    await screen.findByRole("button", { name: /Hang up/ });
+  }
+
+  it("Transfer panel lists teammates/numbers from /transfer-targets and invites a teammate with the right body", async () => {
+    const inviteBodies: unknown[] = [];
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/calls/call-9/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { url: "wss://lk.example.com", token: "tok-inbound", room: "call-9" };
+        }
+        throw new Error("unexpected request");
+      },
+      "/api/v1/calls/call-9/transfer-targets": {
+        teammates: [{ user_id: "u2", name: "Sam Agent", email: "sam@example.com" }],
+        numbers: [{ e164: "+14694617576" }],
+      },
+      "/api/v1/calls/call-9/invite": (_path: string, init: RequestInit & { json?: unknown }) => {
+        inviteBodies.push(init.json);
+        return {};
+      },
+    });
+
+    await answerAndGetInCall(client);
+
+    await userEvent.click(screen.getByRole("button", { name: "Transfer" }));
+
+    expect(await screen.findByText("Sam Agent")).toBeInTheDocument();
+    expect(screen.getByText("sam@example.com")).toBeInTheDocument();
+    expect(screen.getByText("(469) 461-7576", { exact: false })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Sam Agent"));
+
+    await waitFor(() => expect(inviteBodies).toEqual([{ user_id: "u2", mode: "transfer" }]));
+    expect(await screen.findByText(/Ringing Sam Agent/)).toBeInTheDocument();
+  });
+
+  it("shows the empty-teammates message and hides the numbers section when there are none", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/calls/call-9/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { url: "wss://lk.example.com", token: "tok-inbound", room: "call-9" };
+        }
+        throw new Error("unexpected request");
+      },
+      "/api/v1/calls/call-9/transfer-targets": { teammates: [], numbers: [] },
+    });
+
+    await answerAndGetInCall(client);
+    await userEvent.click(screen.getByRole("button", { name: "Transfer" }));
+
+    expect(
+      await screen.findByText("No teammates can take calls on this number"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Our numbers")).toBeNull();
+  });
+
+  it("a number transfer posts /transfer only after confirming, not on the first click", async () => {
+    const transferBodies: unknown[] = [];
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/calls/call-9/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { url: "wss://lk.example.com", token: "tok-inbound", room: "call-9" };
+        }
+        throw new Error("unexpected request");
+      },
+      "/api/v1/calls/call-9/transfer-targets": {
+        teammates: [],
+        numbers: [{ e164: "+14694617576" }],
+      },
+      "/api/v1/calls/call-9/transfer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        transferBodies.push(init.json);
+        return {};
+      },
+    });
+
+    await answerAndGetInCall(client);
+    await userEvent.click(screen.getByRole("button", { name: "Transfer" }));
+
+    await userEvent.click(await screen.findByText("(469) 461-7576", { exact: false }));
+
+    // Just clicking the number must not have transferred yet - it needs the confirm step.
+    expect(await screen.findByText(/Transfer to \(469\) 461-7576\?/)).toBeInTheDocument();
+    expect(transferBodies).toEqual([]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(transferBodies).toEqual([{ to: "+14694617576" }]));
+    // A completed blind transfer leaves the call for us (disconnect only, no /hangup).
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Hang up/ })).toBeNull());
+    expect(client.calls.some((c) => c.path === "/api/v1/calls/call-9/hangup")).toBe(false);
+  });
+
+  it("a pending invite's Cancel button posts /invite/cancel with the invited teammate's id", async () => {
+    const cancelBodies: unknown[] = [];
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/numbers": [],
+      "/api/v1/calls/call-9/answer": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { url: "wss://lk.example.com", token: "tok-inbound", room: "call-9" };
+        }
+        throw new Error("unexpected request");
+      },
+      "/api/v1/calls/call-9/transfer-targets": {
+        teammates: [{ user_id: "u2", name: "Sam Agent", email: "sam@example.com" }],
+        numbers: [],
+      },
+      "/api/v1/calls/call-9/invite": () => ({}),
+      "/api/v1/calls/call-9/invite/cancel": (_path: string, init: RequestInit & { json?: unknown }) => {
+        cancelBodies.push(init.json);
+        return null;
+      },
+    });
+
+    await answerAndGetInCall(client);
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    await userEvent.click(await screen.findByText("Sam Agent"));
+    await screen.findByText(/Ringing Sam Agent/);
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(cancelBodies).toEqual([{ user_id: "u2" }]));
+    expect(screen.queryByText(/Ringing Sam Agent/)).toBeNull();
+  });
 });

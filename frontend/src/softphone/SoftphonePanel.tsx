@@ -12,14 +12,16 @@ import {
   MicOff,
   Pause,
   Phone,
+  PhoneForwarded,
   PhoneIncoming,
   PhoneOff,
   Play,
+  UserPlus,
   X,
 } from "lucide-react";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { useNumbers } from "@/api/hooks";
-import { useSoftphone, type Caption } from "@/softphone/SoftphoneProvider";
+import { useSoftphone, type Caption, type IncomingRing } from "@/softphone/SoftphoneProvider";
 import { useCapabilities } from "@/api/capabilities";
 import { Button, Input } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
@@ -32,6 +34,25 @@ const KEYPAD_ROWS = [
   ["7", "8", "9"],
   ["*", "0", "#"],
 ];
+
+type TransferTeammate = { user_id: string; name: string; email: string };
+type TransferNumber = { e164: string };
+type TransferTargetsOut = { teammates: TransferTeammate[]; numbers: TransferNumber[] };
+
+/** A teammate this operator just invited (add or transfer), while it's still ringing. */
+type PendingInvite = {
+  userId: string;
+  name: string;
+  mode: "add" | "transfer";
+  /** Set once 45s pass with no call.invite.update - shown as "No answer" instead of the
+   * Cancel button (the invite itself was already cancelled server-side at that point). */
+  timedOut: boolean;
+};
+
+/** How long to wait for an invite to be answered before auto-cancelling it (spec: 45s -
+ * shorter than the backend's own 60s call_invites.INVITE_TTL so the caller isn't left on
+ * transfer-hold for the full minute if nobody picks up). */
+const INVITE_NO_ANSWER_MS = 45_000;
 
 function callerIdStorageKey(orgId: string | null): string {
   return `csaas.softphone.callerId.${orgId ?? "none"}`;
@@ -202,6 +223,23 @@ export function SoftphonePanel() {
   const [pendingRingIds, setPendingRingIds] = React.useState<Set<string>>(new Set());
   const answerButtonRef = React.useRef<HTMLButtonElement>(null);
 
+  // Transfer/Add-teammate inline panel (active-call view only).
+  const [teamPanelMode, setTeamPanelMode] = React.useState<"transfer" | "add" | null>(null);
+  const [targets, setTargets] = React.useState<TransferTargetsOut | null>(null);
+  const [targetsLoading, setTargetsLoading] = React.useState(false);
+  const [targetsError, setTargetsError] = React.useState<string | null>(null);
+  const [confirmNumber, setConfirmNumber] = React.useState<string | null>(null);
+  const [inviteError, setInviteError] = React.useState<string | null>(null);
+  const [transferError, setTransferError] = React.useState<string | null>(null);
+  const [pendingInvite, setPendingInvite] = React.useState<PendingInvite | null>(null);
+  // Set once an "add" invite is accepted for the current call - shows the Leave control
+  // alongside Hang up, since hanging up now would end the call for the added teammate too.
+  const [hasAddedTeammate, setHasAddedTeammate] = React.useState(false);
+  const pendingInviteRef = React.useRef<PendingInvite | null>(null);
+  React.useEffect(() => {
+    pendingInviteRef.current = pendingInvite;
+  }, [pendingInvite]);
+
   const activeNumbers = React.useMemo(() => (numbers ?? []).filter((n) => n.is_active), [numbers]);
   // This gate now fails CLOSED, and the comment that used to sit here was describing a
   // world that never existed. It said an undefined `permissions` meant "the backend has not
@@ -283,6 +321,53 @@ export function SoftphonePanel() {
     setDtmfInput("");
   }, [activeCallId]);
 
+  // The transfer/add-teammate panel and any in-flight invite belong to ONE call - a new
+  // call (or none) never inherits the last one's panel state.
+  React.useEffect(() => {
+    setTeamPanelMode(null);
+    setTargets(null);
+    setTargetsError(null);
+    setConfirmNumber(null);
+    setInviteError(null);
+    setTransferError(null);
+    setPendingInvite(null);
+    setHasAddedTeammate(false);
+  }, [activeCallId]);
+
+  // Clears the pending invite (and, for an accepted "add", flags a teammate as now on the
+  // call) as soon as the inviter's call.invite.update for it comes back over the socket -
+  // the toast itself is shown by the provider, this just clears this panel's own "Ringing
+  // Sam..." UI so it doesn't keep showing a resolved invite as still ringing.
+  React.useEffect(() => {
+    return softphone.subscribe((event) => {
+      if (event.type !== "call.invite.update") return;
+      const inv = pendingInviteRef.current;
+      if (!inv || event.call_id !== activeCallId || event.invitee !== inv.userId) return;
+      if (event.state === "accepted" || event.state === "declined") {
+        if (event.state === "accepted" && inv.mode === "add") setHasAddedTeammate(true);
+        setPendingInvite(null);
+      }
+    });
+  }, [softphone, activeCallId]);
+
+  // Item spec: auto-cancel an invite nobody answered after 45s, and show "No answer"
+  // instead of leaving the "Ringing..." card up forever.
+  React.useEffect(() => {
+    if (!pendingInvite || pendingInvite.timedOut || !activeCallId) return undefined;
+    const timer = setTimeout(() => {
+      const current = pendingInviteRef.current;
+      if (!current || current.timedOut) return;
+      void api
+        .request(`/api/v1/calls/${activeCallId}/invite/cancel`, {
+          method: "POST",
+          json: { user_id: current.userId },
+        })
+        .catch(() => undefined);
+      setPendingInvite((prev) => (prev ? { ...prev, timedOut: true } : prev));
+    }, INVITE_NO_ANSWER_MS);
+    return () => clearTimeout(timer);
+  }, [pendingInvite, activeCallId, api]);
+
   React.useEffect(() => {
     if (softphone.activeCall || softphone.incoming.length > 0) setExpanded(true);
   }, [softphone.activeCall, softphone.incoming.length]);
@@ -308,7 +393,7 @@ export function SoftphonePanel() {
       const ring = softphone.incoming[0];
       if (!ring || pendingRingIds.has(ring.callId) || !canPlaceCalls) return;
       e.preventDefault();
-      void handleAnswer(ring.callId);
+      void handleAnswer(ring);
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -326,11 +411,15 @@ export function SoftphonePanel() {
     }
   }
 
-  async function handleAnswer(callId: string) {
+  // Takes the whole ring (not just its id) so an "invite" card can join via /join instead
+  // of a plain ring's /answer.
+  async function handleAnswer(ring: IncomingRing) {
+    const callId = ring.callId;
     setAnswerError(null);
     setPendingRingIds((prev) => new Set(prev).add(callId));
     try {
-      await softphone.answer(callId);
+      if (ring.kind === "invite") await softphone.joinInvite(callId);
+      else await softphone.answer(callId);
     } catch (err) {
       setAnswerError((err as Error).message);
     } finally {
@@ -345,12 +434,15 @@ export function SoftphonePanel() {
   // Item 3: mirrors handleAnswer - a failed decline is caught and surfaced instead of
   // becoming an unhandled rejection (the provider now also keeps the ring card up until
   // the hangup POST actually resolves, so there's something visible left to attach the
-  // error to).
-  async function handleDecline(callId: string) {
+  // error to). An "invite" card declines via /invite/cancel (declineInvite) instead of the
+  // plain ring's hangup-based decline().
+  async function handleDecline(ring: IncomingRing) {
+    const callId = ring.callId;
     setDeclineError(null);
     setPendingRingIds((prev) => new Set(prev).add(callId));
     try {
-      await softphone.decline(callId);
+      if (ring.kind === "invite") await softphone.declineInvite(callId);
+      else await softphone.decline(callId);
     } catch (err) {
       setDeclineError((err as Error).message);
     } finally {
@@ -368,6 +460,88 @@ export function SoftphonePanel() {
       await softphone.hangUp();
     } catch (err) {
       setHangupError((err as Error).message);
+    }
+  }
+
+  async function handleLeave() {
+    try {
+      await softphone.leave();
+    } catch {
+      /* leaving is best-effort - there is no API leg to fail, only the room disconnect */
+    }
+  }
+
+  // Opens (or closes, on a second click of the same button) the Transfer/Add-teammate
+  // panel and loads /transfer-targets fresh every time it opens.
+  async function toggleTeamPanel(mode: "transfer" | "add") {
+    if (teamPanelMode === mode) {
+      setTeamPanelMode(null);
+      return;
+    }
+    setTeamPanelMode(mode);
+    setTargetsError(null);
+    setTargets(null);
+    setConfirmNumber(null);
+    setInviteError(null);
+    setTransferError(null);
+    if (!softphone.activeCall) return;
+    setTargetsLoading(true);
+    try {
+      const result = await api.request<TransferTargetsOut>(
+        `/api/v1/calls/${softphone.activeCall.id}/transfer-targets`,
+      );
+      setTargets(result);
+    } catch (err) {
+      setTargetsError(err instanceof Error ? err.message : "Failed to load transfer targets");
+    } finally {
+      setTargetsLoading(false);
+    }
+  }
+
+  async function inviteTeammate(teammate: TransferTeammate, mode: "add" | "transfer") {
+    if (!softphone.activeCall) return;
+    setInviteError(null);
+    try {
+      await api.request(`/api/v1/calls/${softphone.activeCall.id}/invite`, {
+        method: "POST",
+        json: { user_id: teammate.user_id, mode },
+      });
+      setPendingInvite({ userId: teammate.user_id, name: teammate.name, mode, timedOut: false });
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Failed to invite teammate");
+    }
+  }
+
+  async function cancelPendingInvite() {
+    if (!pendingInvite || !softphone.activeCall) return;
+    const { userId } = pendingInvite;
+    setPendingInvite(null);
+    try {
+      await api.request(`/api/v1/calls/${softphone.activeCall.id}/invite/cancel`, {
+        method: "POST",
+        json: { user_id: userId },
+      });
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Failed to cancel invite");
+    }
+  }
+
+  async function confirmTransferNumber(e164: string) {
+    if (!softphone.activeCall) return;
+    setTransferError(null);
+    try {
+      await api.request(`/api/v1/calls/${softphone.activeCall.id}/transfer`, {
+        method: "POST",
+        json: { to: e164 },
+      });
+      setTeamPanelMode(null);
+      setConfirmNumber(null);
+      // The call leaves the app on a blind transfer - treat it like the call ending for
+      // us: disconnect the room and go back to idle, but never POST /hangup (the call is
+      // still live, just no longer on this leg).
+      await softphone.leave();
+    } catch (err) {
+      setTransferError(err instanceof Error ? err.message : "Transfer failed");
     }
   }
 
@@ -483,10 +657,40 @@ export function SoftphonePanel() {
               className="w-full"
               disabled={pendingRingIds.has(ring.callId) || !canPlaceCalls}
               title={canPlaceCalls ? undefined : "You don't have permission to place or answer calls"}
-              onClick={() => handleAnswer(ring.callId)}
+              onClick={() => handleAnswer(ring)}
             >
               {pendingRingIds.has(ring.callId) ? "Joining…" : "Join call"}
             </Button>
+          </div>
+        ) : ring.kind === "invite" ? (
+          <div key={ring.callId} className="space-y-2 border-b border-border p-3" role="alert">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <PhoneIncoming className="h-4 w-4 text-[hsl(var(--cx-live))]" />
+              {ring.invite?.by || "Someone"} wants to{" "}
+              {ring.invite?.mode === "transfer" ? "transfer a call to you" : "add you to a call"}
+            </div>
+            <p className="text-xs text-muted-foreground">{formatPhone(ring.from)}</p>
+            <div className="flex gap-2">
+              <Button
+                ref={index === 0 ? answerButtonRef : undefined}
+                type="button"
+                className="flex-1"
+                disabled={pendingRingIds.has(ring.callId) || !canPlaceCalls}
+                title={canPlaceCalls ? undefined : "You don't have permission to place or answer calls"}
+                onClick={() => handleAnswer(ring)}
+              >
+                {pendingRingIds.has(ring.callId) ? "Joining…" : "Answer"}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="flex-1"
+                disabled={pendingRingIds.has(ring.callId)}
+                onClick={() => handleDecline(ring)}
+              >
+                Decline
+              </Button>
+            </div>
           </div>
         ) : (
           <div key={ring.callId} className="space-y-2 border-b border-border p-3" role="alert">
@@ -502,7 +706,7 @@ export function SoftphonePanel() {
                 className="flex-1"
                 disabled={pendingRingIds.has(ring.callId) || !canPlaceCalls}
                 title={canPlaceCalls ? undefined : "You don't have permission to place or answer calls"}
-                onClick={() => handleAnswer(ring.callId)}
+                onClick={() => handleAnswer(ring)}
               >
                 {pendingRingIds.has(ring.callId) ? "Answering…" : "Answer"}
               </Button>
@@ -511,7 +715,7 @@ export function SoftphonePanel() {
                 variant="destructive"
                 className="flex-1"
                 disabled={pendingRingIds.has(ring.callId)}
-                onClick={() => handleDecline(ring.callId)}
+                onClick={() => handleDecline(ring)}
               >
                 Decline
               </Button>
@@ -652,10 +856,144 @@ export function SoftphonePanel() {
                 {softphone.onHold ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
               </Button>
             )}
+            {softphone.status === "in-call" && (
+              <Button
+                type="button"
+                size="icon"
+                variant={teamPanelMode === "transfer" ? "default" : "outline"}
+                aria-label="Transfer"
+                aria-pressed={teamPanelMode === "transfer"}
+                onClick={() => toggleTeamPanel("transfer")}
+              >
+                <PhoneForwarded className="h-4 w-4" />
+              </Button>
+            )}
+            {softphone.status === "in-call" && (
+              <Button
+                type="button"
+                size="icon"
+                variant={teamPanelMode === "add" ? "default" : "outline"}
+                aria-label="Add"
+                aria-pressed={teamPanelMode === "add"}
+                onClick={() => toggleTeamPanel("add")}
+              >
+                <UserPlus className="h-4 w-4" />
+              </Button>
+            )}
+            {hasAddedTeammate && (
+              <Button type="button" variant="outline" onClick={handleLeave}>
+                Leave
+              </Button>
+            )}
             <Button type="button" variant="destructive" className="flex-1" onClick={handleHangUp}>
               <PhoneOff className="mr-1 h-4 w-4" /> Hang up
             </Button>
           </div>
+
+          {teamPanelMode && (
+            <div className="space-y-2 rounded-md border border-border p-2 text-xs">
+              <p className="font-medium">
+                {teamPanelMode === "transfer" ? "Transfer" : "Add teammate"}
+              </p>
+              {targetsLoading && <p className="text-muted-foreground">Loading…</p>}
+              {targetsError && (
+                <p role="alert" className="text-destructive">
+                  {targetsError}
+                </p>
+              )}
+              {pendingInvite ? (
+                <div className="space-y-2">
+                  {pendingInvite.timedOut ? (
+                    <p className="text-muted-foreground">No answer</p>
+                  ) : (
+                    <>
+                      <p>Ringing {pendingInvite.name}…</p>
+                      <Button type="button" size="sm" variant="outline" onClick={cancelPendingInvite}>
+                        Cancel
+                      </Button>
+                    </>
+                  )}
+                </div>
+              ) : confirmNumber ? (
+                <div className="space-y-2">
+                  <p>Transfer to {formatPhone(confirmNumber)}?</p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => confirmTransferNumber(confirmNumber)}
+                    >
+                      Confirm
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setConfirmNumber(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                targets && (
+                  <div className="space-y-2">
+                    <div>
+                      <p className="font-medium text-muted-foreground">Teammates</p>
+                      {targets.teammates.length === 0 ? (
+                        <p className="text-muted-foreground">
+                          No teammates can take calls on this number
+                        </p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {targets.teammates.map((t) => (
+                            <li key={t.user_id}>
+                              <button
+                                type="button"
+                                className="w-full rounded-md px-1 py-1 text-left hover:bg-muted"
+                                onClick={() => inviteTeammate(t, teamPanelMode)}
+                              >
+                                {t.name}{" "}
+                                <span className="text-muted-foreground">{t.email}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    {teamPanelMode === "transfer" && targets.numbers.length > 0 && (
+                      <div>
+                        <p className="font-medium text-muted-foreground">Our numbers</p>
+                        <ul className="space-y-1">
+                          {targets.numbers.map((n) => (
+                            <li key={n.e164}>
+                              <button
+                                type="button"
+                                className="w-full rounded-md px-1 py-1 text-left hover:bg-muted"
+                                onClick={() => setConfirmNumber(n.e164)}
+                              >
+                                {formatPhone(n.e164)}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )
+              )}
+              {inviteError && (
+                <p role="alert" className="text-destructive">
+                  {inviteError}
+                </p>
+              )}
+              {transferError && (
+                <p role="alert" className="text-destructive">
+                  {transferError}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       ) : softphone.incoming.length === 0 ? (
         <form className="space-y-2 p-3" onSubmit={dial}>

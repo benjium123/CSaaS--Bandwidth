@@ -244,7 +244,9 @@ function Harness() {
         <button
           key={r.callId}
           onClick={() =>
-            sp.answer(r.callId).catch(() => {
+            // Mirrors SoftphonePanel's kind-based routing: an "invite" ring joins via
+            // /join (joinInvite), everything else via the plain /answer.
+            (r.kind === "invite" ? sp.joinInvite(r.callId) : sp.answer(r.callId)).catch(() => {
               /* asserted via the ring staying/leaving the incoming list */
             })
           }
@@ -256,7 +258,9 @@ function Harness() {
         <button
           key={r.callId}
           onClick={() =>
-            sp.decline(r.callId).catch(() => {
+            // Mirrors SoftphonePanel: an "invite" ring declines via /invite/cancel
+            // (declineInvite, my own user id) rather than the plain-ring hangup route.
+            (r.kind === "invite" ? sp.declineInvite(r.callId) : sp.decline(r.callId)).catch(() => {
               /* asserted via the ring staying/leaving the incoming list */
             })
           }
@@ -1319,5 +1323,129 @@ describe("SoftphoneProvider", () => {
 
     await waitFor(() => expect(screen.queryByTestId("ring-call-broadcast")).toBeNull());
     expect(hangupCalled).toBe(false);
+  });
+
+  // Transfer/add-teammate (P54): a call.invite ring for THIS user, joined via /join (not
+  // /answer) and declined via /invite/cancel with this user's own id (never /hangup).
+  it("shows an invite card on call.invite; Answer posts /join and connects, Decline posts /invite/cancel with my own id", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/calls/call-9/join": (_path: string, init: RequestInit & { json?: unknown }) => {
+        if (init.method === "POST") {
+          return { url: "wss://lk.example.com", token: "tok-join", room: "call-9" };
+        }
+        throw new Error("unexpected request");
+      },
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.invite",
+          call_id: "call-9",
+          room: "call-9",
+          from: "+19725550111",
+          to: "+12145550100",
+          mode: "add",
+          by: "Ana Agent",
+        }),
+      });
+    });
+
+    expect(await screen.findByTestId("ring-call-9")).toHaveTextContent("+19725550111");
+
+    await userEvent.click(screen.getByText("Answer-call-9"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-call").textContent).toBe("call-9:call-9:+19725550111"),
+    );
+    expect(screen.getByTestId("status").textContent).toBe("in-call");
+    expect(screen.queryByTestId("ring-call-9")).toBeNull();
+
+    const joinCall = client.calls.find((c) => c.path === "/api/v1/calls/call-9/join");
+    expect(joinCall?.init.method).toBe("POST");
+    // Never the plain-ring /answer route.
+    expect(client.calls.some((c) => c.path === "/api/v1/calls/call-9/answer")).toBe(false);
+  });
+
+  it("declining a call.invite posts /invite/cancel with my own user id, never /hangup", async () => {
+    let cancelBody: unknown;
+    const client = makeStubClient({
+      "/api/v1/auth/me": ME,
+      "/api/v1/calls/call-9/invite/cancel": (_path: string, init: RequestInit & { json?: unknown }) => {
+        cancelBody = init.json;
+        return null;
+      },
+    });
+    renderWithProviders(
+      <SoftphoneProvider>
+        <Harness />
+      </SoftphoneProvider>,
+      client,
+    );
+
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    const ws = latestWs();
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "call.invite",
+          call_id: "call-9",
+          room: "call-9",
+          from: "+19725550111",
+          to: "+12145550100",
+          mode: "transfer",
+          by: "Ana Agent",
+        }),
+      });
+    });
+
+    expect(await screen.findByTestId("ring-call-9")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Decline-call-9"));
+
+    await waitFor(() => expect(screen.queryByTestId("ring-call-9")).toBeNull());
+    expect(cancelBody).toEqual({ user_id: "u1" });
+    expect(client.calls.some((c) => c.path === "/api/v1/calls/call-9/hangup")).toBe(false);
+  });
+
+  // P54: accepting a transfer we initiated must leave the room WITHOUT ending the call
+  // for the teammate who just joined it.
+  it("leaves the call (no /hangup) when a call.invite.update reports our transfer accepted, and toasts", async () => {
+    const client = makeStubClient(dialRoutes());
+    renderSoftphone(client);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByText("Dial"));
+    await waitFor(() =>
+      expect(screen.getByTestId("active-call").textContent).toBe("call-1:call-call-1:+19725550199"),
+    );
+    const room = FakeRoom.instances.at(-1)!;
+
+    act(() => {
+      latestWs().onmessage?.({
+        data: JSON.stringify({
+          type: "call.invite.update",
+          call_id: "call-1",
+          invitee: "u2",
+          invitee_name: "Sam Agent",
+          mode: "transfer",
+          state: "accepted",
+        }),
+      });
+    });
+
+    await waitFor(() => expect(screen.getByTestId("active-call").textContent).toBe(""));
+    expect(screen.getByTestId("status").textContent).toBe("idle");
+    expect(room.disconnectCalls).toBe(1);
+    expect(client.calls.some((c) => c.path.includes("/hangup"))).toBe(false);
+    expect(await screen.findByText("Transferred to Sam Agent")).toBeInTheDocument();
   });
 });
