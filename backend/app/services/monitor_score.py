@@ -62,6 +62,11 @@ LEVEL_ORDER = {"normal": 0, "watch": 1, "restricted": 2, "paused": 3}
 #: business off. A pause also needs evidence the platform observed itself.
 SOFT_KINDS = frozenset({"public_report", "complaint_reply"})
 PUBLIC_REPORT_DAILY_CAP = 2
+#: Evidence the platform itself confirmed: a call review that found a scam, a held text a
+#: review confirmed bad. With automatic action off, these alone may pause a workspace once
+#: they reach MONITOR_PAUSE_SCORE (operator decision 2026-09-27); everything else, and every
+#: `restricted`, stays a recommendation for a human.
+CONFIRMED_KINDS = frozenset({"call_scam", "text_held_confirmed"})
 #: Where a pending operator decision lives inside `case_file`. NOT "recommendation" - that
 #: key is already taken by the AI case file, where it holds a plain string.
 PENDING_ACTION = "pending_action"
@@ -108,6 +113,7 @@ async def current_score(
     *,
     now: datetime | None = None,
     hard_only: bool = False,
+    kinds: frozenset[str] | None = None,
 ) -> int:
     now = now or _now()
     since = now - timedelta(days=settings.monitor_signal_window_days)
@@ -119,6 +125,8 @@ async def current_score(
     )
     if hard_only:
         stmt = stmt.where(MonitorSignal.kind.not_in(tuple(SOFT_KINDS)))
+    if kinds is not None:
+        stmt = stmt.where(MonitorSignal.kind.in_(tuple(kinds)))
     total = (await session.execute(stmt)).scalar_one()
     return int(total or 0)
 
@@ -234,7 +242,15 @@ async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitor
     # The argument AGAINST this, recorded because it is a real cost and not a straw man: a
     # scam campaign keeps sending until a human looks, and the harm is immediate while the
     # action was reversible. That trade is the operator's to make, and they have made it.
-    if not settings.monitor_auto_action and LEVEL_ORDER[target] >= LEVEL_ORDER["restricted"]:
+    auto_pause = False
+    if not settings.monitor_auto_action and target == "paused":
+        confirmed = await current_score(session, settings, state, kinds=CONFIRMED_KINDS)
+        auto_pause = confirmed >= settings.monitor_pause_score
+    if (
+        not settings.monitor_auto_action
+        and not auto_pause
+        and LEVEL_ORDER[target] >= LEVEL_ORDER["restricted"]
+    ):
         recommend(state, target, reason=f"Risk score {state.score}")
         audit_svc.record(
             session,
@@ -282,6 +298,9 @@ async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitor
                 f"({settings.monitor_pause_score})"
             ),
         )
+        if auto_pause:
+            # Read by case_file_tick: the ops admins are emailed too, after the commit.
+            state.case_file = {**state.case_file, "admin_notify": True}
         session.add(
             SecurityAlert(
                 id=uuid.uuid4(),
@@ -520,6 +539,7 @@ async def case_file_tick(session: AsyncSession, settings: Settings) -> int:
         if (state.case_file or {}).get("status") not in ("pending", "unavailable"):
             continue
         org_id = state.org_id
+        notify_admins = bool((state.case_file or {}).get("admin_notify"))
         evidence = await case_evidence(session, org_id, state)
         first_attempt = (state.case_file or {}).get("status") == "pending"
         if ai_down:
@@ -529,6 +549,8 @@ async def case_file_tick(session: AsyncSession, settings: Settings) -> int:
                 state.case_file = {"status": "unavailable", "evidence": evidence}
                 await session.commit()
                 await _email_paused_owners(session, settings, org_id)
+                if notify_admins:
+                    await _email_admins_auto_paused(session, settings, state)
             continue
         try:
             judgement = await ai_guard.judge(
@@ -562,7 +584,34 @@ async def case_file_tick(session: AsyncSession, settings: Settings) -> int:
         await session.commit()
         if first_attempt:
             await _email_paused_owners(session, settings, org_id)
+            if notify_admins:
+                await _email_admins_auto_paused(session, settings, state)
     return written
+
+
+async def _email_admins_auto_paused(
+    session: AsyncSession, settings: Settings, state: OrgMonitoring
+) -> None:
+    """The monitor paused a workspace by itself: every active ops admin hears about it."""
+    from app.services import break_glass, mailer
+
+    to = await break_glass.admin_emails(session)
+    if not to:
+        return
+    org = await session.get(Org, state.org_id)
+    name = org.name if org is not None else str(state.org_id)
+    await mailer.send(
+        settings,
+        to,
+        f"Workspace paused automatically on {settings.app_name}: {name}",
+        (
+            f"The monitor paused {name} ({state.org_id}) on confirmed evidence "
+            "(scam calls or texts a review confirmed bad).\n\n"
+            f"Reason: {state.paused_reason}\n\n"
+            "Calling and texting are stopped. Only an operator can unpause or suspend it: "
+            "open the workspace in the ops console to review the case file and decide."
+        ),
+    )
 
 
 async def _email_paused_owners(
