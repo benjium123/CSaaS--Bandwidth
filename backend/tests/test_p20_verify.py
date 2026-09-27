@@ -440,6 +440,7 @@ async def test_me_router_does_not_shadow_auth_me(client, settings):
     # "these exact paths, no wildcard, nothing from another router" - update the list
     # when /me grows again.
     assert me_paths == [
+        "/api/v1/me/call-prefs",
         "/api/v1/me/capabilities",
         "/api/v1/me/inbox-order",
         "/api/v1/me/login-events",

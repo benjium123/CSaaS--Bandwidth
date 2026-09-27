@@ -7,7 +7,7 @@ from alembic import op
 
 from app.db.types import PortableJSON
 
-revision = "0087_member_call_prefs"
+revision = "0090_member_call_prefs"
 down_revision = "0089_operator_expiry"
 branch_labels = None
 depends_on = None
