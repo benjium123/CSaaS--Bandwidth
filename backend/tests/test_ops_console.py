@@ -58,6 +58,11 @@ async def _operator(client, session, email="ops@example.com", role="admin") -> s
     return token
 
 
+def _why(token: str) -> dict:
+    """H2: major operator actions need a written reason."""
+    return {**auth_headers(token), "X-Ops-Reason": "test: operator decision"}
+
+
 async def _new_org(session, name: str, *, prepaid: bool = False) -> uuid.UUID:
     """Create a tenant org and optionally mark it as telephony prepaid."""
     org_id = uuid.uuid4()
@@ -458,12 +463,12 @@ async def test_only_admin_operators_switch_the_recording_notice(ops, session, op
     r = await ops.put(path, json={"enabled": False}, headers=auth_headers(reviewer))
     assert r.status_code == 403, r.text
 
-    r = await ops.put(path, json={"enabled": False}, headers=auth_headers(admin))
+    r = await ops.put(path, json={"enabled": False}, headers=_why(admin))
     assert r.status_code == 200, r.text
     assert r.json()["plays_now"] is False
     session.expire_all()
     set_org_context(session, org_id)
     assert (await session.get(Org, org_id)).calling_settings["announcement_off"] is True
 
-    r = await ops.put(path, json={"enabled": True}, headers=auth_headers(admin))
+    r = await ops.put(path, json={"enabled": True}, headers=_why(admin))
     assert r.json()["plays_now"] is True

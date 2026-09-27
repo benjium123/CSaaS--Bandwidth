@@ -16,6 +16,34 @@ from app.models import OPERATOR_ROLES, PlatformOperator, User
 
 ROLE_RANK = {"reviewer": 1, "admin": 2}
 
+#: H2: what each operator role may do. Every role reads; each non-admin role acts in one area;
+#: admin does everything, including the MAJOR actions (auth/deps.py
+#: require_operator_permission(major=True)). reviewer and admin keep exactly what they had.
+OPS_PERMISSIONS: tuple[str, ...] = (
+    "ops:read",
+    "ops:kyc",
+    "ops:support",
+    "ops:billing",
+    "ops:site",
+    "ops:admin",
+)
+ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
+    "read_only": frozenset({"ops:read"}),
+    # ops:site = website chats and leads, answered by reviewers before H2 and by support now.
+    "reviewer": frozenset({"ops:read", "ops:kyc", "ops:site"}),
+    "support": frozenset({"ops:read", "ops:support", "ops:site"}),
+    "billing": frozenset({"ops:read", "ops:billing"}),
+    "admin": frozenset(OPS_PERMISSIONS),
+}
+
+
+def has_permission(role: str, permission: str) -> bool:
+    return permission in ROLE_PERMISSIONS.get(role, frozenset())
+
+
+def permissions_for(role: str) -> list[str]:
+    return sorted(ROLE_PERMISSIONS.get(role, frozenset()))
+
 
 async def get_active(session: AsyncSession, user_id: uuid.UUID) -> PlatformOperator | None:
     return (

@@ -191,6 +191,8 @@ class MeOut(BaseModel):
     #: P43: "reviewer" or "admin" for platform operators, so the console only offers what
     #: the operator may actually do.
     operator_role: str | None = None
+    #: H2: what that role may do (services/operators.py ROLE_PERMISSIONS), e.g. "ops:billing".
+    operator_permissions: list[str] = []
     #: P41: true while this account must still add an authenticator app or passkey.
     second_factor_required: bool = False
     #: This session just proved a second factor and the account has no unused recovery
@@ -501,7 +503,9 @@ async def _login(
     # existing "locked" outcome (same as the SSO deny) and does NOT touch the lockout counter.
     if require_admin:
         operator = await operators_svc.get_active(session, user.id)
-        if operator is None or operator.role != "admin":
+        # H2: every active operator role signs in here; what each may do is enforced per
+        # route (require_operator_permission).
+        if operator is None:
             await _log_and_fail(
                 session,
                 PermissionDeniedError(
@@ -657,6 +661,9 @@ async def me(
         has_passkey=user.has_passkey,
         is_platform_operator=operator is not None,
         operator_role=operator.role if operator is not None else None,
+        operator_permissions=(
+            operators_svc.permissions_for(operator.role) if operator is not None else []
+        ),
         second_factor_required=second_factor_required,
         needs_recovery_codes=needs_recovery_codes,
         # Only platform operators are held to passkey sign-in (services/passkey_policy.py).

@@ -8,15 +8,15 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Depends
 
-from app.auth.deps import OperatorContext, require_operator
+from app.auth.deps import OperatorContext, require_operator_permission
 from app.services import server_stats
 
 router = APIRouter(prefix="/api/v1/ops/console", tags=["ops-console"])
 log = structlog.get_logger("ops_server")
 
-Reviewer = Annotated[OperatorContext, Depends(require_operator("reviewer"))]
+Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))]
 
 
 @router.get("/server")
-async def console_server(op: Reviewer) -> dict:
+async def console_server(op: Reader) -> dict:
     return await server_stats.snapshot()

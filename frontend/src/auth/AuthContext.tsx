@@ -119,6 +119,8 @@ export type Me = {
   /** This session just proved a second factor and the account has no unused recovery
    * codes: App shows them once (RecoveryCodesPage). */
   needs_recovery_codes?: boolean;
+  /** H2: what this operator's role may do, e.g. "ops:billing" (empty for customers). */
+  operator_permissions?: string[];
 };
 
 type LoginResult =

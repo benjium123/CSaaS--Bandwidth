@@ -556,7 +556,7 @@ async def test_ops_routes_need_a_named_operator(kyc_app, session):
     r = await client.post(
         "/api/v1/ops/ban-list",
         json={"kind": "email", "value": "x@y.com", "reason": "r"},
-        headers=auth_headers(ops),
+        headers={**auth_headers(ops), "X-Ops-Reason": "test: operator decision"},
     )
     assert r.status_code == 403
 
@@ -739,7 +739,7 @@ async def test_suspension_cuts_everything_off(kyc_app, session):
     r = await client.post(
         f"/api/v1/ops/applications/{org['id']}/suspend",
         json={"reason": "Scam complaints", "ban": False},
-        headers=auth_headers(ops),
+        headers={**auth_headers(ops), "X-Ops-Reason": "test: operator decision"},
     )
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "suspended"
@@ -772,7 +772,7 @@ async def test_suspension_cuts_everything_off(kyc_app, session):
     r = await client.post(
         f"/api/v1/ops/applications/{org['id']}/unsuspend",
         json={"note": "cleared"},
-        headers=auth_headers(ops),
+        headers={**auth_headers(ops), "X-Ops-Reason": "test: operator decision"},
     )
     assert r.status_code == 200
     assert r.json()["status"] == "approved"

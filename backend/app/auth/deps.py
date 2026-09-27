@@ -633,13 +633,24 @@ class OperatorContext:
 
 
 async def _operator_check(
-    request: Request, session: AsyncSession, user: User, role: str
+    request: Request,
+    session: AsyncSession,
+    user: User,
+    role: str | None,
+    *,
+    permission: str | None = None,
 ) -> PlatformOperator:
     from app.services import operators as operators_svc
 
     operator = await operators_svc.get_active(session, user.id)
-    if operator is None or not operators_svc.role_satisfies(operator.role, role):
+    if operator is None:
         raise PermissionDeniedError("Platform operator access required")
+    if role is not None and not operators_svc.role_satisfies(operator.role, role):
+        raise PermissionDeniedError("Platform operator access required")
+    if permission is not None and not operators_svc.has_permission(operator.role, permission):
+        raise PermissionDeniedError(
+            "Your operator role cannot do this", code="operator_permission_denied"
+        )
     if not user.has_second_factor:
         raise PermissionDeniedError(
             "Operators must have an authenticator app or passkey",
@@ -673,6 +684,44 @@ def require_operator(role: str = "reviewer"):
         session: Annotated[AsyncSession, Depends(get_session)],
     ) -> OperatorContext:
         operator = await _operator_check(request, session, user, role)
+        return OperatorContext(user=user, operator=operator, session=session)
+
+    return _check
+
+
+#: H2: header carrying the operator's reason (services/operator_audit.REASON_HEADER).
+OPS_REASON_MIN_LENGTH = 5
+
+
+def require_operator_permission(permission: str, *, major: bool = False):
+    """H2: a named operator whose role grants ``permission`` (services/operators.py
+    ROLE_PERMISSIONS), with every check require_operator makes.
+
+    ``major=True`` marks an action only a person may take - pausing, suspending, deleting or
+    disabling a workspace, account or feature: it also needs a written reason (X-Ops-Reason,
+    kept in operator_audit_log) and a second factor proved within STEP_UP_2FA_MINUTES. The
+    shared ops token never reaches these (require_platform_operator is a different guard)."""
+    from app.services import operators as operators_svc
+
+    if permission not in operators_svc.OPS_PERMISSIONS:
+        raise ValueError(f"unknown operator permission: {permission}")
+
+    async def _check(
+        request: Request,
+        user: Annotated[User, Depends(get_current_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> OperatorContext:
+        operator = await _operator_check(request, session, user, None, permission=permission)
+        if major:
+            from app.services import operator_audit
+
+            reason = operator_audit.reason_of(request) or ""
+            if len(reason) < OPS_REASON_MIN_LENGTH:
+                raise ValidationFailedError(
+                    "Say why you are doing this. It is kept in the operator audit log.",
+                    code="ops_reason_required",
+                )
+            await check_step_up(request, session, user, kind="recent_2fa", action="ops_major")
         return OperatorContext(user=user, operator=operator, session=session)
 
     return _check

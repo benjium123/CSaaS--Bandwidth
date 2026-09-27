@@ -24,6 +24,7 @@ export const ACTION_LABELS: Record<string, string> = {
   ownership_transfer: "make someone an owner",
   use_case_change: "change what your business uses calling and texting for",
   operator_console: "use the operator console",
+  ops_major: "make a major change to a customer account",
   suspend: "suspend an account",
   unsuspend: "lift a suspension",
   ban: "change the ban list",

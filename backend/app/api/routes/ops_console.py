@@ -15,7 +15,7 @@ import structlog
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from app.auth.deps import OperatorContext, require_operator
+from app.auth.deps import OperatorContext, require_operator_permission
 from app.db.base import set_org_context
 from app.errors import NotFoundError, ValidationFailedError
 from app.models import FixedCost, Org, PlatformPrice
@@ -24,8 +24,10 @@ from app.services import console
 router = APIRouter(prefix="/api/v1/ops/console", tags=["ops-console"])
 log = structlog.get_logger("ops_console")
 
-Reviewer = Annotated[OperatorContext, Depends(require_operator("reviewer"))]
-Admin = Annotated[OperatorContext, Depends(require_operator("admin"))]
+Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))]
+Billing = Annotated[OperatorContext, Depends(require_operator_permission("ops:billing"))]
+AdminOp = Annotated[OperatorContext, Depends(require_operator_permission("ops:admin"))]
+Major = Annotated[OperatorContext, Depends(require_operator_permission("ops:admin", major=True))]
 Start = Annotated[date | None, Query()]
 End = Annotated[date | None, Query()]
 
@@ -46,12 +48,12 @@ def _audit(op: OperatorContext, org_id, action: str, detail: dict) -> None:  # n
 
 
 @router.get("/orgs")
-async def console_orgs(op: Reviewer, start: Start = None, end: End = None) -> dict:
+async def console_orgs(op: Reader, start: Start = None, end: End = None) -> dict:
     return await console.orgs_table(op.session, start, end)
 
 
 @router.get("/orgs.csv")
-async def console_orgs_csv(op: Reviewer, start: Start = None, end: End = None) -> Response:
+async def console_orgs_csv(op: Reader, start: Start = None, end: End = None) -> Response:
     data = await console.orgs_table(op.session, start, end)
     metric_keys = sorted({k for r in data["orgs"] for k in r["metrics"]})
     base = [
@@ -74,7 +76,7 @@ async def console_orgs_csv(op: Reviewer, start: Start = None, end: End = None) -
 
 @router.get("/orgs/{org_id}")
 async def console_org(
-    org_id: uuid.UUID, op: Reviewer, start: Start = None, end: End = None
+    org_id: uuid.UUID, op: Reader, start: Start = None, end: End = None
 ) -> dict:
     detail = await console.org_detail(op.session, org_id, start, end)
     if detail is None:
@@ -83,12 +85,12 @@ async def console_org(
 
 
 @router.get("/payments")
-async def console_payments(op: Reviewer, start: Start = None, end: End = None) -> dict:
+async def console_payments(op: Reader, start: Start = None, end: End = None) -> dict:
     return {"payments": await console.payments_list(op.session, start, end)}
 
 
 @router.get("/prices")
-async def console_prices(op: Reviewer) -> dict:
+async def console_prices(op: Reader) -> dict:
     from app.services.telephony_billing import PLATFORM_PRICE_MICROS
 
     rows = {
@@ -115,7 +117,7 @@ class PriceIn(BaseModel):
 
 
 @router.put("/prices/{metric}")
-async def console_set_price(metric: str, payload: PriceIn, op: Admin) -> dict:
+async def console_set_price(metric: str, payload: PriceIn, op: Billing) -> dict:
     from app.services.telephony_billing import PLATFORM_PRICE_MICROS
 
     if metric not in PLATFORM_PRICE_MICROS:
@@ -160,7 +162,7 @@ async def _org_or_404(op: OperatorContext, org_id: uuid.UUID) -> Org:
 
 
 @router.get("/orgs/{org_id}/features")
-async def console_org_features(org_id: uuid.UUID, op: Reviewer) -> dict:
+async def console_org_features(org_id: uuid.UUID, op: Reader) -> dict:
     from app.services import entitlements
 
     from app.services import calling_settings
@@ -191,7 +193,7 @@ async def console_org_features(org_id: uuid.UUID, op: Reviewer) -> dict:
 
 @router.put("/orgs/{org_id}/features/{key}")
 async def console_set_org_feature(
-    org_id: uuid.UUID, key: str, payload: FeatureIn, op: Admin
+    org_id: uuid.UUID, key: str, payload: FeatureIn, op: Major
 ) -> dict:
     from app.services import entitlements
 
@@ -224,7 +226,7 @@ class RecordingNoticeIn(BaseModel):
 
 @router.put("/orgs/{org_id}/recording-notice")
 async def console_set_recording_notice(
-    org_id: uuid.UUID, payload: RecordingNoticeIn, op: Admin
+    org_id: uuid.UUID, payload: RecordingNoticeIn, op: Major
 ) -> dict:
     """Super admins only: switch the org's recording notice on or off. It plays only on
     calls the org records; the org itself cannot change this."""
@@ -284,14 +286,14 @@ async def _sync_stripe(op: OperatorContext, request: Request, org_id: uuid.UUID)
 
 
 @router.get("/orgs/{org_id}/discounts")
-async def console_org_discounts(org_id: uuid.UUID, op: Reviewer) -> dict:
+async def console_org_discounts(org_id: uuid.UUID, op: Reader) -> dict:
     await _org_or_404(op, org_id)
     return await _discounts_payload(op, org_id)
 
 
 @router.put("/orgs/{org_id}/discounts")
 async def console_set_org_discounts(
-    org_id: uuid.UUID, payload: DiscountIn, op: Admin, request: Request
+    org_id: uuid.UUID, payload: DiscountIn, op: Billing, request: Request
 ) -> dict:
     from app.services import discounts
 
@@ -333,7 +335,7 @@ async def console_set_org_discounts(
 
 @router.delete("/orgs/{org_id}/discounts/{category}")
 async def console_remove_org_discount(
-    org_id: uuid.UUID, category: str, op: Admin, request: Request
+    org_id: uuid.UUID, category: str, op: Billing, request: Request
 ) -> dict:
     from app.services import discounts
 
@@ -376,7 +378,7 @@ def _fixed_cost_dict(row: FixedCost) -> dict:
 
 
 @router.get("/fixed-costs")
-async def console_fixed_costs(op: Reviewer) -> dict:
+async def console_fixed_costs(op: Reader) -> dict:
     rows = (
         (await op.session.execute(sa.select(FixedCost).order_by(FixedCost.starts_on)))
         .scalars()
@@ -391,7 +393,7 @@ def _check_dates(payload: FixedCostIn) -> None:
 
 
 @router.post("/fixed-costs", status_code=201)
-async def console_add_fixed_cost(payload: FixedCostIn, op: Admin) -> dict:
+async def console_add_fixed_cost(payload: FixedCostIn, op: Billing) -> dict:
     _check_dates(payload)
     row = FixedCost(
         **payload.model_dump(), updated_by=op.user.id, updated_at=datetime.now(timezone.utc)
@@ -404,7 +406,7 @@ async def console_add_fixed_cost(payload: FixedCostIn, op: Admin) -> dict:
 
 
 @router.put("/fixed-costs/{cost_id}")
-async def console_update_fixed_cost(cost_id: uuid.UUID, payload: FixedCostIn, op: Admin) -> dict:
+async def console_update_fixed_cost(cost_id: uuid.UUID, payload: FixedCostIn, op: Billing) -> dict:
     _check_dates(payload)
     row = await op.session.get(FixedCost, cost_id)
     if row is None:
@@ -421,7 +423,7 @@ async def console_update_fixed_cost(cost_id: uuid.UUID, payload: FixedCostIn, op
 
 
 @router.delete("/fixed-costs/{cost_id}", status_code=204)
-async def console_delete_fixed_cost(cost_id: uuid.UUID, op: Admin) -> Response:
+async def console_delete_fixed_cost(cost_id: uuid.UUID, op: Billing) -> Response:
     row = await op.session.get(FixedCost, cost_id)
     if row is None:
         raise NotFoundError("Fixed cost not found")
@@ -438,7 +440,7 @@ class AdjustIn(BaseModel):
 
 @router.post("/orgs/{org_id}/adjust")
 async def console_adjust(
-    org_id: uuid.UUID, payload: AdjustIn, op: Admin, request: Request
+    org_id: uuid.UUID, payload: AdjustIn, op: Billing, request: Request
 ) -> dict:
     """Manual credit (positive) or debit (negative) with a reason - e.g. launch credit."""
     from app.services import credits
@@ -484,7 +486,7 @@ class BundleGrantIn(BaseModel):
 
 
 @router.post("/orgs/{org_id}/bundles")
-async def console_grant_bundle(org_id: uuid.UUID, payload: BundleGrantIn, op: Admin) -> dict:
+async def console_grant_bundle(org_id: uuid.UUID, payload: BundleGrantIn, op: Billing) -> dict:
     from app.services import bundles
 
     if await op.session.get(Org, org_id) is None:
@@ -522,7 +524,7 @@ class PrepaidIn(BaseModel):
 
 
 @router.post("/orgs/{org_id}/prepaid")
-async def console_prepaid(org_id: uuid.UUID, payload: PrepaidIn, op: Admin) -> dict:
+async def console_prepaid(org_id: uuid.UUID, payload: PrepaidIn, op: Billing) -> dict:
     """Switch an org's prepaid gate. Switching ON bills from now only (never retro)."""
     from app.services import telephony_billing
 
@@ -541,7 +543,7 @@ async def console_prepaid(org_id: uuid.UUID, payload: PrepaidIn, op: Admin) -> d
 
 
 @router.get("/telnyx")
-async def console_telnyx(op: Reviewer, request: Request) -> dict:
+async def console_telnyx(op: Reader, request: Request) -> dict:
     """Telnyx account float (shared with the CRM) and the last reconciled days."""
     from app.models import TelnyxCostDaily
     from app.services import telnyx_recon
@@ -581,7 +583,7 @@ async def console_telnyx(op: Reviewer, request: Request) -> dict:
 
 
 @router.get("/grants/pending")
-async def console_pending_grants(op: Admin) -> list[dict]:
+async def console_pending_grants(op: Billing) -> list[dict]:
     """P44d: credit and bundle grants waiting for a second operator."""
     from app.services import grant_approval
 
@@ -602,7 +604,7 @@ class GrantDecisionIn(BaseModel):
 
 
 @router.post("/grants/{alert_id}/decide")
-async def console_decide_grant(alert_id: uuid.UUID, payload: GrantDecisionIn, op: Admin) -> dict:
+async def console_decide_grant(alert_id: uuid.UUID, payload: GrantDecisionIn, op: Billing) -> dict:
     """P44d: a DIFFERENT admin approves (applies) or rejects a pending grant."""
     from app.services import grant_approval
 
@@ -621,7 +623,7 @@ async def console_decide_grant(alert_id: uuid.UUID, payload: GrantDecisionIn, op
 
 @router.get("/audit")
 async def console_audit(
-    op: Admin,
+    op: AdminOp,
     operator_user_id: uuid.UUID | None = None,
     org_id: uuid.UUID | None = None,
     q: Annotated[str | None, Query(max_length=100)] = None,

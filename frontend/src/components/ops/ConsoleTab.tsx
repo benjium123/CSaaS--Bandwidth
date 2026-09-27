@@ -758,7 +758,7 @@ function OrgDetailBody({ orgId, range }: { orgId: string; range: DateRange }): J
       </SurfaceCard>
 
       <SurfaceCard>
-        <OrgDiscountsPanel orgId={orgId} canEdit={me?.operator_role === "admin"} />
+        <OrgDiscountsPanel orgId={orgId} canEdit={Boolean(me?.operator_permissions?.includes("ops:billing"))} />
       </SurfaceCard>
     </div>
   );

@@ -21,7 +21,7 @@ from app.auth.deps import (
     OperatorContext,
     OrgContext,
     check_step_up,
-    require_operator,
+    require_operator_permission,
     require_permission,
 )
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
@@ -47,8 +47,10 @@ customer_router = APIRouter(prefix="/api/v1/monitoring", tags=["monitoring"])
 public_router = APIRouter(prefix="/api/v1/public", tags=["public"])
 ops_router = APIRouter(prefix="/api/v1/ops/monitoring", tags=["ops"])
 
-Reviewer = Annotated[OperatorContext, Depends(require_operator("reviewer"))]
-Admin = Annotated[OperatorContext, Depends(require_operator("admin"))]
+Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))]
+Kyc = Annotated[OperatorContext, Depends(require_operator_permission("ops:kyc"))]
+AdminOp = Annotated[OperatorContext, Depends(require_operator_permission("ops:admin"))]
+Major = Annotated[OperatorContext, Depends(require_operator_permission("ops:admin", major=True))]
 
 PUBLIC_LEVEL_TEXT = {
     "normal": None,
@@ -285,7 +287,7 @@ class HeldDecisionIn(BaseModel):
 
 
 @ops_router.get("")
-async def queue(op: Reviewer, level: str | None = Query(default=None)) -> list[dict]:
+async def queue(op: Reader, level: str | None = Query(default=None)) -> list[dict]:
     stmt = sa.select(OrgMonitoring, Org).join(Org, Org.id == OrgMonitoring.org_id)
     if level:
         stmt = stmt.where(OrgMonitoring.level == level)
@@ -314,7 +316,7 @@ async def queue(op: Reviewer, level: str | None = Query(default=None)) -> list[d
 
 
 @ops_router.get("/orgs/{org_id}")
-async def case(org_id: uuid.UUID, op: Reviewer) -> dict:
+async def case(org_id: uuid.UUID, op: Reader) -> dict:
     org = await op.session.get(Org, org_id)
     if org is None:
         raise NotFoundError("Organization not found")
@@ -452,7 +454,7 @@ async def _label_case(op: OperatorContext, org_id: uuid.UUID, label: str) -> Non
 
 
 @ops_router.post("/orgs/{org_id}/unpause")
-async def unpause(org_id: uuid.UUID, payload: DecisionIn, request: Request, op: Admin) -> dict:
+async def unpause(org_id: uuid.UUID, payload: DecisionIn, request: Request, op: Major) -> dict:
     await check_step_up(request, op.session, op.user, kind="recent_2fa", action="monitor_unpause")
     state = await monitor_score.get_state(op.session, org_id, create=False)
     if state is None or state.level == "normal":
@@ -465,7 +467,7 @@ async def unpause(org_id: uuid.UUID, payload: DecisionIn, request: Request, op: 
 
 
 @ops_router.post("/orgs/{org_id}/suspend")
-async def suspend(org_id: uuid.UUID, payload: DecisionIn, request: Request, op: Admin) -> dict:
+async def suspend(org_id: uuid.UUID, payload: DecisionIn, request: Request, op: Major) -> dict:
     """Confirmed abuse: label the evidence as scam and suspend (+ ban) the business."""
     await check_step_up(request, op.session, op.user, kind="recent_2fa", action="suspend")
     from app.services import suspension
@@ -499,7 +501,7 @@ async def suspend(org_id: uuid.UUID, payload: DecisionIn, request: Request, op: 
 
 @ops_router.post("/texts/{message_id}")
 async def decide_held_text(
-    message_id: uuid.UUID, payload: HeldDecisionIn, request: Request, op: Reviewer
+    message_id: uuid.UUID, payload: HeldDecisionIn, request: Request, op: Kyc
 ) -> dict:
     # JUSTIFIED allow_unscoped: operators act across workspaces; the row names its org.
     message = (
@@ -571,7 +573,7 @@ async def decide_held_text(
 
 
 @ops_router.get("/held-texts")
-async def held_texts(op: Reviewer) -> list[dict]:
+async def held_texts(op: Reader) -> list[dict]:
     rows = (
         (
             await op.session.execute(
@@ -599,7 +601,7 @@ async def held_texts(op: Reviewer) -> list[dict]:
 
 
 @ops_router.get("/report")
-async def daily_report(op: Reviewer, days: int = Query(default=1, ge=1, le=30)) -> dict:
+async def daily_report(op: Reader, days: int = Query(default=1, ge=1, le=30)) -> dict:
     """What the monitor did, and whether it still works."""
     since = _now() - timedelta(days=days)
     unscoped = {ALLOW_UNSCOPED_KEY: True}
@@ -730,7 +732,7 @@ class DecisionIn2(BaseModel):
 @ops_router.get("/accounts")
 async def accounts(
     request: Request,
-    op: Reviewer,
+    op: Reader,
     level: str | None = Query(default=None),
     q: str | None = Query(default=None),
     needs_decision: bool = Query(default=False),
@@ -819,7 +821,7 @@ async def accounts(
 
 @ops_router.post("/orgs/{org_id}/review")
 async def review_now(
-    org_id: uuid.UUID, payload: ReviewRequestIn, request: Request, op: Reviewer
+    org_id: uuid.UUID, payload: ReviewRequestIn, request: Request, op: Kyc
 ) -> dict:
     """Run a thorough review of ONE account, right now, because an operator asked.
 
@@ -860,7 +862,7 @@ async def review_now(
 
 @ops_router.post("/orgs/{org_id}/decision")
 async def decide_recommendation(
-    org_id: uuid.UUID, payload: DecisionIn2, request: Request, op: Admin
+    org_id: uuid.UUID, payload: DecisionIn2, request: Request, op: Major
 ) -> dict:
     """Apply or reject what the monitor recommended. This is the human decision.
 
@@ -982,7 +984,7 @@ def _inspect_audit(op: OperatorContext, org_id: uuid.UUID, *, what: str, detail:
 async def inspect_account(
     org_id: uuid.UUID,
     request: Request,
-    op: Reviewer,
+    op: Reader,
     days: int = Query(default=30, ge=1, le=365),
 ) -> dict:
     """The account as a person needs to see it to form their own judgement.
@@ -1078,7 +1080,7 @@ async def inspect_account(
 async def inspect_messages(
     org_id: uuid.UUID,
     request: Request,
-    op: Reviewer,
+    op: Reader,
     days: int = Query(default=30, ge=1, le=365),
     direction: str | None = Query(default=None, pattern="^(inbound|outbound)$"),
     contains: str | None = Query(default=None, min_length=2, max_length=100),
@@ -1178,7 +1180,7 @@ class AuditSampleIn(BaseModel):
 
 
 @ops_router.post("/audit-sample")
-async def audit_sample(payload: AuditSampleIn, request: Request, op: Admin) -> dict:
+async def audit_sample(payload: AuditSampleIn, request: Request, op: AdminOp) -> dict:
     """Review a stratified sample of accounts the monitor thinks are CLEAN, and report the misses.
 
     Every other number on the ops dashboard measures what the monitor caught, and none of them

@@ -155,7 +155,7 @@ async def test_applying_a_recommendation_pauses_and_arms_the_case_file(ops, sess
     r = await ops.post(
         f"/api/v1/ops/monitoring/orgs/{org_id}/decision",
         json={"action": "apply", "note": "Confirmed courier impersonation across 4 numbers."},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "test: operator decision"},
     )
     assert r.status_code == 200, r.text
     assert r.json()["applied_level"] == "paused"
@@ -193,7 +193,7 @@ async def test_a_decision_on_a_paused_account_with_an_ai_case_file_does_not_500(
     r = await ops.post(
         f"/api/v1/ops/monitoring/orgs/{org_id}/decision",
         json={"action": "apply", "note": "trying to decide on an account with a case file"},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "test: operator decision"},
     )
     assert r.status_code == 409, f"expected a clean conflict, got {r.status_code}: {r.text}"
     assert "recommendation" in r.text.lower()
@@ -206,7 +206,7 @@ async def test_rejecting_clears_the_recommendation_over_http(ops, session, ops_s
     r = await ops.post(
         f"/api/v1/ops/monitoring/orgs/{org_id}/decision",
         json={"action": "reject", "note": "Checked the messages - this is their real business."},
-        headers=auth_headers(token),
+        headers={**auth_headers(token), "X-Ops-Reason": "test: operator decision"},
     )
     assert r.status_code == 200, r.text
     assert r.json()["decision"] == "reject"
@@ -235,7 +235,7 @@ async def test_the_endpoints_require_an_operator(ops, session, ops_settings):
         ),
     ):
         r = await getattr(ops, method)(
-            path, headers=auth_headers(token), **({"json": body} if body else {})
+            path, headers={**auth_headers(token), "X-Ops-Reason": "test: operator decision"}, **({"json": body} if body else {})
         )
         assert r.status_code == 403, f"{path} allowed a non-operator: {r.status_code}"
 

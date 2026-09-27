@@ -159,7 +159,7 @@ async def test_operator_queue_case_file_and_unpause(mon, session, ops_settings):
     case = (await client.get(f"/api/v1/ops/monitoring/orgs/{org['id']}", headers=ops)).json()
     assert case["level"] == "paused" and case["case_file"]["recommendation"] == "keep_paused"
     assert len(case["signals"]) == 4
-    r = await client.post(f"/api/v1/ops/monitoring/orgs/{org['id']}/unpause", json={"note": "Verified with the owner"}, headers=ops)
+    r = await client.post(f"/api/v1/ops/monitoring/orgs/{org['id']}/unpause", json={"note": "Verified with the owner"}, headers={**ops, "X-Ops-Reason": "test: operator decision"})
     assert r.status_code == 200, r.text
     assert r.json()["level"] == "normal"
     report = (await client.get("/api/v1/ops/monitoring/report", headers=ops)).json()

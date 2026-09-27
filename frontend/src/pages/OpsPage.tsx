@@ -900,6 +900,14 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
 ];
 const TABS = NAV_GROUPS.flatMap((g) => g.items);
 
+/** H2: sections that need more than ops:read are hidden from roles without it. */
+const TAB_PERMISSION: Record<string, string> = { audit: "ops:admin" };
+
+function navGroupsFor(permissions: string[] | undefined) {
+  const has = (id: string) => !TAB_PERMISSION[id] || Boolean(permissions?.includes(TAB_PERMISSION[id]));
+  return NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => has(i.id)) }));
+}
+
 function RailMark() {
   return (
     <span className="sb-mark" aria-hidden="true">
@@ -997,7 +1005,7 @@ function Switchboard({
           </div>
         </div>
         <nav className="sb-nav" aria-label="Administration navigation">
-          {NAV_GROUPS.map((group) => (
+          {navGroupsFor(me?.operator_permissions).map((group) => (
             <div key={group.label}>
               <div className="sb-group-label">{group.label}</div>
               {group.items.map((item) => (

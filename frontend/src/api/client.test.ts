@@ -15,6 +15,39 @@ describe("ApiClient", () => {
     localStorage.clear();
   });
 
+  it("asks for a reason when a major operator action needs one, then retries with it", async () => {
+    const refused = { error: { code: "ops_reason_required", message: "Say why" } };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(refused), { status: 422 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = createClient();
+    api.onReasonRequired = vi.fn(async () => "owner asked – fax off");
+    const res = await api.request("/api/v1/ops/console/orgs/o1/features/fax", {
+      method: "PUT",
+      json: { enabled: false },
+    });
+
+    expect(res).toEqual({ ok: true });
+    expect(api.onReasonRequired).toHaveBeenCalledWith({ message: "Say why" });
+    const [, retry] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    const sent = (retry.headers as Headers).get("X-Ops-Reason");
+    expect(decodeURIComponent(sent ?? "")).toBe("owner asked – fax off");
+    expect(retry.body).toBe(JSON.stringify({ enabled: false }));
+  });
+
+  it("gives up with the original error when the reason is cancelled", async () => {
+    const refused = { error: { code: "ops_reason_required", message: "Say why" } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(refused), { status: 422 })));
+    const api = createClient();
+    api.onReasonRequired = vi.fn(async () => null);
+    await expect(api.request("/api/v1/ops/ban-list", { method: "POST", json: {} })).rejects.toMatchObject({
+      code: "ops_reason_required",
+    });
+  });
+
   it("attaches Authorization and X-Org-Id", async () => {
     const fetchMock = mockFetch(200, { ok: true });
     vi.stubGlobal("fetch", fetchMock);

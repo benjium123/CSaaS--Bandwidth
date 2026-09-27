@@ -34,7 +34,13 @@ export interface ApiClient {
   onUnauthorized?: () => void;
   /** P41: fired when the API answers step_up_required - the step-up dialog listens here. */
   onStepUpRequired?: (details: { kind: string; action: string; message: string }) => void;
+  /** H2: fired when an operator's major action needs a written reason (ops_reason_required).
+   * Resolves with the reason (the request is then retried with it) or null to give up. */
+  onReasonRequired?: (details: { message: string }) => Promise<string | null>;
 }
+
+/** H2: header carrying an operator's reason; URL-encoded because header values are Latin-1. */
+export const OPS_REASON_HEADER = "X-Ops-Reason";
 
 const STORAGE_KEY = "csaas.auth";
 
@@ -154,6 +160,18 @@ export function createClient(baseUrl = ""): ApiClient {
             : Array.isArray(detail) && detail.length > 0 && typeof detail[0]?.msg === "string"
               ? String(detail[0].msg).replace(/^Value error, /, "")
               : undefined;
+        if (
+          err?.code === "ops_reason_required" &&
+          client.onReasonRequired &&
+          !headers.has(OPS_REASON_HEADER)
+        ) {
+          const reason = await client.onReasonRequired({ message: String(err.message ?? "") });
+          if (reason) {
+            const retry = new Headers(init.headers);
+            retry.set(OPS_REASON_HEADER, encodeURIComponent(reason));
+            return client.request<T>(path, { ...init, headers: retry });
+          }
+        }
         if (
           (err?.code === "step_up_required" || err?.code === "passkey_required") &&
           client.onStepUpRequired

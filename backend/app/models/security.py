@@ -42,8 +42,10 @@ SECURITY_ALERT_KINDS: tuple[str, ...] = (
 SECURITY_ALERT_STATUSES: tuple[str, ...] = ("open", "reviewed")
 
 #: reviewer = read the KYC queue and decide applications; admin = also suspend orgs,
-#: manage the ban list and add/remove operators.
-OPERATOR_ROLES: tuple[str, ...] = ("reviewer", "admin")
+#: manage the ban list and add/remove operators. H2: support (unlock accounts, customer
+#: chats), billing (credits, prices, refunds), read_only (sees everything, changes nothing).
+#: What each may do: services/operators.py ROLE_PERMISSIONS.
+OPERATOR_ROLES: tuple[str, ...] = ("reviewer", "admin", "support", "billing", "read_only")
 
 
 class UserPasskey(Base, TimestampMixin):

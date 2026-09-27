@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import OperatorContext, get_settings, require_operator
+from app.auth.deps import OperatorContext, get_settings, require_operator_permission
 from app.config import Settings
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, ValidationFailedError
@@ -43,7 +43,8 @@ log = structlog.get_logger()
 
 public_router = APIRouter(prefix="/api/v1/public", tags=["site"])
 ops_router = APIRouter(prefix="/api/v1/ops/site", tags=["ops-site"])
-Reviewer = Annotated[OperatorContext, Depends(require_operator("reviewer"))]
+Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))]
+Site = Annotated[OperatorContext, Depends(require_operator_permission("ops:site"))]
 Session = Annotated[AsyncSession, Depends(get_session)]
 
 #: Hours a person is expected to answer a handed-off chat.
@@ -346,7 +347,7 @@ def _chat_summary(chat: SiteChat, last: str | None) -> dict:
 
 @ops_router.get("/chats")
 async def ops_list_chats(
-    op: Reviewer, status: Annotated[str | None, Query(max_length=16)] = None
+    op: Reader, status: Annotated[str | None, Query(max_length=16)] = None
 ) -> dict:
     session = op.session
     stmt = sa.select(SiteChat).order_by(SiteChat.last_message_at.desc().nullslast()).limit(200)
@@ -368,7 +369,7 @@ async def ops_list_chats(
 
 
 @ops_router.get("/chats/{chat_id}")
-async def ops_get_chat(chat_id: uuid.UUID, op: Reviewer) -> dict:
+async def ops_get_chat(chat_id: uuid.UUID, op: Reader) -> dict:
     chat = await op.session.get(SiteChat, chat_id)
     if chat is None:
         raise NotFoundError("Chat not found")
@@ -396,7 +397,7 @@ def _operator_name(op: OperatorContext) -> str:
 
 
 @ops_router.post("/chats/{chat_id}/reply", status_code=201)
-async def ops_reply(chat_id: uuid.UUID, payload: ReplyIn, op: Reviewer) -> dict:
+async def ops_reply(chat_id: uuid.UUID, payload: ReplyIn, op: Site) -> dict:
     chat = await op.session.get(SiteChat, chat_id)
     if chat is None:
         raise NotFoundError("Chat not found")
@@ -413,7 +414,7 @@ async def ops_reply(chat_id: uuid.UUID, payload: ReplyIn, op: Reviewer) -> dict:
 
 
 @ops_router.post("/chats/{chat_id}/close")
-async def ops_close(chat_id: uuid.UUID, op: Reviewer) -> dict:
+async def ops_close(chat_id: uuid.UUID, op: Site) -> dict:
     chat = await op.session.get(SiteChat, chat_id)
     if chat is None:
         raise NotFoundError("Chat not found")
@@ -429,7 +430,7 @@ async def ops_close(chat_id: uuid.UUID, op: Reviewer) -> dict:
 
 
 @ops_router.get("/leads")
-async def ops_list_leads(op: Reviewer) -> dict:
+async def ops_list_leads(op: Reader) -> dict:
     rows = (
         await op.session.execute(sa.select(SiteLead).order_by(SiteLead.created_at.desc()).limit(200))
     ).scalars().all()
@@ -461,7 +462,7 @@ class LeadStatusIn(BaseModel):
 
 
 @ops_router.post("/leads/{lead_id}/status")
-async def ops_lead_status(lead_id: uuid.UUID, payload: LeadStatusIn, op: Reviewer) -> dict:
+async def ops_lead_status(lead_id: uuid.UUID, payload: LeadStatusIn, op: Site) -> dict:
     lead = await op.session.get(SiteLead, lead_id)
     if lead is None:
         raise NotFoundError("Lead not found")

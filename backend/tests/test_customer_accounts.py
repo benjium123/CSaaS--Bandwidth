@@ -29,16 +29,16 @@ async def test_directory_delete_and_email_ban(kyc_app, session):
     }
     bad = await client.post(
         f"/api/v1/ops/customer-accounts/{uid}/delete",
-        headers=h,
+        headers={**h, "X-Ops-Reason": "test: operator decision"},
         json={**payload, "confirmation": "wrong"},
     )
     assert bad.status_code == 422
     denied = await client.post(
-        f"/api/v1/ops/customer-accounts/{uid}/delete", headers=auth_headers(token), json=payload
+        f"/api/v1/ops/customer-accounts/{uid}/delete", headers={**auth_headers(token), "X-Ops-Reason": "test: operator decision"}, json=payload
     )
     assert denied.status_code == 403
     deleted = await client.post(
-        f"/api/v1/ops/customer-accounts/{uid}/delete", headers=h, json=payload
+        f"/api/v1/ops/customer-accounts/{uid}/delete", headers={**h, "X-Ops-Reason": "test: operator decision"}, json=payload
     )
     assert deleted.status_code == 204, deleted.text
     session.expire_all()
@@ -99,7 +99,7 @@ async def test_identity_and_phone_bans_survive_deletion(kyc_app, session):
     assert {i["kind"] for i in data["identifiers"]} == {"email", "phone", "person"}
     response = await client.post(
         path + "/delete",
-        headers=auth_headers(admin),
+        headers={**auth_headers(admin), "X-Ops-Reason": "test: operator decision"},
         json={
             "confirmation": user.email,
             "reason": "Fraud review",
@@ -134,7 +134,7 @@ async def test_deletion_blocks_live_numbers(kyc_app, session):
     assert detail["blockers"]
     response = await client.post(
         path + "/delete",
-        headers=auth_headers(admin),
+        headers={**auth_headers(admin), "X-Ops-Reason": "test: operator decision"},
         json={"confirmation": user.email, "reason": "Delete"},
     )
     assert response.status_code == 422
@@ -151,13 +151,13 @@ async def test_blacklist_disables_login_and_unknown_identifiers_are_rejected(kyc
     detail = (await client.get(path, headers=headers)).json()
     bad = await client.post(
         path + "/blacklist",
-        headers=headers,
+        headers={**headers, "X-Ops-Reason": "test: operator decision"},
         json={"reason": "Review", "identifiers": ["person:invented"]},
     )
     assert bad.status_code == 422
     result = await client.post(
         path + "/blacklist",
-        headers=headers,
+        headers={**headers, "X-Ops-Reason": "test: operator decision"},
         json={"reason": "Review", "identifiers": [detail["identifiers"][0]["key"]]},
     )
     assert result.status_code == 204, result.text

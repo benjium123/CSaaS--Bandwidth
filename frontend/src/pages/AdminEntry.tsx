@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import { OpsPage } from '@/pages/OpsPage';
 import { StepUpDialog } from '@/components/security/StepUpDialog';
+import { OpsReasonDialog } from '@/components/security/OpsReasonDialog';
 import { AdminMfaPage } from '@/pages/AdminMfaPage';
 import { passkeysSupported } from '@/lib/webauthn';
 
@@ -930,6 +931,7 @@ function AdminConsole() {
         }
       />
       <StepUpDialog />
+      <OpsReasonDialog />
     </>
   );
 }
@@ -971,6 +973,7 @@ export function AdminEntry() {
       <>
         <AdminMfaPage />
         <StepUpDialog />
+        <OpsReasonDialog />
       </>
     );
     }
@@ -990,6 +993,7 @@ export function AdminEntry() {
       <>
         <AdminMfaPage />
         <StepUpDialog />
+        <OpsReasonDialog />
       </>
     );
   }

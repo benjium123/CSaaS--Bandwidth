@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from app.auth.deps import OperatorContext, check_step_up, require_operator
+from app.auth.deps import OperatorContext, check_step_up, require_operator_permission
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.models import (
@@ -35,14 +35,17 @@ from app.services import kyc as kyc_svc
 
 router = APIRouter(prefix="/api/v1/ops", tags=["ops"])
 
-Reviewer = Annotated[OperatorContext, Depends(require_operator("reviewer"))]
-Admin = Annotated[OperatorContext, Depends(require_operator("admin"))]
+Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))]
+Kyc = Annotated[OperatorContext, Depends(require_operator_permission("ops:kyc"))]
+Support = Annotated[OperatorContext, Depends(require_operator_permission("ops:support"))]
+Billing = Annotated[OperatorContext, Depends(require_operator_permission("ops:billing"))]
+Major = Annotated[OperatorContext, Depends(require_operator_permission("ops:admin", major=True))]
 
 QUEUE_STATUSES = ("submitted", "in_review", "needs_info", "reverification_due", "suspended")
 
 
 @router.get("/number-purchases")
-async def number_purchase_queue(op: Reviewer) -> list[dict]:
+async def number_purchase_queue(op: Reader) -> list[dict]:
     from app.models import NumberPurchase
     from app.services import number_purchases
 
@@ -68,7 +71,7 @@ async def number_purchase_queue(op: Reviewer) -> list[dict]:
 
 
 @router.get("/texting-registrations")
-async def texting_registrations(op: Reviewer) -> list[dict]:
+async def texting_registrations(op: Reader) -> list[dict]:
     """Self-serve 10DLC registrations across workspaces, newest first."""
     from app.models import Brand, Campaign, Org, TenDlcRegistration
 
@@ -117,7 +120,7 @@ async def _registration_org(op: OperatorContext, reg_id: uuid.UUID) -> uuid.UUID
 
 
 @router.post("/texting-registrations/{reg_id}/reconcile")
-async def reconcile_texting_registration(reg_id: uuid.UUID, request: Request, op: Admin) -> dict:
+async def reconcile_texting_registration(reg_id: uuid.UUID, request: Request, op: Support) -> dict:
     """Ask Telnyx whether an interrupted filing landed: link it, or clear it so it is filed
     again. Never sends a filing itself."""
     from app.services import audit as audit_svc
@@ -140,7 +143,7 @@ async def reconcile_texting_registration(reg_id: uuid.UUID, request: Request, op
 
 
 @router.post("/texting-registrations/{reg_id}/cancel")
-async def cancel_texting_registration(reg_id: uuid.UUID, request: Request, op: Admin) -> dict:
+async def cancel_texting_registration(reg_id: uuid.UUID, request: Request, op: Major) -> dict:
     """Stop a registration and refund what the carrier never charged for."""
     from app.services import audit as audit_svc
     from app.services import tendlc
@@ -192,7 +195,7 @@ def _audit_purchase(op: OperatorContext, org_id, purchase_id, action: str, detai
 
 
 @router.post("/number-purchases/{purchase_id}/retry")
-async def retry_number_purchase(purchase_id: uuid.UUID, request: Request, op: Admin) -> dict:
+async def retry_number_purchase(purchase_id: uuid.UUID, request: Request, op: Billing) -> dict:
     """Finish provisioning a paid purchase that stalled. Looks each missing number up on
     the Telnyx account before ordering, so a timed-out order is never placed twice."""
     from app.services import number_purchases
@@ -205,7 +208,7 @@ async def retry_number_purchase(purchase_id: uuid.UUID, request: Request, op: Ad
 
 
 @router.post("/number-purchases/{purchase_id}/refund")
-async def refund_number_purchase(purchase_id: uuid.UUID, request: Request, op: Admin) -> dict:
+async def refund_number_purchase(purchase_id: uuid.UUID, request: Request, op: Billing) -> dict:
     """Stop billing for and refund the numbers of a paid purchase that were never
     provisioned. Provisioned numbers are kept and stay billed."""
     from app.services import number_purchases
@@ -266,7 +269,7 @@ def _iso(value: datetime | None) -> str | None:
 # --------------------------------------------------------------------------------------
 @router.get("/queue")
 async def queue(
-    op: Reviewer,
+    op: Reader,
     status: str | None = Query(default=None),
     risk: str | None = Query(default=None),
 ) -> dict:
@@ -336,7 +339,7 @@ async def queue(
 
 
 @router.get("/applications/{org_id}")
-async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
+async def application(org_id: uuid.UUID, op: Reader) -> dict:
     profile = await kyc_svc.load_for_operator(op.session, org_id)
     org = await op.session.get(Org, org_id)
     persons = await kyc_checks.persons_for(op.session, org_id)
@@ -460,7 +463,7 @@ async def application(org_id: uuid.UUID, op: Reviewer) -> dict:
 
 @router.get("/applications/{org_id}/persons/{person_id}/evidence")
 async def identity_evidence_summary(
-    org_id: uuid.UUID, person_id: uuid.UUID, request: Request, response: Response, op: Reviewer
+    org_id: uuid.UUID, person_id: uuid.UUID, request: Request, response: Response, op: Reader
 ) -> dict:
     """What a reviewer needs from Didit: who, document, live & same face, sanctions/PEP,
     where from, and the photos (by reference). The full decision stays on the server."""
@@ -501,7 +504,7 @@ async def identity_evidence_media(
     org_id: uuid.UUID,
     person_id: uuid.UUID,
     request: Request,
-    op: Reviewer,
+    op: Reader,
     path: str = Query(max_length=500),
 ) -> Response:
     from urllib.parse import urlparse
@@ -548,7 +551,7 @@ async def identity_evidence_media(
 
 @router.get("/applications/{org_id}/documents/{document_id}")
 async def download_document(
-    org_id: uuid.UUID, document_id: uuid.UUID, request: Request, op: Reviewer
+    org_id: uuid.UUID, document_id: uuid.UUID, request: Request, op: Reader
 ) -> Response:
     await kyc_svc.load_for_operator(op.session, org_id)
     doc = await kyc_documents.get(op.session, org_id, document_id)
@@ -644,7 +647,7 @@ async def _email_decision(
 
 
 @router.post("/applications/{org_id}/review")
-async def start_review(org_id: uuid.UUID, op: Reviewer) -> dict:
+async def start_review(org_id: uuid.UUID, op: Kyc) -> dict:
     profile = await kyc_svc.load_for_operator(op.session, org_id)
     await kyc_svc.start_review(op.session, profile, op.user.id)
     return await _done(op, org_id)
@@ -652,7 +655,7 @@ async def start_review(org_id: uuid.UUID, op: Reviewer) -> dict:
 
 @router.post("/applications/{org_id}/request-info")
 async def request_info(
-    org_id: uuid.UUID, payload: MessageIn, request: Request, op: Reviewer
+    org_id: uuid.UUID, payload: MessageIn, request: Request, op: Kyc
 ) -> dict:
     profile = await kyc_svc.load_for_operator(op.session, org_id)
     await kyc_svc.request_info(op.session, profile, op.user.id, payload.message)
@@ -662,7 +665,7 @@ async def request_info(
 
 
 @router.post("/applications/{org_id}/approve")
-async def approve(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Reviewer) -> dict:
+async def approve(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Kyc) -> dict:
     profile = await kyc_svc.load_for_operator(op.session, org_id)
     if await kyc_svc._is_individual(op.session, org_id) and op.operator.role != "admin":
         raise PermissionDeniedError(
@@ -689,7 +692,7 @@ async def approve(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Revi
 
 
 @router.post("/applications/{org_id}/reject")
-async def reject(org_id: uuid.UUID, payload: RejectIn, request: Request, op: Reviewer) -> dict:
+async def reject(org_id: uuid.UUID, payload: RejectIn, request: Request, op: Kyc) -> dict:
     if payload.ban:
         await check_step_up(request, op.session, op.user, kind="recent_2fa", action="ban")
     profile = await kyc_svc.load_for_operator(op.session, org_id)
@@ -700,14 +703,14 @@ async def reject(org_id: uuid.UUID, payload: RejectIn, request: Request, op: Rev
 
 
 @router.post("/applications/{org_id}/video-call")
-async def video_call(org_id: uuid.UUID, payload: NoteIn, op: Reviewer) -> dict:
+async def video_call(org_id: uuid.UUID, payload: NoteIn, op: Kyc) -> dict:
     profile = await kyc_svc.load_for_operator(op.session, org_id)
     await kyc_svc.record_video_call(op.session, profile, op.user.id, payload.note)
     return await _done(op, org_id)
 
 
 @router.post("/applications/{org_id}/registry")
-async def registry(org_id: uuid.UUID, payload: RegistryIn, request: Request, op: Reviewer) -> dict:
+async def registry(org_id: uuid.UUID, payload: RegistryIn, request: Request, op: Kyc) -> dict:
     profile = await kyc_svc.load_for_operator(op.session, org_id)
     await kyc_svc.record_manual_registry(
         op.session,
@@ -723,7 +726,7 @@ async def registry(org_id: uuid.UUID, payload: RegistryIn, request: Request, op:
 
 
 @router.post("/applications/{org_id}/rerun-checks")
-async def rerun_checks(org_id: uuid.UUID, request: Request, op: Reviewer) -> dict:
+async def rerun_checks(org_id: uuid.UUID, request: Request, op: Kyc) -> dict:
     settings = request.app.state.settings
     profile = await kyc_svc.load_for_operator(op.session, org_id)
     client = getattr(request.app.state, "kyc_http_client", None)
@@ -747,7 +750,7 @@ async def rerun_checks(org_id: uuid.UUID, request: Request, op: Reviewer) -> dic
 
 
 @router.post("/applications/{org_id}/limits")
-async def set_limits(org_id: uuid.UUID, payload: LimitsIn, op: Reviewer) -> dict:
+async def set_limits(org_id: uuid.UUID, payload: LimitsIn, op: Kyc) -> dict:
     profile = await kyc_svc.load_for_operator(op.session, org_id)
     await kyc_svc.set_limits(
         op.session,
@@ -760,7 +763,7 @@ async def set_limits(org_id: uuid.UUID, payload: LimitsIn, op: Reviewer) -> dict
 
 
 @router.post("/applications/{org_id}/suspend")
-async def suspend(org_id: uuid.UUID, payload: SuspendIn, request: Request, op: Admin) -> dict:
+async def suspend(org_id: uuid.UUID, payload: SuspendIn, request: Request, op: Major) -> dict:
     await check_step_up(request, op.session, op.user, kind="recent_2fa", action="suspend")
     await suspension.suspend(
         op.session,
@@ -774,7 +777,7 @@ async def suspend(org_id: uuid.UUID, payload: SuspendIn, request: Request, op: A
 
 
 @router.post("/applications/{org_id}/unsuspend")
-async def unsuspend(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Admin) -> dict:
+async def unsuspend(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Major) -> dict:
     await check_step_up(request, op.session, op.user, kind="recent_2fa", action="unsuspend")
     await suspension.unsuspend(op.session, org_id, operator_id=op.user.id, note=payload.note)
     return await _done(op, org_id)
@@ -784,7 +787,7 @@ async def unsuspend(org_id: uuid.UUID, payload: NoteIn, request: Request, op: Ad
 # Security alerts
 # --------------------------------------------------------------------------------------
 @router.get("/alerts")
-async def alerts(op: Reviewer, status: str = Query(default="open")) -> list[dict]:
+async def alerts(op: Reader, status: str = Query(default="open")) -> list[dict]:
     rows = (
         (
             await op.session.execute(
@@ -812,7 +815,7 @@ async def alerts(op: Reviewer, status: str = Query(default="open")) -> list[dict
 
 
 @router.post("/alerts/{alert_id}/review")
-async def review_alert(alert_id: uuid.UUID, payload: NoteIn, op: Reviewer) -> dict:
+async def review_alert(alert_id: uuid.UUID, payload: NoteIn, op: Kyc) -> dict:
     row = await op.session.get(SecurityAlert, alert_id)
     if row is None:
         raise NotFoundError("Alert not found")
@@ -828,7 +831,7 @@ async def review_alert(alert_id: uuid.UUID, payload: NoteIn, op: Reviewer) -> di
 # Ban list
 # --------------------------------------------------------------------------------------
 @router.get("/ban-list")
-async def list_bans(op: Reviewer) -> list[dict]:
+async def list_bans(op: Reader) -> list[dict]:
     rows = (
         await op.session.execute(
             sa.select(FraudIdentifier, User.email)
@@ -853,7 +856,7 @@ async def list_bans(op: Reviewer) -> list[dict]:
 
 
 @router.post("/ban-list", status_code=201)
-async def add_ban(payload: BanIn, request: Request, op: Admin) -> dict:
+async def add_ban(payload: BanIn, request: Request, op: Major) -> dict:
     await check_step_up(request, op.session, op.user, kind="recent_2fa", action="ban")
     if payload.kind not in FRAUD_IDENTIFIER_KINDS or payload.kind in ("person", "device"):
         raise ValidationFailedError("That kind of identifier is added from an application")
@@ -871,7 +874,7 @@ async def add_ban(payload: BanIn, request: Request, op: Admin) -> dict:
 
 
 @router.delete("/ban-list/{identifier_id}", status_code=204)
-async def remove_ban(identifier_id: uuid.UUID, request: Request, op: Admin) -> Response:
+async def remove_ban(identifier_id: uuid.UUID, request: Request, op: Major) -> Response:
     await check_step_up(request, op.session, op.user, kind="recent_2fa", action="ban")
     row = await op.session.get(FraudIdentifier, identifier_id)
     if row is None:
@@ -889,7 +892,7 @@ class ReasonIn(BaseModel):
 
 
 @router.get("/users")
-async def find_user(op: Reviewer, email: str = Query(min_length=3)) -> dict:
+async def find_user(op: Reader, email: str = Query(min_length=3)) -> dict:
     from app.repositories import users as users_repo
     from app.services import lockout, recovery_codes
 
@@ -920,7 +923,7 @@ async def _target_user(op: OperatorContext, user_id: uuid.UUID) -> User:
 
 
 @router.post("/users/{user_id}/unlock", status_code=204)
-async def unlock_user(user_id: uuid.UUID, request: Request, op: Admin) -> Response:
+async def unlock_user(user_id: uuid.UUID, request: Request, op: Support) -> Response:
     from app.services import lockout
 
     await check_step_up(request, op.session, op.user, kind="recent_2fa", action="user_support")
@@ -932,7 +935,7 @@ async def unlock_user(user_id: uuid.UUID, request: Request, op: Admin) -> Respon
 
 @router.post("/users/{user_id}/reset-2fa", status_code=204)
 async def operator_reset_factors(
-    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Admin
+    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Major
 ) -> Response:
     """Last resort, after verifying the person out of band (e.g. a video call with ID)."""
     from app.services import account_security
@@ -969,7 +972,7 @@ async def operator_reset_factors(
 
 @router.post("/users/{user_id}/deactivate", status_code=204)
 async def deactivate_user(
-    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Admin
+    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Major
 ) -> Response:
     from app.services import account_security
 
@@ -995,7 +998,7 @@ async def deactivate_user(
 
 @router.post("/users/{user_id}/reactivate", status_code=204)
 async def reactivate_user(
-    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Admin
+    user_id: uuid.UUID, payload: ReasonIn, request: Request, op: Major
 ) -> Response:
     from app.services import account_security
 
@@ -1022,7 +1025,7 @@ class AccountActionIn(BaseModel):
 
 @router.get("/customer-accounts")
 async def all_customer_accounts(
-    op: Reviewer,
+    op: Reader,
     q: str = Query(default="", max_length=320),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
@@ -1033,7 +1036,7 @@ async def all_customer_accounts(
 
 
 @router.get("/customer-accounts/{user_id}")
-async def customer_account_detail(user_id: uuid.UUID, op: Admin) -> dict:
+async def customer_account_detail(user_id: uuid.UUID, op: Support) -> dict:
     from app.services import customer_accounts
 
     user = await customer_accounts.target(op.session, user_id, op.user.id)
@@ -1050,7 +1053,7 @@ async def customer_account_detail(user_id: uuid.UUID, op: Admin) -> dict:
 
 @router.post("/customer-accounts/{user_id}/blacklist", status_code=204)
 async def blacklist_customer_account(
-    user_id: uuid.UUID, payload: AccountActionIn, request: Request, op: Admin
+    user_id: uuid.UUID, payload: AccountActionIn, request: Request, op: Major
 ) -> Response:
     from app.services import account_security, customer_accounts
 
@@ -1080,7 +1083,7 @@ async def blacklist_customer_account(
 
 @router.post("/customer-accounts/{user_id}/delete", status_code=204)
 async def delete_customer_account(
-    user_id: uuid.UUID, payload: AccountActionIn, request: Request, op: Admin
+    user_id: uuid.UUID, payload: AccountActionIn, request: Request, op: Major
 ) -> Response:
     from app.services import customer_accounts
 

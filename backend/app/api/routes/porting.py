@@ -13,7 +13,7 @@ from starlette.datastructures import UploadFile
 from app.auth.deps import (
     OperatorContext,
     OrgContext,
-    require_operator,
+    require_operator_permission,
     require_permission,
     requires_feature,
 )
@@ -26,8 +26,8 @@ from app.services import porting as porting_svc
 router = APIRouter(prefix="/api/v1/ports", tags=["porting"])
 ops_router = APIRouter(prefix="/api/v1/ops/ports", tags=["ops-porting"])
 
-Admin = Annotated[OperatorContext, Depends(require_operator("admin"))]
-Reviewer = Annotated[OperatorContext, Depends(require_operator("reviewer"))]
+Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))]
+Kyc = Annotated[OperatorContext, Depends(require_operator_permission("ops:kyc"))]
 
 
 def _public(p: PortRequest) -> dict:
@@ -157,7 +157,7 @@ async def lock_number(
 
 
 @ops_router.get("")
-async def ops_list(op: Reviewer, status: str | None = None) -> dict:
+async def ops_list(op: Reader, status: str | None = None) -> dict:
     stmt = sa.select(PortRequest).order_by(PortRequest.created_at.desc()).limit(200)
     if status:
         stmt = stmt.where(PortRequest.status == status)
@@ -182,7 +182,7 @@ async def _port(op: OperatorContext, port_id: uuid.UUID) -> PortRequest:
 
 
 @ops_router.get("/{port_id}/documents/{kind}")
-async def ops_document(port_id: uuid.UUID, kind: str, request: Request, op: Reviewer) -> Response:
+async def ops_document(port_id: uuid.UUID, kind: str, request: Request, op: Reader) -> Response:
     port = await _port(op, port_id)
     key = {"loa": port.loa_media_key, "invoice": port.invoice_media_key}.get(kind)
     if not key:
@@ -195,7 +195,7 @@ async def ops_document(port_id: uuid.UUID, kind: str, request: Request, op: Revi
 
 
 @ops_router.post("/{port_id}/approve")
-async def ops_approve(port_id: uuid.UUID, request: Request, op: Admin) -> dict:
+async def ops_approve(port_id: uuid.UUID, request: Request, op: Kyc) -> dict:
     port = await _port(op, port_id)
     port = await porting_svc.approve(
         op.session,
@@ -213,7 +213,7 @@ class RejectIn(BaseModel):
 
 
 @ops_router.post("/{port_id}/reject")
-async def ops_reject(port_id: uuid.UUID, payload: RejectIn, op: Admin) -> dict:
+async def ops_reject(port_id: uuid.UUID, payload: RejectIn, op: Kyc) -> dict:
     port = await _port(op, port_id)
     return _public(await porting_svc.reject(op.session, port, op.user.id, payload.reason))
 
@@ -225,7 +225,7 @@ class StatusIn(BaseModel):
 
 
 @ops_router.post("/{port_id}/status")
-async def ops_status(port_id: uuid.UUID, payload: StatusIn, request: Request, op: Admin) -> dict:
+async def ops_status(port_id: uuid.UUID, payload: StatusIn, request: Request, op: Kyc) -> dict:
     """Manual status for ports filed by hand (SignalWire has no porting API)."""
     port = await _port(op, port_id)
     port = await porting_svc.set_manual_status(

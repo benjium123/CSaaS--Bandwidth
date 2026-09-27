@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import unquote
 
 import structlog
 from fastapi import Request
@@ -38,6 +39,12 @@ def tag(request: Request, *, user_id: uuid.UUID | None, email: str | None, role:
     )
 
 
+def reason_of(request: Request) -> str | None:
+    """The operator's reason. The console URL-encodes it (header values are Latin-1)."""
+    raw = (request.headers.get(REASON_HEADER) or "").strip()
+    return unquote(raw).strip()[:500] or None
+
+
 def tagged(request: Request) -> dict | None:
     return getattr(request.state, _STATE_KEY, None)
 
@@ -59,7 +66,7 @@ async def write(request: Request, status_code: int) -> None:
     from app.db.session import get_sessionmaker
     from app.net import client_ip
 
-    reason = (request.headers.get(REASON_HEADER) or "").strip()[:500] or None
+    reason = reason_of(request)
     row = OperatorAuditEntry(
         id=uuid.uuid4(),
         at=datetime.now(timezone.utc),
