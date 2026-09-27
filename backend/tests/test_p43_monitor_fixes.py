@@ -1,4 +1,4 @@
-# ruff: noqa: E501, F811
+﻿# ruff: noqa: E501, F811
 """Regression tests for the second P43 bug hunt (findings on the new monitoring and
 verification code). One test (or small group) per finding."""
 
@@ -33,8 +33,8 @@ from tests.conftest import (
     FakeCarrier,
     _install,
     auth_headers,
-    confirm_registered_email,
     create_org,
+    latest_email_code,
     make_org_with_number,
     make_settings,
     register_and_login,
@@ -223,7 +223,17 @@ async def test_events_socket_survives_session_rotation_but_not_revocation(engine
         )
         # A fresh registration requires its email confirmed before anything outside
         # /api/v1/auth/ - otherwise every later call 403s with email_verification_required.
-        await confirm_registered_email(browser, email)
+        # Cookie-only app (auth_bearer_compat=False), so confirm the way a browser does -
+        # conftest's confirm_registered_email needs a bearer token - then sign out so the
+        # test below still sees exactly one session.
+        await browser.post("/api/v1/auth/login", json={"email": email, "password": password})
+        csrf = {"X-CSRF-Token": browser.cookies.get("csaas_csrf", "")}
+        r = await browser.post(
+            "/api/v1/auth/confirm-email", json={"code": latest_email_code(email)}, headers=csrf
+        )
+        assert r.status_code == 200, r.text
+        await browser.post("/api/v1/auth/logout", headers=csrf)
+        browser.cookies.clear()
         await browser.post("/api/v1/auth/login", json={"email": email, "password": password})
         csrf = {"X-CSRF-Token": browser.cookies.get("csaas_csrf", "")}
         org = (await browser.post("/api/v1/orgs", json={"name": "WS Org"}, headers=csrf)).json()
@@ -238,7 +248,11 @@ async def test_events_socket_survives_session_rotation_but_not_revocation(engine
                 break
             await asyncio.sleep(0.01)
         assert ws.accepted and ws.closed_code is None
-        row = (await session.execute(sa.select(IdentitySession))).scalar_one()
+        row = (
+            await session.execute(
+                sa.select(IdentitySession).where(IdentitySession.revoked_at.is_(None))
+            )
+        ).scalar_one()
         row.token_hash = "0" * 64  # what a step-up rotation does to the stored secret
         await session.commit()
         await asyncio.sleep(1.0)
