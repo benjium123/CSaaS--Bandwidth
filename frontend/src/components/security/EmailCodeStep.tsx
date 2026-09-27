@@ -1,8 +1,9 @@
 import * as React from "react";
 import { AuthAlert, AuthButton, AuthInput, Field, Lamp } from "@/components/auth/AuthShell";
 
-/** Matches services/email_code.RESEND_AFTER on the server. */
-const RESEND_SECONDS = 30;
+/** Longer than the server minimum (30 s): delivery often takes 30-60 s, and a new code
+ * replaces the old one, so offering a resend too early kills the code already on its way. */
+const RESEND_SECONDS = 60;
 
 /**
  * "We emailed you a code": send, type six digits, confirm. Used for signing in, for turning
@@ -88,9 +89,9 @@ export function EmailCodeStep({
   return (
     <div className="space-y-3">
       <Lamp state="live">
-        Code sent{email ? <> to {email}</> : null}. It works for 10 minutes.
+        Code sent{email ? <> to {email}</> : null}. It can take up to a minute to arrive, and works for 10 minutes.
       </Lamp>
-      <Field label="Email code" hint="Six digits, from the email we just sent. Check spam if it is not there.">
+      <Field label="Email code" hint="Six digits, from the email we just sent. Check spam if it is not there. Asking for a new code replaces this one.">
         <AuthInput
           code
           aria-label="Email code"

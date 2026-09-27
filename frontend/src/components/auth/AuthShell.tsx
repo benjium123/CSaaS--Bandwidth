@@ -35,6 +35,7 @@ import "@/auth/authTheme.css";
 import "@/auth/authTheme.light.css";
 import { ThemeToggle } from "@/auth/ThemeToggle";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+import { Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** Stagger helper: every revealed element declares its place in the arrival sequence. */
@@ -257,9 +258,32 @@ export function Field({
 export const AuthInput = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement> & { code?: boolean }
->(({ className, code, ...props }, ref) => (
-  <input ref={ref} className={cn("ex-input", code && "ex-code", className)} {...props} />
-));
+>(({ className, code, ...props }, ref) => {
+  const [visible, setVisible] = React.useState(false);
+  if (props.type !== "password") {
+    return <input ref={ref} className={cn("ex-input", code && "ex-code", className)} {...props} />;
+  }
+  // Password fields get a show/hide eye; the value never leaves the input either way.
+  return (
+    <div className="relative">
+      <input
+        ref={ref}
+        className={cn("ex-input pr-11", code && "ex-code", className)}
+        {...props}
+        type={visible ? "text" : "password"}
+      />
+      <button
+        type="button"
+        aria-label={visible ? "Hide password" : "Show password"}
+        aria-pressed={visible}
+        onClick={() => setVisible((v) => !v)}
+        className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
+      >
+        {visible ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+      </button>
+    </div>
+  );
+});
 AuthInput.displayName = "AuthInput";
 
 type ButtonTone = "primary" | "quiet" | "key";

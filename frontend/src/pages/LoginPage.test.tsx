@@ -165,4 +165,15 @@ describe("LoginPage", () => {
     await screen.findByLabelText("Authenticator code");
     expect(screen.getByRole("button", { name: "Use a recovery code" })).toBeInTheDocument();
   });
+  it("shows and hides the password with the eye button", async () => {
+    const client = makeStubClient({ "/api/v1/auth/me": ME });
+    client.setAuth({ token: null, orgId: null });
+    renderWithProviders(<LoginPage />, client);
+    const input = screen.getByLabelText("Password") as HTMLInputElement;
+    expect(input.type).toBe("password");
+    await userEvent.click(screen.getByRole("button", { name: "Show password" }));
+    expect(input.type).toBe("text");
+    await userEvent.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(input.type).toBe("password");
+  });
 });

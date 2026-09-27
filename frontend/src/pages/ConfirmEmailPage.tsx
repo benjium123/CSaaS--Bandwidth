@@ -16,7 +16,7 @@ import {
 /** Matches the signup rail, so confirming reads as step two of the same form. */
 const STEPS = ["Account", "Confirm email", "Verify identity"];
 /** The server refuses a new code within 30s of the last one (services/email_code.py RESEND_AFTER). */
-const RESEND_SECONDS = 30;
+const RESEND_SECONDS = 60;
 
 /** Webmail inboxes worth a one-click shortcut, by address domain. */
 const INBOXES: Record<string, { label: string; url: string }> = {
@@ -64,7 +64,8 @@ export function ConfirmEmailPage() {
   const [message, setMessage] = React.useState("");
   const [failed, setFailed] = React.useState(false);
   const [done, setDone] = React.useState(false);
-  const [wait, setWait] = React.useState(0);
+  // Registration just sent a code: do not offer a replacement before it can arrive.
+  const [wait, setWait] = React.useState(RESEND_SECONDS);
   const [code, setCode] = React.useState("");
   const inbox = inboxFor(me?.email);
 
@@ -181,7 +182,7 @@ export function ConfirmEmailPage() {
               </a>
             )}
             <ul className="space-y-1.5 text-[0.8125rem] leading-relaxed text-muted-foreground">
-              <li>· The code works for 10 minutes.</li>
+              <li>· It can take up to a minute to arrive. The code works for 10 minutes.</li>
               <li>· Not there after a minute? Check spam or promotions.</li>
             </ul>
             <button
