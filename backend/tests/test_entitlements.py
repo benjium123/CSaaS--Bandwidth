@@ -40,7 +40,9 @@ async def test_set_feature_upsert(session):
     org_id = await _new_org(session, "Upsert")
 
     await entitlements.set_feature(
-        session, org_id, "voice",
+        session,
+        org_id,
+        "voice",
         enabled=False,
         price_override_micros=None,
         actor_user_id=None,
@@ -48,7 +50,9 @@ async def test_set_feature_upsert(session):
     assert await entitlements.has(session, org_id, "voice") is False
 
     await entitlements.set_feature(
-        session, org_id, "voice",
+        session,
+        org_id,
+        "voice",
         enabled=True,
         price_override_micros=None,
         actor_user_id=None,
@@ -57,12 +61,16 @@ async def test_set_feature_upsert(session):
 
     await session.flush()
     rows = (
-        await session.execute(
-            sa.select(OrgFeature)
-            .where(OrgFeature.org_id == org_id)
-            .execution_options(allow_unscoped=True)
+        (
+            await session.execute(
+                sa.select(OrgFeature)
+                .where(OrgFeature.org_id == org_id)
+                .execution_options(allow_unscoped=True)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].feature_key == "voice"
     assert rows[0].enabled is True
@@ -72,7 +80,9 @@ async def test_require_raises_feature_disabled(session):
     org_id = await _new_org(session, "Require")
 
     await entitlements.set_feature(
-        session, org_id, "voice",
+        session,
+        org_id,
+        "voice",
         enabled=False,
         price_override_micros=None,
         actor_user_id=None,
@@ -82,7 +92,9 @@ async def test_require_raises_feature_disabled(session):
     assert exc_info.value.code == "feature_disabled"
 
     await entitlements.set_feature(
-        session, org_id, "voice",
+        session,
+        org_id,
+        "voice",
         enabled=True,
         price_override_micros=None,
         actor_user_id=None,
@@ -97,7 +109,9 @@ async def test_unknown_key_raises_valueerror(session):
         await entitlements.has(session, org_id, "nope")
     with pytest.raises(ValueError, match="unknown feature: nope"):
         await entitlements.set_feature(
-            session, org_id, "nope",
+            session,
+            org_id,
+            "nope",
             enabled=False,
             price_override_micros=None,
             actor_user_id=None,
@@ -112,7 +126,9 @@ async def test_isolation_between_orgs(session):
     assert await entitlements.has(session, b, "voice") is True
 
     await entitlements.set_feature(
-        session, a, "voice",
+        session,
+        a,
+        "voice",
         enabled=False,
         price_override_micros=None,
         actor_user_id=None,
@@ -127,7 +143,9 @@ async def test_memo_invalidation(session):
 
     assert await entitlements.has(session, org_id, "voice") is True
     await entitlements.set_feature(
-        session, org_id, "voice",
+        session,
+        org_id,
+        "voice",
         enabled=False,
         price_override_micros=None,
         actor_user_id=None,
@@ -140,7 +158,9 @@ async def test_reads_unscoped_while_context_is_other_org(session):
     b = await _new_org(session, "Unscoped B")
 
     await entitlements.set_feature(
-        session, a, "voice",
+        session,
+        a,
+        "voice",
         enabled=False,
         price_override_micros=None,
         actor_user_id=None,

@@ -31,30 +31,110 @@ class Feature:
 
 
 CATALOG: dict[str, Feature] = {
-    "voice": Feature("voice", "Calling", "Calling", True, "voice_min_out", "Place and answer phone calls"),
+    "voice": Feature(
+        "voice", "Calling", "Calling", True, "voice_min_out", "Place and answer phone calls"
+    ),
     "sms": Feature("sms", "Text messages", "Messaging", True, "sms_out", "Send and receive SMS"),
     "mms": Feature("mms", "Picture messages", "Messaging", True, "mms_out", "Send and receive MMS"),
     "fax": Feature("fax", "Fax", "Messaging", True, "fax_page_out", "Send and receive faxes"),
-    "numbers": Feature("numbers", "Phone numbers", "Numbers", True, "number_mrc", "Order and keep phone numbers"),
-    "call_recording": Feature("call_recording", "Call recording", "Calling", False, "recording_min", "Record customer calls"),
-    "call_transcription": Feature("call_transcription", "Call transcription", "AI", False, "transcription_min", "Transcripts of recorded human calls"),
-    "voicemail": Feature("voicemail", "Voicemail", "Calling", True, None, "Voicemail boxes in call flows"),
-    "voicemail_transcription": Feature("voicemail_transcription", "Voicemail transcription", "AI", True, "transcription_min", "Text of every voicemail"),
-    "ivr_flows": Feature("ivr_flows", "Call flows and menus", "Calling", True, "ivr_month", "IVR menus, business hours, routing"),
-    "ring_groups": Feature("ring_groups", "Ring groups", "Calling", True, None, "Ring several people at once"),
-    "call_queues": Feature("call_queues", "Call queues", "Calling", True, None, "Queue callers for agents"),
-    "supervisor": Feature("supervisor", "Supervisor tools", "Calling", True, "supervisor_seat_month", "Listen, whisper and barge into calls"),
-    "power_dialer": Feature("power_dialer", "Power dialer", "Calling", True, "dialer_seat_month", "Call lists and campaigns"),
-    "amd": Feature("amd", "Answering-machine detection", "Calling", True, None, "Detect voicemail on outbound calls"),
+    "numbers": Feature(
+        "numbers", "Phone numbers", "Numbers", True, "number_mrc", "Order and keep phone numbers"
+    ),
+    "call_recording": Feature(
+        "call_recording",
+        "Call recording",
+        "Calling",
+        False,
+        "recording_min",
+        "Record customer calls",
+    ),
+    "call_transcription": Feature(
+        "call_transcription",
+        "Call transcription",
+        "AI",
+        False,
+        "transcription_min",
+        "Transcripts of recorded human calls",
+    ),
+    "voicemail": Feature(
+        "voicemail", "Voicemail", "Calling", True, None, "Voicemail boxes in call flows"
+    ),
+    "voicemail_transcription": Feature(
+        "voicemail_transcription",
+        "Voicemail transcription",
+        "AI",
+        True,
+        "transcription_min",
+        "Text of every voicemail",
+    ),
+    "ivr_flows": Feature(
+        "ivr_flows",
+        "Call flows and menus",
+        "Calling",
+        True,
+        "ivr_month",
+        "IVR menus, business hours, routing",
+    ),
+    "ring_groups": Feature(
+        "ring_groups", "Ring groups", "Calling", True, None, "Ring several people at once"
+    ),
+    "call_queues": Feature(
+        "call_queues", "Call queues", "Calling", True, None, "Queue callers for agents"
+    ),
+    "supervisor": Feature(
+        "supervisor",
+        "Supervisor tools",
+        "Calling",
+        True,
+        "supervisor_seat_month",
+        "Listen, whisper and barge into calls",
+    ),
+    "power_dialer": Feature(
+        "power_dialer",
+        "Power dialer",
+        "Calling",
+        True,
+        "dialer_seat_month",
+        "Call lists and campaigns",
+    ),
+    "amd": Feature(
+        "amd",
+        "Answering-machine detection",
+        "Calling",
+        True,
+        None,
+        "Detect voicemail on outbound calls",
+    ),
     "ai_agent": Feature("ai_agent", "AI agent", "AI", True, None, "AI voice and text assistant"),
-    "ai_kb": Feature("ai_kb", "AI knowledge base", "AI", True, None, "Documents the AI agent can search"),
-    "analytics": Feature("analytics", "Analytics", "Platform", True, None, "Reports and transcript search"),
-    "e911": Feature("e911", "Emergency calling (E911)", "Numbers", True, None, "Emergency addresses on numbers"),
-    "porting": Feature("porting", "Number porting", "Numbers", True, None, "Move numbers in from another carrier"),
-    "tendlc": Feature("tendlc", "10DLC registration", "Messaging", True, None, "Brand and campaign registration"),
-    "enterprise_sso": Feature("enterprise_sso", "Single sign-on", "Platform", True, "sso_month", "SAML / OIDC sign-in and SCIM"),
-    "api_access": Feature("api_access", "API and webhooks", "Platform", True, None, "API keys and outbound webhooks"),
-    "contact_export": Feature("contact_export", "Contact export", "Platform", True, None, "Export and erase contacts"),
+    "ai_kb": Feature(
+        "ai_kb", "AI knowledge base", "AI", True, None, "Documents the AI agent can search"
+    ),
+    "analytics": Feature(
+        "analytics", "Analytics", "Platform", True, None, "Reports and transcript search"
+    ),
+    "e911": Feature(
+        "e911", "Emergency calling (E911)", "Numbers", True, None, "Emergency addresses on numbers"
+    ),
+    "porting": Feature(
+        "porting", "Number porting", "Numbers", True, None, "Move numbers in from another carrier"
+    ),
+    "tendlc": Feature(
+        "tendlc", "10DLC registration", "Messaging", True, None, "Brand and campaign registration"
+    ),
+    "enterprise_sso": Feature(
+        "enterprise_sso",
+        "Single sign-on",
+        "Platform",
+        True,
+        "sso_month",
+        "SAML / OIDC sign-in and SCIM",
+    ),
+    "api_access": Feature(
+        "api_access", "API and webhooks", "Platform", True, None, "API keys and outbound webhooks"
+    ),
+    "contact_export": Feature(
+        "contact_export", "Contact export", "Platform", True, None, "Export and erase contacts"
+    ),
 }
 
 
@@ -78,9 +158,7 @@ async def for_org(session: AsyncSession, org_id: uuid.UUID) -> dict[str, bool]:
     )
     rows = (await session.execute(stmt)).all()
 
-    result: dict[str, bool] = {
-        key: feature.default_enabled for key, feature in CATALOG.items()
-    }
+    result: dict[str, bool] = {key: feature.default_enabled for key, feature in CATALOG.items()}
     for key, enabled in rows:
         result[key] = enabled
 
@@ -99,9 +177,7 @@ async def require(session: AsyncSession, org_id: uuid.UUID, key: str) -> None:
     if key not in CATALOG:
         raise ValueError(f"unknown feature: {key}")
     if not await has(session, org_id, key):
-        raise FeatureDisabledError(
-            f"{CATALOG[key].label} is not enabled for your workspace"
-        )
+        raise FeatureDisabledError(f"{CATALOG[key].label} is not enabled for your workspace")
 
 
 async def set_feature(
@@ -119,9 +195,7 @@ async def set_feature(
 
     set_org_context(session, org_id)
 
-    stmt = sa.select(OrgFeature).where(
-        OrgFeature.org_id == org_id, OrgFeature.feature_key == key
-    )
+    stmt = sa.select(OrgFeature).where(OrgFeature.org_id == org_id, OrgFeature.feature_key == key)
     row = (await session.execute(stmt)).scalar_one_or_none()
 
     if row is None:

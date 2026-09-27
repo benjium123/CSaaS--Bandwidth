@@ -26,9 +26,7 @@ def upgrade():
     op.create_table(
         "org_features",
         sa.Column("id", GUID(), primary_key=True),
-        sa.Column(
-            "org_id", GUID(), sa.ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
-        ),
+        sa.Column("org_id", GUID(), sa.ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False),
         sa.Column("feature_key", sa.String(32), nullable=False),
         sa.Column("enabled", sa.Boolean(), nullable=False),
         sa.Column("price_override_micros", sa.BigInteger(), nullable=True),

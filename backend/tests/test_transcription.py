@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -13,10 +12,9 @@ from pydantic import SecretStr
 from app.db.base import set_org_context
 from app.models import Org
 from app.models.voice import CallRecording, TranscriptionJob
-from app.services import calling_settings, recordings, transcription
+from app.services import recordings, transcription
 from app.storage.base import InMemoryObjectStore
 from tests.test_p43_call_monitoring import _finished_call, _org, mon_settings, voice  # noqa: F401
-
 
 EASTERN = ZoneInfo('America/New_York')
 

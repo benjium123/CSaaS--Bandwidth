@@ -249,7 +249,9 @@ def _check_dates(payload: FixedCostIn) -> None:
 @router.post("/fixed-costs", status_code=201)
 async def console_add_fixed_cost(payload: FixedCostIn, op: Admin) -> dict:
     _check_dates(payload)
-    row = FixedCost(**payload.model_dump(), updated_by=op.user.id, updated_at=datetime.now(timezone.utc))
+    row = FixedCost(
+        **payload.model_dump(), updated_by=op.user.id, updated_at=datetime.now(timezone.utc)
+    )
     op.session.add(row)
     log.info("fixed_cost_added", name=payload.name, monthly_micros=payload.monthly_micros,
              operator_user_id=str(op.user.id))
