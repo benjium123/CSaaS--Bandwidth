@@ -245,22 +245,8 @@ def load_models():
     threads = int(os.environ.get("STT_THREADS", "2"))
     engines = {}
 
-    parakeet_dir = os.path.join(models_dir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
-    if os.path.isdir(parakeet_dir):
-        try:
-            recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
-                encoder=os.path.join(parakeet_dir, "encoder.int8.onnx"),
-                decoder=os.path.join(parakeet_dir, "decoder.int8.onnx"),
-                joiner=os.path.join(parakeet_dir, "joiner.int8.onnx"),
-                tokens=os.path.join(parakeet_dir, "tokens.txt"),
-                num_threads=threads,
-                model_type="nemo_transducer",
-            )
-            engines["parakeet"] = recognizer
-        except Exception as exc:
-            print(f"warning: failed to load parakeet model: {type(exc).__name__}", file=sys.stderr)
-    else:
-        print(f"warning: missing parakeet model directory: {parakeet_dir}", file=sys.stderr)
+    # Parakeet was removed 2026-09-27 (user): Zipformer is the only local engine; customer
+    # transcripts go to Groq whisper-large-v3-turbo (backend services/groq_stt.py).
 
     zipformer_dir = os.path.join(models_dir, "sherpa-onnx-zipformer-gigaspeech-2023-12-12")
     if os.path.isdir(zipformer_dir):

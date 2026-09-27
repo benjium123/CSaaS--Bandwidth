@@ -6370,6 +6370,10 @@ export interface components {
             transcript?: components["schemas"]["app__api__routes__calls__TranscriptSegmentOut"][] | null;
             /** Transcription Status */
             transcription_status?: string | null;
+            /** Ai Summary */
+            ai_summary?: string | null;
+            /** Ai Sentiment */
+            ai_sentiment?: string | null;
         };
         /** CallDispositionsOut */
         CallDispositionsOut: {

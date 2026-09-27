@@ -475,6 +475,20 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
         </div>
       </SurfaceCard>
 
+      {call.ai_summary ? (
+        <SurfaceCard>
+          <SectionLabel>Summary</SectionLabel>
+          <p className="mt-[11px] whitespace-pre-wrap text-[13px] leading-relaxed" aria-label="Call summary">
+            {call.ai_summary}
+          </p>
+          {call.ai_sentiment ? (
+            <p className="mt-[6px] text-[12px] text-[hsl(var(--cx-muted))]">
+              Tone: {call.ai_sentiment}
+            </p>
+          ) : null}
+        </SurfaceCard>
+      ) : null}
+
       {call.transcript && call.transcript.length > 0 && (
         <SurfaceCard>
           <SectionLabel>Transcript</SectionLabel>

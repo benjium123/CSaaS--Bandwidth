@@ -7,7 +7,9 @@ Which calls (``choose``):
 
 How we get words out of a call:
   - carrier calls (Telnyx/SignalWire/Bandwidth): the call is recorded (the recording
-    announcement always plays first) and the recording is transcribed with Deepgram
+    announcement always plays first) and the recording is transcribed by our own Zipformer
+    worker, after hours (user decision 2026-09-27); a call the AI flags as suspicious or
+    scam is re-transcribed with Groq whisper-large-v3-turbo and judged again
   - softphone calls in LiveKit rooms: the ``call-monitor`` worker (agents/call_monitor.py)
     joins silently, plays the announcement and streams a transcript
   - AI assistant calls already have a transcript
@@ -56,7 +58,8 @@ MONITOR_AGENT_NAME_DEFAULT = "call-monitor"
 DEEPGRAM_URL = "https://api.deepgram.com/v1/listen"
 REVIEW_DELAY = timedelta(minutes=2)
 TICK_BUDGET_SECONDS = 90
-GIVE_UP_AFTER = timedelta(hours=6)
+#: Reviews wait for the night window (transcription.in_night_window), so allow a day and a half.
+GIVE_UP_AFTER = timedelta(hours=36)
 MIN_TALK_SECONDS = 15
 MAX_TRANSCRIPT_CHARS = 24_000
 
@@ -214,6 +217,72 @@ def _utterances_to_segments(call: Call, payload: dict) -> list[tuple[str, str, i
     return out
 
 
+class _SttFailed(Exception):
+    def __init__(self, retryable: bool):
+        super().__init__("stt failed")
+        self.retryable = retryable
+
+
+async def _stt(settings: Settings, audio: bytes, content_type: str, *, client, engine: str) -> tuple[list[tuple[int, str, int]], float]:  # noqa: ANN001,E501
+    """(channel, text, start_ms) segments + audio seconds. ``engine`` "local" = our Zipformer
+    stt worker (no per-minute cost), "groq" = Groq whisper-large-v3-turbo (verification)."""
+    if engine == "groq":
+        from app.services import groq_stt
+
+        if not groq_stt.enabled(settings):
+            raise _SttFailed(False)
+        try:
+            kept, seconds = await groq_stt.transcribe_bytes(
+                settings, audio, filename="call.audio", content_type=content_type, client=client
+            )
+        except groq_stt.GroqSttError as exc:
+            raise _SttFailed(True) from exc
+        return [
+            (0, (seg.get("text") or "").strip(), int(float(seg.get("start") or 0) * 1000))
+            for seg in kept
+        ], seconds
+    from app.services import transcription
+
+    if not settings.stt_url:
+        raise _SttFailed(False)
+    resp = await client.post(
+        settings.stt_url.rstrip("/") + "/transcribe?engine=zipformer",
+        content=audio,
+        headers={
+            "Authorization": f"Bearer {transcription.auth_token(settings)}",
+            "Content-Type": content_type,
+        },
+        timeout=900.0,
+    )
+    if resp.status_code >= 400:
+        raise _SttFailed(resp.status_code in (408, 429, 503) or resp.status_code >= 500)
+    data = resp.json()
+    segs = [
+        (int(seg.get("channel", 0)), str(seg.get("text") or "").strip(), int(seg.get("start_ms", 0)))
+        for seg in data.get("segments", [])
+        if isinstance(seg, dict) and str(seg.get("text") or "").strip()
+    ]
+    return segs, float(data.get("audio_sec") or 0)
+
+
+async def _meter_groq(session: AsyncSession, call: Call, seconds: float, *, side: str) -> None:
+    from app.services import ai_usage
+
+    try:
+        await ai_usage.record(
+            session,
+            call.org_id,
+            provider="groq",
+            kind="stt",
+            metric="stt_seconds",
+            quantity=max(1, math.ceil(seconds)),
+            source="platform",
+            idempotency_key=f"monitor-verify:{call.id}:{side}",
+        )
+    except Exception:  # noqa: BLE001 - metering must never break the review
+        log.warning("monitor_verify_meter_failed", call_id=str(call.id))
+
+
 async def transcribe_recording(
     session: AsyncSession,
     settings: Settings,
@@ -221,13 +290,15 @@ async def transcribe_recording(
     call: Call,
     *,
     client: httpx.AsyncClient | None = None,
+    engine: str = "local",
 ) -> str:
-    """'done' | 'waiting' (recording not stored yet) | 'none' (no recording) | 'failed'."""
+    """'done' | 'waiting' (recording not stored yet) | 'none' (no recording) | 'failed'.
+    ``engine``: "local" (Zipformer, the normal after-hours pass) or "groq" (verification)."""
     from app.services import agent as agent_svc
     from app.services import recordings as recordings_svc
 
     if (call.extra or {}).get("recorder"):
-        return await _transcribe_sides(session, settings, store, call, client=client)
+        return await _transcribe_sides(session, settings, store, call, client=client, engine=engine)
 
     recording = (
         await session.execute(
@@ -241,47 +312,46 @@ async def transcribe_recording(
         return "none"
     if recording.status != "stored":
         return "waiting" if recording.status == "pending" else "none"
-    api_key = settings.deepgram_api_key.get_secret_value().strip()
-    if not api_key:
-        return "failed"
-    try:
-        data = await recordings_svc.load_recording_bytes(store, recording)
-    except KeyError:
-        return "failed"
-    owns = client is None
-    client = client or httpx.AsyncClient(timeout=120.0)
-    try:
-        resp = await client.post(
-            DEEPGRAM_URL,
-            params={
-                "model": "nova-2",
-                "smart_format": "true",
-                "diarize": "true",
-                "utterances": "true",
-            },
-            headers={
-                "Authorization": f"Token {api_key}",
-                "Content-Type": recording.content_type or "audio/mpeg",
-            },
-            content=data,
-        )
-        if resp.status_code >= 400:
-            # 429/5xx are worth retrying; any other 4xx will fail the same way every time.
-            retryable = resp.status_code in (408, 429) or resp.status_code >= 500
-            return "failed" if retryable else "rejected"
-        await _meter_deepgram(session, call, resp, side="mixed")
-        payload = resp.json()
-    except (httpx.HTTPError, ValueError):
-        return "failed"
-    finally:
-        if owns:
-            await client.aclose()
+    # A dual recording has one track per side: transcribe each so the speaker is known
+    # (these engines do not diarize). A single mixed track is labelled "user", as customer
+    # transcripts are.
+    if recording.channel_layout == "dual":
+        layouts = [("agent", "agent"), ("customer", "user")]
+    else:
+        layouts = [("mixed", "user")]
 
     class _Seg:
         def __init__(self, role, text, at_ms):
             self.role, self.text, self.at_ms = role, text, at_ms
 
-    rows = [_Seg(*s) for s in _utterances_to_segments(call, payload)]
+    rows: list[_Seg] = []
+    owns = client is None
+    client = client or httpx.AsyncClient(timeout=900.0)
+    try:
+        for layout, role in layouts:
+            try:
+                data = await recordings_svc.load_recording_bytes(store, recording, layout)
+            except KeyError:
+                return "failed"
+            segs, seconds = await _stt(
+                settings, data, recording.content_type or "audio/mpeg", client=client, engine=engine
+            )
+            if engine == "groq":
+                await _meter_groq(session, call, seconds, side=layout)
+            # A stereo mixed file comes back as two channels: 0 = our side, 1 = theirs.
+            stereo = len({c for c, _, _ in segs}) > 1
+            rows.extend(
+                _Seg(("agent" if c == 0 else "user") if stereo else role, text, at_ms)
+                for c, text, at_ms in segs
+            )
+    except _SttFailed as exc:
+        return "failed" if exc.retryable else "rejected"
+    except (httpx.HTTPError, ValueError):
+        return "failed"
+    finally:
+        if owns:
+            await client.aclose()
+    rows.sort(key=lambda r: r.at_ms)
     await agent_svc.upsert_transcript_segments(session, call, rows)
     return "done"
 
@@ -317,6 +387,7 @@ async def _transcribe_sides(
     call: Call,
     *,
     client: httpx.AsyncClient | None = None,
+    engine: str = "local",
 ) -> str:
     """Transcribe an lkrec recording: one Ogg file per side, so the speaker is known
     without diarization and both sides share one timeline (at_ms lines up)."""
@@ -331,35 +402,24 @@ async def _transcribe_sides(
     sides = await lkrec.load_sides(store, call)
     if not sides:
         return "none"  # announcement failed (nothing recorded) or already purged
-    api_key = settings.deepgram_api_key.get_secret_value().strip()
-    if not api_key:
-        return "failed"
-
     class _Seg:
         def __init__(self, role, text, at_ms):
             self.role, self.text, self.at_ms = role, text, at_ms
 
     rows: list[_Seg] = []
     owns = client is None
-    client = client or httpx.AsyncClient(timeout=120.0)
+    client = client or httpx.AsyncClient(timeout=900.0)
     try:
         for part, (side, data, offset_ms) in enumerate(sides):
-            resp = await client.post(
-                DEEPGRAM_URL,
-                params={"model": "nova-2", "smart_format": "true", "utterances": "true"},
-                headers={"Authorization": f"Token {api_key}", "Content-Type": "audio/ogg"},
-                content=data,
-            )
-            if resp.status_code >= 400:
-                retryable = resp.status_code in (408, 429) or resp.status_code >= 500
-                return "failed" if retryable else "rejected"
             # A recorder restart splits a side into parts: each part is its own request.
-            await _meter_deepgram(session, call, resp, side=side if part < 2 else f"{side}:{part}")
+            segs, seconds = await _stt(settings, data, "audio/ogg", client=client, engine=engine)
+            if engine == "groq":
+                await _meter_groq(session, call, seconds, side=side if part < 2 else f"{side}:{part}")
             role = "user" if side == "customer" else "agent"
-            for u in (resp.json().get("results") or {}).get("utterances") or []:
-                text = str(u.get("transcript") or "").strip()
-                if text:
-                    rows.append(_Seg(role, text, offset_ms + int(float(u.get("start") or 0) * 1000)))
+            for _channel, text, at_ms in segs:
+                rows.append(_Seg(role, text, offset_ms + at_ms))
+    except _SttFailed as exc:
+        return "failed" if exc.retryable else "rejected"
     except (httpx.HTTPError, ValueError):
         return "failed"
     finally:
@@ -445,8 +505,16 @@ async def review_one(
         return "skipped"
 
     segments = await _segments(session, call.id)
+    transcribed_locally = False
     if not segments:
+        # After hours only (user decision 2026-09-27): the box's CPU belongs to live calls
+        # during the day. The reviewer waits for the night window.
+        from app.services import transcription
+
+        if not transcription.in_night_window(now):
+            return "waiting"
         outcome = await transcribe_recording(session, settings, store, call, client=client)
+        transcribed_locally = outcome == "done"
         if outcome == "waiting" and now - ended < GIVE_UP_AFTER:
             return "waiting"
         segments = await _segments(session, call.id)
@@ -481,6 +549,19 @@ async def review_one(
             review.status = "error"
         return "error"
 
+    if result["verdict"] in ("suspicious", "scam") and transcribed_locally:
+        # Verify with the better engine before anything counts against the business: a
+        # Zipformer mishearing must not raise a scam signal on its own.
+        verified = await _verify_with_groq(session, settings, store, call, context, client=client)
+        if verified is not None:
+            log.info(
+                "call_review_verified",
+                call_id=str(call.id),
+                first=result["verdict"],
+                verified=verified["verdict"],
+            )
+            result = verified
+
     verdict = result["verdict"]
     confidence = result["confidence"]
     evidence = result["evidence"]
@@ -504,6 +585,48 @@ async def review_one(
             call_id=call.id,
         )
     return verdict
+
+
+async def _verify_with_groq(
+    session: AsyncSession,
+    settings: Settings,
+    store,  # noqa: ANN001
+    call: Call,
+    context,  # noqa: ANN001
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> dict | None:
+    """Re-transcribe a flagged call with Groq whisper-large-v3-turbo and judge it again.
+    None = could not verify (the first verdict stands - fail closed)."""
+    from app.services import groq_stt
+
+    if not groq_stt.enabled(settings):
+        return None
+    local_rows = await _segments(session, call.id)
+    await session.execute(
+        sa.delete(CallTranscriptSegment).where(CallTranscriptSegment.call_id == call.id)
+    )
+    outcome = await transcribe_recording(session, settings, store, call, client=client, engine="groq")
+    segments = await _segments(session, call.id)
+    if outcome != "done" or not segments:
+        # Put the local transcript back so the review keeps its evidence.
+        from app.services import agent as agent_svc
+
+        await session.execute(
+            sa.delete(CallTranscriptSegment).where(CallTranscriptSegment.call_id == call.id)
+        )
+        await agent_svc.upsert_transcript_segments(session, call, local_rows)
+        return None
+    transcript = "\n".join(f"{s.role}: {s.text}" for s in segments)[:MAX_TRANSCRIPT_CHARS]
+    try:
+        return await judge_call(
+            settings,
+            context,
+            transcript,
+            {"direction": call.direction, "duration_seconds": call.duration_seconds},
+        )
+    except ai_guard.AIUnavailable:
+        return None
 
 
 async def review_tick(

@@ -133,13 +133,13 @@ def test_pressure_and_ramping():
 
 
 def test_pick_engine():
-    engines = ['parakeet', 'zipformer']
+    # Parakeet removed 2026-09-27: Zipformer is the only local engine.
+    engines = ['zipformer']
     assert transcription.pick_engine('night', 0.8, engines, overdue=False) == 'zipformer'
-    assert transcription.pick_engine('night', 0.8, ['parakeet'], overdue=False) == 'parakeet'
+    assert transcription.pick_engine('night', 0.8, ['parakeet'], overdue=False) is None
     assert transcription.pick_engine('night', 0.8, [], overdue=False) is None
-    assert transcription.pick_engine('soon', 0.4, engines, overdue=False) == 'parakeet'
+    assert transcription.pick_engine('soon', 0.4, engines, overdue=False) == 'zipformer'
     assert transcription.pick_engine('soon', 0.4, engines, overdue=True) == 'zipformer'
-    assert transcription.pick_engine('soon', 0.5, engines, overdue=False) == 'zipformer'
 
 
 def test_allowed_tiers():
@@ -293,7 +293,7 @@ async def test_wanted_after_call_needs_the_call_transcription_entitlement(sessio
 # --- tick -------------------------------------------------------------------------
 
 
-async def test_tick_happy_path_parakeet_at_low_load(session):
+async def test_tick_happy_path_zipformer_at_low_load(session):
     store = InMemoryObjectStore()
     org_id = await _org(session)
     call = await _finished_call(session, org_id)
@@ -320,7 +320,7 @@ async def test_tick_happy_path_parakeet_at_low_load(session):
     set_org_context(session, org_id)
     await session.refresh(job)
     assert job.status == 'done'
-    assert job.engine == 'parakeet'
+    assert job.engine == 'zipformer'
     assert job.audio_seconds == 60
     assert job.cpu_ms == 1500
 

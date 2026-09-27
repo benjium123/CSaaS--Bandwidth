@@ -45,10 +45,11 @@ RETRY_EXHAUSTED = "retry_exhausted"
 _VALID_SENTIMENTS = ("positive", "neutral", "negative")
 
 SYSTEM_PROMPT = (
-    "You score a phone call transcript for sentiment. Respond with STRICT JSON only, no "
-    "prose, no markdown fences, exactly this shape: "
+    "You summarize and score a business phone call transcript for the people who took the "
+    "call. Respond with STRICT JSON only, no prose, no markdown fences, exactly this shape: "
     '{"sentiment": "positive" | "neutral" | "negative", "score": <integer 1-5>, '
-    '"summary": "<one sentence>"}'
+    '"summary": "<2-3 plain sentences: why they called, what was agreed or happened, and '
+    'any next step or follow-up; no speaker labels>"}'
 )
 
 
@@ -57,8 +58,11 @@ def _now() -> datetime:
 
 
 def _pick_provider(settings: Settings) -> tuple[str, str] | None:
-    """(provider, api_key), preferring Anthropic (matches sms_agent's default), or None
-    when neither is configured."""
+    """(provider, api_key): DeepSeek Flash first (user decision 2026-09-27: call summaries
+    on DeepSeek V4 Flash), then Anthropic, then OpenAI; None when none is configured."""
+    deepseek_key = settings.deepseek_api_key.get_secret_value().strip()
+    if deepseek_key:
+        return "deepseek", deepseek_key
     anthropic_key = settings.anthropic_api_key.get_secret_value().strip()
     if anthropic_key:
         return "anthropic", anthropic_key

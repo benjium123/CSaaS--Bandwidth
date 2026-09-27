@@ -291,7 +291,7 @@ async def test_second_look_stops_calling_the_ai_once_it_is_down(app_ai, session,
 async def test_review_of_a_call_that_never_finished_is_given_up(session, fix_settings):
     org_id = await _org(session)
     set_org_context(session, org_id)
-    call = Call(id=uuid.uuid4(), org_id=org_id, direction="outbound", contact_e164=THEM, our_e164=OUR, carrier="bandwidth", status="ringing", created_at=datetime.now(timezone.utc) - timedelta(hours=8))
+    call = Call(id=uuid.uuid4(), org_id=org_id, direction="outbound", contact_e164=THEM, our_e164=OUR, carrier="bandwidth", status="ringing", created_at=datetime.now(timezone.utc) - timedelta(hours=40))
     session.add(call)
     await session.flush()
     session.add(CallReview(id=uuid.uuid4(), org_id=org_id, call_id=call.id, reason="sample"))

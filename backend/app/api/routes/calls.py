@@ -159,6 +159,9 @@ class CallDetailOut(CallOut):
     transcript: list[TranscriptSegmentOut] | None = None
     #: queued | running | done | failed | skipped - None when never queued for transcription.
     transcription_status: str | None = None
+    #: AI summary of the call (services/scoring.py, DeepSeek Flash) once its transcript exists.
+    ai_summary: str | None = None
+    ai_sentiment: str | None = None
 
 
 def _livekit_route_reason(c: Call) -> str | None:
@@ -284,6 +287,17 @@ async def _detail_out(
                 sa.select(TranscriptionJob.status).where(TranscriptionJob.call_id == call.id)
             )
         ).scalar_one_or_none()
+    ai_summary = ai_sentiment = None
+    if include_transcript:
+        from app.models import CallScore
+        from app.services.scoring import RETRY_EXHAUSTED
+
+        score = (
+            await session.execute(sa.select(CallScore).where(CallScore.call_id == call.id))
+        ).scalar_one_or_none()
+        if score is not None and score.summary and score.summary != RETRY_EXHAUSTED:
+            ai_summary = score.summary
+            ai_sentiment = score.sentiment
     base_url = request.app.state.settings.public_base_url or ""
     return CallDetailOut(
         **_call_out(call).model_dump(),
@@ -291,6 +305,8 @@ async def _detail_out(
         recordings=[_recording_out(rec, base_url, call.id) for rec in recordings],
         transcript=transcript,
         transcription_status=transcription_status,
+        ai_summary=ai_summary,
+        ai_sentiment=ai_sentiment,
     )
 
 

@@ -148,7 +148,7 @@ services:
     depends_on: [livekit]
     logging: *default-logging
 
-  # Transcription worker (stt/): sherpa-onnx Parakeet + Zipformer on CPU. Private (no port);
+  # Transcription worker (stt/): sherpa-onnx Zipformer on CPU (Parakeet removed). Private (no port);
   # the api reaches it as http://stt:9100 with a token derived from LIVEKIT_API_SECRET. The
   # api's scheduler decides when it runs, so the cpus cap is the most transcription can
   # ever take from live calls. Models live under var/ (never touched by deploy's rsync).

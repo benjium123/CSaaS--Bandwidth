@@ -175,20 +175,11 @@ def ramping(load1: float, load5: float, cpus: int) -> bool:
 
 
 def pick_engine(tier, p, engines, *, overdue: bool) -> str | None:
+    """Zipformer is the only local engine (Parakeet removed 2026-09-27). Kept as a function
+    so the tier/pressure arguments stay the scheduler's single decision point."""
     engines = engines or []
-    if tier == 'night':
-        if 'zipformer' in engines:
-            return 'zipformer'
-        if 'parakeet' in engines:
-            return 'parakeet'
-        return None
-
-    if p < 0.45 and not overdue and 'parakeet' in engines:
-        return 'parakeet'
     if 'zipformer' in engines:
         return 'zipformer'
-    if 'parakeet' in engines:
-        return 'parakeet'
     return None
 
 
@@ -218,6 +209,130 @@ async def _handle_transcribe_failure(session, job, error_text, now):
         job.error = None
         job.not_before = _db_now(session, now + RETRY_AFTER)
     await session.commit()
+
+
+async def _store_result(session, call, job, data, now):
+    """Save a finished transcript (stt worker or Groq shape), mark the job done and charge
+    the transcript minutes. Commits."""
+    segments = data.get('segments', [])
+    channels = data.get('channels', 1)
+    rows = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        channel = segment.get('channel', 0)
+        if channels == 1:
+            role = 'user'
+        else:
+            role = 'agent' if channel == 0 else 'user'
+        rows.append(
+            SimpleNamespace(
+                role=role,
+                text=str(segment.get('text', '')),
+                at_ms=int(segment.get('start_ms', 0)),
+            )
+        )
+
+    from app.services import agent as agent_svc
+
+    await agent_svc.upsert_transcript_segments(session, call, rows)
+
+    job.status = 'done'
+    job.audio_seconds = int(data.get('audio_sec', 0))
+    job.cpu_ms = int(float(data.get('cpu_sec', 0)) * 1000)
+    job.finished_at = _db_now(session, now)
+    job.error = None
+    # Transcript minutes (P46 P2b): $0 + a price_unset alert while unset.
+    from app.services import telephony_billing
+
+    await telephony_billing.charge_feature_minutes(
+        session,
+        job.org_id,
+        'transcription_min',
+        job.audio_seconds,
+        reference=f'stt:{job.id}',
+        note=f'{job.audio_seconds}s call transcript',
+        feature='call_transcription',
+    )
+    await session.commit()
+
+
+#: Groq tries per job before the local Zipformer worker takes it over.
+GROQ_MAX_ATTEMPTS = 2
+#: Jobs per Groq pass (Groq is fast; this only bounds one tick's wall time).
+GROQ_BATCH = 5
+
+
+async def _groq_pass(session, settings, store, http, now, counts) -> None:
+    """Customer transcripts via Groq whisper-large-v3-turbo: no box CPU, so every tier runs
+    at once. A job Groq failed GROQ_MAX_ATTEMPTS times is left for the local worker."""
+    from app.services import ai_usage, groq_stt
+
+    db_now = _db_now(session, now)
+    jobs = (
+        await session.execute(
+            sa.select(TranscriptionJob)
+            .where(
+                TranscriptionJob.status == 'queued',
+                TranscriptionJob.attempts < GROQ_MAX_ATTEMPTS,
+                sa.or_(
+                    TranscriptionJob.not_before.is_(None),
+                    TranscriptionJob.not_before <= db_now,
+                ),
+            )
+            .order_by(TranscriptionJob.created_at)
+            .limit(GROQ_BATCH)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalars().all()
+    for job in jobs:
+        set_org_context(session, job.org_id)
+        try:
+            rec = await session.get(CallRecording, job.recording_id)
+            call = await session.get(Call, job.call_id)
+            if rec is None or rec.status != 'stored' or call is None:
+                job.status = 'failed'
+                job.error = 'no recording' if call is not None else 'call missing'
+                await session.commit()
+                counts['failed'] = counts.get('failed', 0) + 1
+                continue
+            job.status = 'running'
+            job.engine = 'groq-turbo'
+            job.attempts += 1
+            job.started_at = _db_now(session, now)
+            await session.commit()
+            try:
+                data = await groq_stt.transcribe_recording(settings, store, rec, client=http)
+            except (groq_stt.GroqSttError, httpx.HTTPError, KeyError) as exc:
+                log.warning('groq_transcribe_failed', job_id=str(job.id), error=str(exc)[:200])
+                job.status = 'queued'
+                job.not_before = _db_now(session, now + RETRY_AFTER)
+                job.error = ('groq: ' + (str(exc) or 'error'))[:255]
+                await session.commit()
+                counts['groq_retry'] = counts.get('groq_retry', 0) + 1
+                continue
+            await _store_result(session, call, job, data, now)
+            # What Groq bills US (platform cost for the P&L), never the customer.
+            try:
+                await ai_usage.record(
+                    session,
+                    job.org_id,
+                    provider='groq',
+                    kind='stt',
+                    metric='stt_seconds',
+                    quantity=max(1, int(round(float(data.get('audio_sec') or 0)))),
+                    source='platform',
+                    idempotency_key=f'groq-stt:{job.id}',
+                    call_id=job.call_id,
+                )
+                await session.commit()
+            except Exception:  # noqa: BLE001 - metering must never undo a transcript
+                await session.rollback()
+                log.warning('groq_stt_meter_failed', job_id=str(job.id))
+            counts['done'] = counts.get('done', 0) + 1
+        except Exception:
+            log.exception('transcription_job_failed', job_id=str(job.id))
+            await session.rollback()
 
 
 async def tick(session, settings, store, *, now=None, client=None, loadavg=None, cpus=None) -> dict:
@@ -250,6 +365,12 @@ async def tick(session, settings, store, *, now=None, client=None, loadavg=None,
     http = client if client is not None else httpx.AsyncClient(timeout=5.0)
 
     try:
+        from app.services import groq_stt
+
+        groq_on = groq_stt.enabled(settings)
+        if groq_on:
+            await _groq_pass(session, settings, store, http, now, counts)
+
         health_url = settings.stt_url.rstrip('/') + '/health'
         health_headers = {'Authorization': f'Bearer {auth_token(settings)}'}
         try:
@@ -321,6 +442,8 @@ async def tick(session, settings, store, *, now=None, client=None, loadavg=None,
             .where(
                 TranscriptionJob.status == 'queued',
                 TranscriptionJob.tier.in_(tiers),
+                # With Groq on, the local worker is only the fallback for jobs Groq failed.
+                *([TranscriptionJob.attempts >= GROQ_MAX_ATTEMPTS] if groq_on else []),
                 sa.or_(
                     TranscriptionJob.not_before.is_(None),
                     TranscriptionJob.not_before <= db_now,
@@ -398,48 +521,7 @@ async def tick(session, settings, store, *, now=None, client=None, loadavg=None,
                         counts['failed'] = counts.get('failed', 0) + 1
                     continue
 
-                data = resp.json()
-                segments = data.get('segments', [])
-                channels = data.get('channels', 1)
-                rows = []
-                for segment in segments:
-                    if not isinstance(segment, dict):
-                        continue
-                    channel = segment.get('channel', 0)
-                    if channels == 1:
-                        role = 'user'
-                    else:
-                        role = 'agent' if channel == 0 else 'user'
-                    rows.append(
-                        SimpleNamespace(
-                            role=role,
-                            text=str(segment.get('text', '')),
-                            at_ms=int(segment.get('start_ms', 0)),
-                        )
-                    )
-
-                from app.services import agent as agent_svc
-
-                await agent_svc.upsert_transcript_segments(session, call, rows)
-
-                job.status = 'done'
-                job.audio_seconds = int(data.get('audio_sec', 0))
-                job.cpu_ms = int(float(data.get('cpu_sec', 0)) * 1000)
-                job.finished_at = _db_now(session, now)
-                job.error = None
-                # Transcript minutes (P46 P2b): $0 + a price_unset alert while unset.
-                from app.services import telephony_billing
-
-                await telephony_billing.charge_feature_minutes(
-                    session,
-                    job.org_id,
-                    'transcription_min',
-                    job.audio_seconds,
-                    reference=f'stt:{job.id}',
-                    note=f'{job.audio_seconds}s call transcript',
-                    feature='call_transcription',
-                )
-                await session.commit()
+                await _store_result(session, call, job, resp.json(), now)
                 counts['done'] = counts.get('done', 0) + 1
 
             except Exception:

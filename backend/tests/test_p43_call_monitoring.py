@@ -187,7 +187,13 @@ async def test_scam_transcript_becomes_a_signal(voice, session, mon_settings):
 
 
 async def test_recording_is_transcribed_with_speakers_then_reviewed(voice, session, mon_settings, monkeypatch):
+    """After hours, a carrier recording is transcribed by our own Zipformer worker (no
+    Deepgram) and reviewed; a two-channel result keeps the speakers apart."""
+    from app.services import transcription
+
     _client, _carrier, fake, app = voice
+    monkeypatch.setattr(transcription, "in_night_window", lambda now: True)
+    monkeypatch.setattr(mon_settings, "stt_url", "http://stt:9100")
     org_id = await _org(session)
     call = await _finished_call(session, org_id)
     set_org_context(session, org_id)
@@ -202,31 +208,98 @@ async def test_recording_is_transcribed_with_speakers_then_reviewed(voice, sessi
         async def get(self, key):
             return b"ID3fakeaudio"
 
-    deepgram_payload = {
-        "results": {
-            "utterances": [
-                {"speaker": 0, "transcript": "Hello?", "start": 0.4},
-                {"speaker": 1, "transcript": "Hi, this is Acme Plumbing about tomorrow.", "start": 1.5},
-            ]
-        }
+    stt_payload = {
+        "segments": [
+            {"channel": 1, "text": "Hello?", "start_ms": 400},
+            {"channel": 0, "text": "Hi, this is Acme Plumbing about tomorrow.", "start_ms": 1500},
+        ],
+        "channels": 2,
+        "audio_sec": 12,
     }
     seen = {}
 
     async def handler(request):
-        seen["auth"] = request.headers.get("authorization")
+        seen["host"] = request.url.host
         seen["params"] = dict(request.url.params)
-        return httpx.Response(200, json=deepgram_payload)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json=stt_payload)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as dg:
-        counts = await monitor_calls.review_tick(session, mon_settings, Store(), client=dg)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        counts = await monitor_calls.review_tick(session, mon_settings, Store(), client=http)
     assert counts.get("ok") == 1
-    assert seen["auth"] == "Token dg-test" and seen["params"]["diarize"] == "true"
+    assert seen["host"] == "stt" and seen["params"]["engine"] == "zipformer"
+    assert seen["auth"].startswith("Bearer ")
     set_org_context(session, org_id)
     segments = (await session.execute(sa.select(CallTranscriptSegment).order_by(CallTranscriptSegment.at_ms))).scalars().all()
     assert [(s.role, s.text) for s in segments] == [
         ("user", "Hello?"),
         ("agent", "Hi, this is Acme Plumbing about tomorrow."),
     ]
+
+
+async def test_review_waits_for_the_night_window(voice, session, mon_settings, monkeypatch):
+    from app.services import transcription
+
+    monkeypatch.setattr(transcription, "in_night_window", lambda now: False)
+    org_id = await _org(session)
+    await _finished_call(session, org_id)
+    assert await monitor_calls.review_tick(session, mon_settings, store=None) == {"waiting": 1}
+
+
+async def test_flagged_call_is_verified_with_groq_before_it_counts(voice, session, mon_settings, monkeypatch):
+    """Zipformer's transcript reads as a scam; Groq turbo re-transcribes and the second
+    judgement (ok) is the one that stands - no scam signal from a mishearing."""
+    from pydantic import SecretStr
+
+    from app.models import CallReview
+    from app.services import transcription
+
+    monkeypatch.setattr(transcription, "in_night_window", lambda now: True)
+    monkeypatch.setattr(mon_settings, "stt_url", "http://stt:9100")
+    monkeypatch.setattr(mon_settings, "groq_api_key", SecretStr("gsk-test"))
+    org_id = await _org(session)
+    call = await _finished_call(session, org_id)
+    set_org_context(session, org_id)
+    session.add(CallRecording(
+        id=uuid.uuid4(), org_id=org_id, call_id=call.id, provider_recording_id="r2",
+        storage_key=f"org/{org_id}/rec2", content_type="audio/mpeg", status="stored",
+    ))
+    await session.commit()
+
+    class Store:
+        async def get(self, key):
+            return b"ID3fakeaudio"
+
+    hosts = []
+
+    async def handler(request):
+        hosts.append(request.url.host)
+        if request.url.host == "api.groq.com":
+            return httpx.Response(200, json={"duration": 12.0, "segments": [
+                {"start": 0.4, "text": " Hi, this is Acme Plumbing about tomorrow.", "no_speech_prob": 0.01, "avg_logprob": -0.2},
+            ]})
+        return httpx.Response(200, json={"segments": [
+            {"channel": 0, "text": "send me your bank password", "start_ms": 400},
+        ], "channels": 1, "audio_sec": 12})
+
+    verdicts = iter(["scam", "ok"])
+    transcripts = []
+
+    async def judge(settings, context, transcript, meta):
+        transcripts.append(transcript)
+        v = next(verdicts)
+        return {"verdict": v, "confidence": 90, "category": "test", "summary": v,
+                "evidence": [], "tokens": (1, 1)}
+
+    monkeypatch.setattr(monitor_calls, "judge_call", judge)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        counts = await monitor_calls.review_tick(session, mon_settings, Store(), client=http)
+    assert counts.get("ok") == 1
+    assert hosts == ["stt", "api.groq.com"]
+    assert "bank password" in transcripts[0] and "Acme Plumbing" in transcripts[1]
+    set_org_context(session, org_id)
+    review = (await session.execute(sa.select(CallReview).where(CallReview.call_id == call.id))).scalar_one()
+    assert review.verdict == "ok"
 
 
 async def test_short_or_unfinished_calls_are_skipped_or_wait(voice, session, mon_settings):

@@ -247,7 +247,9 @@ async def test_on_livekit_event_uses_recorder_and_falls_back(
 async def test_transcribe_sides_labels_roles_and_offsets(
     session, mon_settings, tmp_path, monkeypatch
 ):
-    settings = _settings(mon_settings, tmp_path)
+    settings = _settings(mon_settings, tmp_path).model_copy(
+        update={"stt_url": "http://stt:9100"}
+    )
     store = InMemoryObjectStore()
     org_id = await _org(session)
     set_org_context(session, org_id)
@@ -256,24 +258,17 @@ async def test_transcribe_sides_labels_roles_and_offsets(
     call.extra = {"recorder": {"room": f"call-{call.id}", "announcement": "a.ogg"}}
     await session.commit()
 
-    utterances = [
-        {"transcript": "hello", "start": 1.5, "end": 2.0},
-        {"transcript": "hi there", "start": 0.5, "end": 1.0},
+    # Our local Zipformer stt worker, one request per side.
+    segments = [
+        {"channel": 0, "text": "hello", "start_ms": 1500},
+        {"channel": 0, "text": "hi there", "start_ms": 500},
     ]
     seen: list[bytes] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.content)
-        item = utterances[min(len(seen) - 1, len(utterances) - 1)]
-        return httpx.Response(
-            200,
-            json={
-                "results": {
-                    "utterances": [item],
-                    "channels": [{"alternatives": [{"transcript": item["transcript"]}]}],
-                }
-            },
-        )
+        item = segments[min(len(seen) - 1, len(segments) - 1)]
+        return httpx.Response(200, json={"segments": [item], "channels": 1, "audio_sec": 2})
 
     captured: list = []
 
