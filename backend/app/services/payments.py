@@ -427,3 +427,106 @@ async def fee_tick(session: AsyncSession, settings) -> int:  # noqa: ANN001
             log.exception("payments.fee_lookup_failed", intent_id=intent_id)
     return filled
 
+
+
+#: Auto-recharge a workspace gets after its first top-up (the customer can turn it off):
+#: below $5, charge $10 to the card that paid.
+DEFAULT_AUTO_RECHARGE_THRESHOLD_MICROS = 5_000_000
+DEFAULT_AUTO_RECHARGE_AMOUNT_MICROS = 10_000_000
+
+
+async def save_topup_card(
+    session: AsyncSession, settings, org: Org, intent: dict  # noqa: ANN001
+) -> None:
+    """After a paid Checkout top-up: keep the card it was paid with (saved on the workspace's
+    Stripe customer by setup_future_usage) as a payment method, and on the workspace's first
+    paid top-up switch auto-recharge on with the defaults unless it was already configured.
+    The same checks as adding a card in Billing apply (ban list, card risk); a refused card is detached and nothing is saved.
+    Never raises: the credit was already granted. Does not commit."""
+    from app.errors import PermissionDeniedError
+    from app.models import PaymentMethod
+    from app.services import audit as audit_svc
+    from app.services import ban_list, card_risk, stripe_client
+
+    pm_id = intent.get("payment_method")
+    customer_id = intent.get("customer")
+    if not (isinstance(pm_id, str) and pm_id and isinstance(customer_id, str) and customer_id):
+        return
+    try:
+        async with session.begin_nested():
+            set_org_context(session, org.id)
+            rows = (
+                await session.execute(
+                    sa.select(PaymentMethod).where(PaymentMethod.org_id == org.id)
+                )
+            ).scalars().all()
+            pm = next((r for r in rows if r.stripe_payment_method_id == pm_id), None)
+            if pm is None:
+                card = await stripe_client.retrieve_payment_method(settings, pm_id)
+                fingerprint = card.get("fingerprint")
+                refused = bool(fingerprint) and bool(
+                    await ban_list.matches(
+                        session, [ban_list.identifier("card_fingerprint", fingerprint)]
+                    )
+                )
+                if not refused:
+                    try:
+                        await card_risk.check_new_card(
+                            session,
+                            org.id,
+                            fingerprint=fingerprint,
+                            card_country=card.get("country"),
+                        )
+                    except PermissionDeniedError:
+                        refused = True
+                if refused:
+                    log.warning("payments.topup_card_refused", org_id=str(org.id))
+                    try:
+                        await stripe_client.detach_payment_method(settings, payment_method_id=pm_id)
+                    except Exception:  # noqa: BLE001 - refusing the card matters more
+                        pass
+                    return
+                pm = PaymentMethod(
+                    id=uuid.uuid4(),
+                    org_id=org.id,
+                    stripe_customer_id=customer_id,
+                    stripe_payment_method_id=pm_id,
+                    brand=card.get("brand", ""),
+                    last4=card.get("last4", ""),
+                    is_default=not rows,
+                    card_fingerprint=fingerprint,
+                )
+                session.add(pm)
+                await session.flush()
+            # Only on the FIRST paid top-up: a customer who later turned auto-recharge off
+            # must not have it switched back on by their next top-up.
+            earlier = (
+                await session.execute(
+                    sa.select(sa.func.count(BillingPayment.id)).where(
+                        BillingPayment.org_id == org.id,
+                        BillingPayment.state == "paid",
+                        BillingPayment.kind.in_(("topup", "auto_recharge")),
+                        BillingPayment.stripe_payment_intent_id != str(intent.get("id") or ""),
+                    )
+                )
+            ).scalar_one()
+            configured = bool((org.credit_auto_recharge or {}).get("threshold_micros"))
+            if earlier == 0 and not configured:
+                org.credit_auto_recharge = {
+                    "enabled": True,
+                    "threshold_micros": DEFAULT_AUTO_RECHARGE_THRESHOLD_MICROS,
+                    "amount_micros": DEFAULT_AUTO_RECHARGE_AMOUNT_MICROS,
+                    "payment_method_id": str(pm.id),
+                }
+                org.auto_recharge_failures = 0
+                audit_svc.record(
+                    session,
+                    org.id,
+                    action="billing.auto_recharge_updated",
+                    target_type="org",
+                    target_id=str(org.id),
+                    detail={"enabled": True, "source": "first_topup_default",
+                            "credit_auto_recharge": org.credit_auto_recharge},
+                )
+    except Exception:
+        log.exception("payments.save_topup_card_failed", org_id=str(org.id))

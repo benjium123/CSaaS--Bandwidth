@@ -232,6 +232,15 @@ async def test_sign_up_to_a_working_inbox(
         f"/api/v1/ops/applications/{org_id}/approve", json={"note": "Checked."}, headers=admin
     )
     assert r.status_code == 200, r.text
+    # 3b. A first credit top-up comes before numbers (the console sends them to /add-credit);
+    # the paid Checkout webhook records it.
+    assert await _step(client, h) == "funding"
+    from app.services import payments
+
+    await payments.record_topup_paid(
+        session, uuid.UUID(org_id), intent_id="pi_journey_topup", amount_micros=5_000_000
+    )
+    await session.commit()
     assert await _step(client, h) == "numbers"  # the console sends them to /choose-numbers
 
     # 4. Buy two numbers, with the 911 address.

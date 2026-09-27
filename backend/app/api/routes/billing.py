@@ -244,6 +244,8 @@ def _checkout_urls(settings) -> tuple[str, str]:
 
 class TopupIn(BaseModel):
     amount_micros: int
+    #: "onboarding": return to the signup funding step instead of the Billing page.
+    return_to: str | None = Field(default=None, pattern="^onboarding$")
 
 
 class SubscriptionCheckoutIn(BaseModel):
@@ -474,12 +476,35 @@ async def create_topup(
 
     await card_risk.check_checkout(ctx.session, settings, ctx.org.id, amount)
     success_url, cancel_url = _checkout_urls(settings)
+    if payload.return_to == "onboarding":
+        base = (getattr(settings, "public_web_url", "") or "").rstrip("/")
+        success_url, cancel_url = f"{base}/add-credit?topup=done", f"{base}/add-credit"
+    # The card is saved on the workspace's Stripe customer (the one its saved cards already
+    # use, else a new one) so auto-recharge can charge it later; the webhook records it.
+    existing_customer_id = (
+        await ctx.session.execute(
+            sa.select(PaymentMethod.stripe_customer_id)
+            .where(PaymentMethod.org_id == ctx.org.id)
+            .order_by(PaymentMethod.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    actor_email = None
+    if ctx.actor_user_id is not None:
+        from app.models import User
+
+        actor = await ctx.session.get(User, ctx.actor_user_id)
+        actor_email = actor.email if actor is not None else None
+    customer_id = await stripe_client.ensure_customer(
+        settings, org=ctx.org, email=actor_email, existing_customer_id=existing_customer_id
+    )
     checkout = await stripe_client.create_checkout_session(
         settings,
         org=ctx.org,
         amount_micros=amount,
         success_url=success_url,
         cancel_url=cancel_url,
+        customer_id=customer_id,
     )
 
     actor_user, actor_key = _actor(ctx)

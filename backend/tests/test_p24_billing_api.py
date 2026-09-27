@@ -207,10 +207,18 @@ async def test_topup_creates_a_checkout_link(client, session, monkeypatch):
     token = await register_and_login(client, "topup-checkout@example.com")
     org = await create_org(client, token, "Topup Checkout Org")
 
+    seen: dict = {}
+
     async def fake_create_checkout_session(*args, **kwargs):
+        seen.update(kwargs)
         return {"id": "cs_test", "url": "https://checkout.test/x"}
 
+    async def fake_ensure_customer(*args, **kwargs):
+        seen["customer_email"] = kwargs.get("email")
+        return "cus_topup"
+
     monkeypatch.setattr(stripe_client, "create_checkout_session", fake_create_checkout_session)
+    monkeypatch.setattr(stripe_client, "ensure_customer", fake_ensure_customer)
 
     r = await client.post(
         "/api/v1/billing/topups",
@@ -219,6 +227,18 @@ async def test_topup_creates_a_checkout_link(client, session, monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"checkout_url": "https://checkout.test/x"}
+    # The card is saved on the workspace's customer (for auto-recharge).
+    assert seen["customer_id"] == "cus_topup"
+    assert seen["customer_email"] == "topup-checkout@example.com"
+    assert seen["success_url"].endswith("/settings/billing?topup=done")
+
+    r = await client.post(
+        "/api/v1/billing/topups",
+        json={"amount_micros": 5_000_000, "return_to": "onboarding"},
+        headers=auth_headers(token, org["id"]),
+    )
+    assert r.status_code == 200, r.text
+    assert seen["success_url"].endswith("/add-credit?topup=done")
 
     set_org_context(session, uuid.UUID(org["id"]))
     audit_count = (
@@ -228,7 +248,7 @@ async def test_topup_creates_a_checkout_link(client, session, monkeypatch):
             )
         )
     ).scalar_one()
-    assert audit_count == 1
+    assert audit_count == 2  # one per checkout started
 
 
 async def test_topup_refuses_an_amount_outside_the_allowed_range(client):

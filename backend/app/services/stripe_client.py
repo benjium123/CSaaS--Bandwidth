@@ -98,8 +98,11 @@ async def create_checkout_session(
     success_url: str,
     cancel_url: str,
     customer_email: str | None = None,
+    customer_id: str | None = None,
 ) -> dict:
-    """Create a Checkout Session for a one-off credit top-up."""
+    """Create a Checkout Session for a one-off credit top-up. With ``customer_id`` the card
+    is saved on that customer for later off-session charges (auto-recharge); the webhook
+    records it (payments.save_topup_card)."""
     if amount_micros < MIN_TOPUP_MICROS or amount_micros > MAX_TOPUP_MICROS:
         raise ValidationFailedError("Top-up amount must be between $5 and $5,000.")
 
@@ -127,11 +130,28 @@ async def create_checkout_session(
         "payment_intent_data": {"metadata": metadata},
         "payment_method_options": THREE_DS_OPTIONS,
     }
-    if customer_email:
+    if customer_id:
+        params["customer"] = customer_id
+        params["payment_intent_data"]["setup_future_usage"] = "off_session"
+    elif customer_email:
         params["customer_email"] = customer_email
 
     session_obj = await _run_sync(stripe.checkout.Session.create, **params)
     return {"id": session_obj["id"], "url": session_obj["url"]}
+
+
+async def retrieve_payment_method(settings, payment_method_id: str) -> dict:
+    """A saved card's display fields and fingerprint, as attach_payment_method returns them."""
+    stripe = _stripe(settings)
+    pm = await _run_sync(stripe.PaymentMethod.retrieve, payment_method_id)
+    card = pm.get("card") or {}
+    return {
+        "id": pm["id"],
+        "brand": card.get("brand", ""),
+        "last4": card.get("last4", ""),
+        "fingerprint": card.get("fingerprint"),
+        "country": card.get("country"),
+    }
 
 
 async def create_bundle_checkout_session(

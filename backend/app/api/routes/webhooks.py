@@ -1010,6 +1010,9 @@ async def stripe_webhook(
         amount_micros=amount_received * 10_000,
         kind="auto_recharge" if metadata.get("source") == "auto_recharge" else "topup",
     )
+    if metadata.get("source") != "auto_recharge":
+        # A Checkout top-up saves its card; the first one also switches auto-recharge on.
+        await payments_svc.save_topup_card(session, request.app.state.settings, org, intent)
     await session.commit()
 
     # The sweeper owns low-balance warnings. Calling check_balance_warnings here

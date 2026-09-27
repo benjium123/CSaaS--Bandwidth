@@ -41,7 +41,9 @@ class OrgSummaryOut(BaseModel):
     registration_state: str
     account_type: str
     kyc_status: str
-    onboarding_step: Literal["verification", "awaiting_review", "remediation", "numbers", "ready"]
+    onboarding_step: Literal[
+        "verification", "awaiting_review", "remediation", "funding", "numbers", "ready"
+    ]
     calling_ready: bool
     messaging_ready: bool
 
@@ -82,6 +84,24 @@ class InboxOrderIn(BaseModel):
     #: The Lines rail top-to-bottom, exactly as this member just dragged it. A full
     #: replacement, never a delta - same PUT-replaces contract as inbox grants.
     inbox_ids: list[uuid.UUID] = []
+
+
+async def _has_paid_topup(ctx: OrgContext) -> bool:
+    """A paid credit top-up (Checkout or auto-recharge) or a paid custom invoice."""
+    from app.models import BillingPayment
+
+    row = (
+        await ctx.session.execute(
+            sa.select(BillingPayment.id)
+            .where(
+                BillingPayment.org_id == ctx.org.id,
+                BillingPayment.state == "paid",
+                BillingPayment.kind.in_(("topup", "auto_recharge", "invoice")),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row is not None
 
 
 @router.get("/capabilities", response_model=CapabilitiesOut)
@@ -178,10 +198,15 @@ async def capabilities(
     if kyc_status is None:
         kyc_status = "missing"
 
-    onboarding_step: Literal["verification", "awaiting_review", "remediation", "numbers", "ready"]
+    onboarding_step: Literal[
+        "verification", "awaiting_review", "remediation", "funding", "numbers", "ready"
+    ]
     if kyc_status in ("approved", "reverification_due"):
         if has_number:
             onboarding_step = "ready"
+        elif not await _has_paid_topup(ctx):
+            # Signup: a first credit top-up (min $5) comes before choosing numbers.
+            onboarding_step = "funding"
         else:
             onboarding_step = "numbers"
     elif kyc_status in ("submitted", "in_review"):
