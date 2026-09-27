@@ -13,7 +13,7 @@ from alembic import op
 from app.db.types import GUID
 
 revision = "0085_org_discounts"
-down_revision = "0079_contact_soft_delete"
+down_revision = "0080_recovery_codes_ack"
 branch_labels = None
 depends_on = None
 
