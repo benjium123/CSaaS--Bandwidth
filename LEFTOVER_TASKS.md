@@ -6,9 +6,9 @@ Merged from three sessions: 04 (transcripts/profile/help), 2b (monitoring/billin
 (its 30s health check can falsely say ABORT; the API needs ~40s — check `/healthz` by hand).
 Live head after this deploy: **650ab15** (includes 0608257 auto-pause). Alembic head 0091.
 **Update 2026-09-27 (Ringlite):** box verified = origin/main 5b86129 (file hashes). main is now
-**6839fa0** (invoice pay-link, no migration) — pushed, deploy pending (run by the user).
-Uncommitted, owner unknown (not 04's): `csaas_ship` softphone Panel/Provider + tests;
-`csaas_site` StartCallDialog/ConversationsPage/format.ts. Not in main, not deployed.
+**6839fa0** (invoice pay-link, no migration) — DEPLOYED 2026-09-27 (live head 5563bad, healthz 200).
+Uncommitted edits in `csaas_ship` and `csaas_site` are STALE snapshots (2b checked: main is ahead;
+committing them would regress). Do not ship; the user decides whether to discard them.
 
 Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to build · **[OPS]** box work.
 
