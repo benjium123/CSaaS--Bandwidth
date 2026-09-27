@@ -184,6 +184,10 @@ export function BundlesCard() {
     <Card id="bundles">
       <CardHeader title="Bundles" />
 
+      <p className="mt-2 text-xs text-muted-foreground">
+        Unused units expire when your monthly cycle renews. They do not roll over.
+      </p>
+
       {!canPay ? (
         <p className="mt-2 text-sm text-muted-foreground">
           Only the workspace owner can buy bundles.

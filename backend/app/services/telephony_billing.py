@@ -29,6 +29,7 @@ Rules
 from __future__ import annotations
 
 import calendar
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -1191,16 +1192,32 @@ async def stamp_rentals_forward(
 # ------------------------------------------------------------------------------------
 # Sweeper entry point
 # ------------------------------------------------------------------------------------
+#: Unused bundle units are written off at the cycle renewal; checked every 15 minutes.
+BUNDLE_EXPIRY_INTERVAL_SECONDS = 900
+_bundle_expiry_last_run: float | None = None
+
+
 async def telephony_tick(
     session: AsyncSession, *, hangup: Any, now: datetime | None = None, is_live: Any = None
 ) -> dict[str, int]:
-    return {
+    global _bundle_expiry_last_run
+    out = {
         "calls_billed": await bill_finished_calls(session, now=now),
         "calls_cut_off_no_credit": await enforce_active_calls(
             session, hangup=hangup, now=now, is_live=is_live
         ),
         "number_rentals_charged": await renew_number_rentals(session, today=(now or _now()).date()),
     }
+    mono = time.monotonic()
+    if (
+        _bundle_expiry_last_run is None
+        or mono - _bundle_expiry_last_run >= BUNDLE_EXPIRY_INTERVAL_SECONDS
+    ):
+        _bundle_expiry_last_run = mono
+        from app.services import bundles
+
+        out["bundle_expiries"] = await bundles.expire_unused(session, now=now)
+    return out
 
 
 async def charge_feature_minutes(

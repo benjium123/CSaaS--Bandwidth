@@ -24,7 +24,7 @@ from app.db.base import Base, TenantScoped, TimestampMixin
 from app.db.types import GUID, PortableJSON
 
 BUNDLE_KINDS: tuple[str, ...] = ("sms", "mms", "voice")
-BUNDLE_ENTRY_TYPES: tuple[str, ...] = ("purchase", "usage", "adjustment", "refund")
+BUNDLE_ENTRY_TYPES: tuple[str, ...] = ("purchase", "usage", "adjustment", "refund", "expire")
 PAYMENT_KINDS: tuple[str, ...] = (
     "topup", "sms_bundle", "mms_bundle", "voice_bundle", "auto_recharge"
 )

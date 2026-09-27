@@ -15,12 +15,13 @@ Pricing (defaults, editable in platform_prices):
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, time, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.base import set_org_context
+from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ValidationFailedError
 from app.models import BundleLedgerEntry
 from app.models.billing_v2 import BUNDLE_ENTRY_TYPES, BUNDLE_KINDS
@@ -224,3 +225,68 @@ async def take(
         note=note,
     )
     return covered
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+async def expire_unused(session: AsyncSession, *, now: datetime | None = None) -> int:
+    """Bundle units do not roll over: whatever is left when the workspace's monthly cycle
+    renews is written off (entry_type "expire"). The cycle is the plan anniversary
+    (plans.period_for on org.plan_started_at); a workspace with no plan uses its sign-up
+    day. Units bought or granted since the cycle started are kept. Idempotent per
+    (org, kind, cycle). One commit per org. Returns the number of expire rows written."""
+    from app.models import Org
+    from app.services.plans import period_for
+
+    now = now or datetime.now(timezone.utc)
+    # JUSTIFIED: a sweeper pass legitimately spans every tenant.
+    pairs = (
+        await session.execute(
+            sa.select(BundleLedgerEntry.org_id, BundleLedgerEntry.kind)
+            .distinct()
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    by_org: dict[uuid.UUID, list[str]] = {}
+    for org_id, kind in pairs:
+        by_org.setdefault(org_id, []).append(kind)
+
+    written = 0
+    for org_id, kinds in by_org.items():
+        org = await session.get(Org, org_id)
+        if org is None:
+            continue
+        anchor = org.plan_started_at or org.created_at
+        period_start, _end = period_for(anchor, now.date())
+        cutoff = datetime.combine(period_start, time.min, tzinfo=timezone.utc)
+        for kind in sorted(kinds):
+            have = await units(session, org_id, kind)
+            if have <= 0:
+                continue
+            fresh_rows = (
+                await session.execute(
+                    sa.select(BundleLedgerEntry.delta_units, BundleLedgerEntry.created_at).where(
+                        BundleLedgerEntry.kind == kind,
+                        BundleLedgerEntry.entry_type.in_(("purchase", "adjustment")),
+                        BundleLedgerEntry.delta_units > 0,
+                    )
+                )
+            ).all()
+            fresh = sum(int(d) for d, at in fresh_rows if at and _aware(at) >= cutoff)
+            stale = have - fresh
+            if stale <= 0:
+                continue
+            await _append(
+                session,
+                org_id,
+                kind=kind,
+                entry_type="expire",
+                delta_units=-stale,
+                reference=f"expire:{period_start.isoformat()}",
+                note=f"Unused units expired at the cycle renewal on {period_start.isoformat()}",
+            )
+            written += 1
+        await session.commit()
+    return written
