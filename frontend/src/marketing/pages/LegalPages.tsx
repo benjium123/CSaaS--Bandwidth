@@ -112,35 +112,38 @@ export function TermsPage() {
 
 export function RefundPage() {
   return (
-    <SitePage title="Refunds and cancellation" description="How cancellations, plans, prepaid balance and refunds work at Ringlite.">
+    <SitePage title="Refunds and cancellation" description="What Ringlite refunds, what it does not, and how cancellation works.">
       <article className="ms-prose rl-wrap">
         <h1>Refunds and cancellation</h1>
         <p>Last updated September 2026</p>
 
-        <h2>Plans</h2>
-        <p>You can cancel any time in Billing. The plan stays active until the end of the period you have paid for. We do not refund part of a month.</p>
+        <h2>What we refund</h2>
+        <p>Only <strong>unused prepaid account credit</strong> is refundable: credit top-ups, auto-recharges, and balance credit bought on a custom invoice.</p>
+        <p>Card processing fees are not returned. We deduct the processor&apos;s fee on the original payment, in proportion to the part refunded, and any fee the processor charges on the refund itself.</p>
+        <p><strong>Example:</strong> you top up $50 and the card fee is $1.75. You use $20, so $30 is unused. We refund $30 less $1.75 × 30/50 = <strong>$28.95</strong>.</p>
 
-        <h2>Prepaid balance and bundles</h2>
-        <p>Prepaid balance (credits) and bundles (SMS, MMS and minute packages) are non-refundable once purchased, except where the law requires it or where the error is ours.</p>
+        <h2>What we do not refund</h2>
         <ul>
-          <li>Bundle units expire at the monthly renewal.</li>
-          <li>Balance credit does not expire while the account is open.</li>
+          <li>Bundles of any kind (SMS, MMS, call minutes), whether the units are used or unused.</li>
+          <li>Credit already spent on calls, texts, fax, recording, transcription, AI summaries or the AI agent.</li>
+          <li>Plans, seats and add-ons for the current period.</li>
+          <li>Number rental, setup and porting fees.</li>
+          <li>10DLC brand and campaign registration fees.</li>
+          <li>Card processing fees.</li>
+          <li>Any payment under an open chargeback or dispute.</li>
         </ul>
 
+        <h2>Cancelling a plan</h2>
+        <p>You can cancel any time in Billing. Plans are billed per period: access runs to the end of the period you paid for, and we do not refund partial periods.</p>
+
         <h2>Phone numbers</h2>
-        <p>Numbers are rented monthly. We do not refund the current month when a number is released.</p>
+        <p>Numbers are rented monthly. A released number is not refunded for the current month and may not be recoverable.</p>
 
-        <h2>Carrier registration fees</h2>
-        <p>10DLC brand and campaign fees are passed through to you and are non-refundable.</p>
+        <h2>Billing errors</h2>
+        <p>If we charge you in error or charge you twice, we refund that charge in full. Contact support within 30 days.</p>
 
-        <h2>Billing errors and duplicate charges</h2>
-        <p>If we charge you in error or charge you twice, we refund it in full. Contact support within 30 days.</p>
-
-        <h2>Accounts closed for abuse</h2>
-        <p>If we close an account for abuse, any unused balance may be forfeited, as the law allows.</p>
-
-        <h2>How refunds are paid</h2>
-        <p>Refunds go back to the original payment method and usually take 5-10 business days.</p>
+        <h2>How to ask for a refund</h2>
+        <p>Email <a className="rl-text-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> from the account owner&apos;s address. Refunds go back to the original payment method and usually arrive in 5-10 business days.</p>
 
         <h2>Contact</h2>
         <p>Ringlite is operated by {LEGAL_ENTITY}, {LEGAL_ADDRESS}. Email <a className="rl-text-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> or call {SUPPORT_PHONE}.</p>

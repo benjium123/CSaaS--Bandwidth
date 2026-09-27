@@ -205,6 +205,13 @@ export function BalanceCard({
         </p>
       ) : null}
 
+      <p className="mt-2 text-xs text-muted-foreground">
+        Unused credit is refundable, less card processing fees.{" "}
+        <a className="underline" href="/legal/refunds" target="_blank" rel="noreferrer">
+          Refund policy
+        </a>
+      </p>
+
       <MutationStatus
         pending={topupMutation.isPending}
         error={topupMutation.error}
