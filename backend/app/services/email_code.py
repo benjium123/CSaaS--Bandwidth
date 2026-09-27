@@ -9,16 +9,24 @@ Re-sending is throttled so the endpoint cannot be used to flood someone's inbox.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
+import structlog
+
 from app.config import Settings
 from app.errors import UnauthenticatedError, ValidationFailedError
 from app.models import User
 from app.services import mailer
+
+log = structlog.get_logger(__name__)
+
+#: Strong refs for background code emails (a bare create_task can be GC'd mid-flight).
+_pending_sends: set[asyncio.Task] = set()
 
 Purpose = Literal["enrol", "login", "step_up", "verify"]
 
@@ -60,11 +68,15 @@ def _body(settings: Settings, code: str, purpose: Purpose) -> tuple[str, str]:
     return subject, body
 
 
-async def issue(settings: Settings, user: User, purpose: Purpose) -> bool:
+async def issue(
+    settings: Settings, user: User, purpose: Purpose, *, background: bool = False
+) -> bool:
     """Mint a fresh code for ``purpose``, store its digest on ``user`` and email it.
 
     The caller commits. Raises when the previous code was sent under RESEND_AFTER ago.
-    Returns whether the mailer accepted the message.
+    Returns whether the mailer accepted the message. With ``background=True`` the email
+    goes out after the response (the provider call takes 3-9 s) and this returns True;
+    a failed send is logged, and Telnyx sends are still followed up (email_delivery).
     """
     now = _now()
     expires = _aware(user.email_code_expires_at)
@@ -79,7 +91,23 @@ async def issue(settings: Settings, user: User, purpose: Purpose) -> bool:
     user.email_code_expires_at = now + EMAIL_CODE_TTL
     user.email_code_attempts = 0
     subject, body = _body(settings, code, purpose)
+    if background and settings.app_env != "test":
+        task = asyncio.create_task(_send_logged(settings, user.email, subject, body, purpose))
+        _pending_sends.add(task)
+        task.add_done_callback(_pending_sends.discard)
+        return True
     return await mailer.send(settings, [user.email], subject, body)
+
+
+async def _send_logged(
+    settings: Settings, email: str, subject: str, body: str, purpose: str
+) -> None:
+    # Log the purpose only: the subject and body both carry the code.
+    try:
+        if not await mailer.send(settings, [email], subject, body):
+            log.warning("email_code_send_failed", purpose=purpose)
+    except Exception as exc:
+        log.warning("email_code_send_error", purpose=purpose, error=type(exc).__name__)
 
 
 def check(settings: Settings, user: User, purpose: Purpose, code: str) -> None:

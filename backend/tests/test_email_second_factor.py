@@ -197,3 +197,34 @@ async def test_an_unapproved_owner_may_turn_email_codes_off_again(sf_client):
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"email_2fa_enabled": False}
+
+
+async def test_a_background_code_send_returns_before_the_mailer_finishes(monkeypatch):
+    """Sign-in, enrol and step-up codes go out after the response (the provider call takes
+    3-9 s); the code still arrives and still checks."""
+    import asyncio
+    import uuid
+
+    settings = make_settings().model_copy(update={"app_env": "development"})
+    release = asyncio.Event()
+    sent: list[tuple[list[str], str, str]] = []
+
+    async def slow_send(_settings, to, subject, body, **_kw):
+        await release.wait()
+        sent.append((to, subject, body))
+        return True
+
+    monkeypatch.setattr(mailer, "send", slow_send)
+    user = User(id=uuid.uuid4(), email="bg-code@example.com")
+
+    assert await asyncio.wait_for(
+        email_code.issue(settings, user, "login", background=True), timeout=1
+    )
+    assert sent == [] and user.email_code_hash
+
+    release.set()
+    await asyncio.gather(*list(email_code._pending_sends))
+    [(to, subject, body)] = sent
+    assert to == ["bg-code@example.com"]
+    code = re.search(r"\b(\d{6})\b", body).group(1)
+    email_code.check(settings, user, "login", code)

@@ -319,7 +319,7 @@ async def email_enrol_send(
     # Like adding an authenticator app: someone who already holds a factor proves it first.
     if user.has_second_factor:
         await check_step_up(request, session, user, kind="recent_2fa", action="email_2fa_change")
-    await email_code.issue(request.app.state.settings, user, "enrol")
+    await email_code.issue(request.app.state.settings, user, "enrol", background=True)
     await session.commit()
     return {"sent": True}
 
@@ -364,7 +364,7 @@ async def email_login_send(
     await enforce_rate_limit(request, f"email-code:{payload.pending_token}")
     user = await _pending_email_user(settings, session, payload.pending_token)
     await lockout.ensure_not_locked(session, user)
-    await email_code.issue(settings, user, "login")
+    await email_code.issue(settings, user, "login", background=True)
     await session.commit()
     return {"sent": True}
 
@@ -407,7 +407,9 @@ async def email_step_up_send(
     await enforce_rate_limit(request, f"email-code:{user.id}")
     if not user.email_2fa_enabled:
         raise ValidationFailedError("Email codes are not on")
-    await email_code.issue(request.app.state.settings, user, "step_up")
+    await email_code.issue(
+        request.app.state.settings, user, "step_up", background=True
+    )
     await session.commit()
     return {"sent": True}
 
