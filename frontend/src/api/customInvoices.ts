@@ -24,6 +24,9 @@ export interface InvoiceLine {
 
 export type InvoiceState = "pending" | "paid" | "failed" | "void";
 
+/** charge_card = the card on file right away; email_link = Stripe emails a pay link. */
+export type InvoiceCollection = "charge_card" | "email_link";
+
 export interface CustomInvoice {
   id: string;
   state: InvoiceState;
@@ -35,6 +38,8 @@ export interface CustomInvoice {
   total_micros: number;
   paid_micros: number;
   error: string | null;
+  collection: InvoiceCollection;
+  emailed_to: string | null;
   hosted_invoice_url: string | null;
   invoice_pdf: string | null;
   created_at: string | null;
@@ -53,11 +58,19 @@ export type InvoiceLineInput =
     }
   | { type: "credit"; amount_cents: number; description?: string }
   | { type: "item"; description: string; amount_cents: number }
-  | { type: "discount"; percent?: number; amount_cents?: number; description?: string };
+  | {
+      type: "discount";
+      percent?: number;
+      amount_cents?: number;
+      description?: string;
+    };
 
 export interface InvoiceIn {
   lines: InvoiceLineInput[];
   memo?: string;
+  collection?: InvoiceCollection;
+  email?: string;
+  days_until_due?: number;
 }
 
 /** What the server says the current form costs, in micros (1/1,000,000 dollar). `paid` is the
@@ -86,8 +99,13 @@ function orgInvoicesPath(orgId: string): string {
 // Fetchers
 // ---------------------------------------------------------------------------------------
 
-export async function fetchOrgInvoices(api: ApiClient, orgId: string): Promise<CustomInvoice[]> {
-  const data = await api.request<{ invoices: CustomInvoice[] }>(orgInvoicesPath(orgId));
+export async function fetchOrgInvoices(
+  api: ApiClient,
+  orgId: string,
+): Promise<CustomInvoice[]> {
+  const data = await api.request<{ invoices: CustomInvoice[] }>(
+    orgInvoicesPath(orgId),
+  );
   return data.invoices ?? [];
 }
 
@@ -118,9 +136,12 @@ export async function retryInvoice(
   orgId: string,
   invoiceId: string,
 ): Promise<CustomInvoice> {
-  return api.request<CustomInvoice>(`${orgInvoicesPath(orgId)}/${invoiceId}/retry`, {
-    method: "POST",
-  });
+  return api.request<CustomInvoice>(
+    `${orgInvoicesPath(orgId)}/${invoiceId}/retry`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function voidInvoice(
@@ -128,13 +149,20 @@ export async function voidInvoice(
   orgId: string,
   invoiceId: string,
 ): Promise<CustomInvoice> {
-  return api.request<CustomInvoice>(`${orgInvoicesPath(orgId)}/${invoiceId}/void`, {
-    method: "POST",
-  });
+  return api.request<CustomInvoice>(
+    `${orgInvoicesPath(orgId)}/${invoiceId}/void`,
+    {
+      method: "POST",
+    },
+  );
 }
 
-export async function fetchMyInvoices(api: ApiClient): Promise<CustomInvoice[]> {
-  const data = await api.request<{ invoices: CustomInvoice[] }>("/api/v1/billing/invoices");
+export async function fetchMyInvoices(
+  api: ApiClient,
+): Promise<CustomInvoice[]> {
+  const data = await api.request<{ invoices: CustomInvoice[] }>(
+    "/api/v1/billing/invoices",
+  );
   return data.invoices ?? [];
 }
 
@@ -155,9 +183,22 @@ export function myInvoicesQueryKey() {
   return ["billing", "invoices"] as const;
 }
 
-function invalidateOrgInvoices(qc: ReturnType<typeof useQueryClient>, orgId: string) {
+function invalidateOrgInvoices(
+  qc: ReturnType<typeof useQueryClient>,
+  orgId: string,
+) {
   void qc.invalidateQueries({ queryKey: orgInvoicesQueryKey(orgId) });
   void qc.invalidateQueries({ queryKey: CONSOLE_QUERY_ROOT });
+}
+
+/** The workspace's owners: the only addresses a pay link may be emailed to. */
+export function useOrgInvoiceOwners(api: ApiClient, orgId: string) {
+  return useQuery({
+    queryKey: [...orgInvoicesQueryKey(orgId), "owners"] as const,
+    queryFn: async () =>
+      (await api.request<{ owner_emails?: string[] }>(orgInvoicesPath(orgId)))
+        .owner_emails ?? [],
+  });
 }
 
 export function useOrgInvoices(api: ApiClient, orgId: string) {

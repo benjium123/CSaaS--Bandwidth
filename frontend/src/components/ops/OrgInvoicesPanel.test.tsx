@@ -44,6 +44,8 @@ function invoice(overrides: Partial<CustomInvoice> = {}): CustomInvoice {
     total_micros: 0,
     paid_micros: 0,
     error: null,
+    collection: "charge_card",
+    emailed_to: null,
     hosted_invoice_url: null,
     invoice_pdf: null,
     created_at: "2026-02-01T10:00:00Z",

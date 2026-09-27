@@ -6,10 +6,12 @@ import {
   INVOICE_PACKAGES,
   formatCents,
   useOrgInvoices,
+  useOrgInvoiceOwners,
   usePreviewInvoice,
   useRetryInvoice,
   useSendInvoice,
   useVoidInvoice,
+  type InvoiceCollection,
   type InvoiceIn,
   type InvoiceLineInput,
   type InvoicePackage,
@@ -17,7 +19,11 @@ import {
   type InvoiceState,
 } from "@/api/customInvoices";
 import { useAuth } from "@/auth/AuthContext";
-import { ConsoleEmpty, SectionLabel, SurfaceCard } from "@/components/ui/consoleChrome";
+import {
+  ConsoleEmpty,
+  SectionLabel,
+  SurfaceCard,
+} from "@/components/ui/consoleChrome";
 import { Spinner, mutationErrorMessage } from "@/components/ui/primitives";
 
 /** Custom invoices for one workspace. The operator builds the invoice from lines (packages,
@@ -87,18 +93,24 @@ function centsFromDollars(value: string): number | null {
 function lineProblem(line: DraftLine): string | null {
   if (line.type === "package") {
     const quantity = Number(line.quantity.trim());
-    if (line.quantity.trim() === "" || !Number.isInteger(quantity) || quantity <= 0) {
+    if (
+      line.quantity.trim() === "" ||
+      !Number.isInteger(quantity) ||
+      quantity <= 0
+    ) {
       return "Bundles must be a whole number greater than zero.";
     }
     if (line.amount.trim() !== "") {
       const cents = centsFromDollars(line.amount);
-      if (cents == null || cents < 0) return "The price must be a dollar amount.";
+      if (cents == null || cents < 0)
+        return "The price must be a dollar amount.";
     }
     return null;
   }
   if (line.type === "credit") {
     const cents = centsFromDollars(line.amount);
-    if (cents == null || cents <= 0) return "Enter the credit amount in dollars.";
+    if (cents == null || cents <= 0)
+      return "Enter the credit amount in dollars.";
     return null;
   }
   if (line.description.trim() === "") return "Describe the custom item.";
@@ -111,13 +123,19 @@ function discountProblem(mode: DiscountMode, value: string): string | null {
   if (mode === "none") return null;
   if (mode === "percent") {
     const percent = Number(value.trim());
-    if (value.trim() === "" || !Number.isFinite(percent) || percent <= 0 || percent > 100) {
+    if (
+      value.trim() === "" ||
+      !Number.isFinite(percent) ||
+      percent <= 0 ||
+      percent > 100
+    ) {
       return "Enter a discount between 0.01% and 100%.";
     }
     return null;
   }
   const cents = centsFromDollars(value);
-  if (cents == null || cents <= 0) return "Enter the discount amount in dollars.";
+  if (cents == null || cents <= 0)
+    return "Enter the discount amount in dollars.";
   return null;
 }
 
@@ -131,6 +149,8 @@ export function OrgInvoicesPanel({
   const { api } = useAuth();
 
   const invoicesQuery = useOrgInvoices(api, orgId);
+  const ownersQuery = useOrgInvoiceOwners(api, orgId);
+  const owners = ownersQuery.data ?? [];
   const previewMutation = usePreviewInvoice(api, orgId);
   const sendMutation = useSendInvoice(api, orgId);
   const retryMutation = useRetryInvoice(api, orgId);
@@ -143,10 +163,16 @@ export function OrgInvoicesPanel({
   const [discountMode, setDiscountMode] = React.useState<DiscountMode>("none");
   const [discountValue, setDiscountValue] = React.useState("");
   const [memo, setMemo] = React.useState("");
+  const [collection, setCollection] =
+    React.useState<InvoiceCollection>("charge_card");
+  const [email, setEmail] = React.useState("");
+  const [dueDays, setDueDays] = React.useState("7");
   const [preview, setPreview] = React.useState<InvoicePreview | null>(null);
-  const [outcome, setOutcome] = React.useState<{ state: InvoiceState; error: string | null } | null>(
-    null,
-  );
+  const [outcome, setOutcome] = React.useState<{
+    state: InvoiceState;
+    error: string | null;
+    emailed_to?: string | null;
+  } | null>(null);
 
   const problem =
     lines.map(lineProblem).find((message) => message !== null) ??
@@ -182,10 +208,18 @@ export function OrgInvoicesPanel({
         built.push(
           cents == null
             ? { type: "package", package: line.package, quantity }
-            : { type: "package", package: line.package, quantity, amount_cents: cents },
+            : {
+                type: "package",
+                package: line.package,
+                quantity,
+                amount_cents: cents,
+              },
         );
       } else if (line.type === "credit") {
-        built.push({ type: "credit", amount_cents: centsFromDollars(line.amount) ?? 0 });
+        built.push({
+          type: "credit",
+          amount_cents: centsFromDollars(line.amount) ?? 0,
+        });
       } else {
         built.push({
           type: "item",
@@ -197,17 +231,30 @@ export function OrgInvoicesPanel({
     if (discountMode === "percent") {
       built.push({ type: "discount", percent: Number(discountValue.trim()) });
     } else if (discountMode === "amount") {
-      built.push({ type: "discount", amount_cents: centsFromDollars(discountValue) ?? 0 });
+      built.push({
+        type: "discount",
+        amount_cents: centsFromDollars(discountValue) ?? 0,
+      });
     }
     const body: InvoiceIn = { lines: built };
     if (memo.trim() !== "") body.memo = memo.trim();
+    if (collection === "email_link") {
+      body.collection = "email_link";
+      body.email = email || owners[0];
+      body.days_until_due = Math.min(
+        60,
+        Math.max(1, Math.round(Number(dueDays) || 7)),
+      );
+    }
     return body;
   }
 
   function runPreview(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ready) return;
-    previewMutation.mutate(buildBody(), { onSuccess: (result) => setPreview(result) });
+    previewMutation.mutate(buildBody(), {
+      onSuccess: (result) => setPreview(result),
+    });
   }
 
   function clearForm() {
@@ -215,6 +262,9 @@ export function OrgInvoicesPanel({
     setDiscountMode("none");
     setDiscountValue("");
     setMemo("");
+    setCollection("charge_card");
+    setEmail("");
+    setDueDays("7");
     setPreview(null);
   }
 
@@ -227,7 +277,11 @@ export function OrgInvoicesPanel({
     if (!ready || preview == null) return;
     sendMutation.mutate(buildBody(), {
       onSuccess: (invoice) => {
-        setOutcome({ state: invoice.state, error: invoice.error });
+        setOutcome({
+          state: invoice.state,
+          error: invoice.error,
+          emailed_to: invoice.emailed_to,
+        });
         closeForm();
       },
     });
@@ -252,7 +306,9 @@ export function OrgInvoicesPanel({
             >
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[13px] font-medium">{invoice.number ?? "Draft"}</span>
+                  <span className="text-[13px] font-medium">
+                    {invoice.number ?? "Draft"}
+                  </span>
                   <span
                     className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${STATE_BADGES[invoice.state]}`}
                   >
@@ -268,9 +324,19 @@ export function OrgInvoicesPanel({
                 {invoice.state === "failed" && invoice.error ? (
                   <p className="text-xs text-destructive">{invoice.error}</p>
                 ) : null}
+                {invoice.state === "pending" &&
+                invoice.collection === "email_link" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Emailed to {invoice.emailed_to ?? "the owner"}, awaiting
+                    payment
+                  </p>
+                ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {invoice.state === "paid" && invoice.hosted_invoice_url ? (
+                {(invoice.state === "paid" ||
+                  (invoice.state === "pending" &&
+                    invoice.collection === "email_link")) &&
+                invoice.hosted_invoice_url ? (
                   <a
                     href={invoice.hosted_invoice_url}
                     target="_blank"
@@ -280,20 +346,29 @@ export function OrgInvoicesPanel({
                     View
                   </a>
                 ) : null}
-                {canEdit && (invoice.state === "failed" || invoice.state === "pending") ? (
+                {canEdit &&
+                (invoice.state === "failed" || invoice.state === "pending") ? (
                   <>
+                    {invoice.collection !== "email_link" ? (
+                      <button
+                        type="button"
+                        className={SMALL_BUTTON}
+                        disabled={
+                          retryMutation.isPending &&
+                          retryMutation.variables === invoice.id
+                        }
+                        onClick={() => retryMutation.mutate(invoice.id)}
+                      >
+                        Charge again
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className={SMALL_BUTTON}
-                      disabled={retryMutation.isPending && retryMutation.variables === invoice.id}
-                      onClick={() => retryMutation.mutate(invoice.id)}
-                    >
-                      Charge again
-                    </button>
-                    <button
-                      type="button"
-                      className={SMALL_BUTTON}
-                      disabled={voidMutation.isPending && voidMutation.variables === invoice.id}
+                      disabled={
+                        voidMutation.isPending &&
+                        voidMutation.variables === invoice.id
+                      }
                       onClick={() => voidMutation.mutate(invoice.id)}
                     >
                       Void
@@ -319,9 +394,11 @@ export function OrgInvoicesPanel({
         >
           {outcome.state === "paid"
             ? "Invoice paid"
-            : outcome.state === "failed"
-              ? `Card declined: ${outcome.error ?? "the card was declined"}`
-              : "Invoice created."}
+            : outcome.state === "pending" && outcome.emailed_to
+              ? `Invoice emailed to ${outcome.emailed_to}`
+              : outcome.state === "failed"
+                ? `Card declined: ${outcome.error ?? "the card was declined"}`
+                : "Invoice created."}
         </p>
       ) : null}
 
@@ -344,7 +421,9 @@ export function OrgInvoicesPanel({
                         aria-label={`Line ${index + 1} type`}
                         value={line.type}
                         onChange={(event) =>
-                          editLine(line.key, { type: event.target.value as DraftLineType })
+                          editLine(line.key, {
+                            type: event.target.value as DraftLineType,
+                          })
                         }
                         className={FIELD}
                       >
@@ -401,7 +480,9 @@ export function OrgInvoicesPanel({
                           type="text"
                           value={line.description}
                           onChange={(event) =>
-                            editLine(line.key, { description: event.target.value })
+                            editLine(line.key, {
+                              description: event.target.value,
+                            })
                           }
                           className={FIELD}
                         />
@@ -410,7 +491,9 @@ export function OrgInvoicesPanel({
 
                     <label className="space-y-1 text-xs">
                       <span className="block font-medium">
-                        {line.type === "package" ? "Price $ (optional)" : "Amount $"}
+                        {line.type === "package"
+                          ? "Price $ (optional)"
+                          : "Amount $"}
                       </span>
                       <input
                         aria-label={
@@ -422,7 +505,9 @@ export function OrgInvoicesPanel({
                         min="0"
                         step="0.01"
                         value={line.amount}
-                        onChange={(event) => editLine(line.key, { amount: event.target.value })}
+                        onChange={(event) =>
+                          editLine(line.key, { amount: event.target.value })
+                        }
                         className={FIELD}
                       />
                     </label>
@@ -483,6 +568,55 @@ export function OrgInvoicesPanel({
               ) : null}
             </div>
 
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="space-y-1 text-xs">
+                <span className="block font-medium">How to collect</span>
+                <select
+                  aria-label="How to collect"
+                  value={collection}
+                  onChange={(event) => {
+                    setCollection(event.target.value as InvoiceCollection);
+                    setPreview(null);
+                  }}
+                  className={FIELD}
+                >
+                  <option value="charge_card">Charge card on file now</option>
+                  <option value="email_link">Email a pay link</option>
+                </select>
+              </label>
+              {collection === "email_link" ? (
+                <>
+                  <label className="space-y-1 text-xs">
+                    <span className="block font-medium">Email to</span>
+                    <select
+                      aria-label="Email to"
+                      value={email || owners[0] || ""}
+                      onChange={(event) => setEmail(event.target.value)}
+                      className={FIELD}
+                    >
+                      {owners.map((owner) => (
+                        <option key={owner} value={owner}>
+                          {owner}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-xs">
+                    <span className="block font-medium">Due in (days)</span>
+                    <input
+                      aria-label="Due in days"
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={dueDays}
+                      onChange={(event) => setDueDays(event.target.value)}
+                      className={FIELD}
+                    />
+                  </label>
+                </>
+              ) : null}
+            </div>
+
             <label className="space-y-1 text-xs">
               <span className="block font-medium">Memo (optional)</span>
               <textarea
@@ -497,7 +631,9 @@ export function OrgInvoicesPanel({
               />
             </label>
 
-            {problem ? <p className="text-xs text-muted-foreground">{problem}</p> : null}
+            {problem ? (
+              <p className="text-xs text-muted-foreground">{problem}</p>
+            ) : null}
 
             {preview ? (
               <div className="space-y-1 rounded-[var(--cx-r-md,14px)] border border-border px-3 py-2">
@@ -528,7 +664,11 @@ export function OrgInvoicesPanel({
             ) : null}
 
             <div className="flex flex-wrap gap-2">
-              <button type="button" className={SMALL_BUTTON} onClick={closeForm}>
+              <button
+                type="button"
+                className={SMALL_BUTTON}
+                onClick={closeForm}
+              >
                 Cancel
               </button>
               <button
@@ -540,17 +680,24 @@ export function OrgInvoicesPanel({
               </button>
               <button
                 type="button"
-                disabled={preview == null || !ready || sendMutation.isPending}
+                disabled={
+                  preview == null ||
+                  !ready ||
+                  sendMutation.isPending ||
+                  (collection === "email_link" && owners.length === 0)
+                }
                 className={ACTION_BUTTON}
                 onClick={charge}
               >
-                Charge card
+                {collection === "email_link" ? "Email invoice" : "Charge card"}
               </button>
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Charged to the workspace&apos;s card on file. Packages and credit are added once the
-              payment succeeds.
+              {collection === "email_link"
+                ? "Stripe emails the invoice with a pay link to the owner. "
+                : "Charged to the workspace's card on file. "}
+              Packages and credit are added once the payment succeeds.
             </p>
 
             {previewMutation.isError ? (
@@ -566,7 +713,11 @@ export function OrgInvoicesPanel({
             ) : null}
           </form>
         ) : (
-          <button type="button" className={ACTION_BUTTON} onClick={() => setFormOpen(true)}>
+          <button
+            type="button"
+            className={ACTION_BUTTON}
+            onClick={() => setFormOpen(true)}
+          >
             New invoice
           </button>
         )

@@ -385,6 +385,10 @@ class InvoiceLineIn(BaseModel):
 class InvoiceIn(BaseModel):
     lines: list[InvoiceLineIn] = Field(min_length=1, max_length=20)
     memo: str | None = Field(default=None, max_length=500)
+    #: charge_card = the card on file now; email_link = Stripe emails a pay link.
+    collection: str = Field(default="charge_card", pattern="^(charge_card|email_link)$")
+    email: str | None = Field(default=None, max_length=254)
+    days_until_due: int = Field(default=7, ge=1, le=60)
 
 
 @router.get("/orgs/{org_id}/invoices")
@@ -392,7 +396,10 @@ async def console_org_invoices(org_id: uuid.UUID, op: Reader) -> dict:
     from app.services import custom_invoices
 
     await _org_or_404(op, org_id)
-    return {"invoices": await custom_invoices.for_org(op.session, org_id)}
+    return {
+        "invoices": await custom_invoices.for_org(op.session, org_id),
+        "owner_emails": await custom_invoices.owner_emails(op.session, org_id),
+    }
 
 
 @router.post("/orgs/{org_id}/invoices/preview")
@@ -420,12 +427,21 @@ async def console_send_invoice(
         lines=[ln.model_dump() for ln in payload.lines],
         memo=payload.memo,
         actor_user_id=op.user.id,
+        collection=payload.collection,
+        email=payload.email,
+        days_until_due=payload.days_until_due,
     )
     _audit(
         op,
         org_id,
         "custom_invoice.sent",
-        {"payment_id": str(row.id), "state": row.state, "total_micros": int(row.paid_micros)},
+        {
+            "payment_id": str(row.id),
+            "state": row.state,
+            "total_micros": int(row.paid_micros),
+            "collection": payload.collection,
+            "emailed_to": (row.detail or {}).get("emailed_to"),
+        },
     )
     await op.session.commit()
     return custom_invoices.to_dict(row)
@@ -441,6 +457,8 @@ async def console_retry_invoice(
     row = await custom_invoices.get(op.session, org_id, payment_id)
     if row.state not in ("failed", "pending"):
         raise ValidationFailedError("Only an unpaid invoice can be charged again")
+    if (row.detail or {}).get("collection") == "email_link":
+        raise ValidationFailedError("This invoice was emailed; the customer pays it from the link")
     row = await custom_invoices.charge(op.session, request.app.state.settings, row)
     _audit(op, org_id, "custom_invoice.retried", {"payment_id": str(row.id), "state": row.state})
     await op.session.commit()

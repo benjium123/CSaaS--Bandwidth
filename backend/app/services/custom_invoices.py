@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ConflictError, NotFoundError, ValidationFailedError
-from app.models import BillingPayment, Org, PaymentMethod
+from app.models import BillingPayment, Org, OrgMembership, PaymentMethod, Role, User
+from app.models.subscriptions import Subscription
 from app.models.billing_v2 import BUNDLE_KINDS
 from app.services import bundles, credits
 
@@ -32,6 +33,7 @@ log = structlog.get_logger("custom_invoices")
 KIND = "invoice"
 METADATA_KIND = "custom_invoice"
 LINE_TYPES = ("package", "credit", "item", "discount")
+COLLECTIONS = ("charge_card", "email_link")
 MAX_LINES = 20
 MAX_LINE_CENTS = 10_000_000  # $100k
 _CENT = 10_000  # micros
@@ -147,6 +149,52 @@ def _card_error(exc: Exception) -> str | None:
     return getattr(exc, "user_message", None) or str(code).replace("_", " ")
 
 
+async def owner_emails(session: AsyncSession, org_id: uuid.UUID) -> list[str]:
+    set_org_context(session, org_id)
+    return list(
+        (
+            await session.execute(
+                sa.select(User.email)
+                .join(OrgMembership, OrgMembership.user_id == User.id)
+                .join(Role, Role.id == OrgMembership.role_id)
+                .where(OrgMembership.org_id == org_id, Role.name == "owner")
+                .order_by(User.email)
+            )
+        ).scalars()
+    )
+
+
+async def _customer_for_link(
+    session: AsyncSession, settings, org: Org, email: str  # noqa: ANN001
+) -> str:
+    """The workspace's Stripe customer (from its card or plan subscription, else a new
+    one), with ``email`` as its billing email so Stripe mails the invoice there."""
+    from app.services import stripe_client
+
+    set_org_context(session, org.id)
+    existing = (
+        await session.execute(
+            sa.select(PaymentMethod.stripe_customer_id)
+            .where(PaymentMethod.org_id == org.id)
+            .order_by(PaymentMethod.is_default.desc(), PaymentMethod.created_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none() or (
+        await session.execute(
+            sa.select(Subscription.stripe_customer_id)
+            .where(Subscription.org_id == org.id, Subscription.stripe_customer_id.is_not(None))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not existing:
+        return await stripe_client.ensure_customer(settings, org=org, email=email)
+    stripe = stripe_client._stripe(settings)
+    customer = await stripe_client._run_sync(stripe.Customer.retrieve, existing)
+    if (customer.get("email") or "").lower() != email.lower():
+        await stripe_client._run_sync(stripe.Customer.modify, existing, email=email)
+    return existing
+
+
 async def create_and_charge(
     session: AsyncSession,
     settings,  # noqa: ANN001
@@ -155,14 +203,30 @@ async def create_and_charge(
     lines: list[dict],
     memo: str | None,
     actor_user_id: uuid.UUID | None,
+    collection: str = "charge_card",
+    email: str | None = None,
+    days_until_due: int = 7,
 ) -> BillingPayment:
-    """Price the lines, create the Stripe invoice on the workspace's card and try to pay it.
+    """Price the lines and create the Stripe invoice. ``charge_card``: charged to the
+    workspace's card on file right away. ``email_link``: Stripe emails it (to one of the
+    workspace's owners) with a pay link and it stays open until paid or voided.
     Commits (the pending row before Stripe is called, then the outcome)."""
     from app.services import stripe_client
 
+    if collection not in COLLECTIONS:
+        raise ValidationFailedError(f"Unknown collection: {collection}")
     priced = await price_lines(session, lines)
     t = totals(priced)
-    pm = await _card(session, org.id)
+    pm = None
+    if collection == "charge_card":
+        pm = await _card(session, org.id)
+    else:
+        owners = await owner_emails(session, org.id)
+        email = (email or (owners[0] if owners else "")).strip()
+        if email.lower() not in {o.lower() for o in owners}:
+            raise ValidationFailedError("A pay link can only be emailed to a workspace owner")
+        if not 1 <= days_until_due <= 60:
+            raise ValidationFailedError("Due in 1 to 60 days")
     set_org_context(session, org.id)
     row = BillingPayment(
         id=uuid.uuid4(),
@@ -177,6 +241,8 @@ async def create_and_charge(
             "lines": priced,
             "memo": (memo or "").strip() or None,
             "created_by": str(actor_user_id) if actor_user_id else None,
+            "collection": collection,
+            "emailed_to": email if collection == "email_link" else None,
         },
     )
     session.add(row)
@@ -186,12 +252,20 @@ async def create_and_charge(
     currency = settings.stripe_price_currency
     metadata = {"kind": METADATA_KIND, "org_id": str(org.id), "payment_id": str(row.id)}
     try:
+        if pm is not None:
+            customer = pm.stripe_customer_id
+            how = {
+                "collection_method": "charge_automatically",
+                "default_payment_method": pm.stripe_payment_method_id,
+            }
+        else:
+            customer = await _customer_for_link(session, settings, org, email)
+            how = {"collection_method": "send_invoice", "days_until_due": days_until_due}
         invoice = await stripe_client._run_sync(
             stripe.Invoice.create,
-            customer=pm.stripe_customer_id,
-            collection_method="charge_automatically",
+            customer=customer,
             auto_advance=False,
-            default_payment_method=pm.stripe_payment_method_id,
+            **how,
             currency=currency,
             description=row.detail["memo"],
             pending_invoice_items_behavior="exclude",
@@ -201,7 +275,7 @@ async def create_and_charge(
         for i, ln in enumerate(priced):
             await stripe_client._run_sync(
                 stripe.InvoiceItem.create,
-                customer=pm.stripe_customer_id,
+                customer=customer,
                 invoice=invoice["id"],
                 amount=ln["amount_cents"],
                 currency=currency,
@@ -210,6 +284,8 @@ async def create_and_charge(
                 idempotency_key=f"custom-invoice-{row.id}-line-{i}",
             )
         invoice = await stripe_client._run_sync(stripe.Invoice.finalize_invoice, invoice["id"])
+        if pm is None and invoice.get("status") != "paid":
+            invoice = await stripe_client._run_sync(stripe.Invoice.send_invoice, invoice["id"])
     except Exception:
         log.error("custom_invoice.create_failed", payment_id=str(row.id), exc_info=True)
         row.state = "failed"
@@ -225,6 +301,14 @@ async def create_and_charge(
         "invoice_pdf": invoice.get("invoice_pdf"),
     }
     await session.commit()
+    if pm is None:
+        # Emailed: open until the customer pays (invoice.paid webhook) or it is voided. A
+        # fully discounted ($0) invoice is paid at finalize.
+        if invoice.get("status") == "paid":
+            await apply_paid(session, invoice)
+            await session.commit()
+            await session.refresh(row)
+        return row
     return await charge(session, settings, row, invoice=invoice)
 
 
@@ -420,6 +504,8 @@ def to_dict(row: BillingPayment) -> dict:
         "total_micros": int(row.list_micros) - int(row.discount_micros),
         "paid_micros": int(row.paid_micros) if row.state == "paid" else 0,
         "error": d.get("error"),
+        "collection": d.get("collection") or "charge_card",
+        "emailed_to": d.get("emailed_to"),
         "hosted_invoice_url": d.get("hosted_invoice_url"),
         "invoice_pdf": d.get("invoice_pdf"),
         "created_at": row.created_at.isoformat() if row.created_at else None,

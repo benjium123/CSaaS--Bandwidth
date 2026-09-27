@@ -5,15 +5,17 @@ custom items (with a discount line); what it contains is granted only once it is
 from __future__ import annotations
 
 import types
+import uuid
 
 import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
 from app.errors import ValidationFailedError
-from app.models import BillingPayment, PaymentMethod
+from app.models import BillingPayment, OrgMembership, PaymentMethod, Role
+from app.repositories import users as users_repo
 from app.services import bundles, console, credits, custom_invoices, stripe_client
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, register_and_login
 from tests.test_ops_console import _new_org, _operator, ops, ops_settings  # noqa: F401
 
 CENT = 10_000
@@ -30,11 +32,17 @@ class _FakeStripe:
         self.items: list[dict] = []
         self.created: list[dict] = []
         self.voided: list[str] = []
+        self.sent: list[str] = []
+        self.customers: dict[str, dict] = {"cus_1": {"id": "cus_1", "email": None}}
+        self.Customer = types.SimpleNamespace(
+            create=self._customer_create, retrieve=self._customer_get, modify=self._customer_mod
+        )
         self.Invoice = types.SimpleNamespace(
             create=self._create,
             finalize_invoice=self._finalize,
             pay=self._pay,
             void_invoice=self._void,
+            send_invoice=self._send,
         )
         self.InvoiceItem = types.SimpleNamespace(create=self._item)
 
@@ -69,6 +77,22 @@ class _FakeStripe:
             self.decline -= 1
             raise _CardError()
         return self._invoice("paid")
+
+    def _send(self, invoice_id):
+        self.sent.append(invoice_id)
+        return self._invoice("open")
+
+    def _customer_create(self, **kw):
+        cid = f"cus_{len(self.customers) + 1}"
+        self.customers[cid] = {"id": cid, "email": kw.get("email")}
+        return self.customers[cid]
+
+    def _customer_get(self, cid):
+        return self.customers[cid]
+
+    def _customer_mod(self, cid, **kw):
+        self.customers[cid].update(kw)
+        return self.customers[cid]
 
     def _void(self, invoice_id):
         self.voided.append(invoice_id)
@@ -252,3 +276,93 @@ async def test_no_card_on_file_is_refused(ops, session, fake_stripe):
 async def test_other_invoices_are_not_ours(session):
     event = {"type": "invoice.paid", "data": {"object": {"id": "in_x", "metadata": {}}}}
     assert await custom_invoices.handle_event(session, event) is False
+
+
+async def _with_owner(ops, session, org_id, email):
+    await register_and_login(ops, email)
+    user = await users_repo.get_by_email(session, email)
+    set_org_context(session, org_id)
+    role = Role(id=uuid.uuid4(), org_id=org_id, name="owner", permissions=[], is_system=True)
+    session.add(role)
+    await session.flush()
+    session.add(OrgMembership(id=uuid.uuid4(), org_id=org_id, user_id=user.id, role_id=role.id))
+    await session.commit()
+
+
+async def test_email_link_invoice_stays_open_until_paid_and_can_be_voided(
+    ops, session, fake_stripe
+):
+    token = await _operator(ops, session)
+    org_id = await _new_org(session, "Link Org")
+    await _with_owner(ops, session, org_id, "owner-link@example.com")  # no card on file
+
+    r = await ops.get(f"/api/v1/ops/console/orgs/{org_id}/invoices", headers=auth_headers(token))
+    assert r.json()["owner_emails"] == ["owner-link@example.com"]
+
+    r = await ops.post(
+        f"/api/v1/ops/console/orgs/{org_id}/invoices",
+        json={"lines": LINES[:2], "collection": "email_link", "days_until_due": 3},
+        headers=auth_headers(token),
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert (body["state"], body["collection"]) == ("pending", "email_link")
+    assert body["emailed_to"] == "owner-link@example.com"
+    created = fake_stripe.created[0]
+    assert created["collection_method"] == "send_invoice"
+    assert created["days_until_due"] == 3
+    assert "default_payment_method" not in created
+    assert fake_stripe.sent == ["in_1"]
+    # A new Stripe customer carrying the owner's email (that is where Stripe mails it).
+    assert fake_stripe.customers[created["customer"]]["email"] == "owner-link@example.com"
+    session.expire_all()
+    assert await credits.balance(session, org_id) == 0  # nothing granted while unpaid
+
+    # Charging it again is not an option: the customer pays from the link.
+    r2 = await ops.post(
+        f"/api/v1/ops/console/orgs/{org_id}/invoices/{body['id']}/retry",
+        headers=auth_headers(token),
+    )
+    assert r2.status_code == 422
+
+    r = await ops.post(
+        f"/api/v1/ops/console/orgs/{org_id}/invoices/{body['id']}/void",
+        headers=auth_headers(token),
+    )
+    assert r.json()["state"] == "void"
+    assert fake_stripe.voided == ["in_1"]
+
+
+async def test_email_link_paid_later_grants_through_the_webhook(ops, session, fake_stripe):
+    token = await _operator(ops, session)
+    org_id = await _new_org(session, "Link Paid Org")
+    await _with_owner(ops, session, org_id, "owner-paid@example.com")
+    await _with_card(session, org_id)  # existing customer cus_1 gets the owner's email
+    r = await ops.post(
+        f"/api/v1/ops/console/orgs/{org_id}/invoices",
+        json={"lines": LINES[1:2], "collection": "email_link"},
+        headers=auth_headers(token),
+    )
+    assert r.json()["state"] == "pending"
+    assert fake_stripe.created[0]["customer"] == "cus_1"
+    assert fake_stripe.customers["cus_1"]["email"] == "owner-paid@example.com"
+
+    event = {"type": "invoice.paid", "data": {"object": fake_stripe._invoice("paid")}}
+    assert await custom_invoices.handle_event(session, event) is True
+    session.expire_all()
+    assert await credits.balance(session, org_id) == 5000 * CENT
+
+
+async def test_email_link_only_goes_to_a_workspace_owner(ops, session, fake_stripe):
+    token = await _operator(ops, session)
+    org_id = await _new_org(session, "Link Owner Org")
+    await _with_owner(ops, session, org_id, "owner-only@example.com")
+    r = await ops.post(
+        f"/api/v1/ops/console/orgs/{org_id}/invoices",
+        json={"lines": LINES[2:3], "collection": "email_link", "email": "someone@else.com"},
+        headers=auth_headers(token),
+    )
+    assert r.status_code == 422
+    assert "owner" in r.text
+    assert fake_stripe.created == []
+
