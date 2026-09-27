@@ -336,6 +336,8 @@ async def sla_tick(session: AsyncSession, bus: object | None = None) -> dict[str
             await session.rollback()
             log.exception("sla_tick_org_failed", org_id=str(org_id))
             continue
+    # Don't leave the session bound to the last org swept.
+    set_org_context(session, None)
 
     # Because sla_breached_at is only ever set once and notify_overdue carries the
     # dedupe key, re-running this tick can never mark or notify the same thread

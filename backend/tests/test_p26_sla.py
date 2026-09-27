@@ -739,3 +739,14 @@ async def test_sla_tick_is_tenant_isolated(client, session):
     )
     assert notifs2
     assert all(n.user_id == user2.id for n in notifs2)
+
+
+async def test_sla_tick_does_not_leave_the_session_bound_to_an_org(session):
+    from app.db.base import ORG_CONTEXT_KEY
+    from app.models import Org
+
+    session.add(Org(id=uuid.uuid4(), name="SLA Leak Org", slug=uuid.uuid4().hex))
+    await session.commit()
+    await inbox_sla.sla_tick(session)
+
+    assert session.info.get(ORG_CONTEXT_KEY) is None

@@ -294,6 +294,8 @@ async def retention_tick(session, store, *, now=None) -> dict[str, int]:
         except Exception:
             log.exception("retention_org_purge_failed", org_id=str(org_id))
             await session.rollback()
+    # Don't leave the session bound to the last org swept.
+    set_org_context(session, None)
 
     totals["orgs"] = len(org_ids)
     return totals
