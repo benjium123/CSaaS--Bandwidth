@@ -33,6 +33,7 @@ services:
       # Transcription worker (deploy/livekit compose, stt/). Empty = transcription off.
       STT_URL: http://stt:9100
       LIVE_CAPTIONS_AGENT_NAME: live-captions
+      HOLD_MUSIC_AGENT_NAME: hold-music
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_started}

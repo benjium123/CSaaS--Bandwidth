@@ -940,6 +940,29 @@ async def dispatch_agent(
     return {"dispatched": payload.agent_name, "room": extra["room"], "id": result.get("id", "")}
 
 
+class HoldIn(BaseModel):
+    on: bool
+
+
+@router.post("/calls/{call_id}/hold", response_model=CallDetailOut)
+async def hold_call(
+    call_id: uuid.UUID,
+    payload: HoldIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("calls:place"))],
+) -> CallDetailOut:
+    """Hold (music for the caller, both directions muted) or resume a softphone call."""
+    from app.services import call_hold
+
+    call = await ctx.session.get(Call, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    await _access_or_404(ctx, call, require_use=True)
+    api = getattr(request.app.state, "livekit", None)
+    await call_hold.set_hold(ctx.session, api, request.app.state.settings, call, on=payload.on)
+    return await _detail_out(ctx.session, request, call)
+
+
 @router.post("/calls/{call_id}/hangup", response_model=CallDetailOut)
 async def hangup_call(
     call_id: uuid.UUID,

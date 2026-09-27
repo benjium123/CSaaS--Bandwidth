@@ -154,6 +154,20 @@ async def post_agent_transcript(
     return {"accepted": accepted}
 
 
+@router.get("/hold/{call_id}")
+async def get_hold_state(
+    call_id: uuid.UUID,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """The hold-music worker polls this and leaves as soon as the call is off hold."""
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, call_id)
+    if call is None:
+        return {"on_hold": False}
+    return {"on_hold": bool((call.extra or {}).get("on_hold")) and call.ended_at is None}
+
+
 class LiveUsageIn(BaseModel):
     call_id: uuid.UUID
     deepgram_seconds: int = Field(ge=0, le=86_400)

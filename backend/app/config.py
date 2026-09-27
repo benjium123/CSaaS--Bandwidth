@@ -535,6 +535,8 @@ class Settings(BaseSettings):
     stt_url: str = ""
     #: agents/live_captions.py worker name ("" = live captions off).
     live_captions_agent_name: str = ""
+    #: agents/hold_music.py worker name ("" = hold off).
+    hold_music_agent_name: str = ""
     #: Monthly Deepgram minutes per org when the box is too busy for live captions.
     live_overflow_max_minutes: int = 600
     monitor_recorder_dir: str = "var/lkrec"
