@@ -253,6 +253,19 @@ async def generate_recovery_codes(
     return {"codes": codes}
 
 
+@router.post("/recovery-codes/acknowledge")
+async def acknowledge_recovery_codes(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """The owner confirmed they saved their codes; lifts the setup screen (GET /auth/me)."""
+    if await recovery_codes.remaining(session, user.id) == 0:
+        raise ValidationFailedError("Generate recovery codes first")
+    user.recovery_codes_acknowledged_at = datetime.now(timezone.utc)
+    await session.commit()
+    return {"acknowledged": True}
+
+
 @router.post("/2fa/recovery")
 async def login_with_recovery_code(
     payload: RecoveryLoginIn,

@@ -87,6 +87,10 @@ describe("RecoveryCodesPage", () => {
     await user.click(cont);
 
     await waitFor(() => expect(auth.request).toHaveBeenCalledWith("/api/v1/auth/me"));
+    // The API records that the codes were saved; closing the tab without this keeps the wall.
+    expect(auth.request).toHaveBeenCalledWith("/api/v1/auth/recovery-codes/acknowledge", {
+      method: "POST",
+    });
     expect(auth.refreshMe).toHaveBeenCalledTimes(1);
   });
 

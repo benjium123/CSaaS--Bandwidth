@@ -97,6 +97,7 @@ export function RecoveryCodesPage() {
   async function handleContinue() {
     setBusy(true);
     try {
+      await api.request(`${RECOVERY_CODES_PATH}/acknowledge`, { method: "POST" });
       await refreshMe();
     } catch (err) {
       setError((err as Error).message);

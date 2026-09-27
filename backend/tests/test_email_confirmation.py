@@ -95,6 +95,11 @@ async def test_confirming_turns_email_codes_on_and_shows_recovery_codes_once(on_
     r = await on_client.post("/api/v1/auth/recovery-codes", headers=headers)
     assert r.status_code == 200, r.text
     assert len(r.json()["codes"]) == 10
+    # Generating is not enough: closing the tab before saving them must not skip the screen.
+    me = (await on_client.get("/api/v1/auth/me", headers=headers)).json()
+    assert me["needs_recovery_codes"] is True
+    r = await on_client.post("/api/v1/auth/recovery-codes/acknowledge", headers=headers)
+    assert r.status_code == 200, r.text
     me = (await on_client.get("/api/v1/auth/me", headers=headers)).json()
     assert me["needs_recovery_codes"] is False
 

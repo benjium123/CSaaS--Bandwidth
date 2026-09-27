@@ -648,7 +648,10 @@ async def me(
         if proven is not None and datetime.now(timezone.utc) - proven <= timedelta(
             minutes=request.app.state.settings.step_up_2fa_minutes
         ):
-            needs_recovery_codes = await recovery_codes.remaining(session, user.id) == 0
+            needs_recovery_codes = (
+                user.recovery_codes_acknowledged_at is None
+                or await recovery_codes.remaining(session, user.id) == 0
+            )
     return MeOut(
         id=user.id,
         email=user.email,

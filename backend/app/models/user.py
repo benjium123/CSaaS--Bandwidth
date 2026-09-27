@@ -77,6 +77,11 @@ class User(Base, TimestampMixin):
     passkey_required_since: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    #: The owner ticked "I have saved these codes" (0080). Until then the recovery-codes
+    #: screen stays up even though codes exist: closing the tab must not skip it.
+    recovery_codes_acknowledged_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
     @property
     def has_second_factor(self) -> bool:
