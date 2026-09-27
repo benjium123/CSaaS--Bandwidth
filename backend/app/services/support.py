@@ -20,10 +20,11 @@ from app.models import Org, PlatformSetting, SupportRequest, User
 log = structlog.get_logger("support")
 
 CONTACTS_KEY = "support_contacts"
-#: What the Help menu shows until ops fill the real details in the Switchboard.
+#: What the Help menu shows until ops change it in the Switchboard (the same contact the
+#: legal pages on ringlite.io publish).
 DEFAULT_CONTACTS: dict[str, str | None] = {
-    "email": None,
-    "phone": None,
+    "email": "support@ringlite.io",
+    "phone": "+1 (469) 461-7576",
     "knowledge_base_url": None,
     "whats_new_url": None,
     "status_url": "/status",

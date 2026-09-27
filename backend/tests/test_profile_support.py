@@ -117,7 +117,7 @@ async def test_support_contacts_default(client, session):
     r = await client.get("/api/v1/support/contacts", headers=h)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["email"] is None
+    assert body["email"] == "support@ringlite.io"
     assert body["status_url"] == "/status"
 
 

@@ -14,6 +14,18 @@ on top of Ringlite's undeployed 6d1fb0a) — NOT pushed/deployed, waiting for th
 4faa3eb AI summaries paid (`summary_min`, feature `call_summary`), af95ace external transfers
 (feature `external_transfer`, bridged outbound call), eba3258 dead Deepgram helpers removed.
 
+**Update 2026-09-28 (Ringlite, combined deploy with 19):** branch `feat/min5-autorecharge-signup`
+rebased on bdc4c8d: $5 minimum on custom invoices; auto-recharge $5 steps; Telnyx balance alert
+< $25 (sweeper, `services/telnyx_balance_alert.py`, emails ops admins once per drop); legal pages
+/legal/{privacy,terms,refunds} (+ /privacy etc.), footer "Powered by Sabine Property Group LLC";
+Checkout top-ups save the card (setup_future_usage) and the FIRST paid top-up turns auto-recharge
+on (below $5 -> $10, never re-enabled later); signup onboarding step `funding` -> /add-credit
+(min $5) between approval and numbers. No migration.
+**After deploy [USER/Claude in Chrome]:** Stripe public name (DBA) Ringlite, website ringlite.io,
+privacy/terms URLs, support email support@ringlite.io, invoice prefix RL, branding logo;
+statement descriptor stays SABINE-based (AdAgentIQ shares the account). Stripe also shows
+"Business ownership information: Incomplete" and account representative "Invalid" — user must fix.
+
 Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to build · **[OPS]** box work.
 
 ---
@@ -31,7 +43,8 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
 2. ~~Recording price~~ — decided above.
 3. **[USER] Rotate the Groq key** — it was pasted in chat. New key → `/opt/csaas/.env` `GROQ_API_KEY=`
    (backup `.env.bak-groq-20260927` exists), then `docker compose ... up -d api worker`.
-4. **[USER] Support contact details** — email, phone, KB links for the Help menu / Support tab
+4. **[USER] Support contact details** — email DECIDED: support@ringlite.io (legal pages use it;
+   phone +1 469 461 7576 from Stripe). Still open: KB links, and wiring the email/phone into for the Help menu / Support tab
    (`frontend/src/components/HelpMenu.tsx`, `SupportTab.tsx`, backend `services/support.py`).
 5. **[USER] Live test call** — recording notice timing, hold, transfer/add, leave, park/pickup,
    and (after af95ace ships) an EXTERNAL transfer: outside party answers → agent drops, both
