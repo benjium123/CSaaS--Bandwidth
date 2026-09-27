@@ -17,7 +17,13 @@ import sqlalchemy as sa
 
 from app.db.base import set_org_context
 from app.models import Invite
-from tests.conftest import auth_headers, create_org, make_settings, register_and_login
+from tests.conftest import (
+    auth_headers,
+    confirm_registered_email,
+    create_org,
+    make_settings,
+    register_and_login,
+)
 
 pytestmark = pytest.mark.usefixtures("paid_seats")  # adds members; not about seats
 
@@ -303,6 +309,11 @@ async def test_agent_role_cannot_create_invite(client):
         },
     )
     assert reg.status_code == 201
+
+    # Registration now requires email confirmation before any non-auth route (app/auth/
+    # deps.py::get_current_user) - without it every request here 403s with
+    # "email_verification_required" rather than exercising the RBAC denial under test.
+    await confirm_registered_email(client, "fieldagent@example.com", PASSWORD)
 
     agent_login = await client.post(
         "/api/v1/auth/login", json={"email": "fieldagent@example.com", "password": PASSWORD}

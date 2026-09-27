@@ -376,6 +376,16 @@ async def test_an_empty_balance_pauses_the_running_campaigns(session):
 
 async def test_shadow_mode_never_pauses_campaigns_on_an_empty_balance(session):
     org = await _make_org(session, "Shadow Workspace")
+    # Migration 0055 flipped Org.telephony_prepaid's column default to True (prepaid
+    # is now the money gate for every NEW org); _make_org constructs the row directly
+    # rather than through repositories.orgs.create_org_with_owner, which is the only
+    # place that reads settings.telephony_prepaid_default. This test is specifically
+    # about the UNGATED "shadow metering" org (ai_usage.credits_tick's own "gated"
+    # check - neither ai_billing_enforce nor telephony_prepaid), so opt this org back
+    # out explicitly rather than relying on a default the migration already changed.
+    set_org_context(session, org.id)
+    org.telephony_prepaid = False
+    await session.commit()
     contact_list = await _make_contact_list(session, org.id)
     campaign = await _make_campaign(session, org.id, contact_list.id, status="running")
 

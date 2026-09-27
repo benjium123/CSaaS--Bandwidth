@@ -187,9 +187,13 @@ async def test_outcome_is_tenant_scoped(app_with_agent, session):
     """The seam resolves org from the Call row, and a follow_up_sms_message_id from
     another org is ignored rather than stored."""
     client, _app = app_with_agent
-    _token_a, org_a, call_a = await _place_call(client, "scopeA@example.com", "Org Scope A")
+    # conftest.make_org_with_number looks the owner up by an EXACT User.email match
+    # after registration has normalised and stored it lowercase (repositories/users.py
+    # normalize_email) - a mixed-case local part here 404s that lookup with
+    # NoResultFound before the org is ever built.
+    _token_a, org_a, call_a = await _place_call(client, "scope-a@example.com", "Org Scope A")
     _token_b, org_b, call_b = await _place_call(
-        client, "scopeB@example.com", "Org Scope B", e164="+12145550101"
+        client, "scope-b@example.com", "Org Scope B", e164="+12145550101"
     )
     org_a_id = uuid.UUID(org_a["id"])
     org_b_id = uuid.UUID(org_b["id"])

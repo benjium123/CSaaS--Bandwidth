@@ -450,11 +450,12 @@ async def test_rbac_and_rate_put_validation_audit(client, session):
 
 
 async def test_rollup_recent_counts_orgs(client, session):
-    token_a = await register_and_login(client, "p19-sweep-a@example.com")
-    await create_org(client, token_a, "Sweep A")
-
-    token_b = await register_and_login(client, "p19-sweep-b@example.com")
-    await create_org(client, token_b, "Sweep B")
+    # Self-serve registration now hands the account its own workspace (auth.py::register,
+    # per test_auth.py::test_register_login_me), so each register_and_login already
+    # creates one org - an additional create_org per token would make it two apiece
+    # (4 total) rather than the one-org-per-account this test is counting.
+    await register_and_login(client, "p19-sweep-a@example.com")
+    await register_and_login(client, "p19-sweep-b@example.com")
 
     assert await spend_svc.rollup_recent(session) == 2
 

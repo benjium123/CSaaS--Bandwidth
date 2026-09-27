@@ -18,13 +18,14 @@ real money anywhere in this file. It proves the platform's own send -> delivery 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
-from app.models import KycProfile
+from app.models import KycProfile, Org, User
 from tests.conftest import auth_headers, make_org_with_number, register_and_login
 from tests.e2e_billing_helpers import (
     balance,
@@ -245,9 +246,24 @@ async def test_kyc_gate_blocks_unverified_org_and_approved_org_can_send(
         ).scalar_one()
 
     # Adding a number is gated by KYC too (kind "number"), so approve the existing draft
-    # profile first - update it, never insert a second row for the org.
+    # profile first - update it, never insert a second row for the org. Self-serve
+    # registration also always sets number_subscription_required=True (auth.py::
+    # register), an independent checkout gate this test isn't about - bypass it the
+    # same way conftest.make_org_with_number and test_agent_calls_place.py's
+    # _approve_kyc_for_calls do. Self-serve registration also always creates an
+    # "individual" account_type org, and telephony_access.refusal requires an
+    # individual profile to carry decided_by/decided_at (not just an approved status)
+    # for every kind, calling and numbers included.
+    set_org_context(session, org_uuid)
+    org_row = await session.get(Org, org_uuid)
+    org_row.number_subscription_required = False
+    owner = (
+        await session.execute(sa.select(User).where(User.email == "tenant-kyc-1@example.com"))
+    ).scalar_one()
     profile = await _profile()
     profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
     await session.commit()
 
     added = await client.post(

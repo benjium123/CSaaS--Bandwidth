@@ -18,9 +18,11 @@ from app.models import (
     DepartmentMember,
     Inbox,
     InboxGrant,
+    KycProfile,
     Message,
     MessageThread,
     Notification,
+    Org,
     OrgMembership,
     OrgNumber,
     Role,
@@ -507,6 +509,26 @@ async def test_probe5_first_response_stamped_once_and_not_by_bulk_or_ai(
     org = await create_org(client, owner, "V5A")
     org_id = uuid.UUID(org["id"])
     h = auth_headers(owner, org["id"])
+
+    # POST /orgs (create_org) always makes an "individual" account_type org with
+    # number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    # orgs.py create_org) - POST /api/v1/numbers refuses both in turn regardless of
+    # settings.kyc_enforced. Every OTHER test in this file inserts OrgNumber rows
+    # directly (_make_number), bypassing the route and this gate; this is the only one
+    # that goes through the real endpoint, so bypass it the same way
+    # conftest.make_org_with_number and test_agent_calls_place.py's
+    # _approve_kyc_for_calls do.
+    set_org_context(session, org_id)
+    org_row = await session.get(Org, org_id)
+    org_row.number_subscription_required = False
+    owner_user = await users_repo.get_by_email(session, "v5a@example.com")
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner_user.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
     A, C = "+12145555000", "+19725555000"
     r = await client.post("/api/v1/numbers", json={"e164": A}, headers=h)

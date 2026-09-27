@@ -13,6 +13,8 @@ from app.main import create_app
 from app.models import (
     TRAFFIC_SCOPE,
     Inbox,
+    KycProfile,
+    Org,
     OrgMembership,
     OrgNumber,
     ProviderSpendDaily,
@@ -88,10 +90,28 @@ async def test_numbers_list_inbox_name_null_when_no_inbox(client, session):
     assert r.json()[0]["inbox_name"] is None
 
 
-async def test_numbers_list_inbox_name_is_not_n_plus_one(client, query_counter):
+async def test_numbers_list_inbox_name_is_not_n_plus_one(client, query_counter, session):
     token = await register_and_login(client, "inbox-nplus@example.com")
     org = await create_org(client, token, "Inbox N Plus")
+    org_id = uuid.UUID(org["id"])
     headers = auth_headers(token, org["id"])
+
+    # POST /orgs (create_org) always makes an "individual" account_type org with
+    # number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    # orgs.py create_org) - POST /api/v1/numbers refuses both in turn regardless of
+    # settings.kyc_enforced. Mirrors conftest.make_org_with_number and
+    # test_agent_calls_place.py's _approve_kyc_for_calls.
+    set_org_context(session, org_id)
+    org_row = await session.get(Org, org_id)
+    org_row.number_subscription_required = False
+    owner = await users_repo.get_by_email(session, "inbox-nplus@example.com")
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
 
     for e164 in ["+12025550162", "+12025550163", "+12025550164"]:
         r = await client.post("/api/v1/numbers", json={"e164": e164}, headers=headers)

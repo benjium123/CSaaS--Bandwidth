@@ -356,7 +356,13 @@ async def test_non_owner_can_still_verify_their_own_identity(kyc_app, session): 
     """
     client, _app, _carrier, created, outcomes = kyc_app
     owner_token = await register_and_login(client, "owner-lockout@example.com")
-    org = await _signup_org(client, owner_token, "Owner Lockout Co")
+    # Self-serve registration now always hands out an "individual" account_type
+    # workspace (auth.py::register), and verify_me refuses a non-owner outright for
+    # those ("Only the account owner can verify an individual account" - an
+    # individual account IS the one person, so there is no separate admin to
+    # verify). This test is about a non-owner admin of a BUSINESS workspace, so flip
+    # account_type the same way _signup_org's own business=True branch does.
+    org = await _signup_org(client, owner_token, "Owner Lockout Co", session, business=True)
     org_id = uuid.UUID(org["id"])
     admin_token = await _add_admin_member(
         client, session, org_id, "admin-lockout@example.com"

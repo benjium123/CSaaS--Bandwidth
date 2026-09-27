@@ -52,7 +52,11 @@ async def test_duplicate_registration_is_409(client):
     await register_and_login(client, "dup@example.com")
     r = await client.post(
         "/api/v1/auth/register",
-        json={"email": "dup@example.com", "password": "correct-horse-battery"},
+        json={
+            "email": "dup@example.com",
+            "password": "correct-horse-battery",
+            "full_name": "Dup Person",
+        },
     )
     assert r.status_code == 409
 

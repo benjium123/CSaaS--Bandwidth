@@ -12,7 +12,13 @@ from app.db.base import set_org_context
 from app.models import AuditLogEntry, LoginEvent, OrgMembership, Role, User
 from app.models import Session as IdentitySession
 from app.services import session_cache
-from tests.conftest import TEST_JWT_SECRET, auth_headers, create_org, register_and_login
+from tests.conftest import (
+    TEST_JWT_SECRET,
+    auth_headers,
+    confirm_registered_email,
+    create_org,
+    register_and_login,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -211,6 +217,12 @@ async def test_sign_out_everywhere_keeps_current(client):
         json={"email": email, "password": password, "full_name": "Everywhere"},
     )
     assert r.status_code == 201, r.text
+    # Registration now requires email confirmation before any non-auth route (app/auth/
+    # deps.py::get_current_user) - without it every /me/sessions call here 403s with
+    # "email_verification_required" instead of exercising sign-out-everywhere. This logs
+    # in and back out once on its own (and clears cookies), so it adds no session to the
+    # three this test drives below.
+    await confirm_registered_email(client, email, password)
 
     async def login_once():
         r = await client.post(

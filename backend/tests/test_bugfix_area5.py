@@ -12,6 +12,7 @@ tests/test_p15_inbox_access.py's grant setup.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
@@ -24,8 +25,10 @@ from app.models import (
     Department,
     Inbox,
     InboxGrant,
+    KycProfile,
     Message,
     MessageThread,
+    Org,
     OrgMembership,
     OrgNumber,
     Role,
@@ -258,6 +261,27 @@ async def test_5_2_softphone_token_denied_without_inbox_access(engine):
 # ----------------------------------------------------------------------------------
 # 5.3: GET /search/transcripts scopes by inbox access
 # ----------------------------------------------------------------------------------
+async def _bypass_number_gate(session, org_id: uuid.UUID, owner_email: str) -> None:
+    """POST /orgs (create_org) always makes an 'individual' account_type org with
+    number_subscription_required=True and an unapproved KycProfile (app/api/routes/
+    orgs.py create_org) - POST /api/v1/numbers refuses both (number_checkout_required,
+    then account_not_verified) regardless of settings.kyc_enforced. Mirrors
+    conftest.make_org_with_number and test_agent_calls_place.py's
+    _approve_kyc_for_calls, needed here because this test adds TWO numbers directly
+    rather than through that single-number helper."""
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.number_subscription_required = False
+    owner = await users_repo.get_by_email(session, owner_email)
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org_id))
+    ).scalar_one()
+    profile.status = "approved"
+    profile.decided_by = owner.id
+    profile.decided_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
 async def test_5_3_search_transcripts_scoped_by_inbox_access(client, session):
     from app.models.agent import CallTranscriptSegment
     from app.models.voice import Call
@@ -265,6 +289,7 @@ async def test_5_3_search_transcripts_scoped_by_inbox_access(client, session):
     token = await register_and_login(client, "b53-owner@example.com")
     org = await create_org(client, token, "Org B53")
     org_id = uuid.UUID(org["id"])
+    await _bypass_number_gate(session, org_id, "b53-owner@example.com")
     for e164 in (OUR, OUR_B):
         r = await client.post(
             "/api/v1/numbers", json={"e164": e164}, headers=auth_headers(token, org_id)

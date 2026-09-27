@@ -12,10 +12,18 @@ it: a single-carrier deployment cannot distinguish "sent via the only thing we h
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
+
 import httpx
 import pytest
+import sqlalchemy as sa
 
+from app.compliance import telnyx_approval
+from app.db.base import set_org_context
 from app.main import create_app
+from app.models import OrgNumber
+from app.models.numbers import Brand, Campaign
 from app.providers.domain import CarrierError, SendResult
 from app.providers.health import HealthRegistry
 from app.providers.registry import CarrierRegistry
@@ -61,13 +69,58 @@ async def multi(engine, webhook_settings, clock):
         yield c, registry, bandwidth, telnyx
 
 
-async def _org_with_numbers(client, email: str) -> tuple[str, dict]:
+async def _register_telnyx_campaign(session, org_id, number_e164: str) -> None:
+    """Commit 81df130 "feat(telnyx): enforce carrier-backed registration" made an
+    unregistered Telnyx number a hard refusal for every send path, including automatic
+    failover - so a test that actually expects a send to land ON the Telnyx fallback
+    needs the same approved, carrier-confirmed campaign a real registration + Telnyx
+    refresh would leave behind (mirrors tests/test_carrier_routing.py's
+    ``_register_telnyx_campaign`` / tests/test_failover.py's copy of it)."""
+    org_uuid = uuid.UUID(str(org_id))
+    set_org_context(session, org_uuid)
+    number = (
+        await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == number_e164))
+    ).scalar_one()
+    carrier_ref = f"CR-{uuid.uuid4().hex[:12]}"
+    evidence = telnyx_approval.build_evidence(
+        state=telnyx_approval.STATE_APPROVED,
+        carrier_id=carrier_ref,
+        checked_at=datetime.now(timezone.utc),
+        source=telnyx_approval.SOURCE_STATUS_DECISION,
+    )
+    brand = Brand(id=uuid.uuid4(), name=f"Brand {number_e164}")
+    session.add(brand)
+    await session.flush()
+    campaign = Campaign(
+        id=uuid.uuid4(),
+        brand_id=brand.id,
+        name=f"Campaign {number_e164}",
+        status="approved",
+        carrier_refs={"telnyx": carrier_ref, telnyx_approval.TELNYX_APPROVAL_KEY: evidence},
+    )
+    session.add(campaign)
+    await session.flush()
+    number.campaign_id = campaign.id
+    number.provisioning = {
+        **(number.provisioning or {}),
+        "telnyx_campaign_assignment": {
+            "state": "assigned",
+            "campaign_id": str(campaign.id),
+            "carrier_id": carrier_ref,
+        },
+    }
+    await session.commit()
+
+
+async def _org_with_numbers(client, email: str, session=None) -> tuple[str, dict]:
     token, org, _ = await make_org_with_number(client, email, "Org SR", PRIMARY_NUM)
     h = auth_headers(token, org["id"])
     r = await client.post(
         "/api/v1/numbers", json={"e164": FALLBACK_NUM, "carrier": "telnyx"}, headers=h
     )
     assert r.status_code == 201, r.text
+    if session is not None:
+        await _register_telnyx_campaign(session, org["id"], FALLBACK_NUM)
     return token, org
 
 
@@ -106,11 +159,11 @@ async def test_sms_send_records_route_reason_sentence(multi):
         assert listed.json()["route_reason"] == reason
 
 
-async def test_sms_failover_records_failed_over_sentence(multi):
+async def test_sms_failover_records_failed_over_sentence(multi, session):
     """When the first provider's credential is dead and the send crosses to another, the
     sentence says so by name - that is the question a surprised operator actually asks."""
     client, _registry, bandwidth, telnyx = multi
-    token, org = await _org_with_numbers(client, "sr2@example.com")
+    token, org = await _org_with_numbers(client, "sr2@example.com", session)
     h = auth_headers(token, org["id"])
     await _set_policy(client, h, allow_cross_carrier_failover=True)
 

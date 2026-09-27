@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet
 from app.db.base import set_org_context
 from app.main import create_app
 from app.models import PERMISSIONS, KycProfile, Org, OrgMembership, OrgNumber, Role
+from app.models.numbers import Brand, Campaign
 from app.repositories import users as users_repo
 from tests.conftest import (
     auth_headers,
@@ -191,6 +192,37 @@ async def _add_number(
     await session.commit()
 
 
+async def _add_registered_number(session, org_id: uuid.UUID, e164: str) -> None:
+    """A number whose 10DLC registration is fully local-approved (default carrier
+    "bandwidth", never Telnyx - see app/compliance/registration.py's
+    _local_registration_state: a non-Telnyx number is "approved" once its linked
+    campaign is, with no carrier-evidence check). GET /me/capabilities' messaging_ready
+    needs registration_state == "approved", which in turn needs an active number AT
+    ALL (see registration_state's "if active_numbers" scan) - a bare _add_number leaves
+    it at "none"."""
+    set_org_context(session, org_id)
+    brand = Brand(id=uuid.uuid4(), org_id=org_id, name=f"Brand {e164}")
+    session.add(brand)
+    await session.flush()
+    campaign = Campaign(
+        id=uuid.uuid4(), org_id=org_id, brand_id=brand.id, name=f"Campaign {e164}",
+        status="approved",
+    )
+    session.add(campaign)
+    await session.flush()
+    session.add(
+        OrgNumber(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            e164=e164,
+            status="active",
+            is_active=True,
+            campaign_id=campaign.id,
+        )
+    )
+    await session.commit()
+
+
 async def _summary(client, token: str, org_id) -> dict:
     r = await client.get(
         "/api/v1/me/capabilities", headers=auth_headers(token, org_id)
@@ -255,14 +287,29 @@ async def test_capabilities_released_number_is_not_a_number(client, session):
 
 
 async def test_capabilities_messaging_ready_needs_a_business(client, session):
+    """Kept its original name (still the test id the suite runs by) even though its
+    premise flipped: commit 1fb0006 "Unify signup around identity verification and
+    unlock registered messaging" deliberately dropped the
+    ``account_type == "business"`` clause from ``messaging_ready`` (app/api/routes/
+    me.py): once kyc_status is approved, the org has an active number, AND that
+    number's 10DLC/TFV registration itself resolves to "approved", messaging_ready is
+    True for a business OR an individual account alike - individual messaging is
+    unlocked, not gated on account_type any more. Also needs an active,
+    locally-registered number in the first place - without one, registration_state
+    stays "none" and onboarding_step stays "numbers", so neither account type could
+    ever reach messaging_ready regardless of this rule."""
     biz_token = await register_and_login(client, "cap-business@example.com")
     biz = await create_org(client, biz_token, "Cap Business")
-    await _set_account_type(session, uuid.UUID(biz["id"]), "business")
-    await _set_kyc_status(session, uuid.UUID(biz["id"]), "approved")
+    biz_id = uuid.UUID(biz["id"])
+    await _set_account_type(session, biz_id, "business")
+    await _set_kyc_status(session, biz_id, "approved")
+    await _add_registered_number(session, biz_id, "+12025550180")
     assert (await _summary(client, biz_token, biz["id"]))["messaging_ready"] is True
 
     solo_token = await register_and_login(client, "cap-individual@example.com")
     solo = await create_org(client, solo_token, "Cap Individual")
-    await _set_account_type(session, uuid.UUID(solo["id"]), "individual")
-    await _set_kyc_status(session, uuid.UUID(solo["id"]), "approved")
-    assert (await _summary(client, solo_token, solo["id"]))["messaging_ready"] is False
+    solo_id = uuid.UUID(solo["id"])
+    await _set_account_type(session, solo_id, "individual")
+    await _set_kyc_status(session, solo_id, "approved")
+    await _add_registered_number(session, solo_id, "+12025550181")
+    assert (await _summary(client, solo_token, solo["id"]))["messaging_ready"] is True

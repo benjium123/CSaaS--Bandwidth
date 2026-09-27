@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import uuid
 
+import sqlalchemy as sa
+
 from app.db.base import set_org_context
-from app.models import KycPerson
+from app.models import KycPerson, Org
 from tests.conftest import auth_headers
 from tests.test_p41_kyc import _make_operator, _write_sanctions
 from tests.test_p41_kyc import kyc_app as kyc_app
@@ -169,6 +171,16 @@ async def test_individual_kyc_end_to_end(
     org_id = await _org_id(client, token)
     h = auth_headers(token, org_id)
 
+    # Self-serve signup always sets number_subscription_required=True (auth.py::register);
+    # this file is about the identity-verification gate, not the billing one, so bypass it
+    # the same way tests/test_individual_telephony.py's _new_org does.
+    set_org_context(session, uuid.UUID(org_id))
+    org_row = (
+        await session.execute(sa.select(Org).where(Org.id == uuid.UUID(org_id)))
+    ).scalar_one()
+    org_row.number_subscription_required = False
+    await session.commit()
+
     # Submit before verification fails.
     r = await client.post("/api/v1/kyc/submit", headers=h)
     assert r.status_code == 422, r.text
@@ -185,15 +197,19 @@ async def test_individual_kyc_end_to_end(
     assert body["status"] == "submitted"
     assert body["account_type"] == "individual"
 
-    # After submit but before admin approval, the real telephony gate refuses calling
-    # (no operator decision recorded yet) and always refuses texting for individuals.
+    # After submit but before admin approval, the real telephony gate refuses both
+    # calling and texting (no operator decision recorded yet). Commit 1fb0006 "Unify
+    # signup around identity verification and unlock registered messaging" removed the
+    # blanket individual-texting refusal: individuals now reach the same
+    # account_not_verified check as calling, not a permanent "individual_messaging_
+    # disabled" code (see tests/test_individual_telephony.py, updated by that commit).
     assert (
         await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "call")
         == "account_not_verified"
     )
     assert (
         await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "sms")
-        == "individual_messaging_disabled"
+        == "account_not_verified"
     )
 
     # Ops queue/detail show the individual account type.
@@ -224,15 +240,13 @@ async def test_individual_kyc_end_to_end(
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "approved"
 
-    # Real approval unlocks calling: refresh the cached KycProfile in this session and
-    # re-check the gate. Texting stays disabled for individuals.
+    # Real approval unlocks both calling and texting: refresh the cached KycProfile in
+    # this session and re-check the gate (post-1fb0006, an approved individual is no
+    # longer permanently barred from texting).
     set_org_context(session, uuid.UUID(org_id))
     session.expire_all()
     assert await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "call") is None
-    assert (
-        await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "sms")
-        == "individual_messaging_disabled"
-    )
+    assert await telephony_access.refusal(session, kyc_settings, uuid.UUID(org_id), "sms") is None
 
     set_org_context(session, uuid.UUID(org_id))
     person = await session.get(KycPerson, uuid.UUID(person_id))
