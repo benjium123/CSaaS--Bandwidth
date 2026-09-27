@@ -45,6 +45,14 @@ async def _setup(session, mon_settings, tmp_path, monkeypatch, *, record=True, a
     set_org_context(session, org_id)
     org = await session.get(Org, org_id)
     calling_settings.apply(org, record_calls=record)
+    if record:
+        # Customer recording also needs the ops-controlled entitlement (P2).
+        from app.services import entitlements
+
+        await entitlements.set_feature(
+            session, org_id, "call_recording",
+            enabled=True, price_override_micros=None, actor_user_id=None,
+        )
     org.recording_announcement = announce
     await session.commit()
     started: list[tuple[str, str]] = []

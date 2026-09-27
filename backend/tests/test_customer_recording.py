@@ -87,13 +87,19 @@ async def test_wanted_false_when_org_has_no_calling_settings(session):
     assert await customer_recording.wanted(session, org) is False
 
 
-async def test_wanted_true_when_record_calls_on_and_no_entitlements_module(session):
+async def test_wanted_needs_record_calls_and_the_call_recording_entitlement(session):
+    from app.services import entitlements
+
     org_id = await _org(session)
     set_org_context(session, org_id)
     org = await session.get(Org, org_id)
     org.calling_settings = {"record_calls": True}
-    # entitlements module does not exist in the repo, so the import fails and wanted()
-    # falls back to True.
+    # The workspace's own setting is not enough: ops must enable call_recording (P2).
+    assert await customer_recording.wanted(session, org) is False
+    await entitlements.set_feature(
+        session, org_id, "call_recording",
+        enabled=True, price_override_micros=None, actor_user_id=None,
+    )
     assert await customer_recording.wanted(session, org) is True
 
 
