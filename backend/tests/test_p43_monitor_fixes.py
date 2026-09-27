@@ -33,6 +33,7 @@ from tests.conftest import (
     FakeCarrier,
     _install,
     auth_headers,
+    confirm_registered_email,
     create_org,
     make_org_with_number,
     make_settings,
@@ -42,6 +43,7 @@ from tests.fake_ai import FakeSafetyAI
 from tests.test_p41_kyc import (  # noqa: F401 - fixtures
     _complete_application,
     _pdf_bytes,
+    _signup_org,
     kyc_app,
     kyc_settings,
 )
@@ -211,7 +213,17 @@ async def test_events_socket_survives_session_rotation_but_not_revocation(engine
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://test") as browser:
         email = f"ws-{uuid.uuid4().hex[:6]}@example.com"
         password = "correct-horse-battery-staple"
-        await browser.post("/api/v1/auth/register", json={"email": email, "password": password})
+        # Self-serve registration is unified around identity verification (1fb0006) and now
+        # requires full_name for every signup, and creates the account's own workspace - the
+        # explicit POST /api/v1/orgs below is then a second workspace, which is fine here
+        # because this test runs with the default kyc_enforced=False.
+        await browser.post(
+            "/api/v1/auth/register",
+            json={"email": email, "password": password, "full_name": "WS Tester"},
+        )
+        # A fresh registration requires its email confirmed before anything outside
+        # /api/v1/auth/ - otherwise every later call 403s with email_verification_required.
+        await confirm_registered_email(browser, email)
         await browser.post("/api/v1/auth/login", json={"email": email, "password": password})
         csrf = {"X-CSRF-Token": browser.cookies.get("csaas_csrf", "")}
         org = (await browser.post("/api/v1/orgs", json={"name": "WS Org"}, headers=csrf)).json()
@@ -279,7 +291,18 @@ async def test_review_of_a_call_that_never_finished_is_given_up(session, fix_set
 async def test_changed_details_reset_document_reviews(kyc_app, session):
     client, _app, _carrier, created, outcomes = kyc_app
     token = await register_and_login(client, "edit@acme-plumbing.example")
-    org = await create_org(client, token, "Edit Co")
+    # P41's "one unverified workspace at a time" gate (kyc_pending_elsewhere) now applies
+    # because self-serve registration already hands the account its own draft workspace
+    # (1fb0006) - take that workspace instead of creating a second, blocked one.
+    org = await _signup_org(client, token, "Edit Co")
+    # Registration's own workspace is always "individual" (1fb0006), which refuses the
+    # company-only fields _complete_application submits ("That field is for business
+    # accounts only" - app/api/routes/kyc.py's put_business). This test exercises the
+    # business-document reset path, so flip the workspace to business first, same as
+    # tests/test_individual_signup.py does for its own legacy-business coverage.
+    workspace = await session.get(Org, uuid.UUID(org["id"]))
+    workspace.account_type = "business"
+    await session.commit()
     h = auth_headers(token, org["id"])
     person_id = await _complete_application(client, created, outcomes, token, org["id"])
     set_org_context(session, uuid.UUID(org["id"]))
@@ -311,7 +334,14 @@ async def test_one_broken_document_does_not_stop_the_others(kyc_app, session, ky
     client, app, _carrier, created, outcomes = kyc_app
     app.state.fake_ai.fail = True
     token = await register_and_login(client, "broken@acme-plumbing.example")
-    org = await create_org(client, token, "Broken Co")
+    # See test_changed_details_reset_document_reviews: registration already gives this
+    # account a draft workspace, so take that one instead of a second (blocked) one.
+    org = await _signup_org(client, token, "Broken Co")
+    # See test_changed_details_reset_document_reviews: flip to business so the company-only
+    # fields _complete_application submits are accepted.
+    workspace = await session.get(Org, uuid.UUID(org["id"]))
+    workspace.account_type = "business"
+    await session.commit()
     await _complete_application(client, created, outcomes, token, org["id"])
     app.state.fake_ai.fail = False
     real = kyc_doc_reader.review_document
@@ -366,7 +396,16 @@ def test_cache_key_keeps_links_and_phone_numbers():
 async def test_proof_of_address_does_not_count_as_the_business_document(kyc_app, session):
     client, _app, _carrier, _created, _outcomes = kyc_app
     token = await register_and_login(client, "proof@acme-plumbing.example")
-    org = await create_org(client, token, "Proof Co")
+    # See test_changed_details_reset_document_reviews: registration already gives this
+    # account a draft workspace, so take that one instead of a second (blocked) one.
+    org = await _signup_org(client, token, "Proof Co")
+    # "Pat Lee" is a separate owner from the signed-in user; an individual workspace only
+    # ever accepts a single owner who IS the signed-in user (app/services/individual_kyc.py's
+    # validate_person_creation), so flip to business to allow it - this test is about the
+    # business-document/proof-of-address distinction, not the individual-account gate.
+    workspace = await session.get(Org, uuid.UUID(org["id"]))
+    workspace.account_type = "business"
+    await session.commit()
     h = auth_headers(token, org["id"])
     person = (await client.post("/api/v1/kyc/persons", json={"role": "owner", "full_name": "Pat Lee", "ownership_percent": 100, "residential_address": {"line1": "1 Elm", "city": "Austin", "postal_code": "78701", "country": "US"}}, headers=h)).json()
     r = await client.post("/api/v1/kyc/documents", data={"kind": "proof_of_address", "person_id": person["id"]}, files={"file": ("bill.pdf", _pdf_bytes(), "application/pdf")}, headers=h)
@@ -811,7 +850,21 @@ async def test_a_person_payload_says_whether_it_is_you_without_naming_who(app_ai
     user ids."""
     client, _carrier, _fake, _app = app_ai
     email = f"owner-{uuid.uuid4().hex[:6]}@example.com"
-    token, org, _num = await make_org_with_number(client, email, "Dan Plumbing Ltd", OUR)
+    # Not make_org_with_number: it now also approves the workspace's KYC profile (1fb0006,
+    # to satisfy telephony/messaging gates that this test doesn't exercise), and an approved
+    # profile refuses new owner/beneficial_owner persons ("contact support to change these
+    # details" - app/services/kyc.py's _require_editable). This test is about the person
+    # payload's is_you/is_user fields, not telephony, so a plain draft workspace is enough
+    # and keeps person creation open.
+    token = await register_and_login(client, email)
+    org = await create_org(client, token, "Dan Plumbing Ltd")
+    # An individual workspace (the only kind create_org makes since 1fb0006) may only ever
+    # hold a single person - itself ("An individual account has exactly one owner: you" -
+    # app/api/routes/kyc.py's add_person). This test's whole point is a SECOND person who
+    # is a real user but not the viewer, which needs a business workspace.
+    workspace = await session.get(Org, uuid.UUID(org["id"]))
+    workspace.account_type = "business"
+    await session.commit()
     h = auth_headers(token, org["id"])
 
     me = (await client.get("/api/v1/auth/me", headers=h)).json()

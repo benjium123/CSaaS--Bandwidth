@@ -490,7 +490,7 @@ async def test_sweeper_recording_fetch_backs_off_then_retries_and_succeeds(
     app_with_voice_carrier, session
 ):
     client, fake, application = app_with_voice_carrier
-    token, org, _ = await make_org_with_number(client, "recB@example.com", "Org RB", OUR)
+    token, org, _ = await make_org_with_number(client, "recb@example.com", "Org RB", OUR)
     org_id = uuid.UUID(org["id"])
     call_out = await _make_call(client, token, org)
     provider_call_id = call_out["legs"][0]["provider_call_id"]
@@ -563,7 +563,7 @@ async def test_sweeper_recording_fetch_gives_up_permanently_past_the_ceiling(
     app_with_voice_carrier, session
 ):
     client, fake, application = app_with_voice_carrier
-    token, org, _ = await make_org_with_number(client, "recC@example.com", "Org RC", OUR)
+    token, org, _ = await make_org_with_number(client, "recc@example.com", "Org RC", OUR)
     org_id = uuid.UUID(org["id"])
     call_out = await _make_call(client, token, org)
     provider_call_id = call_out["legs"][0]["provider_call_id"]
@@ -611,7 +611,7 @@ async def test_sweeper_recording_fetch_gives_up_permanently_past_the_ceiling(
 async def test_cross_org_recording_fetch_is_404(app_with_voice_carrier, session):
     client, fake, application = app_with_voice_carrier
     fake.recording_auth_result = ("bw-user", "bw-pass")
-    token_a, org_a, _ = await make_org_with_number(client, "recA@example.com", "Org A", OUR)
+    token_a, org_a, _ = await make_org_with_number(client, "reca@example.com", "Org A", OUR)
     org_a_id = uuid.UUID(org_a["id"])
     call_out = await _make_call(client, token_a, org_a)
     call_id = uuid.UUID(call_out["id"])
@@ -639,7 +639,7 @@ async def test_cross_org_recording_fetch_is_404(app_with_voice_carrier, session)
     recording = await _get_recording(session, "rec-cross")
 
     token_b, org_b, _ = await make_org_with_number(
-        client, "recB2@example.com", "Org B", "+12145550101"
+        client, "recb2@example.com", "Org B", "+12145550101"
     )
 
     got = await client.get(

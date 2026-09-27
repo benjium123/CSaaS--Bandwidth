@@ -226,6 +226,12 @@ async def test_retention_purge_per_type_with_counts_and_audit(client, session):
     assert counts2["voicemails"] == 0, counts2
     assert counts2["imports"] == 0, counts2
 
+    # retention_tick iterates every org unscoped and leaves the session's org context
+    # sitting on whichever org it processed last (non-deterministic across a set of
+    # org ids) - reset it back to ours before reading, exactly as done after the first
+    # tick above, or this read is scoped to the wrong workspace.
+    set_org_context(session, org_id)
+
     # A settled sweep writes no audit row at all (retention_tick only records when
     # something was actually purged), so the count stays at the single run above.
     audits_after = (
