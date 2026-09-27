@@ -1,0 +1,8 @@
+[Unit]
+Description=Snapshot docker container stats for the CSAAS ops console
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/csaas/bin/csaas-host-stats.sh
+Nice=10
