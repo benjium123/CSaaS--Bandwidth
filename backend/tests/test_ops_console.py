@@ -439,3 +439,31 @@ async def test_big_bundle_grant_needs_a_second_operator(ops, session, ops_settin
     assert r.status_code == 200, r.text
     assert "pending_approval" in r.json()
     assert await bundles.units(session, B, "sms") == 0
+
+
+async def test_only_admin_operators_switch_the_recording_notice(ops, session, ops_settings):
+    org_id = await _new_org(session, "Notice Co")
+    set_org_context(session, org_id)
+    org = await session.get(Org, org_id)
+    org.calling_settings = {"record_calls": True}
+    await session.commit()
+    admin = await _operator(ops, session)
+    reviewer = await _operator(ops, session, email="rev2@example.com", role="reviewer")
+    path = f"/api/v1/ops/console/orgs/{org_id}/recording-notice"
+
+    r = await ops.get(f"/api/v1/ops/console/orgs/{org_id}/features", headers=auth_headers(admin))
+    assert r.status_code == 200, r.text
+    assert r.json()["recording_notice"] == {"enabled": True, "record_calls": True}
+
+    r = await ops.put(path, json={"enabled": False}, headers=auth_headers(reviewer))
+    assert r.status_code == 403, r.text
+
+    r = await ops.put(path, json={"enabled": False}, headers=auth_headers(admin))
+    assert r.status_code == 200, r.text
+    assert r.json()["plays_now"] is False
+    session.expire_all()
+    set_org_context(session, org_id)
+    assert (await session.get(Org, org_id)).calling_settings["announcement_off"] is True
+
+    r = await ops.put(path, json={"enabled": True}, headers=auth_headers(admin))
+    assert r.json()["plays_now"] is True

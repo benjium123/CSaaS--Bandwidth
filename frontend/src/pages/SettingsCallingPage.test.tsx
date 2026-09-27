@@ -121,20 +121,22 @@ describe("SettingsCallingPage", () => {
     });
   });
 
-  it("announcement save sends changed fields and empty text becomes null", async () => {
+  it("the notice switch is locked and saving sends only the text (empty becomes null)", async () => {
     const { client } = renderPage({
       calling: {
         ...DEFAULT_CALLING,
-        recording_announcement: false,
+        recording_announcement: true,
         recording_announcement_text: "Custom",
       },
     });
 
-    await userEvent.click(
-      await screen.findByRole("checkbox", {
-        name: /Play an announcement before the call connects/i,
-      }),
-    );
+    const toggle = await screen.findByRole("checkbox", {
+      name: /this call may be recorded/i,
+    });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(screen.getByText(/Contact Ringlite support to change it/i)).toBeInTheDocument();
+
     await userEvent.clear(screen.getByLabelText("Announcement"));
     await userEvent.click(screen.getByRole("button", { name: "Save announcement" }));
 
@@ -144,10 +146,7 @@ describe("SettingsCallingPage", () => {
           c.path === "/api/v1/orgs/current/calling" &&
           c.init.method === "PATCH",
       );
-      expect(patchCall?.init.json).toEqual({
-        recording_announcement: true,
-        recording_announcement_text: null,
-      });
+      expect(patchCall?.init.json).toEqual({ recording_announcement_text: null });
     });
   });
 

@@ -54,6 +54,11 @@ var (
 
 const announceTimeout = 60 * time.Second
 
+// announceSpeechWait: after the carrier says "answered", wait this long for the callee
+// to speak before playing the announcement anyway. A forwarding line "answers" and then
+// plays ringback for several seconds; the speech gate never fires on tones.
+const announceSpeechWait = 6 * time.Second
+
 type fileInfo struct {
 	File          string `json:"file"`
 	Identity      string `json:"identity"`
@@ -88,6 +93,7 @@ type roomRec struct {
 	room     *lksdk.Room
 	wg       sync.WaitGroup
 	armed    atomic.Bool // announcement done (or not required): packets may be written
+	gate     *speechGate // hears the callee's first words; nil = play on answer
 	started  atomic.Bool // announcement playback claimed
 	stopping atomic.Bool
 
@@ -184,6 +190,11 @@ func (r *recorder) start(name, announce string, resume bool) error {
 	}
 	if announce != "" && !resume {
 		rr.announce = filepath.Join(r.dir, "announce", announce)
+		if dec, err := newOpusDecoder(); err == nil {
+			rr.gate = newSpeechGate(dec)
+		} else {
+			log.Printf("speech gate unavailable room=%s err=%v (announce on answer)", name, err)
+		}
 	} else {
 		rr.armed.Store(true) // no announcement required, or it already played before a restart
 	}
@@ -251,6 +262,18 @@ func (r *recorder) maybeAnnounce(rr *roomRec, p lksdk.Participant) {
 		return
 	}
 	go func() {
+		if rr.gate != nil {
+			rr.gate.activate(time.Now())
+			select {
+			case <-rr.gate.heard():
+				log.Printf("callee spoke room=%s; announcing", rr.name)
+			case <-time.After(announceSpeechWait):
+				log.Printf("no speech after answer room=%s; announcing anyway", rr.name)
+			}
+			if rr.stopping.Load() {
+				return
+			}
+		}
 		err := playFile(rr.room, rr.announce)
 		rr.mu.Lock()
 		if err != nil {

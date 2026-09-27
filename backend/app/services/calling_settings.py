@@ -81,9 +81,17 @@ def announcement_text_for(org) -> str:
     return DEFAULT_ANNOUNCEMENT_TEXT
 
 
+def announcement_ops_off(org) -> bool:
+    """Whether platform ops (super admins) switched the recording notice off for this org."""
+    return _stored_settings(org).get("announcement_off") is True
+
+
 def announcement_enabled(org) -> bool:
-    """Return whether the recording announcement toggle is on."""
-    return bool(getattr(org, "recording_announcement", False))
+    """Whether the recording notice plays: on by default whenever the org records calls,
+    unless a super admin switched it off for the org. The org cannot change it itself,
+    and safety monitoring never plays it (the legacy recording_announcement column is
+    no longer consulted)."""
+    return record_calls_for(org) and not announcement_ops_off(org)
 
 
 def normalize_dispositions(raw) -> list[str]:
@@ -167,6 +175,8 @@ def as_dict(org) -> dict:
     """Return the full calling-settings payload for the settings page."""
     return {
         "recording_announcement": announcement_enabled(org),
+        # Only platform ops can switch the notice; the settings page shows it read-only.
+        "recording_announcement_locked": True,
         "recording_announcement_text": getattr(org, "recording_announcement_text", None),
         "announcement_text_effective": announcement_text_for(org),
         "channel_layout": channel_layout_for(org),

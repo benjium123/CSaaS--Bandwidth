@@ -181,7 +181,8 @@ async def _add_call(
 async def _set_announcement(session, org_id: uuid.UUID, enabled: bool) -> None:
     set_org_context(session, org_id)
     org = await session.get(Org, org_id)
-    org.recording_announcement = enabled
+    # The notice follows call recording; super admins can switch it off (announcement_off).
+    org.calling_settings = {"record_calls": True} if enabled else {"record_calls": False}
     await session.commit()
 
 
@@ -328,7 +329,8 @@ async def test_calling_settings_defaults(p29_app):
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["recording_announcement"] is False
+    assert body["recording_announcement"] is False  # recording is off by default
+    assert body["recording_announcement_locked"] is True
     assert body["recording_announcement_text"] is None
     assert body["channel_layout"] == "mixed"
     assert body["dispositions"] == list(calling_settings_svc.DEFAULT_DISPOSITIONS)
@@ -832,7 +834,9 @@ async def test_consent_announcement_plays_once_per_call(p29_app, session):
 
 async def test_consent_announcement_is_played_before_recording_on_an_answered_outbound_call():
     call = SimpleNamespace(extra={"record": True})
-    org_on = SimpleNamespace(recording_announcement=True, recording_announcement_text=None)
+    org_on = SimpleNamespace(
+        calling_settings={"record_calls": True}, recording_announcement_text=None
+    )
     commands = _outbound_answer_commands(call, org_on, needs_pause=False)
     assert len(commands) == 2
     assert isinstance(commands[0], voice.Speak)
@@ -841,7 +845,8 @@ async def test_consent_announcement_is_played_before_recording_on_an_answered_ou
 
     off_call = SimpleNamespace(extra={"record": True})
     org_off = SimpleNamespace(
-        recording_announcement=False, recording_announcement_text=None
+        calling_settings={"record_calls": True, "announcement_off": True},
+        recording_announcement_text=None,
     )
     commands = _outbound_answer_commands(off_call, org_off, needs_pause=False)
     assert len(commands) == 1
@@ -1100,3 +1105,22 @@ async def test_agents_can_read_the_call_result_list(p29_app, session):
     r = await client.get("/api/v1/calls/dispositions", headers=auth_headers(agent_token, org_id))
     assert r.status_code == 200, r.text
     assert r.json() == {"dispositions": ["Booked", "Not now"]}
+
+
+async def test_workspace_owner_cannot_switch_the_recording_notice(p29_app):
+    client, _fake, _app = p29_app
+    token, org, org_id = await _org(client, "notice-locked")
+    r = await client.patch(
+        "/api/v1/orgs/current/calling",
+        json={"recording_announcement": False},
+        headers=auth_headers(token, org_id),
+    )
+    assert r.status_code == 403, r.text
+
+
+async def test_recording_notice_is_on_by_default_whenever_the_org_records():
+    org = SimpleNamespace(calling_settings={"record_calls": True})
+    assert calling_settings_svc.announcement_enabled(org) is True
+    assert calling_settings_svc.announcement_enabled(SimpleNamespace(calling_settings={})) is False
+    ops_off = SimpleNamespace(calling_settings={"record_calls": True, "announcement_off": True})
+    assert calling_settings_svc.announcement_enabled(ops_off) is False

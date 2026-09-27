@@ -345,6 +345,9 @@ def main() -> None:
             agent_name=name,
             port=8084,
             num_idle_processes=resolve_idle_processes("hold-music"),
+            # Playing a loop costs next to nothing: never refuse a hold because the host
+            # CPU is busy (the default load check reports host CPU and stops at 0.7).
+            load_fnc=lambda *_args: 0.0,
         )
     )
 

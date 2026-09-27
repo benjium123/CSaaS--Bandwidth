@@ -181,10 +181,8 @@ async def update_calling_settings(
     changed: list[str] = []
 
     if "recording_announcement" in payload.model_fields_set:
-        if payload.recording_announcement is None:
-            raise ValidationFailedError("Recording announcement must be true or false")
-        ctx.org.recording_announcement = payload.recording_announcement
-        changed.append("recording_announcement")
+        # Only platform super admins switch the recording notice (ops console).
+        raise PermissionDeniedError("Only Ringlite support can turn the recording notice on or off")
 
     if "recording_announcement_text" in payload.model_fields_set:
         ctx.org.recording_announcement_text = (

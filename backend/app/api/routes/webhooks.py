@@ -350,11 +350,8 @@ def _outbound_answer_commands(call, org, *, needs_pause: bool) -> list[VoiceComm
     needs the Pause.
     """
     commands: list[VoiceCommand] = []
-    # P43: a call recorded for safety monitoring ALWAYS tells the other side first, even
-    # when the business turned its own announcement off (two-party consent states).
-    if org is not None and (
-        calling_settings_svc.announcement_enabled(org) or (call.extra or {}).get("monitor")
-    ):
+    # The notice follows the org's recording setting only; safety monitoring never plays it.
+    if org is not None and calling_settings_svc.announcement_enabled(org):
         commands.append(Speak(text=calling_settings_svc.announcement_text_for(org)))
     if call.extra.get("record"):
         commands.append(StartRecording())

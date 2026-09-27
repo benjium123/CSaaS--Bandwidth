@@ -106,10 +106,15 @@ async def test_choose_new_watch_sample_and_off(session, mon_settings):
     assert await monitor_calls.choose(session, make_settings(), new_org) is None
 
 
-def test_monitored_calls_always_announce_before_recording():
-    org = SimpleNamespace(recording_announcement=False, recording_announcement_text="")
+def test_monitoring_never_plays_the_notice_only_org_recording_does():
+    org = SimpleNamespace(calling_settings={}, recording_announcement_text="")
     monitored = SimpleNamespace(extra={"monitor": "new_account", "record": True})
     commands = _outbound_answer_commands(monitored, org, needs_pause=False)
+    assert len(commands) == 1 and isinstance(commands[0], StartRecording)
+    recording_org = SimpleNamespace(
+        calling_settings={"record_calls": True}, recording_announcement_text=""
+    )
+    commands = _outbound_answer_commands(monitored, recording_org, needs_pause=False)
     assert isinstance(commands[0], Speak) and isinstance(commands[1], StartRecording)
     plain = SimpleNamespace(extra={})
     assert _outbound_answer_commands(plain, org, needs_pause=False) == []
@@ -296,7 +301,8 @@ async def test_listener_joins_monitored_inbound_room_calls(voice, session, mon_s
     dispatch = api.dispatches[0]
     assert dispatch["agent_name"] == "call-monitor"
     assert dispatch["metadata"]["call_id"] == str(call.id)
-    assert dispatch["metadata"]["announcement"].startswith("This call may be recorded")
+    # Monitoring alone never plays the notice (the org does not record calls).
+    assert dispatch["metadata"]["announcement"] == ""
     set_org_context(session, org_id)
     await session.refresh(call)
     assert call.extra["monitor"] == "new_account" and call.extra["monitor_dispatched"] is True

@@ -48,9 +48,26 @@ function featurePath(orgId: string, key: string): string {
   return `${featuresPath(orgId)}/${key}`;
 }
 
-async function fetchOrgFeatures(api: ConsoleApi, orgId: string): Promise<OrgFeature[]> {
-  const data = await api.request<{ org_id: string; features: OrgFeature[] }>(featuresPath(orgId));
-  return data.features ?? [];
+/** The "this call may be recorded" notice: on by default, only super admins switch it. It
+ * plays only on calls the workspace records. */
+export type RecordingNotice = { enabled: boolean; record_calls: boolean };
+
+type OrgFeaturesPayload = { features: OrgFeature[]; recordingNotice: RecordingNotice | null };
+
+async function fetchOrgFeatures(api: ConsoleApi, orgId: string): Promise<OrgFeaturesPayload> {
+  const data = await api.request<{
+    org_id: string;
+    features: OrgFeature[];
+    recording_notice?: RecordingNotice;
+  }>(featuresPath(orgId));
+  return { features: data.features ?? [], recordingNotice: data.recording_notice ?? null };
+}
+
+async function setRecordingNotice(api: ConsoleApi, orgId: string, enabled: boolean) {
+  return api.request(`/api/v1/ops/console/orgs/${orgId}/recording-notice`, {
+    method: "PUT",
+    json: { enabled },
+  });
 }
 
 async function setOrgFeature(
@@ -108,7 +125,15 @@ export function OrgFeaturesPanel({
     },
   });
 
-  const features = featuresQuery.data ?? [];
+  const noticeMutation = useMutation({
+    mutationFn: (enabled: boolean) => setRecordingNotice(api, orgId, enabled),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orgFeaturesQueryKey(orgId) });
+    },
+  });
+
+  const features = React.useMemo(() => featuresQuery.data?.features ?? [], [featuresQuery.data]);
+  const notice = featuresQuery.data?.recordingNotice ?? null;
   const grouped = React.useMemo(() => groupFeatures(features), [features]);
   const pendingKey = toggleMutation.isPending
     ? toggleMutation.variables?.key ?? null
@@ -136,6 +161,37 @@ export function OrgFeaturesPanel({
         </p>
       ) : features.length > 0 ? (
         <div className="space-y-4">
+          {notice ? (
+            <div className="flex items-start justify-between gap-4 rounded-[var(--cx-r-md,14px)] border border-border px-3 py-2">
+              <div className="min-w-0 space-y-1">
+                <span className="text-[13px] font-medium">Recording notice</span>
+                <p className="text-xs text-muted-foreground">
+                  Plays &quot;this call may be recorded&quot; when the other side answers, on calls
+                  this workspace records. On by default; only super admins can change it.
+                  {notice.record_calls ? "" : " Call recording is off, so it does not play now."}
+                </p>
+              </div>
+              <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="Recording notice"
+                  className="peer sr-only"
+                  checked={notice.enabled}
+                  disabled={!canEdit || noticeMutation.isPending}
+                  onChange={(event) => noticeMutation.mutate(event.target.checked)}
+                />
+                <span
+                  aria-hidden="true"
+                  className="h-5 w-9 rounded-full bg-muted transition-colors peer-checked:bg-muted-foreground peer-disabled:opacity-50"
+                />
+                <span
+                  aria-hidden="true"
+                  className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full border border-border bg-background transition-transform peer-checked:translate-x-4"
+                />
+              </label>
+            </div>
+          ) : null}
           {grouped.map((group) => (
             <div key={group.group} className="space-y-2">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -207,6 +263,12 @@ export function OrgFeaturesPanel({
       ) : (
         <ConsoleEmpty>No features yet.</ConsoleEmpty>
       )}
+
+      {noticeMutation.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {mutationErrorMessage(noticeMutation.error)}
+        </p>
+      ) : null}
 
       {toggleMutation.isError ? (
         <p role="alert" className="text-sm text-destructive">

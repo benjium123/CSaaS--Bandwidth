@@ -105,6 +105,9 @@ func recordTrack(track *webrtc.TrackRemote, rr *roomRec, identity, kind string) 
 		for _, p := range ps {
 			if !rr.armed.Load() {
 				st.PreConsent++
+				if rr.gate != nil && kind == "sip" {
+					rr.gate.feedOpus(p.Payload, time.Now()) // listens only; never written
+				}
 				continue
 			}
 			if seg == nil {

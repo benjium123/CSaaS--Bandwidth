@@ -53,7 +53,9 @@ async def _setup(session, mon_settings, tmp_path, monkeypatch, *, record=True, a
             session, org_id, "call_recording",
             enabled=True, price_override_micros=None, actor_user_id=None,
         )
-    org.recording_announcement = announce
+    if not announce:
+        # The notice is on by default for a recording org; a super admin switched it off.
+        org.calling_settings = {**(org.calling_settings or {}), "announcement_off": True}
     await session.commit()
     started: list[tuple[str, str]] = []
     announced: list[str] = []

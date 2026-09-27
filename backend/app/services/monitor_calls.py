@@ -152,7 +152,12 @@ async def dispatch_listener(session: AsyncSession, api, settings: Settings, call
             "call_id": str(call.id),
             "org_id": str(call.org_id),
             "worker_token": token,
-            "announcement": calling_settings_svc.announcement_text_for(org),
+            # Monitoring never plays the notice; only an org that records calls does.
+            "announcement": (
+                calling_settings_svc.announcement_text_for(org)
+                if org is not None and calling_settings_svc.announcement_enabled(org)
+                else ""
+            ),
         }
     )
     try:
@@ -961,8 +966,8 @@ async def start_recorder(
 ) -> bool:
     """Record a room call with lkrec. False = not handled (recorder off or unreachable,
     announcement unavailable): a monitored call then falls back to the live listener, so
-    it is never left unwatched. A monitored call always hears the announcement first; a
-    call recorded only for the customer hears it when the org turned it on. With
+    it is never left unwatched. The announcement plays only when the org records calls
+    and platform ops have not switched it off; monitoring alone never plays it. With
     `customer`, a pending CallRecording is queued; customer_recording finalizes it after
     hangup."""
     from app.models import Org
@@ -974,7 +979,7 @@ async def start_recorder(
         return True  # participant_joined fires more than once per call
     org = await session.get(Org, call.org_id)
     announcement = ""
-    if monitored or calling_settings.announcement_enabled(org):
+    if calling_settings.announcement_enabled(org):
         try:
             announcement = await lkrec.ensure_announcement(settings, org)
         except lkrec.AnnouncementUnavailable:

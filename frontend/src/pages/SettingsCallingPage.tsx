@@ -88,8 +88,8 @@ export function SettingsCallingPage() {
     layoutValue !== settings.channel_layout ||
     recordValue !== settings.record_calls ||
     transcriptValue !== settings.transcription_mode;
-  const announcementEnabledValue =
-    announcementEnabledDraft ?? settings.recording_announcement;
+  // Only Ringlite support switches the notice: it always shows the saved value here.
+  const announcementEnabledValue = settings.recording_announcement;
   const announcementTextValue = announcementTextDraft ?? "";
   const listValue = dispositionsDraft ?? settings.dispositions;
 
@@ -121,9 +121,7 @@ export function SettingsCallingPage() {
   const announcementTooLong =
     announcementTextValue.trim().length > MAX_ANNOUNCEMENT_LEN;
   const savedAnnouncementText = settings.recording_announcement_text ?? null;
-  const announcementChanged =
-    announcementEnabledValue !== settings.recording_announcement ||
-    normalizedAnnouncementText !== savedAnnouncementText;
+  const announcementChanged = normalizedAnnouncementText !== savedAnnouncementText;
 
   function saveAnnouncement(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -137,12 +135,8 @@ export function SettingsCallingPage() {
     }
 
     const patch: {
-      recording_announcement?: boolean;
       recording_announcement_text?: string | null;
     } = {};
-    if (announcementEnabledValue !== settings.recording_announcement) {
-      patch.recording_announcement = announcementEnabledValue;
-    }
     if (normalizedAnnouncementText !== savedAnnouncementText) {
       patch.recording_announcement_text = normalizedAnnouncementText;
     }
@@ -347,13 +341,15 @@ export function SettingsCallingPage() {
               <input
                 type="checkbox"
                 checked={announcementEnabledValue}
-                onChange={() => {
-                  announcementMutation.reset();
-                  setAnnouncementEnabledDraft(!announcementEnabledValue);
-                }}
-                disabled={!canWrite}
+                readOnly
+                disabled
               />
-              <span>Play an announcement before the call connects</span>
+              <span>
+                Play &quot;this call may be recorded&quot; when the other side answers
+                <span className="block text-[12px] text-muted-foreground">
+                  On whenever call recording is on. Contact Ringlite support to change it.
+                </span>
+              </span>
             </label>
 
             <Textarea

@@ -163,10 +163,17 @@ async def _org_or_404(op: OperatorContext, org_id: uuid.UUID) -> Org:
 async def console_org_features(org_id: uuid.UUID, op: Reviewer) -> dict:
     from app.services import entitlements
 
-    await _org_or_404(op, org_id)
+    from app.services import calling_settings
+
+    org = await _org_or_404(op, org_id)
     values = await entitlements.for_org(op.session, org_id)
     return {
         "org_id": str(org_id),
+        # The "this call may be recorded" notice: on by default, super admins switch it.
+        "recording_notice": {
+            "enabled": not calling_settings.announcement_ops_off(org),
+            "record_calls": calling_settings.record_calls_for(org),
+        },
         "features": [
             {
                 "key": f.key,
@@ -209,6 +216,35 @@ async def console_set_org_feature(
     )
     await op.session.commit()
     return {"org_id": str(org_id), "key": key, "enabled": payload.enabled}
+
+
+class RecordingNoticeIn(BaseModel):
+    enabled: bool
+
+
+@router.put("/orgs/{org_id}/recording-notice")
+async def console_set_recording_notice(
+    org_id: uuid.UUID, payload: RecordingNoticeIn, op: Admin
+) -> dict:
+    """Super admins only: switch the org's recording notice on or off. It plays only on
+    calls the org records; the org itself cannot change this."""
+    from app.services import calling_settings
+
+    org = await _org_or_404(op, org_id)
+    before = not calling_settings.announcement_ops_off(org)
+    stored = dict(org.calling_settings or {})
+    if payload.enabled:
+        stored.pop("announcement_off", None)
+    else:
+        stored["announcement_off"] = True
+    org.calling_settings = stored
+    _audit(op, org_id, "org_recording_notice.updated", {"from": before, "to": payload.enabled})
+    await op.session.commit()
+    return {
+        "org_id": str(org_id),
+        "enabled": payload.enabled,
+        "plays_now": calling_settings.announcement_enabled(org),
+    }
 
 
 class FixedCostIn(BaseModel):
