@@ -131,7 +131,7 @@ function BundleRow({ info, kind, canPay }: { info: BundlesInfo; kind: BundleKind
       </p>
 
       <p className="text-xs text-muted-foreground">
-        Bundles are non-refundable, including unused units.{" "}
+        Bundles are non-refundable and unused units expire at your monthly renewal (no roll-over).{" "}
         <a className="underline" href="/legal/refunds" target="_blank" rel="noopener noreferrer">
           Refund policy
         </a>

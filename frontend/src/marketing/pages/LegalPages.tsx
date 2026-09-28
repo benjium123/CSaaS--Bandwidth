@@ -133,6 +133,9 @@ export function RefundPage() {
           <li>Any payment under an open chargeback or dispute.</li>
         </ul>
 
+        <h2>No roll-over</h2>
+        <p>Plan allowances, packages and bundles do not roll over. Unused units expire at your monthly renewal and are not refunded.</p>
+
         <h2>Cancelling a plan</h2>
         <p>You can cancel any time in Billing. Plans are billed per period: access runs to the end of the period you paid for, and we do not refund partial periods.</p>
 

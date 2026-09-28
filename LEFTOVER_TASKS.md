@@ -77,7 +77,8 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
 8. ~~Refund claw-back decision~~ DECIDED + BUILT 2026-09-28 (dbb1d01, 70d0f74): refundable = ONLY unused paid credit, less Stripe fees (customer bears card fees both ways); bundles/spent credit/plans/number+10DLC fees never. Ops -> Billing -> "Refund unused credit" issues it; refunds made in Stripe take back the unused part (fee-grossed), excess -> `refund_shortfall` alert; P&L nets refunds, keeps fees. [USER] add `charge.refunded` to the Stripe webhook; policy page /legal/refunds = Ringlite branch.
    Original note: **Refund claw-back decision** — refunding a custom invoice does not take back granted
    packages/credit (reference `invoice:<id>:<line>`). Needs a `charge.refunded` handler if wanted.
-9. **[USER] Invoiced packages roll-over?** — today they expire at monthly renewal like bought bundles
+9. ~~Invoiced packages roll-over?~~ DECIDED 2026-09-28 (user): NOTHING rolls over - plan allowances, invoiced packages and bought bundles all expire at the monthly renewal (already the code: plans per period, bundles.expire_unused, invoice packages = purchase entries). Stated on the bundle card; legal pages = Ringlite.
+   Original: **Invoiced packages roll-over?** — today they expire at monthly renewal like bought bundles
    (entry_type "purchase"). Roll-over = new entry_type in `custom_invoices.apply_paid` + 2b's `expire_unused` rule.
 10. **[USER] Monitoring steps 2–5 file-list OK** (2b) — each needs its file list approved (>3-files
     rule); security logic → build directly, not delegated. User policy (verbatim): "major actions like
