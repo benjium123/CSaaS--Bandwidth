@@ -193,7 +193,8 @@ describe("App shell error boundary", () => {
     // Not just a URL change: the boundary cleared and a working page rendered.
     expect(await screen.findByText("Contacts page")).toBeInTheDocument();
     expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
-    expect(await screen.findByRole("navigation", { name: "Sidebar" })).toBeInTheDocument();
+    // The top bar (outside the boundary) carries the navigation now.
+    expect(await screen.findByRole("navigation", { name: "Main" })).toBeInTheDocument();
   });
 
   it("lets the user navigate away when a non-inbox route throws", async () => {

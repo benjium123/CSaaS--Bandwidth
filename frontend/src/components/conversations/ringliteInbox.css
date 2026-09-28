@@ -87,10 +87,10 @@
 
 @media (min-width: 640px) {
   .console-surface.ringlite-inbox { grid-template-rows: minmax(0, 1fr); }
-  .console-surface.ringlite-inbox > .cx-rail { width: 256px; }
+  .console-surface.ringlite-inbox > .cx-rail { width: var(--ri-w-inbox, 256px); }
 }
 @media (min-width: 640px) and (max-width: 1023px) {
-  .console-surface.ringlite-inbox { grid-template-columns: 256px minmax(0, 1fr); }
+  .console-surface.ringlite-inbox { grid-template-columns: var(--ri-w-inbox, 256px) minmax(0, 1fr); }
 }
 @media (max-width: 639px) {
   .console-surface.ringlite-inbox { grid-template-rows: auto minmax(0, 1fr); }
@@ -98,8 +98,8 @@
 }
 
 @media (min-width: 1024px) {
-  .console-surface.ringlite-inbox[data-panel='closed'] { grid-template-columns: 256px minmax(0, 1fr) 0; }
-  .console-surface.ringlite-inbox[data-panel='open'] { grid-template-columns: 256px minmax(0, 1fr) 272px; }
+  .console-surface.ringlite-inbox[data-panel='closed'] { grid-template-columns: var(--ri-w-inbox, 256px) minmax(0, 1fr) 0; }
+  .console-surface.ringlite-inbox[data-panel='open'] { grid-template-columns: var(--ri-w-inbox, 256px) minmax(0, 1fr) 272px; }
   .console-surface.ringlite-inbox .ri-workspace { padding: 12px 0 12px 12px; }
   .console-surface.ringlite-inbox .ri-conversations { border: 1px solid var(--ri-edge); border-radius: 22px 0 0 22px; overflow: hidden; }
   .console-surface.ringlite-inbox .cx-thread { border: 1px solid var(--ri-edge); border-left: 0; border-radius: 0 22px 22px 0; overflow: hidden; margin-right: 12px; }
@@ -108,7 +108,7 @@
   .console-surface.ringlite-inbox .ri-workspace { animation-delay: .05s; }
 }
 @media (min-width: 768px) and (max-width: 1399px) {
-  .console-surface.ringlite-inbox[data-panel='open'] .ri-workspace { grid-template-columns: 270px minmax(0, 1fr); }
+  .console-surface.ringlite-inbox[data-panel='open'] .ri-workspace { grid-template-columns: min(var(--ri-w-list, 320px), 270px) minmax(0, 1fr); }
 }
 @media (max-width: 767px) {
   .console-surface.ringlite-inbox .ri-list-heading { padding: 15px; }
@@ -139,3 +139,14 @@
   .console-surface.ringlite-inbox[data-rail-collapsed='true'][data-panel='open'] { grid-template-columns: 72px minmax(0, 1fr) 272px; }
 }
 @media (prefers-reduced-motion: reduce) { .console-surface.ringlite-inbox .ri-brand,.console-surface.ringlite-inbox .ri-workspace { animation: none; } }
+
+/* Phase 1: resizable columns (useColumnWidths). A closed list gives the thread its full
+   rounded frame; the splitters overlay the column seams and only exist at lg+. */
+.console-surface.ringlite-inbox .ri-workspace { position: relative; }
+/* The list is display:none when closed, so the thread must own the only column. */
+.console-surface.ringlite-inbox[data-list-closed='true'] .ri-workspace { grid-template-columns: minmax(0, 1fr) !important; }
+@media (min-width: 1024px) {
+  .console-surface.ringlite-inbox[data-list-closed='true'] .cx-thread { border-left: 1px solid var(--ri-edge); border-radius: 22px; }
+}
+.console-surface.ringlite-inbox .ri-splitter-slot { position: absolute; top: 0; bottom: 0; display: none; z-index: 20; }
+@media (min-width: 1024px) { .console-surface.ringlite-inbox .ri-splitter-slot { display: flex; } }

@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
+import { dndTimeLeft, useCallPrefs } from "@/api/callPrefs";
 import { useNumbers } from "@/api/hooks";
 import { useSoftphone, type Caption, type IncomingRing } from "@/softphone/SoftphoneProvider";
 import { useCapabilities } from "@/api/capabilities";
@@ -218,39 +219,13 @@ export function SoftphonePanel() {
   }
   // Do Not Disturb + where my rings go meanwhile (GET/PUT /me/call-prefs). Forwarding is
   // teammates only - calls never leave the workspace.
-  const [callPrefs, setCallPrefs] = React.useState<{
-    dnd: boolean;
-    forward_to: string | null;
-    teammates: { user_id: string; name: string }[];
-  } | null>(null);
-  const [prefsError, setPrefsError] = React.useState<string | null>(null);
-  React.useEffect(() => {
-    if (!me || !orgId) return;
-    let cancelled = false;
-    api
-      .request<{ dnd: boolean; forward_to: string | null; teammates: { user_id: string; name: string }[] }>(
-        "/api/v1/me/call-prefs",
-      )
-      .then((res) => {
-        if (!cancelled) setCallPrefs(res);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [api, me, orgId]);
-  async function saveCallPrefs(dnd: boolean, forwardTo: string | null) {
+  // Shared with the top bar's status pill (api/callPrefs.ts): one cache, so turning DND on
+  // in either place shows up in both at once.
+  const { prefs: callPrefs, save: savePrefs, error: prefsError } = useCallPrefs();
+  function saveCallPrefs(dnd: boolean, forwardTo: string | null) {
     if (!callPrefs) return;
-    setPrefsError(null);
-    try {
-      const saved = await api.request<{ dnd: boolean; forward_to: string | null }>("/api/v1/me/call-prefs", {
-        method: "PUT",
-        json: { dnd, forward_to: dnd ? forwardTo : null },
-      });
-      setCallPrefs({ ...callPrefs, ...saved });
-    } catch (err) {
-      setPrefsError(err instanceof Error ? err.message : "Could not save");
-    }
+    // The checkbox means "until I turn it off"; changing the forward keeps any end time.
+    void savePrefs({ dnd, dnd_until: dnd ? callPrefs.dnd_until : null, forward_to: forwardTo });
   }
   const [pickupError, setPickupError] = React.useState<string | null>(null);
   async function handlePickup(callId: string) {
@@ -698,7 +673,9 @@ export function SoftphonePanel() {
         <div className="space-y-1 border-b border-border px-3 py-2 text-xs">
           <label className="flex items-center justify-between gap-2">
             <span className={callPrefs.dnd ? "font-medium text-destructive" : "text-muted-foreground"}>
-              {callPrefs.dnd ? "Do not disturb is on" : "Do not disturb"}
+              {callPrefs.dnd
+                ? `Do not disturb is on${dndTimeLeft(callPrefs.dnd_until) ? ` · ${dndTimeLeft(callPrefs.dnd_until)}` : ""}`
+                : "Do not disturb"}
             </span>
             <input
               type="checkbox"

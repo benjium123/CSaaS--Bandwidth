@@ -21,6 +21,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { SettingsIndexRedirect } from "@/pages/SettingsIndexRedirect";
 import { Spinner } from "@/components/ui/primitives";
 import { Sidebar, MobileTabBar } from "@/components/shell/Sidebar";
+import { TopBar } from "@/components/shell/TopBar";
 import { SetupPage } from "@/pages/SetupPage";
 import { ErrorBoundary, ErrorFallbackNav } from "@/components/shell/ErrorBoundary";
 import { BannerRegion } from "@/components/shell/BannerSlot";
@@ -112,8 +113,8 @@ function InboxRoute() {
  * on a phone - renders outside this and is untouched.
  */
 function useHideIconRail(): boolean {
-  const { pathname } = useLocation();
-  return pathname === "/inbox" || pathname.startsWith("/inbox/");
+  // Phase 1 (docs/design/INBOX_NAV_SPEC.md): the top bar replaced the rail on every route.
+  return true;
 }
 
 /** Exported for OnboardingJourney.test.tsx, which pins the console theme class it emits. */
@@ -145,7 +146,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           carrying it on this one wrapper hands the palette to every page rendered as `children`.
           Public screens (/, /login, /onboarding, /plans) return before this component and are
           not descendants of this node, so no console token can reach them. */}
-      <div className={cn("console-surface", surfaceThemeClass(theme), "flex h-full bg-background text-foreground")}>
+      <div className={cn("console-surface", surfaceThemeClass(theme), "flex h-full flex-col bg-background text-foreground")}>
+        {/* The top bar carries the navigation the icon rail used to (same useRailNav gate),
+            plus search, status, bell, help and the account menu. The rail is kept only as a
+            fallback for routes that opt back into it (none today). */}
+        <TopBar />
+        <div className="flex min-h-0 flex-1">
         {hideIconRail ? null : <Sidebar />}
         <main className="min-h-0 flex-1 pb-14 sm:pb-0">
           {/* At most ONE of these renders - see BannerSlot.tsx for the priority order and
@@ -162,6 +168,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             {children}
           </ErrorBoundary>
         </main>
+        </div>
       </div>
       <MobileTabBar />
       <CommandPalette />

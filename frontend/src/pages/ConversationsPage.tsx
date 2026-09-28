@@ -36,6 +36,8 @@ import "@fontsource-variable/onest/wght.css";
 import "@fontsource-variable/martian-mono/wght.css";
 import "@/components/conversations/consoleTheme.css";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+import { ColumnSplitter } from "@/components/shell/ColumnSplitter";
+import { useColumnWidths } from "@/components/shell/useColumnWidths";
 
 /** Item 2: the list is kept fresh two ways - a background poll while the tab is visible
  * (TanStack Query pauses `refetchInterval` in the background by default, so this alone
@@ -100,6 +102,9 @@ export function ConversationsPage() {
     setRailCollapsed(next);
     try { localStorage.setItem("ringlite.inbox.rail-collapsed", String(next)); } catch { /* The current session still works when storage is unavailable. */ }
   }
+  // Phase 1: drag the column seams; widths and a closed list are remembered per browser.
+  const columns = useColumnWidths();
+  const listClosed = columns.closed.list;
   const [contactPanelOpen, setContactPanelOpen] = React.useState(false);
   const [mobileInboxSheetOpen, setMobileInboxSheetOpen] = React.useState(false);
   // P28: the send-later list. Local state, not a URL param - it is a peek at a queue, not
@@ -454,6 +459,13 @@ export function ConversationsPage() {
       )}
       data-panel={contactPanelOpen ? "open" : "closed"}
       data-rail-collapsed={!isBelowSm && railCollapsed}
+      data-list-closed={listClosed}
+      style={
+        {
+          "--ri-w-inbox": `${columns.widths.inbox}px`,
+          "--ri-w-list": listClosed ? "0px" : `${columns.widths.list}px`,
+        } as React.CSSProperties
+      }
     >
       {/* Floats over the whole inbox (it's `fixed`-positioned) rather than replacing the
           selected conversation's pane the way NewConversationPanel does for a text
@@ -514,7 +526,35 @@ export function ConversationsPage() {
           conversation list with it and putting the reply box out of reach. Timeline itself
           already has `min-h-0 flex-1 overflow-y-auto`; the constraint was missing on its
           ancestors, which is why the symptom looked like "the timeline won't scroll". */}
-      <main className="ri-workspace grid min-h-0 min-w-0 grid-cols-[1fr] md:grid-cols-[320px_1fr]">
+      <main className="ri-workspace grid min-h-0 min-w-0 grid-cols-[1fr] md:grid-cols-[var(--ri-w-list,320px)_1fr]">
+        {!isBelowSm && (
+          <div className="ri-splitter-slot" style={{ left: 0 }}>
+            <ColumnSplitter
+              column="inbox"
+              label="sidebar"
+              width={columns.widths.inbox}
+              closed={railCollapsed}
+              onResize={(px) => columns.setWidth("inbox", px)}
+              onToggle={toggleRail}
+              onSnapClosed={() => {
+                if (!railCollapsed) toggleRail();
+              }}
+            />
+          </div>
+        )}
+        {!isBelowSm && (
+          <div className="ri-splitter-slot" style={{ left: listClosed ? 12 : `calc(12px + ${columns.widths.list}px)` }}>
+            <ColumnSplitter
+              column="list"
+              label="conversation list"
+              width={columns.widths.list}
+              closed={listClosed}
+              onResize={(px) => columns.setWidth("list", px)}
+              onToggle={() => columns.toggle("list")}
+              onSnapClosed={() => columns.setClosed("list", true)}
+            />
+          </div>
+        )}
         <ConversationList
           items={items}
           selectedContactE164={urlContact}
@@ -531,7 +571,7 @@ export function ConversationsPage() {
           onLoadMore={conversationsQuery.fetchNextPage}
           error={conversationsQuery.error ? (conversationsQuery.error as Error).message : null}
           hasNoInboxAccess={!inboxesQuery.isLoading && inboxes.length === 0}
-          className={cn((selectedConversation || composeMode) && "hidden", "md:flex")}
+          className={cn((selectedConversation || composeMode) && "hidden", listClosed ? "md:hidden" : "md:flex")}
           onNew={(kind) => {
             setComposeSeed(null);
             setComposeMode(kind);

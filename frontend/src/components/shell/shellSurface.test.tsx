@@ -284,12 +284,12 @@ describe("the inbox route has exactly one navigation", () => {
     expect(screen.queryByRole("navigation", { name: "Sidebar" })).not.toBeInTheDocument();
   });
 
-  it("keeps the icon Sidebar on every other console route", async () => {
+  it("shows the top bar navigation on every other console route, and no icon rail", async () => {
+    // Phase 1 (docs/design/INBOX_NAV_SPEC.md): the top bar carries the rail's navigation.
     renderApp("/contacts");
 
-    expect(
-      await screen.findByRole("navigation", { name: "Sidebar" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Main" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Sidebar" })).not.toBeInTheDocument();
   });
 
   it("leaves phone navigation alone - the mobile bar still renders on /inbox", async () => {
