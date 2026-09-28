@@ -75,9 +75,12 @@ async def get_current_user(
 
     if creds is None or not creds.credentials:
         raise UnauthenticatedError("Sign in to continue")
-    if not settings.auth_bearer_compat:
-        raise UnauthenticatedError("Sign in to continue")
     user_id, sid = decode_access_token(creds.credentials, settings.jwt_secret.get_secret_value())
+    if not settings.auth_bearer_compat:
+        # Ringlite apps P1: with bearer-compat off, only a live DEVICE session (Android /
+        # desktop) may use a Bearer token; web sessions stay cookie-only.
+        await _authenticate_device(request, session, sid, user_id)
+        return await _finish_user(request, session, settings, user_id)
 
     if sid is not None:
         request.state.session_id = sid
@@ -92,6 +95,31 @@ async def get_current_user(
             await session_cache.remember(settings, sid, False)
 
     return await _finish_user(request, session, settings, user_id)
+
+
+async def _authenticate_device(
+    request: Request, session: AsyncSession, sid: uuid.UUID | None, user_id: uuid.UUID
+) -> None:
+    """Ringlite apps P1: validate a device access token's session row on every request.
+
+    The row check (not the 60 s revocation cache) is what makes removal, disable and password
+    reset sign a device out on its very next call. Device sessions have no idle timeout; the
+    hard expiry is enforced here and by the token's own ``exp``."""
+    expired = UnauthenticatedError("Your session has ended. Sign in again.", code="session_expired")
+    if sid is None:
+        raise UnauthenticatedError("Sign in to continue")
+    row = await identity_svc.get_live_session(session, sid)
+    if row is None or not row.is_device or row.user_id != user_id:
+        raise expired
+    request.state.session_id = sid
+    # Only the creation time: a workspace's session_max_hours applies to devices too, its
+    # idle timeout does not (see _enforce_org_session_policy).
+    request.state.session_created = _aware(row.created_at)
+    now = datetime.now(timezone.utc)
+    last_seen = _aware(row.last_seen_at)
+    if last_seen is None or now - last_seen >= timedelta(seconds=60):
+        row.last_seen_at = now
+        await session.commit()
 
 
 async def _authenticate_cookie(
@@ -172,10 +200,15 @@ def _enforce_org_session_policy(request: Request, org: Org) -> None:
     sessions carry the timestamps this needs (bearer-compat sessions keep platform rules)."""
     last_seen = getattr(request.state, "session_last_seen", None)
     created = getattr(request.state, "session_created", None)
-    if last_seen is None or created is None:
+    if created is None:
         return
     now = datetime.now(timezone.utc)
-    if org.session_idle_minutes and now - last_seen > timedelta(minutes=org.session_idle_minutes):
+    # Device sessions set only session_created: the max age applies to them, idle does not.
+    if (
+        last_seen is not None
+        and org.session_idle_minutes
+        and now - last_seen > timedelta(minutes=org.session_idle_minutes)
+    ):
         raise UnauthenticatedError(
             "This workspace signs you out after a period of inactivity.", code="session_expired"
         )

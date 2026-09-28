@@ -30,6 +30,7 @@ from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import audit as audit_svc
+from app.services import device_sessions  # noqa: F401 - type hints (Ringlite apps P1)
 from app.services import (
     ban_list,
     lockout,
@@ -431,7 +432,8 @@ async def _login(
     session: AsyncSession,
     *,
     require_admin: bool = False,
-) -> TokenOut:
+    device: "device_sessions.DeviceInfo | None" = None,
+) -> TokenOut | dict:
     """Shared password sign-in body.
 
     ``/login`` delegates here with ``require_admin=False``; the dedicated admin sign-in
@@ -538,8 +540,10 @@ async def _login(
         )
 
     token = await login_flow.complete_login(
-        session, settings, request, user, second_factor=False, response=response
+        session, settings, request, user, second_factor=False, response=response, device=device
     )
+    if device is not None:
+        return token  # Ringlite apps P1: the device TokenPair
     # P41: for a PRIVILEGED account with no factor this token only reaches enrolment routes
     # until one exists (auth/deps.py gate); the flag tells the console to go straight there.
     # For ordinary staff it is False and the console lands them in the product as normal.

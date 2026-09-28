@@ -41,6 +41,11 @@ class SessionOut(BaseModel):
     created_at: datetime
     expires_at: datetime
     current: bool = False
+    # Ringlite apps P1: the web Devices list (web | android | desktop | ios).
+    device_kind: str = "web"
+    device_name: str | None = None
+    device_os: str | None = None
+    app_version: str | None = None
 
 
 class LoginEventOut(BaseModel):
@@ -216,6 +221,10 @@ async def list_sessions(
                 created_at=row.created_at,
                 expires_at=row.expires_at,
                 current=is_current,
+                device_kind=row.device_kind or "web",
+                device_name=row.device_name,
+                device_os=row.device_os,
+                app_version=row.app_version,
             )
         )
 

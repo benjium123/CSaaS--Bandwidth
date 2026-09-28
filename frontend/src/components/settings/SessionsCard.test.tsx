@@ -40,6 +40,42 @@ const SESSIONS: SessionOut[] = [
 ];
 
 describe("SessionsCard", () => {
+  it("names Ringlite app sessions by app and device", async () => {
+    const client = makeStubClient({
+      "/api/v1/me/sessions": [
+        SESSIONS[0],
+        { ...SESSIONS[1], id: "s3", device_kind: "android", device_name: "Pixel 8" },
+      ],
+      "/api/v1/auth/me": ME,
+    });
+
+    renderWithProviders(<SessionsCard />, client);
+
+    expect(await screen.findByText("Ringlite for Android · Pixel 8")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Sign out Ringlite for Android · Pixel 8" }),
+    ).toBeTruthy();
+  });
+
+  it("shows a one-time QR code to link a device", async () => {
+    const client = makeStubClient({
+      "/api/v1/auth/device/link-codes": {
+        code: "abc",
+        qr_payload: "ringlite://link?c=abc&h=app.ringlite.com",
+        expires_at: new Date(Date.now() + 120_000).toISOString(),
+      },
+      "/api/v1/me/sessions": SESSIONS,
+      "/api/v1/auth/me": ME,
+    });
+
+    renderWithProviders(<SessionsCard />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Link a device" }));
+
+    expect(await screen.findByLabelText("Device link QR code")).toBeTruthy();
+    expect(screen.getByText(/Expires in \d+s/)).toBeTruthy();
+  });
+
   it("marks the session you are using and offers no way to revoke it", async () => {
     const client = makeStubClient({
       "/api/v1/me/sessions/revoke-all": { revoked: 3 },

@@ -57,6 +57,7 @@ from app.api.routes import status as status_routes
 from app.api.routes import telephony as telephony_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
+from app.api.routes import device_auth as device_auth_routes
 from app.api.routes import webhooks as webhook_routes
 from app.config import Settings, load_settings, set_active_settings
 from app.db.session import dispose_engine, init_engine
@@ -166,7 +167,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=["X-Request-Id"],
+            expose_headers=["X-Request-Id", "X-Ringlite-Min-App"],
         )
 
     @app.middleware("http")
@@ -188,6 +189,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             raise
         response.headers["X-Request-Id"] = request_id
+        # Ringlite apps P1: tell an installed app the oldest build still allowed.
+        min_app = device_auth_routes.min_app_header(settings, request.headers.get("X-Ringlite-App"))
+        if min_app is not None:
+            response.headers["X-Ringlite-Min-App"] = min_app
         # P42: API responses are data, never pages: nothing may frame, sniff or embed them,
         # and authentication responses are never cached.
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -276,6 +281,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(identity_routes.org_router)
     app.include_router(roles_routes.router)
     app.include_router(twofa_routes.router)
+    app.include_router(device_auth_routes.router)
+    app.include_router(device_auth_routes.app_router)
     app.include_router(passkey_routes.router)
     app.include_router(account_routes.router)
     app.include_router(kyc_routes.router)

@@ -1,6 +1,9 @@
 import * as React from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { useAuth } from "@/auth/AuthContext";
 import {
+  type SessionOut,
+  useCreateDeviceLinkCode,
   useRevokeAllSessions,
   useRevokeSession,
   useSessions,
@@ -43,12 +46,82 @@ function deviceLabel(userAgent: string | null): string {
   return "Unknown device";
 }
 
+const APP_KIND_LABEL: Record<string, string> = {
+  android: "Ringlite for Android",
+  desktop: "Ringlite desktop",
+  ios: "Ringlite for iPhone",
+};
+
+/** Ringlite apps sign in as device sessions: name them by app, not by user agent. */
+function sessionLabel(session: SessionOut): string {
+  const app = session.device_kind ? APP_KIND_LABEL[session.device_kind] : undefined;
+  if (!app) return deviceLabel(session.user_agent);
+  return session.device_name ? `${app} · ${session.device_name}` : app;
+}
+
+function LinkDevicePanel({ onClose }: { onClose: () => void }) {
+  const { api } = useAuth();
+  const create = useCreateDeviceLinkCode(api);
+  const [now, setNow] = React.useState(() => Date.now());
+  const { mutate } = create;
+
+  React.useEffect(() => {
+    mutate();
+  }, [mutate]);
+  React.useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const data = create.data;
+  const secondsLeft = data
+    ? Math.max(0, Math.round((new Date(data.expires_at).getTime() - now) / 1000))
+    : 0;
+  const expired = data !== undefined && secondsLeft === 0;
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3 text-sm">
+      <p>
+        Open Ringlite on your phone or computer, choose <strong>Link with QR code</strong>, and
+        scan this code. It works once and expires in two minutes.
+      </p>
+      {create.isPending ? (
+        <Spinner label="Creating a code" />
+      ) : create.isError ? (
+        <p role="alert" className="text-destructive">
+          {mutationErrorMessage(create.error)}
+        </p>
+      ) : data && !expired ? (
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="rounded-md bg-white p-3">
+            <QRCodeSVG value={data.qr_payload} size={176} aria-label="Device link QR code" />
+          </div>
+          <span className="text-muted-foreground">Expires in {secondsLeft}s</span>
+        </div>
+      ) : (
+        <p className="text-muted-foreground">This code expired.</p>
+      )}
+      <div className="flex gap-2">
+        {expired || create.isError ? (
+          <Button type="button" size="sm" onClick={() => create.mutate()}>
+            New code
+          </Button>
+        ) : null}
+        <Button type="button" size="sm" variant="outline" onClick={onClose}>
+          Done
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function SessionsCard() {
   const { api } = useAuth();
   const sessionsQuery = useSessions(api);
   const revokeSession = useRevokeSession(api);
   const revokeAll = useRevokeAllSessions(api);
   const [confirmRevokeAll, setConfirmRevokeAll] = React.useState(false);
+  const [linking, setLinking] = React.useState(false);
 
   React.useEffect(() => {
     if (revokeAll.isSuccess) setConfirmRevokeAll(false);
@@ -100,7 +173,7 @@ export function SessionsCard() {
               </thead>
               <tbody className="divide-y divide-border">
                 {sessions.map((session) => {
-                  const label = deviceLabel(session.user_agent);
+                  const label = sessionLabel(session);
                   const isPending =
                     revokeSession.isPending && revokeSession.variables === session.id;
 
@@ -149,6 +222,21 @@ export function SessionsCard() {
               {mutationErrorMessage(revokeSession.error)}
             </p>
           ) : null}
+
+          <div className="space-y-2">
+            {linking ? (
+              <LinkDevicePanel
+                onClose={() => {
+                  setLinking(false);
+                  void sessionsQuery.refetch();
+                }}
+              />
+            ) : (
+              <Button type="button" size="sm" onClick={() => setLinking(true)}>
+                Link a device
+              </Button>
+            )}
+          </div>
 
           <div className="space-y-2">
             {confirmRevokeAll ? (

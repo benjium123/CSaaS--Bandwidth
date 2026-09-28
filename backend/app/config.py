@@ -229,6 +229,18 @@ class Settings(BaseSettings):
     #: Accept ``Authorization: Bearer <JWT>`` for people (pre-cookie clients). API keys are
     #: unaffected. Off by default: browsers use HttpOnly session cookies.
     auth_bearer_compat: bool = False
+    #: Ringlite apps P1: device (Android/desktop) sessions. The session row hard-expires
+    #: device_session_days after sign-in and refresh never extends it; access tokens are
+    #: short Bearer JWTs. Link codes are the one-time QR codes a web user shows a device.
+    device_session_days: int = 14
+    device_access_minutes: int = 15
+    device_link_code_ttl_seconds: int = 120
+    #: Oldest app build still allowed (X-Ringlite-Min-App header); 0 = no minimum.
+    app_min_android_code: int = 0
+    app_min_desktop_code: int = 0
+    app_latest_android_code: int = 0
+    app_latest_android_name: str = ""
+    app_android_manifest_url: str = ""
     #: SSO/SCIM may only enforce for, or link new people from, DNS-verified email domains.
     sso_require_verified_domain: bool = True
     #: DNS-over-HTTPS resolver used to check domain verification TXT records.

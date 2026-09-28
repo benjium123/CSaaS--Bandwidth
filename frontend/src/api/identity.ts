@@ -19,6 +19,17 @@ export type SessionOut = {
   created_at: string;
   expires_at: string;
   current: boolean;
+  /** Ringlite apps: web | android | desktop | ios (older servers omit it = web). */
+  device_kind?: string;
+  device_name?: string | null;
+  device_os?: string | null;
+  app_version?: string | null;
+};
+
+export type DeviceLinkCodeOut = {
+  code: string;
+  qr_payload: string;
+  expires_at: string;
 };
 
 export type LoginEventOut = {
@@ -113,6 +124,14 @@ export function useRevokeAllSessions(api: ApiClient) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
     },
+  });
+}
+
+/** Ringlite apps: a one-time code the Android/desktop app scans to sign in as this user. */
+export function useCreateDeviceLinkCode(api: ApiClient) {
+  return useMutation({
+    mutationFn: () =>
+      api.request<DeviceLinkCodeOut>("/api/v1/auth/device/link-codes", { method: "POST" }),
   });
 }
 

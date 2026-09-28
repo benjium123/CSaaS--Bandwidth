@@ -20,7 +20,7 @@ from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY
 from app.models import OrgMembership, Role, User
 from app.services import identity as identity_svc
-from app.services import login_risk, mailer, session_tokens
+from app.services import device_sessions, login_risk, mailer, session_tokens
 
 #: Strong refs for fire-and-forget alert emails (a bare create_task can be GC'd mid-flight).
 _pending_emails: set[asyncio.Task] = set()
@@ -77,7 +77,8 @@ async def complete_login(
     auth_method: str = "password",
     org_id: uuid.UUID | None = None,
     event_outcome: str = "ok",
-) -> str | None:
+    device: "device_sessions.DeviceInfo | None" = None,
+) -> str | dict | None:
     """Create the Session, record the event, handle risk. Commits.
 
     P42: the session lives in an HttpOnly cookie set on ``response``. A bearer JWT is only
@@ -97,7 +98,15 @@ async def complete_login(
         expire_hours=settings.session_max_hours,
     )
     identity_session.auth_method = auth_method
-    cookie_value = session_tokens.issue_secret(identity_session)
+    # Ringlite apps P1: a device login gets a device session (hard expiry, no cookie) and
+    # returns the device TokenPair dict instead of the web token.
+    refresh_token: str | None = None
+    cookie_value: str | None = None
+    if device is not None:
+        device_sessions.apply_device(identity_session, settings, device)
+        refresh_token = device_sessions.issue_refresh(identity_session)
+    else:
+        cookie_value = session_tokens.issue_secret(identity_session)
     identity_session.risk_flags = list(risk.flags)
     identity_session.country = risk.country
     identity_session.second_factor_at = now if second_factor else None
@@ -120,8 +129,10 @@ async def complete_login(
         login_risk.open_alert(session, user, risk, request)
         recipients = await owner_emails_for_user(session, user)
 
-    token = (
-        create_access_token(
+    token: str | dict | None = (
+        device_sessions.token_pair(identity_session, user, settings, refresh_token)
+        if refresh_token is not None
+        else create_access_token(
             user.id,
             settings.jwt_secret.get_secret_value(),
             expire_hours=settings.jwt_expire_hours,
@@ -131,7 +142,7 @@ async def complete_login(
         else None
     )
     await session.commit()
-    if response is not None:
+    if response is not None and cookie_value is not None:
         session_tokens.set_cookies(response, settings, identity_session, cookie_value)
 
     if recipients:

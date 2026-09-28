@@ -36,6 +36,7 @@ from app.errors import (
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
+from app.services import device_sessions  # noqa: F401 - type hints (Ringlite apps P1)
 from app.services import (
     account_security,
     email_code,
@@ -163,6 +164,17 @@ async def verify(
     response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
+    return await verify_totp_login(payload, request, response, session)
+
+
+async def verify_totp_login(
+    payload: VerifyIn,
+    request: Request,
+    response: Response,
+    session: AsyncSession,
+    *,
+    device: "device_sessions.DeviceInfo | None" = None,
+) -> dict:
     """Exchange a pending-2FA token + code for a real access token.
 
     P25: THIS is where a 2FA login becomes a login - routes/auth.py deliberately creates
@@ -199,7 +211,10 @@ async def verify(
         second_factor=True,
         response=response,
         auth_method="password_totp",
+        device=device,
     )
+    if device is not None:
+        return token  # Ringlite apps P1: the device TokenPair
     return {"access_token": token, "token_type": "bearer"}
 
 
@@ -376,6 +391,17 @@ async def email_login_verify(
     response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
+    return await verify_email_login(payload, request, response, session)
+
+
+async def verify_email_login(
+    payload: PendingCodeIn,
+    request: Request,
+    response: Response,
+    session: AsyncSession,
+    *,
+    device: "device_sessions.DeviceInfo | None" = None,
+) -> dict:
     """Exchange a pending-2FA token + emailed code for a session (see ``verify``)."""
     settings: Settings = request.app.state.settings
     await enforce_rate_limit(request, f"email-code-check:{payload.pending_token}")
@@ -394,7 +420,10 @@ async def email_login_verify(
         second_factor=True,
         response=response,
         auth_method="password_email",
+        device=device,
     )
+    if device is not None:
+        return token  # Ringlite apps P1: the device TokenPair
     return {"access_token": token, "token_type": "bearer"}
 
 
