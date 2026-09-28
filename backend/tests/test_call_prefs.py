@@ -89,7 +89,7 @@ async def test_call_prefs_routes(client, session):
         "/api/v1/me/call-prefs", json={"dnd": True}, headers=h
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {"dnd": True, "forward_to": None}
+    assert r.json() == {"dnd": True, "dnd_until": None, "forward_to": None}
     r = await client.get("/api/v1/me/call-prefs", headers=h)
     assert r.json()["dnd"] is True
 
@@ -109,3 +109,66 @@ async def test_set_prefs_refuses_self_forward():
         await call_prefs.set_prefs(
             object(), membership, dnd=True, forward_to=membership.user_id
         )
+
+
+def test_clean_dnd_until_expiry():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+    future = (now + timedelta(hours=1)).isoformat()
+    past = (now - timedelta(minutes=1)).isoformat()
+    on = call_prefs._clean({"dnd": True, "dnd_until": future}, now=now)
+    assert on["dnd"] is True and on["dnd_until"] == future
+    # An end time in the past switches DND off by itself.
+    assert call_prefs._clean({"dnd": True, "dnd_until": past}, now=now)["dnd"] is False
+    # No end time = until turned off.
+    assert call_prefs._clean({"dnd": True}, now=now) == {"dnd": True, "dnd_until": None, "forward_to": None}
+    # Garbage end time is ignored rather than silencing rings forever by accident.
+    assert call_prefs._clean({"dnd": True, "dnd_until": "nope"}, now=now)["dnd"] is True
+    # Old rows with no dnd_until key keep working.
+    assert call_prefs._clean({"dnd": False, "forward_to": A}, now=now)["dnd"] is False
+
+
+@pytest.mark.asyncio
+async def test_dnd_users_skips_expired(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+
+    class Result:
+        def all(self):
+            return [
+                (uuid.UUID(A), {"dnd": True, "dnd_until": past}),
+                (uuid.UUID(B), {"dnd": True, "dnd_until": future, "forward_to": C}),
+            ]
+
+    class Session:
+        async def execute(self, stmt):
+            return Result()
+
+    assert await call_prefs.dnd_users(Session(), uuid.uuid4()) == {B: C}
+
+
+async def test_call_prefs_route_dnd_until(client, session):
+    from datetime import datetime, timedelta, timezone
+
+    token = await register_and_login(client, "dnd-until@example.com")
+    org = await create_org(client, token, "DND Until Org")
+    h = auth_headers(token, org["id"])
+    until = (datetime.now(timezone.utc) + timedelta(minutes=30)).replace(microsecond=0)
+    r = await client.put(
+        "/api/v1/me/call-prefs", json={"dnd": True, "dnd_until": until.isoformat()}, headers=h
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["dnd"] is True
+    assert datetime.fromisoformat(r.json()["dnd_until"]) == until
+    r = await client.get("/api/v1/me/call-prefs", headers=h)
+    assert datetime.fromisoformat(r.json()["dnd_until"]) == until
+    # An end time in the past is refused.
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    r = await client.put("/api/v1/me/call-prefs", json={"dnd": True, "dnd_until": past}, headers=h)
+    assert r.status_code == 422, r.text
+    # Turning DND off clears the end time.
+    r = await client.put("/api/v1/me/call-prefs", json={"dnd": False}, headers=h)
+    assert r.json() == {"dnd": False, "dnd_until": None, "forward_to": None}

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { SettingsProfilePage } from "@/pages/SettingsProfilePage";
+import { NotificationsSoundPage } from "@/pages/NotificationsSoundPage";
 import { Navigate, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { hasPermission, isOwner, useAuth } from "@/auth/AuthContext";
@@ -23,6 +24,8 @@ import {
 } from "@/components/ui/primitives";
 import { SectionLabel, SurfaceCard } from "@/components/ui/consoleChrome";
 import { cn } from "@/lib/utils";
+import { Search } from "lucide-react";
+import { isWorkspaceFullySetUp } from "@/components/onboarding/OnboardingChecklist";
 import { TeamPage } from "@/pages/TeamPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
 import { InboxSettingsPage } from "@/pages/InboxSettingsPage";
@@ -40,6 +43,8 @@ import {
   canViewSettingsSection,
   SETTINGS_SECTIONS,
   type SettingsSectionId,
+  SETTINGS_GROUPS,
+  SETTINGS_MENU_ORDER,
 } from "./settingsSections";
 import { INBOX_RAIL_PATHS, useRailNav } from "@/components/shell/Sidebar";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
@@ -426,6 +431,8 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
       return <PlatformPage />;
     case "profile":
       return <SettingsProfilePage />;
+    case "notifications":
+      return <NotificationsSoundPage />;
   }
 
   return null;
@@ -458,6 +465,8 @@ export function SettingsPage() {
   const owner = isOwner(me, orgId);
   const { items: railItems } = useRailNav();
   const current = SETTINGS_SECTIONS.find((s) => s.id === section);
+  const [menuQuery, setMenuQuery] = React.useState("");
+  const [searchParams] = useSearchParams();
 
   /**
    * The destinations that moved OUT of the inbox rail and now live here.
@@ -493,17 +502,102 @@ export function SettingsPage() {
           <Spinner label="Loading settings" />
         ) : (
           <div className="flex flex-row gap-[3px] sm:flex-col">
-            {SETTINGS_SECTIONS.filter((s) => canViewSettingsSection(s, gate.can, owner)).map((s) => (
+            {/* Phase 1c: search, the owner's setup card, then the sections in three groups.
+                Gating is unchanged (canViewSettingsSection); operatorOnly sections are only
+                LISTED for platform operators - their routes keep their own gates. */}
+            <label className="hidden items-center gap-2 rounded-[10px] border border-[hsl(var(--cx-line))] px-[10px] py-[7px] text-[13px] sm:flex">
+              <Search className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--cx-subtle))]" aria-hidden="true" />
+              <input
+                id="settings-search"
+                aria-label="Search settings"
+                placeholder="Search settings"
+                value={menuQuery}
+                onChange={(e) => setMenuQuery(e.currentTarget.value)}
+                className="min-w-0 flex-1 bg-transparent outline-none"
+              />
+            </label>
+            {owner && gate.org && !isWorkspaceFullySetUp(gate.org) && !menuQuery ? (
               <NavLink
-                key={s.id}
-                to={`/settings/${s.id}`}
-                className={settingsNavLinkClass}
+                to="/setup"
+                aria-label="Finish setting up your workspace"
+                className="mt-2 hidden flex-col rounded-[10px] border border-[hsl(var(--cx-line))] px-[10px] py-[8px] text-[12.5px] hover:bg-[hsl(var(--cx-overlay))] sm:flex"
               >
-                {s.id === "verification" && gate.org?.account_type === "individual"
-                  ? "Identity verification"
-                  : s.label}
+                {(() => {
+                  const org = gate.org!;
+                  const steps: [boolean, string][] =
+                    org.account_type === "individual"
+                      ? [[org.has_provider, "Connect a phone service"], [org.has_number, "Get a number"]]
+                      : [
+                          [org.has_provider, "Connect a phone service"],
+                          [org.has_number, "Get a number"],
+                          [org.member_count > 1, "Invite your team"],
+                          [org.registration_state !== "none", "Register for texting"],
+                        ];
+                  const done = steps.filter(([ok]) => ok).length;
+                  const next = steps.find(([ok]) => !ok)?.[1];
+                  return (
+                    <>
+                      <span className="font-semibold text-[hsl(var(--cx-text))]">
+                        Setup {done} of {steps.length} done
+                      </span>
+                      {next ? (
+                        <span className="text-[hsl(var(--cx-accent,var(--cx-subtle)))]">Next: {next}</span>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </NavLink>
-            ))}
+            ) : null}
+            {SETTINGS_GROUPS.map((group) => {
+              const q = menuQuery.trim().toLowerCase();
+              const rows = SETTINGS_MENU_ORDER.map((id) => SETTINGS_SECTIONS.find((x) => x.id === id))
+                .filter((x): x is (typeof SETTINGS_SECTIONS)[number] => Boolean(x))
+                .filter((x) => x.group === group.id)
+                .filter((x) => canViewSettingsSection(x, gate.can, owner))
+                .filter((x) => !x.operatorOnly || me?.is_platform_operator)
+                .filter(
+                  (x) =>
+                    !q ||
+                    x.label.toLowerCase().includes(q) ||
+                    (x.subPages ?? []).some((sp) => sp.label.toLowerCase().includes(q)),
+                );
+              if (rows.length === 0) return null;
+              return (
+                <React.Fragment key={group.id}>
+                  <SectionLabel className="hidden px-[10px] pb-1 pt-4 sm:block">{group.label}</SectionLabel>
+                  {rows.map((s) => (
+                    <React.Fragment key={s.id}>
+                      <NavLink to={`/settings/${s.id}`} className={settingsNavLinkClass}>
+                        {s.id === "verification" && gate.org?.account_type === "individual"
+                          ? "Identity verification"
+                          : s.label}
+                      </NavLink>
+                      {s.id === current.id && s.subPages ? (
+                        <div className="ml-[14px] hidden flex-col border-l border-[hsl(var(--cx-line))] pl-2 sm:flex">
+                          {s.subPages.map((sp) => (
+                            <NavLink
+                              key={sp.id}
+                              to={`/settings/${s.id}?tab=${sp.id}`}
+                              aria-label={`${s.label}: ${sp.label}`}
+                              className={() =>
+                                cn(
+                                  "rounded-[8px] px-2 py-[5px] text-[12.5px]",
+                                  (searchParams.get("tab") ?? s.subPages![0].id) === sp.id
+                                    ? "font-semibold text-[hsl(var(--cx-text))]"
+                                    : "text-[hsl(var(--cx-subtle))] hover:text-[hsl(var(--cx-text))]",
+                                )
+                              }
+                            >
+                              {sp.label}
+                            </NavLink>
+                          ))}
+                        </div>
+                      ) : null}
+                    </React.Fragment>
+                  ))}
+                </React.Fragment>
+              );
+            })}
 
             {/* The rail's former rows. Separated by a rule and a caption because they are
                 not settings SECTIONS - each one leaves this page for a route of its own,

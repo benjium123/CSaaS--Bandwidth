@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { Composer } from "./Composer";
@@ -331,11 +331,67 @@ describe("Composer reply/note toggle", () => {
     expect(screen.getByRole("tab", { name: "Internal note" })).toBeDisabled();
   });
 
-  it("has NO separate templates button while the composer is idle", () => {
+  // 2026-09-29: the user asked for visible Saved replies / emoji / save-as buttons in the
+  // composer toolbar (docs/design/INBOX_NAV_SPEC.md). Typing "/" still works as before.
+  it("Saved replies button opens the saved-reply list", async () => {
+    const user = userEvent.setup();
+    const client = makeStubClient({
+      "/api/v1/templates": [{ id: "t1", name: "Intro", body: "Hi there", media_asset_ids: [], tokens: [] }],
+    });
+    renderWithProviders(<Composer onSend={vi.fn().mockResolvedValue(undefined)} />, client);
+
+    await user.click(screen.getByRole("button", { name: "Saved replies" }));
+    const list = await screen.findByRole("listbox", { name: "Insert a saved reply" });
+    await user.click(await within(list).findByRole("option", { name: /Intro/ }));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Hi there");
+  });
+
+  it("saves the typed message as a saved reply (templates:manage only)", async () => {
+    const user = userEvent.setup();
+    const perms = ["templates:manage"];
+    const me = {
+      id: "u1", email: "ada@example.com", full_name: "Ada", permissions: perms,
+      memberships: [{ org_id: "org-1", org_name: "Org", org_slug: "org", role_name: "owner", permissions: perms }],
+    };
+    const client = makeStubClient({
+      "/api/v1/auth/me": me,
+      "/api/v1/me": me,
+      "/api/v1/templates": (_p: string, init: RequestInit & { json?: unknown }) =>
+        init.method === "POST"
+          ? { id: "t9", name: (init.json as { name: string }).name, body: "x", media_asset_ids: [], tokens: [] }
+          : [],
+    });
+    renderWithProviders(<Composer onSend={vi.fn().mockResolvedValue(undefined)} />, client);
+
+    await user.type(screen.getByRole("textbox"), "We can close Friday");
+    await user.click(await screen.findByRole("button", { name: "Save as a saved reply" }));
+    await user.type(screen.getByRole("textbox", { name: "Saved reply name" }), "Close date");
+    await user.click(screen.getByRole("button", { name: "Save reply" }));
+
+    await waitFor(() =>
+      expect(client.calls.find((c) => c.init.method === "POST")?.init.json).toEqual({
+        name: "Close date",
+        body: "We can close Friday",
+      }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent('Saved as "Close date"');
+  });
+
+  it("hides save-as-reply without templates:manage", () => {
+    renderWithProviders(<Composer onSend={vi.fn().mockResolvedValue(undefined)} />, makeStubClient({}));
+    expect(screen.queryByRole("button", { name: "Save as a saved reply" })).toBeNull();
+  });
+
+  it("emoji picker inserts at the caret", async () => {
+    const user = userEvent.setup();
     const client = makeStubClient({});
     renderWithProviders(<Composer onSend={vi.fn().mockResolvedValue(undefined)} />, client);
 
-    expect(screen.queryByRole("button", { name: /template|saved repl/i })).toBeNull();
+    await user.type(screen.getByRole("textbox"), "Thanks ");
+    await user.click(screen.getByRole("button", { name: "Insert emoji" }));
+    const grid = screen.getByRole("group", { name: "Emoji" });
+    await user.click(within(grid).getAllByRole("button")[0]);
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Thanks \u{1F44D}");
   });
 
   it("reply mode still sends: Enter calls onSend and does not POST a note", async () => {

@@ -208,6 +208,9 @@ async def test_department_members_grants_and_delete_revokes_access(client, sessi
     listed = await client.get("/api/v1/inboxes", headers=h_agent)
     assert listed.status_code == 200
     assert any(i["e164"] == A and i["my_role"] == "member" for i in listed.json())
+    # The sidebar groups lines by department: the list says which departments hold it.
+    line = next(i for i in listed.json() if i["e164"] == A)
+    assert line["departments"] == [{"id": dept_id, "name": "Sales"}]
 
     # Remove the agent from the department -> access revoked immediately.
     emptied = await client.put(

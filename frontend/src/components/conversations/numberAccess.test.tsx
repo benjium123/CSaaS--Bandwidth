@@ -12,7 +12,7 @@
  * drawer grows later fails here rather than drifting through as a silent stub miss.
  */
 import { describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { InboxColumn } from "./InboxColumn";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
@@ -178,16 +178,13 @@ describe("InboxColumn: per-number access", () => {
     await waitFor(() =>
       expect(client.calls.some((c) => c.path === "/api/v1/me/capabilities")).toBe(true),
     );
-    // ...and the gate has RESOLVED rather than merely started. useRailNav reports the nav
-    // as no longer busy only once the capability list is in hand, so this rules out the
-    // first paint - where useGate fails CLOSED for everyone - as the reason for the
-    // absence asserted below.
-    await waitFor(() =>
-      expect(screen.getByRole("navigation", { name: "Workspace" })).toHaveAttribute(
-        "aria-busy",
-        "false",
-      ),
-    );
+    // ...and the gate has RESOLVED rather than merely started: let the capabilities
+    // response settle and React re-render before asserting the absence, so the first
+    // paint (where useGate fails CLOSED for everyone) is not what we are measuring. The
+    // Workspace nav used to be the signal; it moved to the top bar in Phase 1.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
     expect(screen.queryByRole("button", { name: /Manage access/ })).toBeNull();
   });

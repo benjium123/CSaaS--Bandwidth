@@ -1,0 +1,1319 @@
+<title>Ringlite Sidebar Options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#EEF1F7; --page:#F6F8FC; --surface:#FFFFFF; --side:#F3F5FA; --side2:#FAFBFD;
+  --line:#E2E7F0; --line2:#EDF0F6; --text:#101A30; --muted:#63708A; --faint:#98A2B6;
+  --accent:#2B5BFF; --accent-ink:#FFFFFF; --soft:#E7EDFF; --hover:#E9EDF5;
+  --green:#12A06A; --green-soft:#E2F6EC; --red:#E5484D; --red-soft:#FDECEC; --amber:#C98107;
+  --rail:#0F1B33; --rail-ink:#AEB9D0; --rail-hover:#1C2A47;
+  --bubble:#EEF1F6; --shadow:0 1px 2px rgba(16,26,48,.06),0 8px 24px rgba(16,26,48,.08);
+  --t-acq:#2B5BFF; --t-dispo:#8B46E8; --t-office:#0E9384;
+  --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"Geist Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#080C15; --page:#0C111C; --surface:#121927; --side:#0F1522; --side2:#111827;
+  --line:#222D42; --line2:#1A2335; --text:#E6EBF5; --muted:#8C98AF; --faint:#5E6A82;
+  --accent:#6E8BFF; --accent-ink:#0A1024; --soft:#1A2547; --hover:#18213A;
+  --green:#34C68A; --green-soft:#10301F; --red:#FF6B6F; --red-soft:#3A1519; --amber:#F0B03A;
+  --rail:#070B14; --rail-ink:#8592AC; --rail-hover:#141C2E; --bubble:#1A2233;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.4);
+  --t-acq:#6E8BFF; --t-dispo:#B083FF; --t-office:#3CC7B6;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#080C15; --page:#0C111C; --surface:#121927; --side:#0F1522; --side2:#111827;
+  --line:#222D42; --line2:#1A2335; --text:#E6EBF5; --muted:#8C98AF; --faint:#5E6A82;
+  --accent:#6E8BFF; --accent-ink:#0A1024; --soft:#1A2547; --hover:#18213A;
+  --green:#34C68A; --green-soft:#10301F; --red:#FF6B6F; --red-soft:#3A1519; --amber:#F0B03A;
+  --rail:#070B14; --rail-ink:#8592AC; --rail-hover:#141C2E; --bubble:#1A2233;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.4);
+  --t-acq:#6E8BFF; --t-dispo:#B083FF; --t-office:#3CC7B6;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;padding-inline:20px;padding-block:28px 48px}
+.wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+h1{font-size:26px;font-weight:650;letter-spacing:-.02em;margin:0;text-wrap:balance}
+.lede{color:var(--muted);margin:6px 0 0;max-width:70ch;line-height:1.5}
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.seg button{border:0;background:transparent;color:var(--muted);font:500 13px var(--sans);padding:7px 12px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--text);color:var(--surface)}
+.seg button:focus-visible,button:focus-visible,.row:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ctl-label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-right:6px}
+.optseg button{padding:9px 14px}
+.optseg b{font-weight:650;margin-right:6px}
+.stage{overflow-x:auto;border-radius:14px}
+.frame{width:1200px;height:720px;background:var(--page);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow);position:relative}
+.frame-body{flex:1;display:flex;min-height:0}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.note{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.note h3{margin:0 0 8px;font-size:13px;font-weight:650;letter-spacing:.02em}
+.note ul{margin:0;padding-left:18px;color:var(--muted);line-height:1.55}
+.note li+li{margin-top:4px}
+.note li b{color:var(--text);font-weight:600}
+.example-tag{font:500 11px var(--mono);color:var(--faint)}
+
+/* ---------- sidebar primitives ---------- */
+.sb{width:256px;flex:none;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.sb.slim{width:64px;align-items:center}
+.sb-scroll{flex:1;overflow:hidden;padding:4px 10px 10px;min-height:0}
+.sb.slim .sb-scroll{padding:4px 8px 10px;width:100%;display:flex;flex-direction:column;align-items:center;gap:2px}
+.sb-top{display:flex;align-items:center;gap:6px;padding:12px 10px 8px}
+.ibtn{width:30px;height:30px;flex:none;display:inline-grid;place-items:center;border:0;background:transparent;color:var(--muted);border-radius:8px;cursor:pointer;position:relative}
+.ibtn:hover{background:var(--hover);color:var(--text)}
+.ibtn svg,.row svg,.nav svg{width:17px;height:17px}
+.who{flex:1;min-width:0;display:flex;align-items:center;gap:9px;border:0;background:transparent;padding:5px 6px;border-radius:9px;cursor:pointer;color:var(--text);text-align:left}
+.who:hover{background:var(--hover)}
+.who .nm{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.who .sub{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;white-space:nowrap}
+.av{position:relative;width:30px;height:30px;border-radius:50%;background:#8B6B5A;color:#fff;display:grid;place-items:center;font-weight:600;font-size:12.5px;flex:none}
+.av .dot,.dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 0 2px var(--side)}
+.av .dot{position:absolute;right:-1px;bottom:-1px}
+.dot.dnd{background:var(--red)}
+.dot.inline{width:8px;height:8px;box-shadow:none;display:inline-block}
+.search{display:flex;align-items:center;gap:8px;margin:2px 0 6px;padding:7px 10px;border:1px solid var(--line);background:var(--surface);border-radius:9px;color:var(--faint);font-size:13px;cursor:text}
+.search svg{width:15px;height:15px}
+.kbd{margin-left:auto;font:500 11px var(--mono);color:var(--faint);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.row{display:flex;align-items:center;gap:9px;width:100%;border:0;background:transparent;color:var(--text);padding:6px 8px;border-radius:8px;cursor:pointer;font:500 13.5px var(--sans);text-align:left;position:relative}
+.row:hover{background:var(--hover)}
+.row.on{background:var(--surface);box-shadow:0 0 0 1px var(--line),0 1px 2px rgba(16,26,48,.05)}
+.row .ic{color:var(--muted);display:inline-grid;place-items:center;width:18px;flex:none}
+.row.on .ic{color:var(--accent)}
+.badge{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;background:var(--accent);color:var(--accent-ink);font:600 11px var(--sans);display:inline-grid;place-items:center;font-variant-numeric:tabular-nums}
+.badge.quiet{background:var(--line);color:var(--muted)}
+.badge.red{background:var(--red);color:#fff}
+.sec{display:flex;align-items:center;gap:6px;padding:14px 8px 4px;font-size:11.5px;font-weight:600;color:var(--faint);letter-spacing:.02em}
+.sec .ibtn{width:22px;height:22px;margin-left:auto}
+.sec .ibtn svg{width:14px;height:14px}
+.dept{display:flex;align-items:center;gap:6px;width:100%;border:0;background:transparent;color:var(--muted);padding:6px 8px 4px;border-radius:7px;cursor:pointer;font:600 12px var(--sans);text-align:left}
+.dept:hover{color:var(--text);background:var(--hover)}
+.dept .chev{width:14px;height:14px;transition:transform .15s}
+.dept[aria-expanded="false"] .chev{transform:rotate(-90deg)}
+.dept .sw{width:7px;height:7px;border-radius:2px}
+.dept .cnt{font-weight:500;color:var(--faint)}
+.dept .badge{height:16px;min-width:18px;font-size:10.5px}
+.ln{padding:5px 8px 5px 8px}
+.tile{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font:600 10.5px var(--sans);color:#fff;flex:none;position:relative}
+.ln .txt{min-width:0;display:flex;flex-direction:column;line-height:1.2}
+.ln .t1{font-size:13px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ln .t2{font:400 11.5px var(--mono);color:var(--muted);white-space:nowrap}
+.ln.unread .t1{font-weight:650}
+.live-dot{position:absolute;right:-3px;top:-3px;width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 0 2px var(--side);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 2px var(--side),0 0 0 6px color-mix(in srgb,var(--green) 25%,transparent)}}
+@media (prefers-reduced-motion:reduce){.live-dot{animation:none}}
+.livecard{margin:6px 0 4px;border-radius:10px;background:var(--green-soft);border:1px solid color-mix(in srgb,var(--green) 35%,transparent);padding:9px 10px;display:flex;align-items:center;gap:9px;cursor:pointer}
+.livecard .ph{width:28px;height:28px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;flex:none}
+.livecard .ph svg{width:14px;height:14px}
+.livecard .l1{font-size:12.5px;font-weight:600;color:var(--text)}
+.livecard .l2{font:400 11.5px var(--mono);color:var(--muted)}
+.livecard .tm{margin-left:auto;font:600 12px var(--mono);color:var(--green)}
+.dndbar{margin:4px 0 2px;border-radius:9px;background:var(--red-soft);color:var(--red);padding:7px 10px;font-size:12px;display:flex;gap:8px;align-items:center}
+.dndbar button{margin-left:auto;border:0;background:transparent;color:var(--red);font:600 12px var(--sans);cursor:pointer;text-decoration:underline}
+.sb-foot{border-top:1px solid var(--line);padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.sb.slim .sb-foot{width:100%;align-items:center;padding:8px}
+.newbtn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;border:0;background:var(--accent);color:var(--accent-ink);font:600 13px var(--sans);padding:8px 10px;border-radius:9px;cursor:pointer;margin:2px 0 4px}
+.newbtn svg{width:15px;height:15px}
+.hr{height:1px;background:var(--line);margin:8px 6px;width:calc(100% - 12px)}
+.slim-tile{position:relative}
+.slim-tile .ud{position:absolute;right:-2px;top:-2px;min-width:15px;height:15px;border-radius:8px;background:var(--accent);color:var(--accent-ink);font:600 9.5px var(--sans);display:grid;place-items:center;padding:0 3px;box-shadow:0 0 0 2px var(--side)}
+.ibtn .ud{position:absolute;right:1px;top:1px;min-width:15px;height:15px;border-radius:8px;background:var(--red);color:#fff;font:600 9.5px var(--sans);display:grid;place-items:center;padding:0 3px}
+
+/* status menu */
+.menu{position:absolute;z-index:20;width:268px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:6px}
+.menu .mh{padding:8px 10px 6px;font-size:11.5px;color:var(--faint);font-weight:600}
+.menu .mi{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;padding:8px 10px;border-radius:8px;cursor:pointer;color:var(--text);font:500 13px var(--sans);text-align:left}
+.menu .mi:hover{background:var(--hover)}
+.menu .mi .ck{margin-left:auto;color:var(--accent);width:15px;height:15px}
+.menu .mi.sub{padding-left:30px;color:var(--muted);font-size:12.5px}
+.menu .sep{height:1px;background:var(--line);margin:5px 4px}
+.menu .fwd{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;font-size:12.5px;color:var(--muted)}
+.menu .fwd select{font:500 12.5px var(--sans);color:var(--text);background:var(--side);border:1px solid var(--line);border-radius:7px;padding:4px 6px}
+
+/* rail (option B) */
+.rail{width:60px;flex:none;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:12px 0 10px;gap:4px}
+.rail .logo{width:34px;height:34px;border-radius:9px;background:var(--accent);display:grid;place-items:center;color:#fff;margin-bottom:10px}
+.rail .logo svg{width:18px;height:18px}
+.rbtn{width:40px;height:40px;border:0;background:transparent;color:var(--rail-ink);border-radius:10px;display:grid;place-items:center;cursor:pointer;position:relative}
+.rbtn svg{width:19px;height:19px}
+.rbtn:hover{background:var(--rail-hover);color:#fff}
+.rbtn.on{background:var(--rail-hover);color:#fff}
+.rbtn.on::before{content:"";position:absolute;left:-10px;top:10px;bottom:10px;width:3px;border-radius:2px;background:var(--accent)}
+.rbtn .ud{position:absolute;right:3px;top:3px;min-width:16px;height:16px;border-radius:8px;background:var(--accent);color:#fff;font:600 10px var(--sans);display:grid;place-items:center;padding:0 4px}
+.rail .grow{flex:1}
+.rail .av{box-shadow:0 0 0 2px var(--rail)}
+.rail .av .dot{box-shadow:0 0 0 2px var(--rail)}
+.panel-title{font-size:16px;font-weight:650;letter-spacing:-.01em;flex:1;padding-left:4px}
+
+/* top bar (option C) */
+.topbar{height:52px;flex:none;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 14px}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;letter-spacing:-.02em;width:228px}
+.brand .mark{color:var(--accent);display:inline-flex}
+.brand .mark svg{width:20px;height:20px}
+.wsbtn{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--side2);border-radius:8px;padding:5px 9px;font:500 12.5px var(--sans);color:var(--text);cursor:pointer}
+.wsbtn svg{width:14px;height:14px;color:var(--muted)}
+.gsearch{flex:1;max-width:460px;display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);background:var(--side2);border-radius:9px;color:var(--faint);font-size:13px}
+.gsearch svg{width:15px;height:15px}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.pill{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--side2);border-radius:20px;padding:5px 12px 5px 10px;cursor:pointer;color:var(--text);font:600 12.5px var(--sans)}
+.pill .sub{font:400 11.5px var(--mono);color:var(--muted)}
+.pill.dnd{background:var(--red-soft);border-color:color-mix(in srgb,var(--red) 35%,transparent);color:var(--red)}
+.pill.dnd .sub{color:var(--red)}
+.smart{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:4px 0 2px}
+.smart button{border:1px solid var(--line);background:var(--surface);border-radius:9px;padding:8px 10px;text-align:left;cursor:pointer;color:var(--text);display:flex;flex-direction:column;gap:2px}
+.smart button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.smart .n{font:650 17px var(--sans);font-variant-numeric:tabular-nums}
+.smart .k{font-size:11.5px;color:var(--muted)}
+.smart .n.red{color:var(--red)}
+.smart button.on{border-color:var(--accent);background:var(--soft)}
+
+/* content: conversation list + thread */
+.list{width:318px;flex:none;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.list-h{padding:14px 14px 8px;display:flex;flex-direction:column;gap:10px}
+.list-h .t{font-weight:650;font-size:15px;display:flex;align-items:baseline;gap:8px}
+.list-h .t span{font:400 12px var(--mono);color:var(--muted)}
+.chips{display:flex;gap:6px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:4px 10px;font:500 12px var(--sans);color:var(--muted)}
+.chip.on{background:var(--soft);border-color:transparent;color:var(--accent)}
+.convs{overflow:hidden;flex:1}
+.cv{display:flex;gap:10px;padding:10px 14px;border-top:1px solid var(--line2);align-items:flex-start}
+.cv.on{background:var(--soft)}
+.cav{width:34px;height:34px;border-radius:50%;background:var(--line);color:var(--muted);display:grid;place-items:center;font:600 12px var(--sans);flex:none}
+.cv .m{flex:1;min-width:0}
+.cv .a{display:flex;justify-content:space-between;gap:8px;font-weight:600;font-size:13px}
+.cv .a time{font:400 11px var(--sans);color:var(--faint)}
+.cv .b{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.cv .via{font:400 10.5px var(--mono);color:var(--faint);margin-top:3px;display:flex;align-items:center;gap:5px}
+.cv .via i{width:6px;height:6px;border-radius:2px;display:inline-block}
+.cv.unread .b{color:var(--text);font-weight:500}
+.thread{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--page)}
+.th-h{height:58px;flex:none;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 18px;background:var(--surface)}
+.th-h .n{font-weight:650}
+.th-h .p{font:400 12px var(--mono);color:var(--muted)}
+.msgs{flex:1;padding:18px 22px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+.bub{max-width:62%;padding:9px 12px;border-radius:14px;line-height:1.45;font-size:13px;background:var(--bubble)}
+.bub.me{align-self:flex-end;background:var(--accent);color:var(--accent-ink)}
+.stamp{align-self:center;font-size:11px;color:var(--faint)}
+.compose{margin:0 18px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:11px 14px;color:var(--faint);font-size:13px;display:flex;justify-content:space-between}
+.compose span{font:400 11.5px var(--mono)}
+
+/* settings */
+.snav{width:232px;flex:none;border-right:1px solid var(--line);background:var(--side2);padding:10px 10px;overflow-y:auto}
+.snav .sec:first-child{padding-top:6px}
+.scontent{flex:1;padding:30px 40px;background:var(--surface);overflow:hidden}
+.scontent h2{margin:0;font-size:20px;letter-spacing:-.01em}
+.scontent .d{color:var(--muted);margin:4px 0 22px}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:560px}
+.fld label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+.fld div{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:var(--page)}
+.srow{display:flex;justify-content:space-between;align-items:center;max-width:560px;padding:16px 0;border-top:1px solid var(--line);margin-top:18px}
+.srow .k{font-weight:600}
+.srow .v{color:var(--muted);font-size:12.5px;margin-top:2px}
+.srow .btn{border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:500 12.5px var(--sans);background:var(--surface);color:var(--text)}
+.tip{position:absolute;z-index:30;left:50%;top:calc(100% + 6px);transform:translateX(-50%);background:var(--text);color:var(--surface);font:500 11px var(--sans);padding:4px 7px;border-radius:6px;white-space:nowrap;pointer-events:none}
+.act{width:340px;max-height:520px;overflow-y:auto}
+.acth{display:flex;justify-content:space-between;align-items:center;padding:6px 10px 2px}
+.acth button{border:0;background:transparent;color:var(--accent);font:500 12px var(--sans);cursor:pointer}
+.mi.ai{align-items:flex-start}
+.aic{width:28px;height:28px;border-radius:8px;background:var(--side);display:grid;place-items:center;color:var(--muted);flex:none}
+.aic svg{width:15px;height:15px}
+.atx{display:flex;flex-direction:column;min-width:0;gap:1px}
+.a1{font-size:12.5px;font-weight:600}.a2{font-size:12px;color:var(--muted)}
+.mi.ai time{margin-left:auto;font-size:11px;color:var(--faint);flex:none}
+.tbnav{display:flex;gap:2px}
+.tbtab{border:0;background:transparent;color:var(--muted);font:500 13px var(--sans);padding:7px 11px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.tbtab:hover{background:var(--hover);color:var(--text)}
+.tbtab.on{background:var(--soft);color:var(--accent)}
+.tbtab .badge{margin:0;height:16px;min-width:18px;font-size:10.5px}
+.nchips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 2px}
+.nchip{display:flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:4px 9px;font:500 12px var(--sans);color:var(--muted);cursor:pointer}
+.nchip svg{width:13px;height:13px}.nchip b{color:var(--text);font-weight:650}
+.nchip.red b,.nchip.red svg{color:var(--red)}
+.nchip.on{border-color:var(--accent);background:var(--soft)}
+.dock{border-top:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--side2)}
+.dock-in{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);border-radius:9px;padding:8px 10px;color:var(--faint);font-size:13px}
+.dock-in svg{width:15px;height:15px}
+.dock-row{display:flex;align-items:center;gap:6px}
+.from{flex:1;min-width:0;display:flex;align-items:center;gap:6px;font:400 11.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden}
+.from i{width:7px;height:7px;border-radius:2px;flex:none}.from svg{width:12px;height:12px;flex:none}
+.call{display:flex;align-items:center;gap:5px;border:0;background:var(--green);color:#fff;font:600 12.5px var(--sans);padding:7px 12px;border-radius:8px;cursor:pointer}
+.call svg{width:13px;height:13px}
+.dock-live{display:flex;align-items:center;gap:9px}
+.dock-live .ph{width:28px;height:28px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center}
+.dock-live .ph svg{width:14px;height:14px}
+.dock-live .l1{font-size:12.5px;font-weight:600}.dock-live .l2{font:400 11.5px var(--mono);color:var(--green)}
+.dock-btns{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.dock-btns button{border:1px solid var(--line);background:var(--surface);color:var(--text);font:500 11.5px var(--sans);padding:6px 0;border-radius:7px;cursor:pointer}
+.dock-btns .end{background:var(--red);border-color:var(--red);color:#fff}
+.flag{margin-left:auto;font:600 10.5px var(--sans);padding:2px 7px;border-radius:9px;background:var(--line);color:var(--muted);white-space:nowrap}
+.flag.amber{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber)}
+.flag.red{background:var(--red-soft);color:var(--red)}
+.flag.new{background:var(--soft);color:var(--accent)}
+.t1 .flag{margin-left:4px}
+.subs{display:flex;flex-direction:column;margin:2px 0 4px 26px;border-left:1px solid var(--line);padding-left:6px}
+.subs button{border:0;background:transparent;text-align:left;font:500 12.5px var(--sans);color:var(--muted);padding:4px 8px;border-radius:6px;cursor:pointer}
+.subs button:hover{color:var(--text);background:var(--hover)}
+.subs button.on{color:var(--accent);background:var(--soft)}
+.srow2{padding:5px 8px}
+.stile{width:28px;height:28px;border-radius:8px;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);flex:none}
+.stile svg{width:15px;height:15px}
+.row.on .stile{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.srow2 .t2{font:400 11.5px var(--sans);color:var(--muted)}
+.srow2 .t2.amber{color:var(--amber)}.srow2 .t2.red{color:var(--red)}
+.setup{border:1px solid var(--line);background:var(--surface);border-radius:11px;padding:10px 11px;margin:4px 0 2px;display:flex;flex-direction:column;gap:7px}
+.su1{display:flex;justify-content:space-between;font-size:12.5px}.su1 span{color:var(--muted)}
+.bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}.bar i{display:block;height:100%;background:var(--accent)}
+.su2{border:0;background:transparent;padding:0;text-align:left;color:var(--accent);font:600 12.5px var(--sans);cursor:pointer;display:flex;align-items:center;gap:4px}
+.su2 svg{width:13px;height:13px;transform:rotate(-90deg)}
+.mnote{margin:14px 8px 0;font-size:12px;color:var(--faint);line-height:1.45}
+.scontent .srow{margin-top:0}
+.sset .sb-top{padding:10px 10px 4px}.sset .row{padding:4.5px 8px}.sset .srow2{padding:4px 8px}.sset .sec{padding:10px 8px 3px}.sset .subs button{padding:3px 8px}
+.scontent.wide{padding:22px 24px;overflow:hidden;display:flex;flex-direction:column}
+.lp-wrap{display:flex;gap:16px;min-height:0;flex:1}
+.lp{flex:1;min-width:0}
+.lp-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.lp-h .d{margin:4px 0 14px;max-width:52ch;line-height:1.45}
+.lp-act{display:flex;gap:6px;flex:none}
+.btn{border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:500 12.5px var(--sans);background:var(--surface);color:var(--text);display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.btn svg{width:14px;height:14px}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.lg{margin-bottom:10px}
+.lg-h{display:flex;align-items:center;gap:7px;font:600 12px var(--sans);color:var(--muted);padding:4px 2px 5px}
+.lg-h span:last-child{font-weight:400;color:var(--faint)}
+.lg-h .sw{width:8px;height:8px;border-radius:2px}
+.lr{display:grid;grid-template-columns:26px 1.3fr 1fr auto 70px;align-items:center;gap:12px;width:100%;border:1px solid var(--line2);background:var(--surface);border-radius:9px;padding:7px 10px;margin-bottom:4px;cursor:pointer;text-align:left;color:var(--text);font:inherit}
+.lr:hover{border-color:var(--line)}
+.lr.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.lr-n{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.lr-n b{font-size:13px;font-weight:600}.lr-n span{font:400 11.5px var(--mono);color:var(--muted)}
+.lr-a{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lr-s{display:flex;gap:4px;justify-content:flex-end}
+.lr-c{font:400 12px var(--mono);color:var(--muted);text-align:right}
+.st{font:600 10.5px var(--sans);padding:2px 7px;border-radius:9px;white-space:nowrap}
+.st.ok{background:var(--green-soft);color:var(--green)}
+.st.amber{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber)}
+.st.red{background:var(--red-soft);color:var(--red)}
+.drawer{width:330px;flex:none;border:1px solid var(--line);border-radius:12px;background:var(--surface);display:flex;flex-direction:column;min-height:0;box-shadow:var(--shadow)}
+.dr-h{display:flex;align-items:center;gap:10px;padding:12px 12px 10px;border-bottom:1px solid var(--line)}
+.dr-n{font-weight:650}.dr-p{font:400 12px var(--mono);color:var(--muted)}
+.dr-b{padding:4px 12px 10px;overflow:hidden}
+.blk{padding:7px 0;border-bottom:1px solid var(--line2)}
+.blk:last-child{border-bottom:0}
+.blk-h{font:600 11px var(--sans);letter-spacing:.04em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+.kv{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:2px 0}
+.kv>span:first-child{color:var(--muted);width:92px;flex:none}
+.kv b{font-weight:500;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lnk{color:var(--accent);font:500 12px var(--sans);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:3px}
+.lnk svg{width:13px;height:13px}
+.lnk.danger{color:var(--red);margin-top:4px}
+.lnk.add{margin-top:3px}
+.cdot{display:inline-block;width:12px;height:12px;border-radius:4px;vertical-align:middle}
+.acc{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12.5px}
+.acc>span:nth-child(2){display:flex;flex-direction:column;flex:1;min-width:0;line-height:1.25}
+.acc small{color:var(--muted);font-size:11.5px}
+.acc .sw{width:22px;height:22px;border-radius:6px;flex:none}
+.role{font:500 11.5px var(--sans);color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+.face{width:22px;height:22px;border-radius:50%;background:var(--soft);color:var(--accent);display:inline-grid;place-items:center;font:600 10.5px var(--sans);flex:none}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.dcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.dcard.ghost{border-style:dashed;background:transparent}
+.dc-h{display:flex;align-items:center;gap:8px}
+.dc-h b{flex:1}
+.tog{width:28px;height:16px;border-radius:8px;background:var(--green);position:relative}
+.tog::after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff}
+.dc-s{font:600 11px var(--sans);letter-spacing:.04em;text-transform:uppercase;color:var(--faint);margin-top:4px}
+.dc-r{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.dc-l{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.lchip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:8px;padding:3px 8px;font-size:12px}
+.lchip i{width:7px;height:7px;border-radius:2px}
+.lchip small{font:400 11px var(--mono);color:var(--muted)}
+.dc-f{font-size:12px;color:var(--muted);border-top:1px solid var(--line2);padding-top:8px;margin-top:4px;display:flex;gap:4px;align-items:center}
+.dc-f b{color:var(--text);font-weight:600}
+.compact .ln{padding:3px 8px}
+.compact .ln .txt{flex-direction:row;align-items:baseline;gap:6px;min-width:0}
+.compact .ln .t2{font-size:11px}
+.compact .tile{width:20px;height:20px;font-size:9px;border-radius:6px}
+#tiers{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.t-h{font-size:20px;font-weight:650;letter-spacing:-.01em;margin:0}
+.tiers{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:10px}
+.t-org{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto}
+.t-minis{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;align-items:start}
+.org{display:flex;flex-direction:column;gap:6px;min-width:620px}
+.on-node{display:flex;flex-direction:column;gap:6px}
+.on-node .on-node{margin-left:28px;padding-left:14px;border-left:1px dashed var(--line)}
+.on-card{display:flex;align-items:center;gap:10px;border:1px solid var(--line2);background:var(--side2);border-radius:10px;padding:7px 10px}
+.on-who{display:flex;flex-direction:column;line-height:1.25;width:210px;flex:none}
+.on-who small{color:var(--muted);font-size:11.5px}
+.on-lines{display:flex;flex-wrap:wrap;gap:5px;flex:1}
+.on-sees{font:500 11.5px var(--sans);color:var(--accent);background:var(--soft);border-radius:8px;padding:3px 8px;white-space:nowrap}
+.mini{background:var(--side);border:1px solid var(--line);border-radius:12px;padding:10px}
+.mini-h{display:flex;align-items:center;gap:8px;padding:2px 4px 4px}
+.mini-h small{color:var(--muted);margin-left:auto;font-size:11.5px}
+.mini .row{cursor:default}
+.mini .dept{cursor:default}
+.nest{margin-left:12px;border-left:1px solid var(--line);padding-left:4px}
+.mini-n{margin:10px 6px 2px;font-size:12px;color:var(--muted);line-height:1.45}
+.tray{display:flex;flex-wrap:wrap;align-items:center;gap:6px;border:1px dashed var(--line);border-radius:10px;padding:8px 10px;background:var(--surface);font-size:12.5px}
+.tray b{margin-right:4px}
+.ed{overflow-x:auto;margin-top:10px}
+.ed-hint{font-size:12.5px;color:var(--muted);margin:10px 2px 0;line-height:1.5;max-width:80ch}
+.kb{display:flex;gap:12px;align-items:flex-start;min-width:min-content}
+.kc{width:268px;flex:none;background:var(--side);border:1px solid var(--line);border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px;min-height:120px}
+.kc-h{display:flex;flex-direction:column;padding:4px 4px 2px}
+.kc-h small{color:var(--muted);font-size:11.5px}
+.kc-empty{border:1px dashed var(--line);border-radius:9px;padding:18px;text-align:center;color:var(--faint);font-size:12px}
+.pc{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 9px;display:flex;flex-direction:column;gap:6px}
+.pc-h{display:flex;align-items:center;gap:8px}
+.pc-l{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.pc-empty{font-size:12px;color:var(--faint)}
+.drag{cursor:grab}
+.drag:active{cursor:grabbing}
+.dragging{opacity:.45}
+.over{outline:2px solid var(--accent);outline-offset:2px;background:var(--soft)}
+.lchip.drag{background:var(--surface)}
+.tree{display:flex;flex-direction:column;gap:6px;min-width:560px}
+.tn{display:flex;flex-direction:column;gap:6px}
+.tn>.pc{max-width:520px}
+.tk{margin-left:26px;padding-left:14px;border-left:1px dashed var(--line);display:flex;flex-direction:column;gap:6px}
+.tt{width:100%;min-width:720px;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.tt th{text-align:left;font:600 11px var(--sans);letter-spacing:.04em;text-transform:uppercase;color:var(--faint);padding:9px 12px;border-bottom:1px solid var(--line)}
+.tt td{padding:8px 12px;border-bottom:1px solid var(--line2);vertical-align:middle}
+.tt select{font:500 12.5px var(--sans);color:var(--text);background:var(--side2);border:1px solid var(--line);border-radius:7px;padding:5px 7px}
+.tt .addsel{color:var(--accent)}
+.x{border:0;background:transparent;color:var(--faint);cursor:pointer;font-size:14px;line-height:1;padding:0 0 0 2px}
+.x:hover{color:var(--red)}
+.toast{display:inline-flex;align-items:center;gap:10px;background:var(--text);color:var(--surface);border-radius:9px;padding:7px 12px;font-size:12.5px}
+.toast button{border:0;background:transparent;color:var(--surface);font:600 12.5px var(--sans);text-decoration:underline;cursor:pointer}
+.tsearch{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:0 9px;background:var(--surface);color:var(--faint)}
+.tsearch svg{width:14px;height:14px}
+.tsearch input{border:0;background:transparent;font:400 12.5px var(--sans);color:var(--text);padding:7px 0;width:170px;outline:none}
+.waiting{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border:1px dashed color-mix(in srgb,var(--amber) 55%,var(--line));background:color-mix(in srgb,var(--amber) 6%,var(--surface));border-radius:10px;padding:8px 10px;margin-bottom:10px;font-size:12.5px}
+.wp{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:16px;padding:3px 10px 3px 3px;font-weight:600}
+.wp small{font-weight:400;color:var(--muted)}
+.tray-l{display:inline-flex;gap:5px;flex-wrap:wrap}
+.thead,.tr{display:grid;grid-template-columns:minmax(230px,1.4fr) 120px minmax(0,2fr) 56px 30px;gap:12px;align-items:center}
+.thead{font:600 11px var(--sans);letter-spacing:.04em;text-transform:uppercase;color:var(--faint);padding:0 10px 6px;border-bottom:1px solid var(--line)}
+.tbody{overflow:hidden}
+.tr{padding:6px 10px;border-bottom:1px solid var(--line2);border-radius:8px}
+.tr:hover{background:var(--hover)}
+.tr[draggable="true"]{cursor:grab}
+.tr.hit{background:var(--soft)}
+.tr-name{display:flex;align-items:center;gap:8px;min-width:0;position:relative}
+.elbow{width:12px;height:14px;border-left:1px solid var(--line);border-bottom:1px solid var(--line);border-bottom-left-radius:5px;margin-top:-12px;flex:none;margin-left:-14px}
+.fold{width:20px;height:20px;border:0;background:transparent;color:var(--muted);display:grid;place-items:center;border-radius:5px;cursor:pointer;flex:none}
+.fold:hover{background:var(--line)}
+.fold .chev{width:14px;height:14px;transition:transform .15s}
+.fold[aria-expanded="false"] .chev{transform:rotate(-90deg)}
+.fold-sp{width:20px;flex:none}
+.av.sm{width:28px;height:28px;font-size:12px;background:var(--soft);color:var(--accent)}
+.av.sm .dot{width:9px;height:9px;box-shadow:0 0 0 2px var(--surface)}
+.dot.off{background:var(--faint)}
+.you{font:600 10px var(--sans);color:var(--accent);background:var(--soft);border-radius:6px;padding:1px 5px;margin-left:4px;vertical-align:middle}
+.dtag{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap}
+.dtag i{width:7px;height:7px;border-radius:2px}
+.tr-sees{text-align:right}
+.tr-more{opacity:0;font-weight:700;letter-spacing:1px}
+.tr:hover .tr-more,.tr-more:focus-visible{opacity:1}
+.ttoast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:var(--text);color:var(--surface);border-radius:9px;padding:8px 14px;font-size:12.5px;display:flex;gap:12px;box-shadow:var(--shadow)}
+.ttoast button{border:0;background:transparent;color:var(--surface);font:600 12.5px var(--sans);text-decoration:underline;cursor:pointer}
+.scontent.wide{position:relative}
+.setup{flex-direction:row;align-items:center;gap:10px;width:100%;cursor:pointer;text-align:left;color:var(--text);font:inherit;padding:8px 10px}
+.setup>svg{width:14px;height:14px;transform:rotate(-90deg);color:var(--muted);margin-left:auto}
+.ring{width:26px;height:26px;border-radius:50%;background:conic-gradient(var(--accent) 66%,var(--line) 0);display:grid;place-items:center;flex:none}
+.ring::after{content:"";width:18px;height:18px;border-radius:50%;background:var(--surface)}
+.su-t{display:flex;flex-direction:column;line-height:1.25}.su-t b{font-size:12.5px}.su-t small{font-size:11.5px;color:var(--accent)}
+.subt{display:block;font-size:11px;color:var(--faint);margin:2px 0 0 12px}
+.wp.nol{border-color:color-mix(in srgb,var(--amber) 45%,var(--line))}
+.wp.nol small{color:var(--amber)}
+.dc-sub{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:baseline}
+.camps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.camp{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.camp-h{display:flex;justify-content:space-between;gap:8px;font-size:12.5px}.camp-h span{font:400 11.5px var(--mono);color:var(--muted)}
+.camp .bar i{background:var(--green)}
+.camp.near .bar i{background:var(--amber)}
+.camp.full{border-color:color-mix(in srgb,var(--red) 45%,var(--line));background:var(--red-soft)}
+.camp.full .bar i{background:var(--red)}
+.camp-f{font-size:11.5px;color:var(--muted)}.camp.full .camp-f{color:var(--red)}.camp.near .camp-f{color:var(--amber)}
+.camp.add{border-style:dashed;background:transparent;justify-content:center}
+.lr{grid-template-columns:26px 1.2fr .9fr 150px auto !important}
+.csel{font:500 12px var(--sans);color:var(--text);background:var(--side2);border:1px solid var(--line);border-radius:7px;padding:4px 6px;max-width:150px}
+.kv .csel{flex:1;max-width:none}
+.face.xs{width:18px;height:18px;font-size:9.5px}
+.sb .nest{margin-left:9px;padding-left:4px;border-left:1px solid var(--line)}
+.meter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface);font-size:12.5px}
+.m-l{font:600 11px var(--sans);letter-spacing:.05em;color:var(--faint)}
+.m-c{display:inline-flex;align-items:center;gap:8px}
+.m-c b{font:500 11.5px var(--mono);color:var(--muted)}
+.m-b{width:70px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}.m-b i{display:block;height:100%;background:var(--green)}
+.m-c.near .m-b i{background:var(--amber)}.m-c.near b{color:var(--amber)}
+.m-c.full .m-b i{background:var(--red)}.m-c.full b{color:var(--red)}
+.m-c em{font-style:normal;color:var(--red);font-size:12px}
+.lr2{display:grid;grid-template-columns:26px minmax(0,1fr) 190px 130px 16px;align-items:center;gap:14px;padding:8px 10px;border-bottom:1px solid var(--line2);cursor:pointer;border-radius:8px}
+.lr2:hover{background:var(--hover)}
+.lr2 .csel{border-color:transparent;background:transparent;max-width:190px}
+.lr2:hover .csel{border-color:var(--line);background:var(--surface)}
+.lr-st{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted)}
+.sd{width:8px;height:8px;border-radius:50%;flex:none}.sd.ok{background:var(--green)}.sd.amber{background:var(--amber)}.sd.red{background:var(--red)}
+.go{width:14px;height:14px;transform:rotate(-90deg);color:var(--faint)}
+.ld{display:flex;flex-direction:column;gap:14px;max-width:680px}
+.back{align-self:flex-start;border:0;background:transparent;color:var(--muted);font:500 12.5px var(--sans);display:flex;align-items:center;gap:4px;cursor:pointer;padding:0}
+.back svg{width:14px;height:14px;transform:rotate(90deg)}
+.back:hover{color:var(--text)}
+.ld-h{display:flex;align-items:center;gap:12px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}
+.tabs button{border:0;background:transparent;color:var(--muted);font:500 13px var(--sans);padding:8px 10px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+.tb{display:flex;flex-direction:column;gap:2px}
+.ocs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.oc{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:11px;padding:12px;background:var(--surface)}
+.oc-i{width:32px;height:32px;border-radius:9px;background:var(--side);display:grid;place-items:center;color:var(--muted);flex:none}
+.oc-i svg{width:16px;height:16px}
+.oc.ok .oc-i{background:var(--green-soft);color:var(--green)}
+.oc.amber .oc-i{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber)}
+.oc.red .oc-i{background:var(--red-soft);color:var(--red)}
+.oc-t{display:flex;flex-direction:column;min-width:0;flex:1;line-height:1.3}
+.oc-t small{font-size:11.5px;color:var(--muted)}.oc-t b{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kv2{display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid var(--line2);font-size:13px}
+.kv2>span:first-child{width:130px;color:var(--muted);flex:none}
+.kv2 b{flex:1;font-weight:500}
+.kv2 .csel{max-width:260px}
+.acc2{display:flex;flex-direction:column;gap:6px;padding-top:6px}
+.sb:not(.slim):not(.sset){width:var(--w-side,256px)}
+.list{width:var(--w-list,318px)}
+.split{position:relative;width:0;flex:none;z-index:5;cursor:col-resize}
+.split::before{content:"";position:absolute;top:0;bottom:0;left:-4px;width:8px}
+.split::after{content:"";position:absolute;top:0;bottom:0;left:-1px;width:2px;background:transparent;transition:background .15s}
+.split:hover::after,.split.dragging-split::after{background:var(--accent)}
+.split.closed{cursor:default}
+.split-btn{position:absolute;top:50%;left:-11px;width:22px;height:22px;margin-top:-11px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--muted);display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .15s;box-shadow:var(--shadow);padding:0}
+.split-btn svg{width:13px;height:13px;transform:rotate(90deg)}
+.split.closed .split-btn svg{transform:rotate(-90deg)}
+.split:hover .split-btn,.split.closed .split-btn,.split-btn:focus-visible{opacity:1}
+.split-btn:hover{color:var(--accent);border-color:var(--accent)}
+.sb,.list{border-right:0}
+.sb{box-shadow:inset -1px 0 0 var(--line)}
+.list{box-shadow:inset -1px 0 0 var(--line)}
+@media (max-width:640px){body{padding-inline:16px}h1{font-size:22px}}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Ringlite inbox + settings: final</h1>
+    <p class="lede">The version we build. Inbox: top bar, org-shaped sidebar, phone dock (use “Sidebar as” to see what each person sees). Settings: Team, Lines (10DLC, 50 numbers per campaign per Telnyx), Departments. Names and numbers are example data.</p>
+  </header>
+
+  <div class="controls">
+    <span><span class="ctl-label">View as</span>
+      <span class="seg" role="group" aria-label="View as" id="roleSeg"><button data-role="owner">Owner</button><button data-role="member">Member</button></span></span>
+  </div>
+  <div class="controls">
+    <span><span class="ctl-label">Screen</span>
+      <span class="seg" role="group" aria-label="Screen" id="viewSeg"><button data-view="inbox">Inbox</button><button data-view="settings">Settings</button></span></span>
+    <span><span class="ctl-label">Sidebar</span>
+      <span class="seg" role="group" aria-label="Sidebar width" id="colSeg"><button data-col="0">Expanded</button><button data-col="1">Collapsed</button></span></span>
+    <span><span class="ctl-label">Sidebar as</span>
+      <span class="seg" role="group" aria-label="Sidebar as" id="asSeg"><button data-as="omer">Omer · owner</button><button data-as="sara">Sara · manager</button><button data-as="hamza">Hamza · lead</button><button data-as="bilal">Bilal · rep</button></span></span>
+    <span><span class="ctl-label">Live call</span>
+      <span class="seg" role="group" aria-label="Live call" id="liveSeg"><button data-live="1">On a call</button><button data-live="0">Idle</button></span></span>
+  </div>
+
+  <div class="stage"><div class="frame" id="frame"></div></div>
+  <div class="notes" id="notes"></div>
+  <section id="tiers" hidden></section>
+</div>
+
+<script>
+const I = {
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  bell:'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  inbox:'<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  panel:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
+  panelOpen:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
+  panelClose:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m17 15-3-3 3-3"/>',
+  down:'<path d="m6 9 6 6 6-6"/>',
+  contacts:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  mega:'<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+  chart:'<path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/>',
+  gear:'<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  help:'<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  phone:'<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  pen:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>',
+  building:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01"/>',
+  hash:'<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
+  flow:'<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="8" r="3"/><path d="M6 9v6M18 11a6 6 0 0 1-6 6H9"/>',
+  queue:'<path d="M3 6h18M3 12h18M3 18h11"/>',
+  bot:'<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 8V4M8 14h.01M16 14h.01"/>',
+  plug:'<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8z"/>',
+  card:'<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
+  shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>',
+  sliders:'<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  vol:'<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>',
+  mic:'<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/>',
+  moon:'<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  msg:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  missed:'<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/><path d="m16 2 6 6M22 2l-6 6"/>',
+  vm:'<circle cx="6" cy="12" r="4"/><circle cx="18" cy="12" r="4"/><path d="M6 16h12"/>',
+  at:'<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
+  bars:'<path d="M5 18 11 6M11 18l6-12"/>'
+};
+const ic = (n, cls='') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
+
+const DEPTS = [
+  {id:'acq', name:'Acquisitions', color:'var(--t-acq)', lines:[
+    {id:'h1', name:'Hamza 1', num:'(469) 381-8973', unread:0},
+    {id:'h2', name:'Hamza 2', num:'(972) 961-2810', unread:2},
+    {id:'h3', name:'Acq caller', num:'(469) 461-7145', unread:0}]},
+  {id:'dispo', name:'Dispositions', color:'var(--t-dispo)', lines:[
+    {id:'a1', name:'Ali 1', num:'(682) 423-1003', unread:1},
+    {id:'a2', name:'Ali 2', num:'(972) 903-8841', unread:1}]},
+  {id:'office', name:'Office', color:'var(--t-office)', lines:[
+    {id:'mn', name:'Main line', num:'(469) 461-7576', unread:3},
+    {id:'d1', name:'Dispo 1 New', num:'(469) 461-4644', unread:0}]}
+];
+const LIVE_LINE = 'h1';
+const initials = n => n.split(/\s+/).map(w => w[0]).join('').slice(0,2).toUpperCase();
+const total = () => DEPTS.reduce((s,d) => s + d.lines.reduce((a,l) => a + l.unread, 0), 0);
+const deptUnread = d => d.lines.reduce((a,l) => a + l.unread, 0);
+const findLine = id => { for (const d of DEPTS) for (const l of d.lines) if (l.id === id) return {d, l}; return null; };
+
+const S = {opt:'C3', set:'S1', role:'owner', sec:'team', sub:0, bell:false, view:'settings', slim:false, live:true, status:'available', dndFor:'1 hour', menu:false,
+  open:{acq:true, dispo:true, office:false, 'd:sara':true, 't:hamza':true}, lineOpen:null, as:'omer', ltab:'overview', wSide:256, wList:318, listHidden:false, sel:'all', smart:null, tip:null};
+try { const w = JSON.parse(localStorage.getItem('rl-widths') || 'null'); if (w) { S.wSide = w.side || 256; S.wList = w.list || 318; } } catch(e) {}
+try { const o = localStorage.getItem('rl-settings-menu'); if (['S1','S2','S3'].includes(o)) S.set = o; } catch(e) {}
+
+/* ---------- shared pieces ---------- */
+const dot = () => `<span class="dot ${S.status==='dnd'?'dnd':''}"></span>`;
+const statusText = () => S.status === 'dnd' ? `Do not disturb${S.dndFor==='Until I turn it off'?'':' · 58m left'}` : 'Available';
+const avatar = () => `<span class="av">OA${dot()}</span>`;
+
+function statusMenu(style){
+  const opts = ['30 minutes','1 hour','Until 8:00 AM tomorrow','Until I turn it off'];
+  return `<div class="menu" style="${style}" role="menu">
+    <div class="mh">Your status</div>
+    <button class="mi" data-act="status" data-v="available"><span class="dot inline"></span>Available${S.status==='available'?ic('check','ck'):''}</button>
+    <button class="mi" data-act="status" data-v="dnd"><span class="dot inline dnd"></span>Do not disturb${S.status==='dnd'?ic('check','ck'):''}</button>
+    ${opts.map(o => `<button class="mi sub" data-act="dndfor" data-v="${o}">${o}${S.status==='dnd'&&S.dndFor===o?ic('check','ck'):''}</button>`).join('')}
+    <div class="fwd"><span>While on DND, calls go to</span><select id="fwd-${S.opt}" aria-label="Where calls go during Do not disturb"><option>Voicemail</option><option>Ali (teammate)</option><option>Hamza (teammate)</option></select></div>
+    <div class="sep"></div>
+    <button class="mi" data-act="noop">${ic('user')}My profile</button>
+    <button class="mi" data-act="noop">${ic('building')}Switch workspace</button>
+    <button class="mi" data-act="noop">${ic('moon')}Dark mode</button>
+    <button class="mi" data-act="noop">${ic('logout')}Sign out</button>
+  </div>`;
+}
+
+function liveCard(){
+  if (!S.live) return '';
+  const {l} = findLine(LIVE_LINE);
+  return `<div class="livecard" role="button" tabindex="0" data-act="noop" title="Return to the call">
+    <span class="ph">${ic('phone')}</span>
+    <span><div class="l1">On a call · ${l.name}</div><div class="l2">(903) 555-0142</div></span>
+    <span class="tm">03:12</span></div>`;
+}
+function dndBar(){
+  if (S.status !== 'dnd') return '';
+  return `<div class="dndbar"><span class="dot inline dnd"></span>Calls go to voicemail<button data-act="status" data-v="available">Turn off</button></div>`;
+}
+
+function lineRow(d, l){
+  const live = S.live && l.id === LIVE_LINE;
+  return `<button class="row ln ${S.sel===l.id?'on':''} ${l.unread?'unread':''}" data-act="sel" data-v="${l.id}">
+    <span class="tile" style="background:${d.color}">${initials(l.name)}${live?'<span class="live-dot"></span>':''}</span>
+    <span class="txt"><span class="t1">${l.name}</span><span class="t2">${l.num}</span></span>
+    ${l.unread?`<span class="badge">${l.unread}</span>`:''}</button>`;
+}
+function deptBlock(d){
+  const open = S.open[d.id], u = deptUnread(d);
+  return `<div>
+    <button class="dept" aria-expanded="${open}" data-act="dept" data-v="${d.id}">${ic('down','chev')}<span class="sw" style="background:${d.color}"></span>${d.name}<span class="cnt">${d.lines.length}</span>${!open&&u?`<span class="badge">${u}</span>`:''}</button>
+    ${open?d.lines.map(l => lineRow(d,l)).join(''):''}</div>`;
+}
+function inboxSection(label){
+  return `<div class="sec">${label}<button class="ibtn" data-act="tip" data-v="New inbox" aria-label="Add a number">${ic('plus')}</button></div>
+    <button class="row ${S.sel==='all'?'on':''}" data-act="sel" data-v="all"><span class="ic">${ic('inbox')}</span>All inboxes<span class="badge">${total()}</span></button>
+    ${DEPTS.map(deptBlock).join('')}`;
+}
+function navRows(items){
+  return items.map(([k, n, label, badge]) => `<button class="row ${activeNav()===k?'on':''}" data-act="nav" data-v="${k}"><span class="ic">${ic(n)}</span>${label}${badge?`<span class="badge red">${badge}</span>`:''}</button>`).join('');
+}
+const activeNav = () => S.view === 'settings' ? 'settings' : null;
+
+function slimLines(){
+  return DEPTS.map((d, i) => `${i?'<div class="hr"></div>':''}` + d.lines.map(l => {
+    const live = S.live && l.id === LIVE_LINE;
+    return `<button class="ibtn slim-tile" style="width:36px;height:36px" data-act="sel" data-v="${l.id}" aria-label="${l.name} ${l.num}" title="${l.name} · ${l.num}">
+      <span class="tile" style="background:${d.color};${S.sel===l.id?'outline:2px solid var(--accent);outline-offset:2px':''}">${initials(l.name)}${live?'<span class="live-dot"></span>':''}</span>
+      ${l.unread?`<span class="ud">${l.unread}</span>`:''}</button>`;}).join('')).join('');
+}
+const tipBtn = (act, name, label, extra='') => `<button class="ibtn" data-act="${act}" aria-label="${label}" title="${label}">${ic(name)}${extra}</button>`;
+
+/* ---------- activity (bell) dropdown: the five kinds the backend creates today ---------- */
+const ACT = [
+  ['Mentions', 'at', [['Ali mentioned you on Martha Roman', '“Can you call her back about the lot?”', '12m']]],
+  ['Assigned to you', 'user', [['Hamza assigned you (682) 423-1003', 'Acquisitions · Hamza 2', '40m'], ['Ali assigned you Mir Ali', 'Dispositions · Ali 2', '2h']]],
+  ['Overdue', 'bell', [['Garza Indian Harbor has waited 26h', 'Your reply target is 24h', '2h']]],
+  ['Missed calls', 'missed', [['(469) 210-3654 called Hamza 2', 'No one answered · 11:42 AM', '3h']]],
+  ['Balance', 'card', [['Balance is $18.40', 'Below your $25.00 alert · owners and admins only', 'today']]]
+];
+function activityMenu(style){
+  return `<div class="menu act" style="${style}" role="menu">
+    <div class="acth"><b>Activity</b><button data-act="noop">Mark all read</button></div>
+    ${ACT.map(([h, n, items]) => `<div class="mh">${h}</div>` + items.map(([a, b, t]) => `
+      <button class="mi ai" data-act="noop"><span class="aic">${ic(n)}</span><span class="atx"><span class="a1">${a}</span><span class="a2">${b}</span></span><time>${t}</time></button>`).join('')).join('')}
+  </div>`;
+}
+
+/* ---------- top bar ---------- */
+function topC(){
+  const nav3 = S.opt === 'C3';
+  const tab = (k, label) => `<button class="tbtab ${(k==='settings')===(S.view==='settings')&&(k==='settings'||k==='inbox')?'on':''}" data-act="view" data-v="${k==='settings'?'settings':'inbox'}">${label}${k==='inbox'?`<span class="badge">${total()}</span>`:''}</button>`;
+  return `<header class="topbar">
+    <div class="brand" style="${nav3?'width:auto':''}"><span class="mark">${ic('bars')}</span>ringlite</div>
+    ${nav3 ? `<nav class="tbnav">${tab('inbox','Inbox')}${tab('contacts','Contacts')}${tab('campaigns','Campaigns')}${tab('analytics','Analytics')}${tab('settings','Settings')}</nav>`
+           : `<button class="wsbtn" data-act="noop">Sabine Property Group ${ic('down')}</button>`}
+    <div class="gsearch" style="${nav3?'max-width:300px':''}">${ic('search')}Search${nav3?'':' contacts, messages, numbers'}<span class="kbd">Ctrl K</span></div>
+    <div class="tb-right">
+      ${S.live?`<span class="pill" style="background:var(--green-soft);border-color:transparent;color:var(--green)">${ic('phone').replace('<svg','<svg style="width:14px;height:14px"')}On a call <span class="sub" style="color:var(--green)">03:12</span></span>`:''}
+      <button class="pill ${S.status==='dnd'?'dnd':''}" data-act="menu" aria-haspopup="menu">${dot().replace('class="dot','class="dot inline')}${S.status==='dnd'?'Do not disturb':'Available'}<span class="sub">${S.status==='dnd'?'58m left':'23h 59m'}</span></button>
+      ${S.opt==='C2' ? '' : `<button class="ibtn" data-act="bell" aria-label="Activity, 6 unread" title="Activity">${ic('bell')}<span class="ud">6</span></button>`}
+      ${tipBtn('noop','help','Help')}
+      <button class="who" style="flex:none;padding:3px" data-act="menu" aria-label="Account">${avatar()}</button>
+    </div>
+    ${S.menu?statusMenu('right:14px;top:50px'):''}
+    ${S.bell?activityMenu('right:60px;top:50px'):''}
+  </header>`;
+}
+
+/* ---------- sidebar variants ---------- */
+const NEEDS = [['missed', 'missed', 'Missed calls', 2, 'red'], ['reply', 'msg', 'Waiting on your reply', 6, ''], ['vm', 'vm', 'Voicemails', 1, ''], ['mine', 'user', 'Assigned to you', 2, ''], ['at', 'at', 'Mentions', 1, ''], ['late', 'bell', 'Overdue', 1, 'red']];
+const needLabel = k => (NEEDS.find(n => n[0] === k) || [])[2];
+function needsTiles(){
+  const sm = ([k, , label, n, cls]) => `<button class="${S.smart===k?'on':''}" data-act="smart" data-v="${k}"><span class="n ${cls}">${n}</span><span class="k">${label}</span></button>`;
+  return `<div class="sec">Needs you</div><div class="smart">${NEEDS.slice(0, 4).map(sm).join('')}</div>`;
+}
+function needsList(){
+  return `<div class="sec">Needs you<span class="cnt" style="margin-left:auto;font-weight:500">14</span></div>` + NEEDS.map(([k, n, label, c, cls]) =>
+    `<button class="row ${S.smart===k?'on':''}" data-act="smart" data-v="${k}"><span class="ic" style="${cls?'color:var(--red)':''}">${ic(n)}</span>${label}<span class="badge ${cls?'red':'quiet'}">${c}</span></button>`).join('');
+}
+function needsChips(){
+  return `<div class="nchips">${NEEDS.slice(0, 4).map(([k, n, label, c, cls]) =>
+    `<button class="nchip ${S.smart===k?'on':''} ${cls}" data-act="smart" data-v="${k}" title="${label}">${ic(n)}<b>${c}</b>${label.split(' ')[0]}</button>`).join('')}</div>`;
+}
+function dock(){
+  return `<div class="dock">
+    ${S.live ? `<div class="dock-live"><span class="ph">${ic('phone')}</span><span><div class="l1">Hamza 1 → (903) 555-0142</div><div class="l2">03:12 · recording</div></span></div>
+      <div class="dock-btns"><button data-act="noop">Mute</button><button data-act="noop">Hold</button><button data-act="noop">Transfer</button><button class="end" data-act="noop">End</button></div>`
+    : `<div class="dock-in">${ic('phone')}<span>Enter a number or name</span></div>
+      <div class="dock-row"><span class="from"><i style="background:var(--t-acq)"></i>From Hamza 2 · (972) 961-2810 ${ic('down')}</span><button class="call" data-act="noop">${ic('phone')}Call</button></div>`}
+  </div>`;
+}
+function slimC(){
+  return `<aside class="sb slim">
+    <div class="sb-top" style="padding:10px 0 4px">${tipBtn('slim','panelOpen','Expand sidebar (Ctrl [)')}</div>
+    <div class="sb-scroll">
+      ${tipBtn('noop','pen','New message')}
+      ${tipBtn('smart','missed','Missed calls','<span class="ud">2</span>').replace('data-act="smart"','data-act="smart" data-v="missed"')}
+      ${tipBtn('noop','inbox','All inboxes',`<span class="ud" style="background:var(--accent)">${total()}</span>`)}
+      <div class="hr"></div>${slimLines()}
+      ${S.opt==='C3'?'':`<div class="hr"></div>${tipBtn('noop','contacts','Contacts')}${tipBtn('noop','mega','Campaigns')}${tipBtn('noop','chart','Analytics')}`}
+    </div>
+    ${S.opt==='C3'?'':`<div class="sb-foot">${tipBtn('nav','gear','Settings').replace('data-act="nav"','data-act="nav" data-v="settings"')}</div>`}
+  </aside>`;
+}
+function sideC(){
+  if (S.slim) return slimC();
+  const o = S.opt, inbox = S.view === 'inbox';
+  if (!inbox) return `<aside class="sb sset" style="width:248px"><div class="sb-top"><span class="panel-title">Settings</span>${tipBtn('slim','panelClose','Collapse sidebar (Ctrl [)')}</div><div class="sb-scroll">${settingsNav()}</div></aside>`;
+  const needs = !inbox ? '' : o === 'C1' ? needsTiles() : o === 'C2' ? needsList() : needsChips();
+  const inboxHtml = `<div class="sec">Inbox</div><button class="row ${S.sel==='all'?'on':''}" data-act="sel" data-v="all"><span class="ic">${ic('inbox')}</span>All inboxes<span class="badge">${Object.values(LUNREAD).reduce((a, b) => a + b, 0)}</span></button>${orgSidebar()}`;
+  const nLn = (inboxHtml.match(/class="row ln/g) || []).length;
+  const workspace = o === 'C3' ? '' : `<div class="sec">Workspace</div>` + navRows([['contacts','contacts','Contacts'],['campaigns','mega','Campaigns'],['analytics','chart','Analytics'],['settings','gear','Settings']]);
+  return `<aside class="sb">
+    <div class="sb-top" style="padding:12px 10px 4px">
+      <button class="newbtn" style="margin:0;flex:1" data-act="noop">${ic('pen')}New message</button>
+      ${tipBtn('slim','panelClose','Collapse sidebar (Ctrl [)')}
+    </div>
+    <div class="sb-scroll ${nLn > 6 ? 'compact' : ''}">
+      ${dndBar()}
+      ${needs}
+      ${inboxHtml}
+      ${workspace}
+    </div>
+    ${inbox ? dock() : ''}
+  </aside>`;
+}
+
+/* ---------- content ---------- */
+const CONVS = [
+  ['(682) 423-1003','Called you','Sep 27','h2',1,'missed'],
+  ['Martha Roman','Well I don\'t know, I would have to see…','Sep 25','h2',1],
+  ['Garza Indian Harbor','You: We will do $5,250 for you as y…','Sep 24','a1',0],
+  ['Mir Ali','You: I am a wholesaler','Sep 23','a2',0],
+  ['Valerie Fidelity Title','You called','Sep 23','mn',0],
+  ['(720) 783-3187','Hey Omer, this is Jamal with Leadz…','Sep 21','mn',1],
+  ['(469) 210-3654','You: Hi Ben, how are you','Sep 20','h1',0],
+  ['Steven Cupples','No','Sep 14','a1',0]
+];
+function listCol(){
+  let title = 'All inboxes', sub = '';
+  const f = findLine(S.sel); if (f) { title = f.l.name; sub = f.l.num; }
+  const tl = typeof T !== 'undefined' && T.lines.find(x => x.id === S.sel); if (tl) { title = tl.name; sub = tl.num; }
+  if (S.smart) title = needLabel(S.smart);
+  const rows = CONVS.filter(c => !f || c[3] === S.sel).concat(f && !CONVS.some(c=>c[3]===S.sel) ? [] : []);
+  const shown = rows.length ? rows : CONVS.slice(0,3);
+  return `<section class="list">
+    <div class="list-h"><div class="t">${title}<span>${sub}</span></div>
+      <div class="chips"><span class="chip on">Open</span><span class="chip">Unread</span><span class="chip">Unresponded</span></div></div>
+    <div class="convs">${shown.map((c,i) => { const L = findLine(c[3]);
+      return `<div class="cv ${i===0?'on':''} ${c[4]?'unread':''}"><span class="cav">${/^\(/.test(c[0])?ic('user').replace('<svg','<svg style="width:16px;height:16px"'):initials(c[0])}</span>
+      <div class="m"><div class="a"><span>${c[0]}</span><time>${c[2]}</time></div><div class="b">${c[1]}</div>
+      ${S.sel==='all'?`<div class="via"><i style="background:${L.d.color}"></i>${L.l.name}</div>`:''}</div></div>`;}).join('')}</div>
+  </section>`;
+}
+function threadCol(){
+  return `<section class="thread">
+    <div class="th-h"><span class="cav">SC</span><div><div class="n">Steven Cupples</div><div class="p">(972) 639-1969</div></div></div>
+    <div class="msgs">
+      <div class="bub me">My name is Benjamin Ethan. I am a wholesaler in all of DFW area. We get properties under contract and sell the contracts to builders.</div>
+      <div class="stamp">Monday, Sep 14, 10:50 PM</div>
+      <div class="bub me">Good morning Steven. Are you interested in moving forward with the Tool lot at 1074 Pearl Harbor Street?</div>
+      <div class="bub">No</div>
+    </div>
+    <div class="compose">Write a message…<span>from Ali 1 · (682) 423-1003</span></div>
+  </section>`;
+}
+/* ---------- settings menu: real sections from settingsSections.ts, regrouped ---------- */
+I.code = '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>';
+const SGROUPS = [
+  ['Phone system', [
+    ['numbers', 'hash', 'Lines', '7 lines · 2 need attention', null, ['2', 'amber']],
+    ['inboxes', 'users', 'Departments', '3 departments · 4 people'],
+    ['calling', 'phone', 'Calling', '2 call flows · recording on', ['Call flows', 'Queues', 'Hold music', 'Recording']],
+    ['messaging', 'msg', 'Messaging', '10DLC approved · 1 pending', ['Registration', 'Templates', 'Opt-outs'], ['1 pending', 'amber']],
+    ['ai', 'bot', 'AI assistants', '1 assistant live']]],
+  ['Workspace', [
+    ['workspace', 'building', 'Workspace', 'Name, logo, time zone'],
+    ['team', 'shield', 'Team & security', '4 members · 2FA on', ['Members', 'Roles', 'Security']],
+    ['verification', 'check', 'Business verification', 'Action needed', null, ['Action needed', 'amber'], 'owner'],
+    ['billing', 'card', 'Billing & usage', '$18.40 · auto-recharge on', ['Plan & credits', 'Usage', 'Invoices'], ['Low', 'red'], 'owner']]],
+  ['Your account', [
+    ['profile', 'user', 'My profile', 'Name · 911 address', null, null, 'all'],
+    ['notif', 'bell', 'Notifications & sound', 'Desktop alerts + ringtone', null, null, 'all', 'new']]]
+];
+const visibleGroups = () => SGROUPS.map(([g, items]) => [g, items.filter(it => S.role === 'owner' || it[6] === 'all')]).filter(([, items]) => items.length);
+const flag = f => f ? `<span class="flag ${f[1]}">${f[0]}</span>` : '';
+
+function settingsNav(){
+  const v = S.set, groups = visibleGroups();
+  const member = S.role !== 'owner' ? `<p class="mnote">Other settings are managed by your workspace admin.</p>` : '';
+  if (v === 'S2') return groups.map(([g, items]) => `<div class="sec">${g}</div>` + items.map(([id, n, label, sum, , f, , nw]) =>
+      `<button class="row srow2 ${S.sec===id?'on':''}" data-act="sec" data-v="${id}"><span class="stile">${ic(n)}</span>
+        <span class="txt"><span class="t1">${label}${nw?' <span class="flag new">New</span>':''}</span><span class="t2 ${f?f[1]:''}">${sum}</span></span></button>`).join('')).join('') + member;
+  const setup = S.role === 'owner' ? `<button class="setup" data-act="sec" data-v="verification"><span class="ring"></span>
+      <span class="su-t"><b>Setup 4 of 6 done</b><small>Next: verify your business</small></span>${ic('down')}</button>` : '';
+  const search = `<div class="search">${ic('search')}Search settings</div>`;
+  return search + setup + groups.map(([g, items]) => `<div class="sec">${g}</div>` + items.map(([id, n, label, , subs, f, , nw]) => {
+    const on = S.sec === id;
+    return `<button class="row ${on?'on':''}" data-act="sec" data-v="${id}"><span class="ic">${ic(n)}</span>${label}${nw?'<span class="flag new">New</span>':''}${flag(f)}</button>`
+      + (on && subs ? `<div class="subs">${subs.map((s, i) => `<button class="${(S.sub||0)===i?'on':''}" data-act="sub" data-v="${i}">${s}</button>`).join('')}</div>` : '');
+  }).join('')).join('') + member;
+}
+
+const SCONTENT = {
+  numbers: ['Phone numbers', 'Every line in the workspace and the department it belongs to.', [['Hamza 2 · (972) 961-2810', 'Acquisitions · texting + calling', 'Edit'], ['Ali 1 · (682) 423-1003', 'Dispositions · texting + calling', 'Edit'], ['Buy a number', 'Local or toll-free', 'Buy']]],
+  inboxes: ['Departments & inboxes', 'Group lines into departments and choose who can use them.', [['Acquisitions', '3 lines · Hamza, Omer', 'Manage'], ['Dispositions', '2 lines · Ali, Omer', 'Manage'], ['Office', '2 lines · everyone', 'Manage']]],
+  calling: ['Calling', 'What happens when someone calls your lines.', [['Call flows', 'Main line → business hours → Office', 'Edit'], ['Recording', 'On, with a notice to callers', 'Change'], ['Hold music', 'Soft piano', 'Change']]],
+  messaging: ['Messaging', 'Carrier registration and message rules.', [['10DLC brand', 'Approved', 'View'], ['Campaign for (469) 461-4644', 'Pending carrier review', 'View'], ['Opt-out words', 'STOP, UNSUBSCRIBE, QUIT', 'Edit']]],
+  ai: ['AI assistants', 'Assistants that answer or place calls for you.', [['Acq caller', 'Live on (469) 461-7145', 'Edit'], ['New assistant', 'Start from a template', 'Create']]],
+  workspace: ['Workspace', 'Your company details.', [['Name', 'Sabine Property Group', 'Edit'], ['Time zone', 'Central (Chicago)', 'Change']]],
+  team: ['Team & security', 'Members, roles and sign-in rules.', [['Members', '4 people · 1 invite pending', 'Invite'], ['Two-factor sign-in', 'Required for everyone', 'Change']]],
+  verification: ['Business verification', 'Carriers need this before your lines can text at full volume.', [['Business details', 'Submitted', 'View'], ['Owner ID check', 'Needed', 'Start']]],
+  providers: ['Providers', 'The carriers behind your lines.', [['Telnyx', 'Connected · 5 lines', 'Manage'], ['SignalWire', 'Connected · 2 lines', 'Manage']]],
+  billing: ['Billing & usage', 'Credits, plan and what you spent.', [['Balance', '$18.40 · below your $25 alert', 'Add credit'], ['Auto-recharge', 'On · $50 when under $25', 'Change'], ['This month', '$212.60 used', 'Usage']]],
+  developers: ['Developers', 'API keys and webhooks for your own tools.', [['API keys', '2 active', 'Manage'], ['Webhooks', '1 endpoint', 'Manage']]],
+  profile: ['My profile', 'Your name and the 911 address used when you call.', [['Name', 'Omer Ali', 'Edit'], ['911 address', '1074 Pearl Harbor St, Tool, TX', 'Edit'], ['Default Do not disturb length', '1 hour', 'Change']]],
+  notif: ['Notifications & sound', 'How Ringlite gets your attention.', [['Desktop alerts', 'Texts, missed calls, mentions', 'Change'], ['Ringtone', 'Classic · volume 80%', 'Change'], ['Microphone and speaker', 'Headset (Jabra Evolve2)', 'Test']]]
+};
+/* ---------- Lines + Departments pages ---------- */
+const LX = {
+  h1: {camp: 'acq', ans: 'Hamza', txt: ['Texting ready', 'ok'], e911: ['911 set', 'ok'], cost: '$1.15', mtd: '$6.40', prov: 'Telnyx', extra: []},
+  h2: {camp: 'acq', ans: 'Hamza', txt: ['Texting ready', 'ok'], e911: ['911 set', 'ok'], cost: '$1.15', mtd: '$4.20', prov: 'Telnyx', extra: ['Omer']},
+  h3: {camp: 'acq', ans: 'Acq caller (AI)', txt: ['Texting ready', 'ok'], e911: ['No 911 address', 'red'], cost: '$1.15', mtd: '$22.80', prov: 'Telnyx', extra: []},
+  a1: {camp: 'buy', ans: 'Ali', txt: ['Texting ready', 'ok'], e911: ['911 set', 'ok'], cost: '$1.00', mtd: '$3.10', prov: 'SignalWire', extra: []},
+  a2: {camp: 'buy', ans: 'Ali', txt: ['Texting pending', 'amber'], e911: ['911 set', 'ok'], cost: '$1.00', mtd: '$0.90', prov: 'SignalWire', extra: []},
+  mn: {camp: 'acq', ans: 'Call flow: Office hours', txt: ['Texting ready', 'ok'], e911: ['911 set', 'ok'], cost: '$1.15', mtd: '$8.75', prov: 'Telnyx', extra: []},
+  d1: {camp: '', ans: 'Ali', txt: ['Texting ready', 'ok'], e911: ['911 set', 'ok'], cost: '$1.15', mtd: '$1.20', prov: 'Telnyx', extra: []}
+};
+const CAMPS = [{id: 'acq', name: 'Acquisition outreach', base: 44, cap: 50}, {id: 'buy', name: 'Buyer updates', base: 48, cap: 50}];
+const campUsed = c => c.base + Object.values(LX).filter(x => x.camp === c.id).length;
+const campSel = (id) => `<select class="csel" id="camp-${id}" data-camp="${id}" aria-label="10DLC campaign">
+  <option value="" ${!LX[id].camp ? 'selected' : ''}>Not on a campaign</option>
+  ${CAMPS.map(c => { const full = campUsed(c) >= c.cap && LX[id].camp !== c.id; return `<option value="${c.id}" ${LX[id].camp === c.id ? 'selected' : ''} ${full ? 'disabled' : ''}>${c.name}${full ? ' (full)' : ''}</option>`; }).join('')}</select>`;
+function campStrip(){
+  return `<div class="camps">${CAMPS.map(c => { const u = campUsed(c), pct = Math.min(100, u / c.cap * 100), full = u >= c.cap, near = !full && c.cap - u <= 3;
+    return `<div class="camp ${full ? 'full' : near ? 'near' : ''}"><div class="camp-h"><b>${c.name}</b><span>${u} / ${c.cap} numbers</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="camp-f">${full ? `This campaign is full. <span class="lnk">Attach another campaign</span>` : near ? `${c.cap - u} spots left` : 'Room for more'}</div></div>`; }).join('')}
+    <div class="camp add"><b>10DLC campaigns</b><span class="lnk">${ic('plus')}Register a campaign</span></div></div>`;
+}
+const DMEM = {acq: ['Hamza', 'Omer'], dispo: ['Ali', 'Omer'], office: ['Hamza', 'Ali', 'Omer', 'Sara']};
+const face = n => `<span class="face" title="${n}">${n[0]}</span>`;
+const st = ([t, k]) => `<span class="st ${k}">${t}</span>`;
+
+function linesPage(){
+  const sel = S.lineOpen && findLine(S.lineOpen);
+  if (sel) return lineDetail(sel);
+  const attention = Object.values(LX).filter(x => x.txt[1] !== 'ok' || x.e911[1] !== 'ok' || !x.camp).length;
+  const meter = `<div class="meter"><span class="m-l">10DLC</span>${CAMPS.map(c => { const u = campUsed(c), full = u >= c.cap, near = !full && c.cap - u <= 3;
+      return `<span class="m-c ${full ? 'full' : near ? 'near' : ''}" title="${c.name}: ${u} of ${c.cap} numbers">${c.name}<span class="m-b"><i style="width:${Math.min(100, u / c.cap * 100)}%"></i></span><b>${u}/${c.cap}</b>${full ? '<em>Full · <span class="lnk">attach another</span></em>' : ''}</span>`; }).join('')}
+    <span class="lnk" style="margin-left:auto">${ic('plus')}Campaign</span></div>`;
+  return `<div class="lp">
+    <div class="lp-h"><div><h2>Lines</h2><p class="d" style="margin-bottom:10px">One line is one number and its inbox.</p></div>
+      <div class="lp-act"><span class="btn">Port requests · 1</span><span class="btn pri">${ic('plus')}Get a number</span></div></div>
+    ${meter}
+    <div class="chips" style="margin:12px 0 8px"><span class="chip on">All 7</span><span class="chip" style="color:var(--amber)">Needs attention ${attention}</span></div>
+    ${DEPTS.map(d => `<div class="lg"><div class="lg-h"><span class="sw" style="background:${d.color}"></span>${d.name}</div>
+      ${d.lines.map(l => { const x = LX[l.id]; const issue = !x.camp ? ['Can\'t text', 'amber'] : x.e911[1] !== 'ok' ? x.e911 : x.txt[1] !== 'ok' ? x.txt : null;
+        return `<div class="lr2" role="button" tabindex="0" data-act="line" data-v="${l.id}">
+        <span class="tile" style="background:${d.color}">${initials(l.name)}</span>
+        <span class="lr-n"><b>${l.name}</b><span>${l.num}</span></span>
+        <span>${campSel(l.id)}</span>
+        <span class="lr-st">${issue ? `<i class="sd ${issue[1]}"></i>${issue[0]}` : '<i class="sd ok"></i>Ready'}</span>
+        ${ic('down', 'go')}</div>`; }).join('')}</div>`).join('')}
+  </div>`;
+}
+
+function lineDetail({d, l}){
+  const x = LX[l.id], tab = S.ltab || 'overview';
+  const tabs = [['overview', 'Overview'], ['access', 'Who can use it'], ['calls', 'Calls'], ['texting', 'Texting'], ['advanced', 'Advanced']];
+  const card = (icn, title, value, action, state = '') => `<div class="oc ${state}"><span class="oc-i">${ic(icn)}</span><div class="oc-t"><small>${title}</small><b>${value}</b></div>${action ? `<span class="lnk">${action}</span>` : ''}</div>`;
+  const kv = (k, v, b) => `<div class="kv2"><span>${k}</span><b>${v}</b>${b ? `<span class="lnk">${b}</span>` : ''}</div>`;
+  const body = {
+    overview: `<div class="ocs">
+        ${card('msg', 'Texting', x.camp ? CAMPS.find(c => c.id === x.camp).name : 'Not on a campaign', x.camp ? 'Change' : 'Add to campaign', x.camp ? (x.txt[1] === 'ok' ? 'ok' : 'amber') : 'amber')}
+        ${card('shield', '911 address', x.e911[1] === 'ok' ? '1074 Pearl Harbor St, Tool TX' : 'Not set', x.e911[1] === 'ok' ? 'Change' : 'Add', x.e911[1] === 'ok' ? 'ok' : 'red')}
+        ${card('phone', 'Answered by', x.ans, 'Change')}
+        ${card('users', 'Who can use it', `${d.name}${x.extra.length ? ' + ' + x.extra.join(', ') : ''}`, 'Manage')}</div>`,
+    access: `<div class="acc2"><div class="acc"><span class="sw" style="background:${d.color}"></span><span><b>${d.name}</b><small>${DMEM[d.id].join(', ')}</small></span><span class="role">Send & call</span></div>
+        ${x.extra.map(p => `<div class="acc">${face(p)}<span><b>${p}</b><small>Added directly</small></span><span class="role">Send & call</span></div>`).join('')}
+        <span class="lnk add">${ic('plus')}Add a person or department</span></div>`,
+    calls: kv('Answered by', x.ans, 'Change') + kv('Call flow', 'None', 'Set up'),
+    texting: `<div class="kv2"><span>10DLC campaign</span>${campSel(l.id)}</div>` + kv('Registration', x.camp ? x.txt[0].replace('Texting ', '') : 'Not on a campaign') + kv('Reply within', '15 min', 'Edit') + kv('Resolve within', '24 h', 'Edit'),
+    advanced: kv('Name', l.name, 'Rename') + kv('Department', d.name, 'Move') + kv('Color', `<i class="cdot" style="background:${d.color}"></i>`, 'Change') + kv('Port lock', 'On', 'Turn off') + `<div class="kv2"><span class="lnk danger">Release this line</span></div>`
+  }[tab];
+  return `<div class="ld">
+    <button class="back" data-act="line" data-v="">${ic('down')}Lines</button>
+    <div class="ld-h"><span class="tile" style="background:${d.color};width:42px;height:42px;font-size:14px;border-radius:11px">${initials(l.name)}</span>
+      <div><h2 style="margin:0">${l.name}</h2><div class="dr-p">${l.num} · ${d.name}</div></div></div>
+    <div class="tabs">${tabs.map(([k, t]) => `<button class="${k === tab ? 'on' : ''}" data-act="ltab" data-v="${k}">${t}</button>`).join('')}</div>
+    <div class="tb">${body}</div></div>`;
+}
+
+function deptPage(){
+  return `<div class="lp"><div class="lp-h"><div><h2>Departments</h2><p class="d">A department is a team and the lines it works. Add a person and they get every line in it.</p></div>
+    <div class="lp-act"><span class="btn pri">${ic('plus')}New department</span></div></div>
+    <div class="dgrid">${DEPTS.map(d => `<div class="dcard">
+      <div class="dc-h"><span class="sw" style="background:${d.color};width:10px;height:10px"></span><b>${d.name}</b><span class="tog on" title="Active"></span><span class="lnk" style="margin-left:6px">···</span></div>
+      <div class="dc-s">People</div>
+      <div class="dc-r">${DMEM[d.id].map(face).join('')}<span class="lnk add">${ic('plus')}Add</span></div>
+      ${d.id === 'acq' ? '<div class="dc-sub"><span class="subt" style="margin:0">Closers team</span> led by Hamza · 3 people</div>' : ''}
+      <div class="dc-s">Lines</div>
+      <div class="dc-l">${d.lines.map(l => `<span class="lchip"><i style="background:${d.color}"></i>${l.name}<small>${l.num}</small></span>`).join('')}<span class="lnk add">${ic('plus')}Add line</span></div>
+      <div class="dc-f">Members can <b>send & call</b> <span class="lnk">Change</span></div>
+    </div>`).join('')}
+    <div class="dcard ghost"><b>Lines with no department</b><p class="d" style="margin:6px 0 0">None. New numbers land here until you give them a department.</p></div></div></div>`;
+}
+
+/* ---------- reporting lines: who sees which numbers ---------- */
+const ORG = {name: 'Omer', title: 'Owner', lines: [['Main line', '(469) 461-7576']], kids: [
+  {name: 'Sara', title: 'Sales manager', lines: [['Sales main', '(469) 461-4644', 'shared']], kids: [
+    {name: 'Hamza', title: 'Sales rep', lines: [['Hamza 1', '(469) 381-8973'], ['Hamza 2', '(972) 961-2810']], kids: []},
+    {name: 'Bilal', title: 'Sales rep', lines: [['Bilal 1', '(214) 555-0110']], kids: []},
+    {name: 'Zain', title: 'Sales rep', lines: [['Zain 1', '(817) 555-0199']], kids: []}]},
+  {name: 'Ali', title: 'Dispo lead', lines: [['Ali 1', '(682) 423-1003'], ['Ali 2', '(972) 903-8841']], kids: []}]};
+const subtreeLines = n => n.lines.length + n.kids.reduce((a, k) => a + subtreeLines(k), 0);
+
+function orgTree(){
+  const node = (n, depth) => `<div class="on-node" style="--d:${depth}">
+      <div class="on-card">${face(n.name)}<span class="on-who"><b>${n.name}</b><small>${n.title}${depth ? ' · reports to ' + (depth === 1 ? 'Omer' : 'Sara') : ''}</small></span>
+        <span class="on-lines">${n.lines.map(([l, num, sh]) => `<span class="lchip"><i style="background:${sh ? 'var(--t-office)' : 'var(--t-acq)'}"></i>${l}${sh ? '<small>shared</small>' : ''}</span>`).join('')}</span>
+        <span class="on-sees">sees ${subtreeLines(n)} line${subtreeLines(n) === 1 ? '' : 's'}</span></div>
+      ${n.kids.map(k => node(k, depth + 1)).join('')}</div>`;
+  return `<div class="org">${node(ORG, 0)}</div>`;
+}
+
+function miniSide(who){
+  const L = (name, num, unread, color = 'var(--t-acq)') => `<div class="row ln ${unread ? 'unread' : ''}"><span class="tile" style="background:${color}">${initials(name)}</span><span class="txt"><span class="t1">${name}</span><span class="t2">${num}</span></span>${unread ? `<span class="badge">${unread}</span>` : ''}</div>`;
+  const F = (label, sub, n, open, body = '') => `<div class="dept" aria-expanded="${open}">${ic('down', 'chev')}${label}<span class="cnt">${sub}</span>${!open && n ? `<span class="badge">${n}</span>` : ''}</div>${open ? `<div class="nest">${body}</div>` : ''}`;
+  const sec = t => `<div class="sec" style="padding-top:10px">${t}</div>`;
+  if (who === 'rep') return `<div class="mini"><div class="mini-h">${face('Hamza')}<b>Hamza</b><small>Sales rep</small></div>
+    ${sec('My lines')}${L('Hamza 1', '(469) 381-8973', 2)}${L('Hamza 2', '(972) 961-2810', 0)}
+    ${sec('Shared with Sales')}${L('Sales main', '(469) 461-4644', 1, 'var(--t-office)')}
+    <p class="mini-n">Hamza never sees Bilal's or Zain's lines.</p></div>`;
+  if (who === 'mgr') return `<div class="mini"><div class="mini-h">${face('Sara')}<b>Sara</b><small>Sales manager</small></div>
+    ${sec('My lines')}${L('Sales main', '(469) 461-4644', 1, 'var(--t-office)')}
+    ${sec('My team')}
+    ${F('Hamza', '2 lines', 2, true, L('Hamza 1', '(469) 381-8973', 2) + L('Hamza 2', '(972) 961-2810', 0))}
+    ${F('Bilal', '1 line', 3, false)}${F('Zain', '1 line', 0, false)}
+    <p class="mini-n">One fold per person who reports to Sara.</p></div>`;
+  return `<div class="mini"><div class="mini-h">${face('Omer')}<b>Omer</b><small>Owner</small></div>
+    ${sec('My lines')}${L('Main line', '(469) 461-7576', 3, 'var(--t-office)')}
+    ${sec('My team')}
+    ${F('Sara', "Sara's team · 5 lines", 6, true, F('Sara', '1 line', 1, false) + F('Hamza', '2 lines', 2, false) + F('Bilal', '1 line', 3, false) + F('Zain', '1 line', 0, false))}
+    ${F('Ali', '2 lines', 2, false)}
+    <p class="mini-n">Same rule one level up: a fold for each direct report, holding their whole team.</p></div>`;
+}
+
+function tiersSection(){
+  return `<h2 class="t-h">Reporting lines: who sees which numbers</h2>
+    <p class="lede" style="margin-top:4px">Every person has one manager (“reports to”). Every personal line has one owner. You see your own lines, lines shared with your department, and every line owned by anyone below you, all the way down. The workspace owner sees everything.</p>
+    <div class="tiers">
+      <div class="t-org"><div class="blk-h" style="margin-bottom:8px">Settings → Team (org chart)</div>${orgTree()}</div>
+      <div class="t-minis">${miniSide('rep')}${miniSide('mgr')}${miniSide('own')}</div>
+    </div>`;
+}
+
+function settingsContent(){
+  if (S.role !== 'owner' && !['profile', 'notif'].includes(S.sec)) S.sec = 'profile';
+  if (S.sec === 'numbers') return `<section class="scontent wide">${linesPage()}</section>`;
+  if (S.sec === 'team') return teamPage();
+  if (S.sec === 'inboxes') return `<section class="scontent wide">${deptPage()}</section>`;
+  const [h, d, rows] = SCONTENT[S.sec];
+  return `<section class="scontent"><h2>${h}</h2><p class="d">${d}</p>
+    ${rows.map(([k, v, b]) => `<div class="srow"><div><div class="k">${k}</div><div class="v">${v}</div></div><span class="btn">${b}</span></div>`).join('')}
+  </section>`;
+}
+
+/* ---------- notes ---------- */
+const NOTES = {
+  S1: [['Settings menu', ['Search box, then a setup card for owners (“Setup 4 of 6 done”, next step one click away) that goes away once setup is finished.','Three groups: Phone system, Workspace (with Billing), Your account. Developers and Providers are gone: carriers and per-number cost are only shown to us.','The open section lists its sub-pages under it; small flags mark what needs action.']]],
+  S2: [['Settings menu S2: live summaries', ['Each item shows its current state under the name: “$18.40 · auto-recharge on”, “10DLC approved · 1 pending”, “4 members · 2FA on”.','You read the state of the whole workspace without opening anything. Problems show in amber or red.','Taller rows, so no search box and no sub-pages in the menu (they stay as tabs on the page).']]],
+  S3: [['Settings menu S3: setup first', ['A setup card sits on top for owners until setup is done: “4 of 6 done” and the next step one click away.','Below it, the same compact grouped list as S1, without flags (the card carries them).','Best for new workspaces; the card goes away once setup is finished.']]]
+};
+const COMMON = ['Open as many departments as you like. When more than 6 lines are showing, rows go compact (number beside the name) so the sidebar still fits without scrolling.','Settings has no phone dock. A live call still shows in the top bar.','Members only see My profile and Notifications & sound; everything else follows the permissions that exist today.','Collapse is an icon button with a tooltip and Ctrl [ shortcut, never a row.','Departments fold open and closed and remember it. A folded department shows its total unread.','Each line shows its name, its number, a live-call dot when someone is on it, and its unread count.','Grouping rule: you only see departments and lines you can use. A person in one department gets a flat list, no header. Lines in no department go under “Other lines”.','Status pill in the top bar: Available or Do not disturb with time left, and who takes your calls meanwhile.','A live call shows in the top bar on every screen, including Settings.'];
+function notes(){
+  return NOTES[S.set].map(([h, items]) => `<div class="note"><h3>${h}</h3><ul>${items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('')
+    + `<div class="note"><h3>Same in all three</h3><ul>${COMMON.map(i=>`<li>${i}</li>`).join('')}</ul></div>`;
+}
+
+/* ---------- render ---------- */
+function render(){
+  const f = document.getElementById('frame');
+  const side = sideC();
+  const settingsCols = (S.opt==='C3' && !S.slim ? '' : `<nav class="snav" aria-label="Settings">${settingsNav()}</nav>`) + settingsContent();
+  const split = (k, closed) => `<div class="split ${closed ? 'closed' : ''}" data-split="${k}" title="Drag to resize · double-click to ${closed ? 'open' : 'close'}"><button class="split-btn" data-act="splitbtn" data-v="${k}" aria-label="${closed ? 'Open' : 'Close'} ${k === 'side' ? 'sidebar' : 'conversation list'}">${ic('down')}</button></div>`;
+  const main = S.view==='settings' ? settingsCols : (S.listHidden ? '' : listCol()) + split('list', S.listHidden) + threadCol();
+  f.innerHTML = topC() + `<div class="frame-body">${side}${S.view==='inbox' ? split('side', S.slim) : ''}${main}</div>`;
+  f.style.setProperty('--w-side', S.wSide + 'px'); f.style.setProperty('--w-list', S.wList + 'px');
+  document.getElementById('notes').innerHTML = notes();
+  const mark = (id, attr, val) => document.querySelectorAll(`#${id} button`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset[attr] === String(val))));
+  mark('optSeg','opt',S.set); mark('roleSeg','role',S.role); mark('asSeg','as',S.as); mark('viewSeg','view',S.view); mark('colSeg','col',S.slim?1:0); mark('liveSeg','live',S.live?1:0);
+}
+
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-opt],[data-view],[data-col],[data-live],[data-role],[data-as]');
+  if (c && c.closest('.controls')) {
+    if (c.dataset.opt) { S.set = c.dataset.opt; S.view = 'settings'; S.menu = false; try { localStorage.setItem('rl-settings-menu', S.set); } catch(_) {} }
+    if (c.dataset.as) { S.as = c.dataset.as; S.view = 'inbox'; S.sel = 'all'; }
+    if (c.dataset.role) { S.role = c.dataset.role; S.view = 'settings'; }
+    if (c.dataset.view) S.view = c.dataset.view;
+    if (c.dataset.col) S.slim = c.dataset.col === '1';
+    if (c.dataset.live) S.live = c.dataset.live === '1';
+    return render();
+  }
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
+  const t = e.target.closest('[data-act]');
+  if (!t) { if ((S.menu||S.bell) && !e.target.closest('.menu')) { S.menu = false; S.bell = false; render(); } return; }
+  if (t.tagName === 'SELECT') return;
+  const v = t.dataset.v;
+  switch (t.dataset.act) {
+    case 'menu': S.menu = !S.menu; S.bell = false; break;
+    case 'bell': S.bell = !S.bell; S.menu = false; break;
+    case 'status': S.status = v; S.menu = v === 'dnd'; break;
+    case 'dndfor': S.status = 'dnd'; S.dndFor = v; S.menu = false; break;
+    case 'dept': S.open[v] = !S.open[v]; break;
+    case 'line': S.lineOpen = v || null; S.ltab = 'overview'; break;
+    case 'ltab': S.ltab = v; break;
+    case 'splitbtn': if (v === 'side') S.slim = !S.slim; else S.listHidden = !S.listHidden; break;
+    case 'sec': S.sec = v; S.sub = 0; S.view = 'settings'; break;
+    case 'sub': S.sub = +v; break;
+    case 'sel': S.sel = v; S.smart = null; S.view = 'inbox'; S.menu = false; break;
+    case 'smart': S.smart = S.smart === v ? null : v; S.sel = 'all'; break;
+    case 'nav': S.view = v === 'settings' ? 'settings' : 'inbox'; S.menu = false; break;
+    case 'view': S.view = v; S.menu = false; break;
+    case 'slim': S.slim = !S.slim; S.menu = false; break;
+    default: if (!t.closest('.menu')) { S.menu = false; S.bell = false; } return render();
+  }
+  render();
+});
+document.addEventListener('change', e => { if (e.target.dataset && e.target.dataset.camp) { LX[e.target.dataset.camp].camp = e.target.value; render(); } });
+/* drag the column dividers; widths are clamped and remembered */
+let drag = null;
+const LIM = {side: [200, 380], list: [260, 520]};
+document.addEventListener('pointerdown', e => {
+  const sp = e.target.closest('.split'); if (!sp || e.target.closest('.split-btn') || sp.classList.contains('closed')) return;
+  const k = sp.dataset.split; drag = {k, x0: e.clientX, w0: k === 'side' ? S.wSide : S.wList, w: null};
+  sp.setPointerCapture(e.pointerId); sp.classList.add('dragging-split'); e.preventDefault();
+});
+document.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const [lo, hi] = LIM[drag.k]; const raw = drag.w0 + e.clientX - drag.x0;
+  drag.w = Math.max(lo, Math.min(hi, raw)); drag.snap = raw < lo - 60;
+  document.getElementById('frame').style.setProperty('--w-' + drag.k, drag.w + 'px');
+});
+document.addEventListener('pointerup', () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.w !== null) { if (d.k === 'side') S.wSide = d.w; else S.wList = d.w; }
+  if (d.snap) { if (d.k === 'side') S.slim = true; else S.listHidden = true; }
+  try { localStorage.setItem('rl-widths', JSON.stringify({side: S.wSide, list: S.wList})); } catch(_) {}
+  render();
+});
+document.addEventListener('dblclick', e => {
+  const sp = e.target.closest('.split'); if (!sp) return;
+  if (sp.dataset.split === 'side') S.slim = !S.slim; else S.listHidden = !S.listHidden; render();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && (S.menu||S.bell)) { S.menu = false; S.bell = false; render(); }
+  if (e.ctrlKey && e.key === '[') { e.preventDefault(); S.slim = !S.slim; render(); }
+});
+/* ---------- team structure editors (live, draggable) ---------- */
+const T = {mode: 'K', undo: null, toast: '',
+  people: [
+    {id: 'omer', name: 'Omer', title: 'Owner', mgr: null, root: true},
+    {id: 'sara', name: 'Sara', title: 'Sales manager', mgr: 'omer'},
+    {id: 'ali', name: 'Ali', title: 'Dispo lead', mgr: 'omer'},
+    {id: 'hamza', name: 'Hamza', title: 'Team lead', mgr: 'sara'},
+    {id: 'usman', name: 'Usman', title: 'Sales rep', mgr: 'hamza'},
+    {id: 'raza', name: 'Raza', title: 'Sales rep', mgr: 'hamza'},
+    {id: 'bilal', name: 'Bilal', title: 'Sales rep', mgr: 'sara'},
+    {id: 'zain', name: 'Zain', title: 'Sales rep', mgr: 'sara'},
+    {id: 'nadia', name: 'Nadia', title: 'New hire', mgr: null}],
+  lines: [
+    {id: 'L0', name: 'Main line', num: '(469) 461-7576', owner: 'omer'},
+    {id: 'L1', name: 'Sales main', num: '(469) 461-4644', owner: 'sara'},
+    {id: 'L2', name: 'Hamza 1', num: '(469) 381-8973', owner: 'hamza'},
+    {id: 'L3', name: 'Hamza 2', num: '(972) 961-2810', owner: 'hamza'},
+    {id: 'L4', name: 'Bilal 1', num: '(214) 555-0110', owner: 'bilal'},
+    {id: 'L5', name: 'Zain 1', num: '(817) 555-0199', owner: 'zain'},
+    {id: 'L9', name: 'Usman 1', num: '(469) 555-0142', owner: 'usman'},
+    {id: 'L6', name: 'Ali 1', num: '(682) 423-1003', owner: 'ali'},
+    {id: 'L7', name: 'Ali 2', num: '(972) 903-8841', owner: 'ali'},
+    {id: 'L8', name: 'New line', num: '(214) 555-0177', owner: null}]};
+const P = id => T.people.find(p => p.id === id);
+const kids = id => T.people.filter(p => p.mgr === id);
+const below = id => kids(id).flatMap(k => [k.id, ...below(k.id)]);
+const sees = p => p.root ? T.lines.length : T.lines.filter(l => l.owner && [p.id, ...below(p.id)].includes(l.owner)).length;
+const depth = p => p.root ? 0 : p.mgr ? depth(P(p.mgr)) + 1 : -1;
+const snap = () => JSON.stringify({people: T.people, lines: T.lines});
+
+function lineChip(l){
+  return `<span class="lchip drag" draggable="true" data-drag="l:${l.id}" title="Drag to another person"><i style="background:var(--t-acq)"></i>${l.name}<small>${l.num}</small></span>`;
+}
+function personCard(p, extra = ''){
+  const lines = T.lines.filter(l => l.owner === p.id);
+  return `<div class="pc ${p.root ? '' : 'drag'}" ${p.root ? '' : `draggable="true" data-drag="p:${p.id}"`} data-drop="p:${p.id}">
+    <div class="pc-h">${face(p.name)}<span class="on-who" style="width:auto;flex:1"><b>${p.name}</b><small>${p.title}</small></span><span class="on-sees">sees ${sees(p)}</span></div>
+    <div class="pc-l">${lines.map(lineChip).join('') || '<span class="pc-empty">No lines of their own</span>'}</div>${extra}</div>`;
+}
+
+function edKanban(){
+  const managers = T.people.filter(p => p.root || kids(p.id).length).sort((a, b) => depth(a) - depth(b));
+  const loose = T.people.filter(p => !p.root && !p.mgr);
+  const col = (title, sub, dropId, cards) => `<div class="kc" data-drop="${dropId}"><div class="kc-h"><b>${title}</b><small>${sub}</small></div>${cards || '<div class="kc-empty">Drop a person here</div>'}</div>`;
+  return `<div class="kb">
+    ${managers.map(m => col(`${m.name}'s team`, `Level ${depth(m) + 1} · reports to ${m.root ? 'nobody' : P(m.mgr).name}`, `p:${m.id}`, kids(m.id).map(k => personCard(k)).join(''))).join('')}
+    ${col('Not placed yet', 'New people land here', 'p:none', loose.map(k => personCard(k)).join(''))}
+  </div>
+  <p class="ed-hint">Drop a person on a column to change who they report to. Drop a person on another person's card to put them under that person (a new column appears). Drag a line chip to another person to change its owner.</p>`;
+}
+function edTree(){
+  const node = p => `<div class="tn">${personCard(p)}${kids(p.id).length ? `<div class="tk">${kids(p.id).map(node).join('')}</div>` : ''}</div>`;
+  const loose = T.people.filter(p => !p.root && !p.mgr);
+  return `<div class="tree">${node(P('omer'))}</div>
+    ${loose.length ? `<div class="kc" data-drop="p:none" style="margin-top:10px"><div class="kc-h"><b>Not placed yet</b></div>${loose.map(p => personCard(p)).join('')}</div>` : ''}
+    <p class="ed-hint">Drag a person onto someone to make them report to that person. Everything below them moves too.</p>`;
+}
+function edTable(){
+  const opts = p => ['<option value="">Not placed</option>', ...T.people.filter(o => o.id !== p.id && !below(p.id).includes(o.id)).map(o => `<option value="${o.id}" ${p.mgr === o.id ? 'selected' : ''}>${o.name}</option>`)].join('');
+  return `<table class="tt"><thead><tr><th>Person</th><th>Reports to</th><th>Their lines</th><th>Sees</th></tr></thead><tbody>
+    ${T.people.map(p => `<tr><td><span class="pc-h" style="gap:8px">${face(p.name)}<span class="on-who" style="width:auto"><b>${p.name}</b><small>${p.title}</small></span></span></td>
+      <td>${p.root ? '<span class="pc-empty">Top of the workspace</span>' : `<select id="rt-${p.id}" data-rt="${p.id}" aria-label="${p.name} reports to">${opts(p)}</select>`}</td>
+      <td><div class="pc-l">${T.lines.filter(l => l.owner === p.id).map(l => `<span class="lchip">${l.name}<button class="x" data-unown="${l.id}" aria-label="Remove ${l.name} from ${p.name}">×</button></span>`).join('')}
+        <select id="add-${p.id}" data-own="${p.id}" aria-label="Give ${p.name} a line" class="addsel"><option value="">+ Line</option>${T.lines.filter(l => l.owner !== p.id).map(l => `<option value="${l.id}">${l.name} ${l.num}</option>`).join('')}</select></div></td>
+      <td><span class="on-sees">${sees(p)} lines</span></td></tr>`).join('')}
+    </tbody></table><p class="ed-hint">No dragging: pick a manager and add lines from dropdowns. Works on phones and with hundreds of people.</p>`;
+}
+
+function renderEd(){
+  if (typeof render === 'function') render();
+  const loose = T.lines.filter(l => !l.owner);
+  const host = document.getElementById('tiers');
+  host.innerHTML = `<h2 class="t-h">Team structure</h2>
+    <p class="lede" style="margin-top:4px">Try it: drag people and lines around. “Sees” updates live: you see your own lines and every line owned by anyone below you. Managers can read, reply and call on those lines.</p>
+    <div class="controls" style="margin:10px 0"><span class="seg" role="group" aria-label="Editor style" id="edSeg">
+      <button data-ed="K" aria-pressed="${T.mode==='K'}"><b>T1</b>Team board</button>
+      <button data-ed="O" aria-pressed="${T.mode==='O'}"><b>T2</b>Org tree</button>
+      <button data-ed="L" aria-pressed="${T.mode==='L'}"><b>T3</b>Simple table</button></span>
+      ${T.toast ? `<span class="toast">${T.toast}${T.undo ? '<button data-undo="1">Undo</button>' : ''}</span>` : ''}</div>
+    ${T.mode !== 'L' ? `<div class="tray" data-drop="l:none"><b>Lines with no owner</b>${loose.map(lineChip).join('') || '<span class="pc-empty">None. Drop a line here to take it away from someone.</span>'}</div>` : ''}
+    <div class="ed">${T.mode === 'K' ? edKanban() : T.mode === 'O' ? edTree() : edTable()}</div>`;
+}
+function change(msg, fn){ T.undo = snap(); fn(); T.toast = msg; renderEd(); }
+
+document.addEventListener('dragstart', e => {
+  const d = e.target.closest && e.target.closest('[data-drag]'); if (!d) return;
+  e.stopPropagation(); e.dataTransfer.setData('text/plain', d.dataset.drag); e.dataTransfer.effectAllowed = 'move';
+  d.classList.add('dragging');
+});
+document.addEventListener('dragend', e => { document.querySelectorAll('.dragging,.over').forEach(n => n.classList.remove('dragging', 'over')); });
+document.addEventListener('dragover', e => {
+  const t = e.target.closest && e.target.closest('[data-drop]'); if (!t) return;
+  e.preventDefault(); document.querySelectorAll('.over').forEach(n => n !== t && n.classList.remove('over')); t.classList.add('over');
+});
+document.addEventListener('drop', e => {
+  const t = e.target.closest && e.target.closest('[data-drop]'); if (!t) return;
+  e.preventDefault();
+  const [kind, id] = e.dataTransfer.getData('text/plain').split(':');
+  const [tk, tid] = t.dataset.drop.split(':');
+  if (kind === 'l') {
+    const l = T.lines.find(x => x.id === id);
+    if (tk === 'l' || tid === 'none') return change(`${l.name} has no owner now`, () => { l.owner = null; });
+    if (l.owner === tid) return renderEd();
+    return change(`${l.name} now belongs to ${P(tid).name}`, () => { l.owner = tid; });
+  }
+  if (kind === 'p' && tk === 'p') {
+    const p = P(id);
+    if (tid === 'none') return change(`${p.name} is not placed`, () => { p.mgr = null; });
+    if (tid === id || below(id).includes(tid)) { T.toast = `${P(tid).name} is already under ${p.name}`; T.undo = null; renderEd(); return; }
+    if (p.mgr === tid) return renderEd();
+    change(`${p.name} now reports to ${P(tid).name}`, () => { p.mgr = tid; });
+  }
+});
+document.addEventListener('click', e => {
+  const f = e.target.closest('[data-fold]'); if (f) { T.fold[f.dataset.fold] = !T.fold[f.dataset.fold]; return renderEd(); }
+  const b = e.target.closest('[data-ed],[data-undo],[data-unown]'); if (!b) return;
+  if (b.dataset.ed) { T.mode = b.dataset.ed; T.undo = null; T.toast = ''; }
+  if (b.dataset.undo) { const s = JSON.parse(T.undo); T.people = s.people; T.lines = s.lines; T.undo = null; T.toast = 'Undone'; }
+  if (b.dataset.unown) { const l = T.lines.find(x => x.id === b.dataset.unown); return change(`${l.name} has no owner now`, () => { l.owner = null; }); }
+  renderEd();
+});
+document.addEventListener('input', e => {
+  if (e.target.id !== 'team-q') return;
+  T.q = e.target.value; const pos = e.target.selectionStart; renderEd();
+  const i = document.getElementById('team-q'); if (i) { i.focus(); i.setSelectionRange(pos, pos); }
+});
+document.addEventListener('change', e => {
+  const s = e.target;
+  if (s.dataset.rt) { const p = P(s.dataset.rt); return change(s.value ? `${p.name} now reports to ${P(s.value).name}` : `${p.name} is not placed`, () => { p.mgr = s.value || null; }); }
+  if (s.dataset.own && s.value) { const l = T.lines.find(x => x.id === s.value); change(`${l.name} now belongs to ${P(s.dataset.own).name}`, () => { l.owner = s.dataset.own; }); }
+});
+
+/* ---------- Settings → Team: editable org tree ---------- */
+const TDEPT = {sara: ['Acquisitions', 'var(--t-acq)'], hamza: ['Acquisitions', 'var(--t-acq)'], bilal: ['Acquisitions', 'var(--t-acq)'], zain: ['Acquisitions', 'var(--t-acq)'], usman: ['Acquisitions', 'var(--t-acq)'], raza: ['Acquisitions', 'var(--t-acq)'], ali: ['Dispositions', 'var(--t-dispo)']};
+const TPRES = {hamza: 'dnd', zain: 'off', raza: 'off'};
+const TEAMNAME = {hamza: 'Closers'};
+const subTeam = p => TEAMNAME[p.id] || (p.mgr && TEAMNAME[p.mgr]) || '';
+T.fold = T.fold || {};
+T.q = T.q || '';
+function teamPage(){
+  const q = T.q.trim().toLowerCase();
+  const match = p => !q || p.name.toLowerCase().includes(q) || T.lines.some(l => l.owner === p.id && (l.name + l.num).toLowerCase().includes(q));
+  const visible = p => match(p) || below(p.id).some(id => match(P(id)));
+  const row = (p, d) => {
+    if (!visible(p)) return '';
+    const ks = kids(p.id), folded = T.fold[p.id] && !q, dep = TDEPT[p.id], pres = TPRES[p.id] || 'on';
+    const lines = T.lines.filter(l => l.owner === p.id);
+    return `<div class="tr ${match(p) && q ? 'hit' : ''}" ${p.root ? '' : `draggable="true" data-drag="p:${p.id}"`} data-drop="p:${p.id}">
+        <div class="tr-name" style="padding-left:${d * 26}px">
+          ${d ? '<span class="elbow"></span>' : ''}
+          ${ks.length ? `<button class="fold" data-fold="${p.id}" aria-expanded="${!folded}" aria-label="${folded ? 'Show' : 'Hide'} ${p.name}'s team">${ic('down', 'chev')}</button>` : '<span class="fold-sp"></span>'}
+          <span class="av sm">${p.name[0]}<span class="dot ${pres === 'dnd' ? 'dnd' : pres === 'off' ? 'off' : ''}"></span></span>
+          <span class="on-who" style="width:auto;min-width:0"><b>${p.name}${p.id === 'omer' ? ' <span class="you">You</span>' : ''}</b><small>${p.title}${ks.length ? ` · ${below(p.id).length} below` : ''}</small></span>
+        </div>
+        <div>${dep ? `<span class="dtag"><i style="background:${dep[1]}"></i>${dep[0]}</span>${subTeam(p) ? `<span class="subt">${subTeam(p)} team${TEAMNAME[p.id] ? ' · lead' : ''}</span>` : ''}` : '<span class="pc-empty">·</span>'}</div>
+        <div class="pc-l">${lines.map(lineChip).join('') || (p.root ? '<span class="pc-empty">No lines</span>' : '<span class="st amber">No line yet</span><span class="lnk">Assign one</span>')}</div>
+        <div class="tr-sees"><span class="on-sees" title="Their own lines plus everyone below them">${sees(p)}</span></div>
+        <button class="ibtn tr-more" aria-label="More for ${p.name}" title="Change manager, title, remove">···</button>
+      </div>${folded ? '' : ks.map(k => row(k, d + 1)).join('')}`;
+  };
+  const loose = T.people.filter(p => !p.root && !p.mgr), freeLines = T.lines.filter(l => !l.owner);
+  const noLine = T.people.filter(p => !p.root && p.mgr && !T.lines.some(l => l.owner === p.id));
+  return `<section class="scontent wide">
+    <div class="lp-h"><div><h2>Team</h2><p class="d">Who reports to whom. Drag a person onto someone to move them under that person; their lines and their whole team move with them.</p></div>
+      <div class="lp-act"><label class="tsearch">${ic('search')}<input id="team-q" placeholder="Find a person or number" value="${T.q.replace(/"/g, '&quot;')}"></label><span class="btn pri">${ic('plus')}Invite</span></div></div>
+    ${loose.length || freeLines.length || noLine.length ? `<div class="waiting" data-drop="p:none">
+      <b>Needs a spot</b>
+      ${loose.map(p => `<span class="wp drag" draggable="true" data-drag="p:${p.id}">${face(p.name)}${p.name}<small>${p.title}</small></span>`).join('')}
+      <span class="tray-l" data-drop="l:none">${freeLines.map(lineChip).join('')}</span>
+      ${noLine.map(p => `<span class="wp nol">${face(p.name)}${p.name}<small>has no line</small></span>`).join('')}
+      <span class="pc-empty" style="margin-left:auto">Drag them into the tree</span></div>` : ''}
+    <div class="thead"><span>Person</span><span>Department</span><span>Their lines</span><span style="text-align:right">Sees</span><span></span></div>
+    <div class="tbody">${row(P('omer'), 0)}</div>
+    ${T.toast ? `<div class="ttoast">${T.toast}${T.undo ? '<button data-undo="1">Undo</button>' : ''}</div>` : ''}
+  </section>`;
+}
+
+/* ---------- inbox sidebar that follows the org structure ---------- */
+const LUNREAD = {L0: 3, L1: 1, L3: 2, L4: 3, L9: 1, L6: 1, L7: 1};
+const SHARED = {L1: 'Acquisitions'};
+const DEPT_OF = id => (TDEPT[id] || ['Office', 'var(--t-office)']);
+function orgSidebar(){
+  const me = P(S.as || 'omer');
+  const lineUnread = ids => ids.reduce((a, id) => a + (LUNREAD[id] || 0), 0);
+  const linesOf = pid => T.lines.filter(l => l.owner === pid);
+  const allLinesUnder = pid => [pid, ...below(pid)].flatMap(id => linesOf(id).map(l => l.id));
+  const lrow = (l, color) => {
+    const live = S.live && l.id === 'L2';
+    return `<button class="row ln ${S.sel===l.id?'on':''} ${LUNREAD[l.id]?'unread':''}" data-act="sel" data-v="${l.id}">
+      <span class="tile" style="background:${color}">${initials(l.name)}${live?'<span class="live-dot"></span>':''}</span>
+      <span class="txt"><span class="t1">${l.name}</span><span class="t2">${l.num}</span></span>
+      ${LUNREAD[l.id]?`<span class="badge">${LUNREAD[l.id]}</span>`:''}</button>`;
+  };
+  const fold = (key, label, sub, unread, body, cls = '') => {
+    const open = !!S.open[key];
+    return `<div class="${cls}"><button class="dept" aria-expanded="${open}" data-act="dept" data-v="${key}">${ic('down','chev')}${label}<span class="cnt">${sub}</span>${!open&&unread?`<span class="badge">${unread}</span>`:''}</button>
+      ${open ? `<div class="nest">${body}</div>` : ''}</div>`;
+  };
+  // one person inside a team: their lines (fold only when 2+), then their own reports as a sub-team
+  const person = (p, color) => {
+    const ls = linesOf(p.id), ks = kids(p.id);
+    if (ks.length) {
+      const ids = allLinesUnder(p.id);
+      const name = TEAMNAME[p.id] ? `${TEAMNAME[p.id]} · ${p.name}` : `${p.name}'s team`;
+      return fold('t:' + p.id, `<span class="face xs">${p.name[0]}</span>${name}`, ids.length, lineUnread(ids),
+        ls.map(l => lrow(l, color)).join('') + ks.map(k => person(k, color)).join(''));
+    }
+    if (ls.length >= 2) return fold('p:' + p.id, `<span class="face xs">${p.name[0]}</span>${p.name}`, ls.length, lineUnread(ls.map(l => l.id)), ls.map(l => lrow(l, color)).join(''));
+    return ls.map(l => lrow(l, color)).join('');
+  };
+  const mine = linesOf(me.id);
+  // lines shared with my department that I do not own and that are not already under me
+  const under = new Set(allLinesUnder(me.id));
+  const myDept = TDEPT[me.id] && TDEPT[me.id][0];
+  const shared = me.root ? [] : T.lines.filter(l => SHARED[l.id] && SHARED[l.id] === myDept && !under.has(l.id));
+  const teams = kids(me.id).map(k => {
+    const [dname, color] = DEPT_OF(k.id);
+    if (me.root) {
+      const ids = allLinesUnder(k.id);
+      return fold('d:' + k.id, `<span class="sw" style="background:${color}"></span>${dname}`, `${k.name} · ${ids.length}`, lineUnread(ids),
+        linesOf(k.id).map(l => lrow(l, color)).join('') + kids(k.id).map(c => person(c, color)).join(''));
+    }
+    return person(k, color);
+  }).join('');
+  const color = (TDEPT[me.id] || ['', 'var(--t-office)'])[1];
+  return `<div class="sec">My lines</div>${mine.map(l => lrow(l, color)).join('') || '<p class="mini-n" style="margin:2px 8px">No line of your own yet.</p>'}
+    ${shared.length ? `<div class="sec">Shared with ${myDept}</div>${shared.map(l => lrow(l, 'var(--t-office)')).join('')}` : ''}
+    ${teams ? `<div class="sec">${me.root ? 'Departments' : 'My team'}</div>${teams}` : ''}`;
+}
+
+renderEd();
+</script>

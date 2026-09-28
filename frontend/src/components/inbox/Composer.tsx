@@ -1,10 +1,10 @@
 import * as React from "react";
-import { ArrowRight, Clock, MessageSquare, Paperclip, StickyNote } from "lucide-react";
+import { ArrowRight, BookmarkPlus, Clock, MessageSquare, Paperclip, Smile, SquareSlash, StickyNote } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
 import { estimateSmsSegments } from "@/lib/format";
 import { Button } from "@/components/ui/primitives";
-import { useAuth } from "@/auth/AuthContext";
+import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { fetchOrgMembers, type OrgMember } from "@/api/conversations";
 import { fetchTemplates, postThreadNote, type MessageTemplate } from "@/api/inboxPro";
 import {
@@ -19,6 +19,15 @@ import {
   type MediaAttachment,
 } from "@/api/messaging";
 import { cn } from "@/lib/utils";
+
+/** A short, work-appropriate set; no dependency needed for a picker this size. */
+const COMPOSER_EMOJI = [
+  "👍", "🙏", "😊", "😀", "😂", "🙂", "😉", "😅",
+  "🤝", "👋", "👏", "💪", "✅", "❌", "⏰", "📅",
+  "📞", "📱", "💬", "📝", "📍", "🏠", "🏡", "🔑",
+  "💰", "💵", "📈", "🎉", "🔥", "⭐", "❤️", "👀",
+  "🤔", "😎", "🙌", "👌",
+];
 
 /**
  * Compose + send, and P26 private notes + saved replies.
@@ -83,8 +92,16 @@ export function Composer({
   threadId?: string | null;
   onNoted?: () => void;
 }) {
-  const { api } = useAuth();
+  const { api, me, orgId } = useAuth();
   const queryClient = useQueryClient();
+  const canSaveReplies = hasPermission(me, orgId, "templates:manage");
+  // Toolbar popovers: saved replies opened from the "/" button, the emoji grid, and
+  // "save this message as a saved reply".
+  const [pickerForced, setPickerForced] = React.useState(false);
+  const [emojiOpen, setEmojiOpen] = React.useState(false);
+  const [saveOpen, setSaveOpen] = React.useState(false);
+  const [saveName, setSaveName] = React.useState("");
+  const [saveNote, setSaveNote] = React.useState<string | null>(null);
   const [mode, setMode] = React.useState<"reply" | "note">("reply");
   const [body, setBody] = React.useState("");
   const [caretIndex, setCaretIndex] = React.useState(0);
@@ -148,9 +165,9 @@ export function Composer({
     if (mentionToken) setMentionSuppressed(false);
   }, [mentionToken?.query, mentionToken?.start]);
 
-  const quickPickOpen =
-    mode === "reply" && body.startsWith("/") && !body.includes("\n");
-  const quickPickSearch = quickPickOpen ? body.slice(1) : "";
+  const typedSlash = body.startsWith("/") && !body.includes("\n");
+  const quickPickOpen = mode === "reply" && (typedSlash || pickerForced);
+  const quickPickSearch = typedSlash ? body.slice(1) : "";
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedTemplateSearch(quickPickSearch), 200);
@@ -205,6 +222,7 @@ export function Composer({
     const next = e.currentTarget.value;
     setBody(next);
     setCaretIndex(e.currentTarget.selectionStart ?? next.length);
+    setPickerForced(false);
     if (mode === "reply" && next.startsWith("/") && !next.includes("\n")) {
       setTemplateSuppressed(false);
     }
@@ -228,7 +246,45 @@ export function Composer({
     setMentionHighlight(0);
   }
 
+  function openSavedReplies() {
+    setEmojiOpen(false);
+    setSaveOpen(false);
+    setTemplateSuppressed(false);
+    setTemplateHighlight(0);
+    if (!body) {
+      // Same path as typing "/": the list filters as you keep typing.
+      setBody("/");
+      setCaretIndex(1);
+      focusTextareaCaret(1);
+    } else {
+      setPickerForced(true);
+    }
+  }
+
+  function insertAtCaret(text: string) {
+    const at = Math.min(caretIndex, body.length);
+    const next = body.slice(0, at) + text + body.slice(at);
+    setBody(next);
+    setCaretIndex(at + text.length);
+    focusTextareaCaret(at + text.length);
+  }
+
+  const saveReplyMutation = useMutation({
+    mutationFn: (payload: { name: string; body: string }) =>
+      api.request<MessageTemplate>("/api/v1/templates", { method: "POST", json: payload }),
+    onSuccess: (saved) => {
+      setSaveOpen(false);
+      setSaveName("");
+      setSaveNote(`Saved as "${saved.name}". Type / to use it.`);
+      void queryClient.invalidateQueries({ queryKey: ["templates"] });
+    },
+    onError: (err) => {
+      setSaveNote(err instanceof Error ? err.message : "Could not save the reply");
+    },
+  });
+
   function pickTemplate(template: MessageTemplate) {
+    setPickerForced(false);
     setBody(template.body);
     setCaretIndex(template.body.length);
     focusTextareaCaret(template.body.length);
@@ -687,6 +743,57 @@ export function Composer({
               )}
             </div>
           )}
+          {mode === "reply" && emojiOpen && (
+            <div role="group" aria-label="Emoji" className="flex flex-wrap gap-0.5 rounded-md border border-border bg-background p-1">
+              {COMPOSER_EMOJI.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  aria-label={`Insert ${emoji}`}
+                  className="grid h-8 w-8 place-items-center rounded text-lg hover:bg-muted"
+                  onClick={() => {
+                    insertAtCaret(emoji);
+                    setEmojiOpen(false);
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+          {mode === "reply" && saveOpen && (
+            <div role="group" aria-label="Save as a saved reply" className="flex items-center gap-2 rounded-md border border-border bg-background p-2">
+              <input
+                id="composer-save-reply-name"
+                aria-label="Saved reply name"
+                placeholder="Name, e.g. Intro offer"
+                maxLength={127}
+                value={saveName}
+                onChange={(e) => setSaveName(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (saveName.trim()) saveReplyMutation.mutate({ name: saveName.trim(), body });
+                  }
+                  if (e.key === "Escape") setSaveOpen(false);
+                }}
+                className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm"
+              />
+              <Button
+                type="button"
+                size="sm"
+                disabled={!saveName.trim() || saveReplyMutation.isPending}
+                onClick={() => saveReplyMutation.mutate({ name: saveName.trim(), body })}
+              >
+                Save reply
+              </Button>
+            </div>
+          )}
+          {mode === "reply" && saveNote && (
+            <p role="status" className="px-1 text-xs text-muted-foreground">
+              {saveNote}
+            </p>
+          )}
           {/* The reference's `.composer-row`: small icon buttons, the segment count, and
               the send button at the far end. Every one of these was a text button or a
               text tab before; not one capability has left. */}
@@ -742,15 +849,46 @@ export function Composer({
                 </button>
                 <button
                   type="button"
-                  aria-label="Send later"
-                  title="Send later"
-                  aria-expanded={scheduleOpen}
-                  disabled={disabled || busy || uploading}
-                  onClick={() => setScheduleOpen((open) => !open)}
+                  aria-label="Saved replies"
+                  title="Saved replies (or type /)"
+                  aria-expanded={templateListVisible}
+                  disabled={disabled || busy}
+                  onClick={openSavedReplies}
                   className="cx-icon-btn grid h-8 w-8 place-items-center disabled:pointer-events-none disabled:opacity-40"
                 >
-                  <Clock className="h-4 w-4" aria-hidden="true" />
+                  <SquareSlash className="h-4 w-4" aria-hidden="true" />
                 </button>
+                <button
+                  type="button"
+                  aria-label="Insert emoji"
+                  title="Emoji"
+                  aria-expanded={emojiOpen}
+                  disabled={disabled || busy}
+                  onClick={() => {
+                    setSaveOpen(false);
+                    setEmojiOpen((open) => !open);
+                  }}
+                  className="cx-icon-btn grid h-8 w-8 place-items-center disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <Smile className="h-4 w-4" aria-hidden="true" />
+                </button>
+                {canSaveReplies && (
+                  <button
+                    type="button"
+                    aria-label="Save as a saved reply"
+                    title="Save this message as a saved reply"
+                    aria-expanded={saveOpen}
+                    disabled={disabled || busy || !body.trim() || body.startsWith("/")}
+                    onClick={() => {
+                      setEmojiOpen(false);
+                      setSaveNote(null);
+                      setSaveOpen((open) => !open);
+                    }}
+                    className="cx-icon-btn grid h-8 w-8 place-items-center disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <BookmarkPlus className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )}
               </>
             )}
 
@@ -764,9 +902,22 @@ export function Composer({
               </span>
             )}
 
+            {mode === "reply" && (
+              <button
+                type="button"
+                aria-label="Send later"
+                title="Send later"
+                aria-expanded={scheduleOpen}
+                disabled={disabled || busy || uploading}
+                onClick={() => setScheduleOpen((open) => !open)}
+                className="cx-icon-btn ml-auto grid h-8 w-8 place-items-center disabled:pointer-events-none disabled:opacity-40"
+              >
+                <Clock className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
             <Button
               type="submit"
-              className="cx-send ml-auto gap-2 rounded-full px-4"
+              className={cn("cx-send gap-2 rounded-full px-4", mode !== "reply" && "ml-auto")}
               disabled={
                 submitDisabled ||
                 busy ||

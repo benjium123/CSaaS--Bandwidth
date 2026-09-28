@@ -88,6 +88,9 @@ export const FILTER_LABELS: Record<ConversationFilter, string> = {
   important: "Important",
   snoozed: "Snoozed",
   overdue: "Overdue",
+  missed: "Missed calls",
+  voicemail: "Voicemails",
+  assigned: "Assigned to me",
 };
 
 export type FilterChip = { filter: ConversationFilter; label: string; icon?: LucideIcon };

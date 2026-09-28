@@ -95,17 +95,18 @@ describe("P26: plain words", () => {
   });
 });
 
-describe("P26: the composer's only way to a saved reply is '/'", () => {
+describe("P26: saved replies in the composer ('/' plus the toolbar buttons)", () => {
   const composer = () => source("components/inbox/Composer.tsx");
 
-  it("has no separate templates button", () => {
-    // The rule is "typing / is the way in" - a button would be a second, competing one.
+  it("names saved replies only through the approved controls", () => {
+    // 2026-09-29 (INBOX_NAV_SPEC.md): the user asked for visible toolbar buttons next to
+    // typing "/". Allowed: the quick-pick list, "Saved replies", and "Save as a saved reply"
+    // (with its name field) - anything else naming a template is a stray second way in.
     const src = composer();
-    // The ONE documented exception is the quick-pick list's own name - it is the
-    // feature, not a second way in. Everything else naming a template is a button.
+    const allowed = ["Insert a saved reply", "Saved replies", "Save as a saved reply", "Save this message as a saved reply", "Saved reply name"];
     const named = (
       src.match(/(?:aria-label|title)=\{?["`][^"`]*(?:template|saved repl)[^"`]*["`]/gi) ?? []
-    ).filter((hit) => !hit.includes("Insert a saved reply"));
+    ).filter((hit) => !allowed.some((label) => hit.includes(label)));
     expect(named).toEqual([]);
     // Same guard the plain-words sweep uses: the crude `>...<` heuristic also matches
     // arrow functions and multi-line JSX expressions, which are code, not screen text.

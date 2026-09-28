@@ -35,6 +35,9 @@ class InboxOut(BaseModel):
     my_role: str
     sla_first_response_minutes: int | None
     sla_resolution_minutes: int | None
+    #: Active departments holding a grant on this inbox, by name - the sidebar groups
+    #: lines under them. Read-only; grants are still edited through /grants.
+    departments: list[dict] = []
 
 
 class InboxPatchIn(BaseModel):
@@ -204,6 +207,18 @@ async def list_inboxes(
         ctx.session, ctx.actor_user_id, ctx.role.permissions or []
     )
     out: list[InboxOut] = []
+    # One query for every inbox's department grants (TenantScoped: this org only).
+    dept_rows = (
+        await ctx.session.execute(
+            sa.select(InboxGrant.inbox_id, Department.id, Department.name)
+            .join(Department, Department.id == InboxGrant.grantee_id)
+            .where(InboxGrant.grantee_type == "department", Department.is_active.is_(True))
+            .order_by(Department.name)
+        )
+    ).all()
+    depts_by_inbox: dict[uuid.UUID, list[dict]] = {}
+    for inbox_id, dept_id, dept_name in dept_rows:
+        depts_by_inbox.setdefault(inbox_id, []).append({"id": str(dept_id), "name": dept_name})
     for inbox, e164 in await _rows_with_e164(ctx.session):
         if access.is_admin:
             my_role = "admin"
@@ -223,6 +238,7 @@ async def list_inboxes(
                 my_role=my_role,
                 sla_first_response_minutes=inbox.sla_first_response_minutes,
                 sla_resolution_minutes=inbox.sla_resolution_minutes,
+                departments=depts_by_inbox.get(inbox.id, []),
             )
         )
     return await _order_for_display(ctx, out)

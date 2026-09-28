@@ -80,6 +80,7 @@ function renderSettings({
   memberCount = 1,
   roleName = "owner",
   meStub,
+  operator = false,
 }: {
   initialEntries?: string[];
   permissions?: string[];
@@ -91,6 +92,8 @@ function renderSettings({
   roleName?: string;
   /** Stub the /auth/me response outright (e.g. an Error) to exercise `me === null`. */
   meStub?: unknown;
+  /** Platform operator (us): the only callers who see Developers and Providers listed. */
+  operator?: boolean;
 } = {}) {
   // With no options this clone is structurally identical to ME, so existing call sites
   // behave exactly as before; only the membership's role_name ever differs.
@@ -99,6 +102,7 @@ function renderSettings({
       ? meStub
       : {
           ...ME,
+          is_platform_operator: operator,
           memberships: [{ ...ME.memberships[0], role_name: roleName }],
         };
   const client = makeStubClient({
@@ -147,13 +151,22 @@ describe("SettingsPage", () => {
     });
 
     const nav = await screen.findByRole("navigation", { name: "Settings" });
-    expect(within(nav).getByText("Workspace")).toBeInTheDocument();
-    expect(within(nav).getByText("Phone numbers")).toBeInTheDocument();
+    // "Workspace" is both a group heading and a section now: address the link.
+    expect(within(nav).getByRole("link", { name: "Workspace" })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Lines" })).toBeInTheDocument();
     expect(within(nav).queryByText("Developers")).not.toBeInTheDocument();
   });
 
-  it("shows Developers when settings:write is permitted", async () => {
-    renderSettings({ initialEntries: ["/settings/workspace"] });
+  it("lists Developers and Providers only for platform operators, even with settings:write", async () => {
+    // Phase 1c (INBOX_NAV_SPEC.md §3): customers never see carrier/provider plumbing.
+    const { unmount } = renderSettings({ initialEntries: ["/settings/workspace"] });
+    const customerNav = await screen.findByRole("navigation", { name: "Settings" });
+    await within(customerNav).findByRole("link", { name: "Workspace" });
+    expect(within(customerNav).queryByText("Developers")).not.toBeInTheDocument();
+    expect(within(customerNav).queryByRole("link", { name: "Providers" })).not.toBeInTheDocument();
+    unmount();
+
+    renderSettings({ initialEntries: ["/settings/workspace"], operator: true });
 
     const nav = await screen.findByRole("navigation", { name: "Settings" });
     expect(within(nav).getByText("Developers")).toBeInTheDocument();
@@ -291,8 +304,8 @@ describe("SettingsPage", () => {
     expect(within(nav).queryByText("Business verification")).not.toBeInTheDocument();
     // Proves the filter removed the owner-only rows specifically rather than rendering an
     // empty nav - a nav that failed to render would otherwise pass the negatives above.
-    expect(within(nav).getByText("Workspace")).toBeInTheDocument();
-    expect(within(nav).getByText("Providers")).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Workspace" })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Calling" })).toBeInTheDocument();
   });
 
   it("refuses a non-owner admin who deep-links to /settings/billing", async () => {
@@ -325,7 +338,7 @@ describe("SettingsPage", () => {
 
     const nav = await screen.findByRole("navigation", { name: "Settings" });
     // Workspace proves the nav rendered and the gate is not still loading.
-    expect(within(nav).getByText("Workspace")).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Workspace" })).toBeInTheDocument();
     expect(within(nav).queryByText("Billing & usage")).not.toBeInTheDocument();
     expect(within(nav).queryByText("Business verification")).not.toBeInTheDocument();
   });
@@ -336,5 +349,45 @@ describe("SettingsPage", () => {
     expect(
       await screen.findByText("You do not have access to this setting."),
     ).toBeInTheDocument();
+  });
+});
+
+
+describe("Settings menu (Phase 1c)", () => {
+  it("groups sections under Phone system / Workspace / Your account", async () => {
+    renderSettings({ initialEntries: ["/settings/workspace"] });
+    const nav = await screen.findByRole("navigation", { name: "Settings" });
+    await within(nav).findByRole("link", { name: "Lines" });
+    for (const heading of ["Phone system", "Your account"]) {
+      expect(within(nav).getByText(heading)).toBeInTheDocument();
+    }
+    expect(within(nav).getByRole("link", { name: "Notifications & sound" })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "My profile" })).toBeInTheDocument();
+  });
+
+  it("filters the menu with the search box", async () => {
+    renderSettings({ initialEntries: ["/settings/workspace"] });
+    const nav = await screen.findByRole("navigation", { name: "Settings" });
+    await userEvent.type(within(nav).getByRole("textbox", { name: "Search settings" }), "queue");
+    // "Queues" is a sub-page of Calling, so Calling stays; unrelated sections go.
+    expect(within(nav).getByRole("link", { name: "Calling" })).toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Lines" })).not.toBeInTheDocument();
+  });
+
+  it("lists the open section's sub-pages as links that set ?tab=", async () => {
+    renderSettings({ initialEntries: ["/settings/team"] });
+    const nav = await screen.findByRole("navigation", { name: "Settings" });
+    await userEvent.click(await within(nav).findByRole("link", { name: "Team & security: Security" }));
+    expect(await screen.findByText("Security page")).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/team?tab=security");
+  });
+
+  it("gives a member with no settings permissions only their own account pages", async () => {
+    renderSettings({ initialEntries: ["/settings/profile"], permissions: [], roleName: "agent" });
+    const nav = await screen.findByRole("navigation", { name: "Settings" });
+    await within(nav).findByRole("link", { name: "My profile" });
+    expect(within(nav).getByRole("link", { name: "Notifications & sound" })).toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Lines" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Workspace" })).not.toBeInTheDocument();
   });
 });
