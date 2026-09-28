@@ -314,7 +314,7 @@ function DepartmentRow({
   );
 }
 
-function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
+export function InboxGrantEditor({ inbox }: { inbox: Inbox }) {
   const { api } = useAuth();
   const queryClient = useQueryClient();
   const grantsQuery = useQuery({

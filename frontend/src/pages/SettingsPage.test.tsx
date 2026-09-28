@@ -16,8 +16,11 @@ vi.mock("@/pages/SettingsSecurityPage", () => ({
 vi.mock("@/pages/DepartmentsPage", () => ({
   DepartmentsPage: () => <div>Inboxes settings page</div>,
 }));
-vi.mock("@/pages/NumbersPage", () => ({
-  NumbersPage: () => <div>Numbers page</div>,
+vi.mock("@/pages/LinesPage", () => ({
+  LinesPage: () => <div>Numbers page</div>,
+}));
+vi.mock("@/pages/LineDetailPage", () => ({
+  LineDetailPage: ({ numberId }: { numberId: string }) => <div>Line detail {numberId}</div>,
 }));
 vi.mock("@/pages/ProvidersPage", () => ({
   ProvidersPage: () => <div>Providers page</div>,

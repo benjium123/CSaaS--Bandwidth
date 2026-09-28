@@ -575,7 +575,7 @@ function NumberRow({
  * for it. Uses the shared EmergencyAddressChoice/Form so the checkout flow and this one
  * stay visually and behaviourally identical.
  */
-function EmergencyAddressEditor({
+export function EmergencyAddressEditor({
   api,
   number,
   onDone,

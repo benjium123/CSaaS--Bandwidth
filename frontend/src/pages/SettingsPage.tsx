@@ -29,7 +29,8 @@ import { isWorkspaceFullySetUp } from "@/components/onboarding/OnboardingCheckli
 import { TeamPage } from "@/pages/TeamPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
 import { DepartmentsPage } from "@/pages/DepartmentsPage";
-import { NumbersPage } from "@/pages/NumbersPage";
+import { LinesPage } from "@/pages/LinesPage";
+import { LineDetailPage } from "@/pages/LineDetailPage";
 import { ProvidersPage } from "@/pages/ProvidersPage";
 import { FlowsPage } from "@/pages/FlowsPage";
 import { QueuesPage } from "@/pages/QueuesPage";
@@ -417,6 +418,12 @@ function BillingUsageSection() {
   );
 }
 
+function NumbersSection() {
+  const [searchParams] = useSearchParams();
+  const lineId = searchParams.get("line");
+  return lineId ? <LineDetailPage numberId={lineId} /> : <LinesPage />;
+}
+
 function SectionContent({ id }: { id: SettingsSectionId }) {
   const { me } = useAuth();
   switch (id) {
@@ -429,7 +436,7 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
     case "inboxes":
       return <DepartmentsPage />;
     case "numbers":
-      return <NumbersPage />;
+      return <NumbersSection />;
     case "providers":
       return me?.is_platform_operator ? (
         <ProvidersPage />
