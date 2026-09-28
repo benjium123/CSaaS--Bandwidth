@@ -524,11 +524,11 @@ export function SettingsPage() {
               >
                 {(() => {
                   const org = gate.org!;
+                  // No "connect a provider" step: customers never see carriers (we run them).
                   const steps: [boolean, string][] =
                     org.account_type === "individual"
-                      ? [[org.has_provider, "Connect a phone service"], [org.has_number, "Get a number"]]
+                      ? [[org.has_number, "Get a number"]]
                       : [
-                          [org.has_provider, "Connect a phone service"],
                           [org.has_number, "Get a number"],
                           [org.member_count > 1, "Invite your team"],
                           [org.registration_state !== "none", "Register for texting"],
