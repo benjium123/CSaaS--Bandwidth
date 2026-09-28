@@ -966,4 +966,77 @@ describe("SoftphonePanel", () => {
     await waitFor(() => expect(cancelBodies).toEqual([{ user_id: "u2" }]));
     expect(screen.queryByText(/Ringing Sam Agent/)).toBeNull();
   });
+
+  describe("ringtone mute sync", () => {
+    const KEY = "csaas.softphone.ringtoneMuted";
+
+    async function openPanel() {
+      const client = makeStubClient({ "/api/v1/auth/me": ME, "/api/v1/numbers": [] });
+      const view = renderWithProviders(
+        <SoftphoneProvider>
+          <SoftphonePanel />
+        </SoftphoneProvider>,
+        client,
+      );
+      await userEvent.click(await screen.findByRole("button", { name: "Open softphone" }));
+      await screen.findByRole("button", { name: "Mute ringtone" });
+      return view;
+    }
+
+    const pressed = () =>
+      (
+        screen.getByRole("button", { name: /(Mute|Unmute) ringtone/ }) as HTMLButtonElement
+      ).getAttribute("aria-pressed");
+
+    beforeEach(() => window.localStorage.removeItem(KEY));
+    afterEach(() => window.localStorage.removeItem(KEY));
+
+    it("follows the csaas:ringtone-muted custom event", async () => {
+      await openPanel();
+      expect(pressed()).toBe("false");
+      act(() => {
+        window.dispatchEvent(new CustomEvent("csaas:ringtone-muted", { detail: { muted: true } }));
+      });
+      expect(pressed()).toBe("true");
+      act(() => {
+        window.dispatchEvent(new CustomEvent("csaas:ringtone-muted", { detail: { muted: false } }));
+      });
+      expect(pressed()).toBe("false");
+    });
+
+    it("follows a storage event for the key and ignores other keys", async () => {
+      await openPanel();
+      act(() => {
+        window.dispatchEvent(new StorageEvent("storage", { key: "other.key", newValue: "true" }));
+      });
+      expect(pressed()).toBe("false");
+      act(() => {
+        window.dispatchEvent(new StorageEvent("storage", { key: KEY, newValue: "true" }));
+      });
+      expect(pressed()).toBe("true");
+      act(() => {
+        window.dispatchEvent(new StorageEvent("storage", { key: KEY, newValue: "false" }));
+      });
+      expect(pressed()).toBe("false");
+    });
+
+    it("removes both listeners on unmount", async () => {
+      const add = vi.spyOn(window, "addEventListener");
+      const remove = vi.spyOn(window, "removeEventListener");
+      try {
+        const view = await openPanel();
+        const added = (name: string) => add.mock.calls.filter((c) => c[0] === name);
+        expect(added("csaas:ringtone-muted")).toHaveLength(1);
+        expect(added("storage")).toHaveLength(1);
+        view.unmount();
+        for (const name of ["csaas:ringtone-muted", "storage"]) {
+          const handler = added(name)[0][1];
+          expect(remove.mock.calls.some((c) => c[0] === name && c[1] === handler)).toBe(true);
+        }
+      } finally {
+        add.mockRestore();
+        remove.mockRestore();
+      }
+    });
+  });
 });

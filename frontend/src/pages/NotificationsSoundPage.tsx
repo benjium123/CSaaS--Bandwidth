@@ -13,6 +13,9 @@ import { useSoftphone } from "@/softphone/SoftphoneProvider";
 /** The softphone already reads and writes this exact key when it decides whether to ring,
  * so the choice made here is the same choice the phone panel honours. */
 const RINGTONE_MUTED_KEY = "csaas.softphone.ringtoneMuted";
+/** Same-tab notification for an already-mounted softphone (storage events only reach other
+ * tabs). Must match RINGTONE_MUTED_EVENT in softphone/SoftphonePanel.tsx. */
+const RINGTONE_MUTED_EVENT = "csaas:ringtone-muted";
 
 type DesktopAlertState = "granted" | "default" | "denied" | "unsupported";
 
@@ -134,6 +137,11 @@ export function NotificationsSoundPage(): JSX.Element {
     const muted = !event.target.checked;
     setRingtoneMuted(muted);
     writeRingtoneMuted(muted);
+    try {
+      window.dispatchEvent(new CustomEvent(RINGTONE_MUTED_EVENT, { detail: { muted } }));
+    } catch {
+      // CustomEvent unavailable: other tabs still pick it up through the storage event.
+    }
   };
 
   const playSound = (): void => {

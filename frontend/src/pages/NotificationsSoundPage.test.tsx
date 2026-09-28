@@ -179,6 +179,21 @@ describe("NotificationsSoundPage ringtone", () => {
     expect(window.localStorage.getItem(RINGTONE_MUTED_KEY)).toBe("false");
   });
 
+  it("dispatches csaas:ringtone-muted with the new state when toggled", () => {
+    const seen: unknown[] = [];
+    const handler = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener("csaas:ringtone-muted", handler);
+    try {
+      render(<NotificationsSoundPage />);
+      const checkbox = screen.getByRole("checkbox", { name: "Play a ringtone for incoming calls" });
+      fireEvent.click(checkbox);
+      fireEvent.click(checkbox);
+    } finally {
+      window.removeEventListener("csaas:ringtone-muted", handler);
+    }
+    expect(seen).toEqual([{ muted: true }, { muted: false }]);
+  });
+
   it("plays a test tone through the Web Audio API", () => {
     const frequency = { setValueAtTime: vi.fn() };
     const oscillator = {
