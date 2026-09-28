@@ -289,6 +289,44 @@ async def create_address(session, settings, org_id: uuid.UUID, fields: dict, *, 
     return address
 
 
+async def save_local_address(session, org_id: uuid.UUID, fields: dict) -> EmergencyAddress:
+    """Store a 911 address on OUR side only - no carrier call.
+
+    Same required fields and country rule as ``create_address``. ``telnyx_address_id`` is
+    left empty: that is the marker for "not registered with the carrier yet", which the
+    later carrier push (``create_address`` + ``enable``) fills in.
+    """
+    name = (fields.get("name") or "").strip()
+    street = (fields.get("street_address") or "").strip()
+    unit = (fields.get("extended_address") or "").strip() or None
+    city = (fields.get("locality") or "").strip()
+    state = (fields.get("administrative_area") or "").strip().upper()
+    postal = (fields.get("postal_code") or "").strip()
+    country = (fields.get("country_code") or "US").strip().upper()
+    if not (name and street and city and state and postal):
+        raise ValidationFailedError(
+            "Enter the name, street, city, state and ZIP code of where the phone is used."
+        )
+    if country not in ("US", "CA"):
+        raise ValidationFailedError("Emergency addresses must be in the US or Canada.")
+    address = EmergencyAddress(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        telnyx_address_id="",
+        name=name,
+        street_address=street,
+        extended_address=unit,
+        locality=city,
+        administrative_area=state,
+        postal_code=postal,
+        country_code=country,
+    )
+    session.add(address)
+    await session.flush()
+    log.info("e911_address_saved_locally", org_id=str(org_id), address_id=str(address.id))
+    return address
+
+
 # --------------------------------------------------------------------------------------
 # Numbers
 # --------------------------------------------------------------------------------------
@@ -494,6 +532,27 @@ async def require_e911(session, settings, org_id: uuid.UUID, from_e164: str, to:
         "address). US law requires a registered location for emergency calls.",
         code="e911_required",
     )
+
+
+PERSONAL_ADDRESS_REQUIRED = (
+    "Add your 911 address in Settings, My profile before you call or text. US law "
+    "requires a registered location for emergency calls."
+)
+
+
+async def require_personal_address(session, settings, ctx) -> None:
+    """Refuse an ordinary call or text from a person with no 911 address of their own in
+    this workspace. Callers check ``is_emergency`` first, so 911/933 never reach this.
+    API-key automations have no person behind them and are not gated here."""
+    if not getattr(settings, "e911_personal_required", True):
+        return
+    user_id = ctx.actor_user_id
+    if user_id is None:
+        return
+    from app.services import profile
+
+    if await profile.my_address(session, ctx.org.id, user_id) is None:
+        raise PermissionDeniedError(PERSONAL_ADDRESS_REQUIRED, code="e911_address_required")
 
 
 # --------------------------------------------------------------------------------------

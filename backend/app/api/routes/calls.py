@@ -509,6 +509,7 @@ async def create_call(
     if e911.is_emergency(payload.to) and ctx.api_key is None:
         return await _emergency_call(payload, request, ctx, user)
     await require_permission("calls:place")(request, ctx)
+    await e911.require_personal_address(ctx.session, request.app.state.settings, ctx)
     # Feature gates come AFTER the emergency branch above: 911/933 is never gated.
     from app.services import entitlements
 

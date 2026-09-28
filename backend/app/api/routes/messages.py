@@ -160,6 +160,9 @@ async def send(
     # Parsed in the workspace's own country when the caller typed a bare national number.
     # `payload.from_` below needs no region: it is one of the org's OWN numbers, which
     # always arrive from the carrier in full E.164.
+    from app.services import e911
+
+    await e911.require_personal_address(ctx.session, request.app.state.settings, ctx)
     to_norm = to_e164(payload.to, await phone_region.for_org(ctx.session, ctx.org.id))
     registry = getattr(request.app.state, "carriers", None)
 

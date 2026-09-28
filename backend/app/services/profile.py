@@ -92,10 +92,19 @@ def set_name(user: User, full_name: str) -> None:
 async def set_emergency_address(
     session: AsyncSession, settings, org_id: uuid.UUID, user: User, fields: dict  # noqa: ANN001
 ) -> dict:
-    """Validate + register the person's address with the carrier, then put it on every
-    number assigned to them. A carrier problem on one number marks that number failed (the
-    sweeper retries); it never blocks saving the address."""
+    """Save the person's 911 address. With ``e911_carrier_push`` on, also validate +
+    register it with the carrier and put it on every number assigned to them (a carrier
+    problem on one number marks that number failed - the sweeper retries - and never blocks
+    saving the address). With it off (the current default) the address is stored on our
+    side only; pushing it to the carrier later is this same function with the flag on."""
     from app.services import e911
+
+    if not getattr(settings, "e911_carrier_push", False):
+        address = await e911.save_local_address(session, org_id, fields)
+        address.user_id = user.id
+        await session.flush()
+        log.info("profile_emergency_address_saved", org_id=str(org_id), user_id=str(user.id))
+        return {"applied": 0, "skipped": 0}
 
     address = await e911.create_address(session, settings, org_id, fields)
     address.user_id = user.id

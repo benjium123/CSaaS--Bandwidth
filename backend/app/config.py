@@ -472,6 +472,13 @@ class Settings(BaseSettings):
     e911_enforced: bool = True
     e911_enforcement_start: str = "2026-09-26"
     e911_grace_days: int = 7
+    #: Every person must register their own 911 address (Settings, My profile) before
+    #: placing an ordinary call or sending a text. 911/933 are never refused.
+    e911_personal_required: bool = True
+    #: Off: a person's 911 address is saved on our side only (services/e911.save_local_
+    #: address). On: it is validated and registered with the carrier and applied to their
+    #: numbers, as before. The later carrier push flips this on.
+    e911_carrier_push: bool = False
     #: P44g toll-free inbound guard (services/tollfree_guard.py).
     tollfree_guard_enforced: bool = True
     tollfree_max_concurrent: int = 2
