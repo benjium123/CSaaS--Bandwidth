@@ -119,11 +119,14 @@ async def current_score(
 ) -> int:
     now = now or _now()
     since = now - timedelta(days=settings.monitor_signal_window_days)
+    in_window = MonitorSignal.created_at >= since
     cleared = _aware(state.cleared_before)
     if cleared is not None and cleared > since:
-        since = cleared
+        # Strictly after the operator's decision: a signal stamped in the same clock tick
+        # was part of what they reviewed, and counting it again would undo the decision.
+        in_window = MonitorSignal.created_at > cleared
     stmt = sa.select(sa.func.coalesce(sa.func.sum(MonitorSignal.weight), 0)).where(
-        MonitorSignal.org_id == state.org_id, MonitorSignal.created_at >= since
+        MonitorSignal.org_id == state.org_id, in_window
     )
     if hard_only:
         stmt = stmt.where(MonitorSignal.kind.not_in(tuple(SOFT_KINDS)))
@@ -437,12 +440,19 @@ Return JSON with exactly these keys:
 
 async def case_evidence(session: AsyncSession, org_id: uuid.UUID, state: OrgMonitoring) -> dict:
     set_org_context(session, org_id)
-    since = _aware(state.cleared_before) or (_now() - timedelta(days=30))
+    cleared = _aware(state.cleared_before)
+    since = cleared or (_now() - timedelta(days=30))
+    # Signals strictly after an operator's decision (same reason as the score window above).
+    in_window = (
+        MonitorSignal.created_at > cleared
+        if cleared is not None
+        else MonitorSignal.created_at >= since
+    )
     signals = (
         (
             await session.execute(
                 sa.select(MonitorSignal)
-                .where(MonitorSignal.org_id == org_id, MonitorSignal.created_at >= since)
+                .where(MonitorSignal.org_id == org_id, in_window)
                 .order_by(MonitorSignal.created_at.desc())
                 .limit(40)
             )
