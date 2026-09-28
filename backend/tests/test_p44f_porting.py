@@ -217,3 +217,18 @@ async def test_port_out_request_alerts_and_releases_when_gone(session):
         await session.execute(sa.select(PortRequest).where(PortRequest.direction == "out"))
     ).scalar_one()
     assert out.status == "ported"
+
+
+def test_customer_port_view_never_names_our_carrier():
+    """The workspace's port list and create response drop `carrier`; ops views keep it."""
+    import uuid as _uuid
+
+    from app.api.routes.porting import _for_customer, _public
+    from app.models import PortRequest
+
+    port = PortRequest(
+        id=_uuid.uuid4(), org_id=_uuid.uuid4(), direction="in", carrier="telnyx",
+        numbers=["+12145550100"], status="submitted", details={}, events=[],
+    )
+    assert _public(port)["carrier"] == "telnyx"
+    assert "carrier" not in _for_customer(_public(port))

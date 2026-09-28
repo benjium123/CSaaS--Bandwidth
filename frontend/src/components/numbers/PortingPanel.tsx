@@ -221,7 +221,7 @@ export function PortingPanel({
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-sm text-slate-600">Carrier</span>
+                <span className="mb-1 block text-sm text-slate-600">Network</span>
                 <Select
                   value={draft.carrier}
                   onChange={(event) =>

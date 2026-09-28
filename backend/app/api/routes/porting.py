@@ -30,6 +30,12 @@ Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:rea
 Kyc = Annotated[OperatorContext, Depends(require_operator_permission("ops:kyc"))]
 
 
+def _for_customer(port: dict) -> dict:
+    """A workspace never learns which of OUR carriers receives the port; ops routes keep it."""
+    port.pop("carrier", None)
+    return port
+
+
 def _public(p: PortRequest) -> dict:
     details = dict(p.details or {})
     return {
@@ -74,7 +80,7 @@ async def list_ports(
     rows = (
         await ctx.session.execute(sa.select(PortRequest).order_by(PortRequest.created_at.desc()))
     ).scalars().all()
-    return {"ports": [_public(p) for p in rows]}
+    return {"ports": [_for_customer(_public(p)) for p in rows]}
 
 
 async def _doc(form, name: str) -> tuple[bytes, str]:  # noqa: ANN001
@@ -122,7 +128,7 @@ async def create_port(
         detail={"numbers": port.numbers},
     )
     await ctx.session.commit()
-    return _public(port)
+    return _for_customer(_public(port))
 
 
 class LockIn(BaseModel):
