@@ -39,7 +39,8 @@ function numberFixture(overrides: Partial<NumberOut> = {}): NumberOut {
   return {
     id: "num-t1",
     e164: E164,
-    carrier: "telnyx",
+    carrier_campaign_locked: true,
+    e911_supported: true,
     status: "active",
     number_type: "local",
     inbox_id: null,
@@ -47,12 +48,7 @@ function numberFixture(overrides: Partial<NumberOut> = {}): NumberOut {
     campaign_id: null,
     registration: "approved",
     registration_detail: null,
-    provider_account_id: null,
-    provider_account_label: null,
-    purchase_cost_cents: null,
-    monthly_cost_cents: 1500,
     purchased_at: null,
-    order_detail: null,
     emergency_status: "missing",
     emergency_address_id: null,
     emergency_detail: null,
@@ -147,7 +143,7 @@ describe("NumbersPage 911", () => {
         numberFixture({
           id: "num-bw",
           e164: "+12145550105",
-          carrier: "bandwidth",
+          e911_supported: false,
           emergency_status: "unsupported",
         }),
       ]),
@@ -169,7 +165,7 @@ describe("NumbersPage 911", () => {
     expect(within(missing).getByText("Not set")).toBeInTheDocument();
 
     const bandwidth = await rowFor("+12145550105");
-    expect(within(bandwidth).getByText("Managed by Bandwidth")).toBeInTheDocument();
+    expect(within(bandwidth).getByText("Managed automatically")).toBeInTheDocument();
   });
 
   it("warns when an active Telnyx number is missing its 911 address", async () => {
@@ -241,7 +237,7 @@ describe("NumbersPage 911", () => {
         numberFixture({
           id: "num-bw",
           e164: "+12145550105",
-          carrier: "bandwidth",
+          e911_supported: false,
           emergency_status: "unsupported",
         }),
       ]),

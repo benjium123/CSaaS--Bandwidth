@@ -127,16 +127,14 @@ class CallOut(BaseModel):
     direction: str
     contact_e164: str
     our_e164: str
-    carrier: str
     status: str
     tag: str | None
     answered_at: datetime | None
     ended_at: datetime | None
     duration_seconds: int | None
     created_at: datetime
-    #: P21: one plain sentence saying WHY this call went out the way it did
-    #: ("Called via Telnyx - cheapest healthy route", "Via your calling trunk").
-    #: None for every call placed before P21 shipped.
+    #: Always None for customers: every routing sentence names the carrier. Kept so
+    #: existing API clients do not break.
     route_reason: str | None = None
     #: P29 "call result": the outcome a human picked after the call, from the org's
     #: configurable list (Settings -> Calling). None until somebody picks one.
@@ -194,14 +192,13 @@ def _call_out(c: Call) -> CallOut:
         direction=c.direction,
         contact_e164=c.contact_e164,
         our_e164=c.our_e164,
-        carrier=c.carrier,
         status=c.status,
         tag=c.tag,
         answered_at=c.answered_at,
         ended_at=c.ended_at,
         duration_seconds=c.duration_seconds,
         created_at=c.created_at,
-        route_reason=_livekit_route_reason(c),
+        route_reason=None,
         disposition=c.disposition,
         disposition_note=c.disposition_note,
     )

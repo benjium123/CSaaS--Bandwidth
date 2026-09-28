@@ -33,7 +33,6 @@ import {
   type NumberOut,
   type SearchOut,
 } from "@/api/numbers";
-import { formatMicros, monthToDateRange, useSpendSummary } from "@/api/spend";
 import {
   CONSOLE_CELL as CELL,
   CONSOLE_CELL_L as CELL_L,
@@ -175,13 +174,6 @@ function emergencyPill(number: NumberOut): { label: string; tone: PillTone } {
   }
 }
 
-function providerDisplayLabel(number: NumberOut): string {
-  const friendly = (PROVIDER_LABELS as Record<string, string | undefined>)[number.carrier];
-  if (friendly) return friendly;
-  if (number.provider_account_label) return number.provider_account_label;
-  return "—";
-}
-
 function formatPurchasedAt(value: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
@@ -208,16 +200,6 @@ export function NumbersPage() {
   const campaignName = React.useCallback(
     (id: string | null | undefined) => campaigns?.find((c) => c.id === id)?.name ?? null,
     [campaigns],
-  );
-
-  const spendRange = React.useMemo(() => monthToDateRange(), []);
-  const spendSummaryQuery = useSpendSummary(api, spendRange.from, spendRange.to);
-  const spendMicrosByNumberId = React.useCallback(
-    (numberId: string, carrier: string): number | undefined => {
-      const providerSpend = spendSummaryQuery.data?.by_provider[carrier];
-      return providerSpend?.numbers.find((n) => n.number_id === numberId)?.cost_micros;
-    },
-    [spendSummaryQuery.data],
   );
 
   const [value, setValue] = React.useState("");
@@ -261,7 +243,7 @@ export function NumbersPage() {
   // silently later - emergency calls from it have nowhere to be located to.
   const needsE911Warning = (numbers ?? []).some(
     (n) =>
-      n.carrier === "telnyx" &&
+      n.e911_supported &&
       n.status === "active" &&
       (n.emergency_status === "missing" || n.emergency_status === "failed"),
   );
@@ -336,12 +318,6 @@ export function NumbersPage() {
                         (PATCH /numbers/{id}/answered-by); "Human" restores the seeded ring flow. */}
                     <th className={HEAD}>Answered by</th>
                     <th className={HEAD}>Type</th>
-                    <th className={HEAD}>Provider</th>
-                    <th className={HEAD}>Cost</th>
-                    <th className={HEAD}>
-                      Spend MTD{" "}
-                      <span className="font-normal normal-case tracking-normal">(UTC days)</span>
-                    </th>
                     <th className={HEAD}>Purchased</th>
                     <th className={HEAD}>Status</th>
                     <th className={HEAD}>911</th>
@@ -366,8 +342,6 @@ export function NumbersPage() {
                       answeredByPending={
                         setAnsweredBy.isPending && setAnsweredBy.variables?.numberId === n.id
                       }
-                      spendMicros={spendMicrosByNumberId(n.id, n.carrier)}
-                      spendUnavailable={spendSummaryQuery.isLoading || spendSummaryQuery.isError}
                       onAssign={(campaignId) => assign(n.id, campaignId)}
                       assignPending={assignCampaign.isPending}
                       confirming={confirmReleaseId === n.id}
@@ -418,8 +392,6 @@ function NumberRow({
   assistants,
   onAnsweredByChange,
   answeredByPending,
-  spendMicros,
-  spendUnavailable,
   onAssign,
   assignPending,
   confirming,
@@ -434,8 +406,6 @@ function NumberRow({
   assistants: { id: string; name: string }[];
   onAnsweredByChange: (mode: "human" | "assistant", profileId: string | null) => void;
   answeredByPending: boolean;
-  spendMicros: number | undefined;
-  spendUnavailable: boolean;
   onAssign: (campaignId: string) => void;
   assignPending: boolean;
   confirming: boolean;
@@ -451,7 +421,6 @@ function NumberRow({
       ? (assistants.find((a) => a.id === current.profile_id)?.name ?? null)
       : null;
   const status = numberStatusPill(number.status);
-  const providerLabel = providerDisplayLabel(number);
   const e911 = emergencyPill(number);
 
   return (
@@ -504,16 +473,6 @@ function NumberRow({
         )}
       </td>
       <td className={cn(CELL, "text-muted-foreground")}>{number.number_type}</td>
-      <td className={CELL}>
-        <div className="text-foreground">{providerLabel}</div>
-        {number.provider_account_label && providerLabel !== number.provider_account_label && (
-          <div className="text-xs text-muted-foreground">{number.provider_account_label}</div>
-        )}
-      </td>
-      <td className={cn(CELL, "whitespace-nowrap text-foreground")}>{formatMonthlyCost(number)}</td>
-      <td className={cn(CELL, "whitespace-nowrap text-foreground")}>
-        {spendUnavailable ? "—" : formatMicros(spendMicros ?? 0)}
-      </td>
       <td className={cn(CELL, "whitespace-nowrap text-muted-foreground")}>
         {formatPurchasedAt(number.purchased_at)}
       </td>
@@ -522,17 +481,17 @@ function NumberRow({
           {number.status === "pending" && <Loader2 className="h-3 w-3 animate-spin" />}
           {status.label}
         </Pill>
-        {number.status === "failed" && number.order_detail && (
+        {number.status === "failed" && (
           <span className="mt-1 block max-w-[240px] text-xs text-destructive">
-            {number.order_detail}
+            Order failed - contact support
           </span>
         )}
       </td>
       <td className={CELL}>
-        {/* 911 is carrier-managed unless the carrier is Telnyx and there is nothing to
-            manage yet ("unsupported"). Numbers we cannot touch still say who owns them. */}
-        {number.emergency_status === "unsupported" || number.carrier !== "telnyx" ? (
-          <span className="text-xs text-muted-foreground">Managed by {providerLabel}</span>
+        {/* 911 is managed for the customer unless the number supports E911 provisioning and
+            there is something to manage ("unsupported" means nothing yet). */}
+        {number.emergency_status === "unsupported" || !number.e911_supported ? (
+          <span className="text-xs text-muted-foreground">Managed automatically</span>
         ) : (
           <>
             <Pill tone={e911.tone}>{e911.label}</Pill>
@@ -701,6 +660,53 @@ function EmergencyAddressEditor({
   );
 }
 
+/** Operator-only provider picker. Its catalog/account queries are platform-operator
+ * endpoints (403 for customers), so they live here and mount only for operators. */
+function OperatorCarrierPicker({
+  api,
+  value,
+  onChange,
+}: {
+  api: ApiClient;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const { data: catalog } = useCarrierCatalog(api);
+  const providerAccountsQuery = useQuery({
+    queryKey: ["provider-accounts"],
+    queryFn: () => fetchProviderAccounts(api),
+  });
+  const carrierOptions = React.useMemo(
+    () => buildCarrierOptions(catalog ?? [], providerAccountsQuery.data ?? []),
+    [catalog, providerAccountsQuery.data],
+  );
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-xs text-muted-foreground" htmlFor="carrier">
+        Provider
+      </label>
+      <Select
+        id="carrier"
+        aria-label="Provider"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Any live provider</option>
+        {carrierOptions.map((option) => (
+          <option
+            key={option.value}
+            value={option.value}
+            disabled={option.disabled}
+            title={option.tooltip}
+          >
+            {option.label}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
+}
+
 function OrderNumberSection({
   api,
   campaigns,
@@ -710,6 +716,8 @@ function OrderNumberSection({
   campaigns: { id: string; name: string }[];
   onOrdered: () => void;
 }) {
+  const { me } = useAuth();
+  const isOperator = Boolean(me?.is_platform_operator);
   const [areaCode, setAreaCode] = React.useState("");
   const [contains, setContains] = React.useState("");
   const [numberType, setNumberType] = React.useState("local");
@@ -717,16 +725,6 @@ function OrderNumberSection({
   const [searchFilters, setSearchFilters] = React.useState<AvailableNumberFilters | null>(null);
   const [orderedNumber, setOrderedNumber] = React.useState<{ e164: string; status: string } | null>(
     null,
-  );
-
-  const { data: catalog } = useCarrierCatalog(api);
-  const providerAccountsQuery = useQuery({
-    queryKey: ["provider-accounts"],
-    queryFn: () => fetchProviderAccounts(api),
-  });
-  const carrierOptions = React.useMemo(
-    () => buildCarrierOptions(catalog ?? [], providerAccountsQuery.data ?? []),
-    [catalog, providerAccountsQuery.data],
   );
 
   const availableQuery = useAvailableNumbers(api, searchFilters ?? {}, searchFilters !== null);
@@ -741,7 +739,7 @@ function OrderNumberSection({
       area_code: areaCode || undefined,
       contains: contains || undefined,
       number_type: numberType,
-      carrier: carrier || undefined,
+      carrier: isOperator ? carrier || undefined : undefined,
     });
   }
 
@@ -754,14 +752,6 @@ function OrderNumberSection({
         // state is now - the operator may have changed the dropdown after searching,
         // and the result row's carrier must match what was actually searched/shown.
         carrier: searchFilters?.carrier,
-        // Only send the cost fields the row actually priced - omit them entirely
-        // (rather than sending null) when the provider didn't quote a cents amount.
-        ...(typeof result.monthly_cost_cents === "number"
-          ? { monthly_cost_cents: result.monthly_cost_cents }
-          : {}),
-        ...(typeof result.setup_cost_cents === "number"
-          ? { setup_cost_cents: result.setup_cost_cents }
-          : {}),
       });
       setOrderedNumber({ e164: ordered.e164, status: ordered.status });
       onOrdered();
@@ -812,29 +802,7 @@ function OrderNumberSection({
             <option value="tollfree">Toll-free</option>
           </Select>
         </div>
-        <div className="space-y-1.5">
-          <label className="block text-xs text-muted-foreground" htmlFor="carrier">
-            Provider
-          </label>
-          <Select
-            id="carrier"
-            aria-label="Provider"
-            value={carrier}
-            onChange={(e) => setCarrier(e.target.value)}
-          >
-            <option value="">Any live provider</option>
-            {carrierOptions.map((option) => (
-              <option
-                key={option.value}
-                value={option.value}
-                disabled={option.disabled}
-                title={option.tooltip}
-              >
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </div>
+        {isOperator && <OperatorCarrierPicker api={api} value={carrier} onChange={setCarrier} />}
         <Button type="submit" className="rounded-full px-5" disabled={availableQuery.isFetching}>
           Search
         </Button>
@@ -914,7 +882,7 @@ function OrderNumberSection({
       ) : searchFilters ? (
         <EmptyState
           title="No numbers found"
-          description="Try a different area code, phrase, type, or provider."
+          description="Try a different area code, phrase, or type."
           action={
             <Button type="button" className="rounded-full px-5" variant="outline" onClick={() => setSearchFilters(null)}>
               Clear search

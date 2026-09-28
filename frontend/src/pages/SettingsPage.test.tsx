@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -80,6 +80,7 @@ function renderSettings({
   memberCount = 1,
   roleName = "owner",
   meStub,
+  operator = false,
 }: {
   initialEntries?: string[];
   permissions?: string[];
@@ -91,6 +92,8 @@ function renderSettings({
   roleName?: string;
   /** Stub the /auth/me response outright (e.g. an Error) to exercise `me === null`. */
   meStub?: unknown;
+  /** Sign in as a platform operator (the only identity that sees providers and spend). */
+  operator?: boolean;
 } = {}) {
   // With no options this clone is structurally identical to ME, so existing call sites
   // behave exactly as before; only the membership's role_name ever differs.
@@ -100,6 +103,7 @@ function renderSettings({
       : {
           ...ME,
           memberships: [{ ...ME.memberships[0], role_name: roleName }],
+          is_platform_operator: operator,
         };
   const client = makeStubClient({
     "/api/v1/auth/me": me,
@@ -238,16 +242,57 @@ describe("SettingsPage", () => {
       // explicit ?tab=usage - same pattern the Dashboard tab tests below already use.
       initialEntries: ["/settings/billing?tab=usage"],
       providerAccounts: [{ id: "pa1", provider: "twilio" }],
+      operator: true,
     });
 
     expect(await screen.findByText("Spend card twilio")).toBeInTheDocument();
   });
 
   it("renders the billing empty state when there are no provider accounts", async () => {
-    renderSettings({ initialEntries: ["/settings/billing?tab=usage"] });
+    renderSettings({ initialEntries: ["/settings/billing?tab=usage"], operator: true });
 
     expect(await screen.findByText("No spend yet")).toBeInTheDocument();
     expect(screen.getByText("Connect a provider to see what you are spending.")).toBeInTheDocument();
+  });
+
+  it("hides spend cards from a customer on the Usage tab and never asks for provider accounts", async () => {
+    const { client } = renderSettings({
+      initialEntries: ["/settings/billing?tab=usage"],
+      providerAccounts: [{ id: "pa1", provider: "twilio" }],
+    });
+
+    expect(await screen.findByText(/Your usage and charges are shown on the Credits tab/)).toBeInTheDocument();
+    expect(screen.queryByText("Spend card twilio")).not.toBeInTheDocument();
+    expect(screen.queryByText("No spend yet")).not.toBeInTheDocument();
+    expect(client.calls.some((c) => c.path.startsWith("/api/v1/provider-accounts"))).toBe(false);
+  });
+
+  it("redirects a customer away from the providers section", async () => {
+    renderSettings({ initialEntries: ["/settings/providers"] });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location")).toHaveTextContent("/settings/workspace"),
+    );
+    expect(screen.queryByText("Providers page")).not.toBeInTheDocument();
+  });
+
+  it("refuses the developers section to a customer", async () => {
+    renderSettings({ initialEntries: ["/settings/developers"] });
+
+    expect(await screen.findByText("You do not have access to this setting.")).toBeInTheDocument();
+    expect(screen.queryByText("Platform page")).not.toBeInTheDocument();
+  });
+
+  it("shows the developers section to a platform operator", async () => {
+    renderSettings({ initialEntries: ["/settings/developers"], operator: true });
+
+    expect(await screen.findByText("Platform page")).toBeInTheDocument();
+  });
+
+  it("shows the providers section to a platform operator", async () => {
+    renderSettings({ initialEntries: ["/settings/providers"], operator: true });
+
+    expect(await screen.findByText("Providers page")).toBeInTheDocument();
   });
 
   it("renders Billing sub-tabs and mounts the Dashboard page on the Dashboard tab", async () => {

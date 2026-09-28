@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_org_operator
 from app.errors import ValidationFailedError
 from app.services import audit as audit_svc
 from app.services import spend as spend_svc
@@ -41,7 +41,7 @@ def _default_range(
 
 @router.get("/spend/summary")
 async def get_spend_summary(
-    ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("reports:read"))],
     start: Annotated[date | None, Query(alias="from")] = None,
     end: Annotated[date | None, Query(alias="to")] = None,
 ) -> dict:
@@ -53,7 +53,7 @@ async def get_spend_summary(
 
 @router.get("/spend/daily")
 async def get_spend_daily(
-    ctx: Annotated[OrgContext, Depends(require_permission("reports:read"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("reports:read"))],
     start: Annotated[date | None, Query(alias="from")] = None,
     end: Annotated[date | None, Query(alias="to")] = None,
     provider: str | None = None,
@@ -64,7 +64,7 @@ async def get_spend_daily(
 
 @router.get("/provider-rates")
 async def get_provider_rates(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:read"))],
 ) -> list[dict]:
     return await spend_svc.effective_rates(ctx.session)
 
@@ -72,7 +72,7 @@ async def get_provider_rates(
 @router.put("/provider-rates")
 async def put_provider_rates(
     payload: ProviderRatesPut,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:write"))],
 ) -> list[dict]:
     updated = await spend_svc.upsert_rates(
         ctx.session,
@@ -113,7 +113,7 @@ async def put_provider_rates(
 
 @router.post("/spend/rollup")
 async def post_spend_rollup(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:write"))],
     day: Annotated[date, Query(description="UTC day to recompute")],
 ) -> dict:
     today = datetime.now(timezone.utc).date()

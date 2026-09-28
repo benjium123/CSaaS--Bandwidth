@@ -297,7 +297,7 @@ async def test_reputation_endpoint_returns_derived_stats(client, session, org):
     assert row["delivered"] == 45
     assert row["failed"] == 15
     assert row["delivery_rate"] == pytest.approx(0.75)
-    assert row["carrier"] == "bandwidth"
+    assert "carrier" not in row
 
 
 async def test_reputation_endpoint_is_org_scoped(client, session):

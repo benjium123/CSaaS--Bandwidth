@@ -20,18 +20,46 @@ import pytest
 import sqlalchemy as sa
 
 from app.compliance import telnyx_approval
-from app.db.base import set_org_context
+from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.main import create_app
-from app.models import OrgNumber
+from app.models import Message, OrgNumber
 from app.models.numbers import Brand, Campaign
 from app.providers.domain import CarrierError, SendResult
 from app.providers.health import HealthRegistry
 from app.providers.registry import CarrierRegistry
-from tests.conftest import FakeCarrier, auth_headers, make_org_with_number
+from tests.conftest import (
+    FakeCarrier,
+    auth_headers,
+    make_org_with_number as _make_org_with_number,
+    make_platform_operator,
+)
+
+
+async def make_org_with_number(client, email: str, *args, **kwargs):
+    """Same as conftest's, but the owner is also an active platform operator: the routing
+    console (/routing/*) is operator-only (require_org_operator)."""
+    result = await _make_org_with_number(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return result
 
 PRIMARY_NUM = "+12145550100"
 FALLBACK_NUM = "+19725550300"
 CONTACT = "+19725559999"
+
+
+async def _stored_reason(session, body: dict) -> str | None:
+    """The customer API never returns route_reason (it names the carrier), but the column is
+    still written by the real send path - so read it from the row."""
+    assert body["route_reason"] is None
+    row = (
+        await session.execute(
+            sa.select(Message)
+            .where(Message.id == uuid.UUID(body["id"]))
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one()
+    await session.refresh(row)
+    return row.route_reason
 
 
 class FakeClock:
@@ -139,7 +167,7 @@ async def _set_policy(client, h, **fields) -> dict:
     return r.json()
 
 
-async def test_sms_send_records_route_reason_sentence(multi):
+async def test_sms_send_records_route_reason_sentence(multi, session):
     """A plain successful send carries a plain sentence naming the provider it used."""
     client, _registry, bandwidth, telnyx = multi
     token, org = await _org_with_numbers(client, "sr1@example.com")
@@ -152,7 +180,7 @@ async def test_sms_send_records_route_reason_sentence(multi):
     body = r.json()
     assert body["status"] == "accepted"
 
-    reason = body["route_reason"]
+    reason = await _stored_reason(session, body)
     assert reason, "every outbound message must be able to say why it went out that way"
     assert reason.startswith("Sent via "), reason
     # The sentence names the provider that ACTUALLY carried it, not a guess.
@@ -165,7 +193,7 @@ async def test_sms_send_records_route_reason_sentence(multi):
     # And it is PERSISTED, not merely computed for this one response.
     listed = await client.get(f"/api/v1/messages/{body['id']}", headers=h)
     if listed.status_code == 200:
-        assert listed.json()["route_reason"] == reason
+        assert listed.json()["route_reason"] is None
 
 
 async def test_sms_failover_records_failed_over_sentence(multi, session):
@@ -191,11 +219,11 @@ async def test_sms_failover_records_failed_over_sentence(multi, session):
     assert len(bandwidth.sent) == 1
     assert len(telnyx.sent) == 1
 
-    reason = body["route_reason"]
+    reason = await _stored_reason(session, body)
     assert reason == "Failed over to Telnyx — Bandwidth unavailable", reason
 
 
-async def test_sms_route_reason_is_recorded_even_when_the_send_is_rejected(multi):
+async def test_sms_route_reason_is_recorded_even_when_the_send_is_rejected(multi, session):
     """A message that never lands still explains where it TRIED to go. That is precisely
     when somebody goes looking, so the sentence is written before the attempt, not after."""
     client, _registry, bandwidth, telnyx = multi
@@ -217,5 +245,6 @@ async def test_sms_route_reason_is_recorded_even_when_the_send_is_rejected(multi
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["status"] == "rejected"
-    assert body["route_reason"], "a rejected message must still say where it tried to go"
-    assert body["route_reason"].startswith("Sent via "), body["route_reason"]
+    reason = await _stored_reason(session, body)
+    assert reason, "a rejected message must still say where it tried to go"
+    assert reason.startswith("Sent via "), reason

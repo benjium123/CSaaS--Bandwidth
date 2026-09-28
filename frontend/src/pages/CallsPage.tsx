@@ -388,8 +388,6 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
           <dd>{call.direction}</dd>
           <dt>From</dt>
           <dd>{formatPhone(call.our_e164)}</dd>
-          <dt>Carrier</dt>
-          <dd>{call.carrier}</dd>
           <dt>Status</dt>
           <dd>
             <Badge className={statusBadgeClass(call.status)}>{call.status}</Badge>

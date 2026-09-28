@@ -547,3 +547,26 @@ async def approve_workspaces(email: str) -> None:
             profile.next_reverification_at = datetime.now(timezone.utc) + timedelta(days=365)
             await s.flush()  # writes are checked against the org context current at flush
         await s.commit()
+
+
+async def make_platform_operator(email: str, role: str = "admin") -> None:
+    """Make an existing user an ACTIVE platform operator. Workspace routes that expose the
+    carrier / provider accounts / carrier spend (require_org_operator) are 403 for everyone
+    else, owners included."""
+    import sqlalchemy as sa
+
+    from app.models import PlatformOperator, User
+
+    async with get_sessionmaker()() as s:
+        user = (
+            await s.execute(
+                sa.select(User)
+                .where(sa.func.lower(User.email) == email.lower())
+                .execution_options(allow_unscoped=True)
+            )
+        ).scalar_one()
+        # An operator is always obliged to hold a second factor (services/second_factor.py),
+        # or every request 403s two_factor_required. Bearer tokens already issued stay valid.
+        user.totp_enabled = True
+        s.add(PlatformOperator(id=uuid.uuid4(), user_id=user.id, role=role, is_active=True))
+        await s.commit()

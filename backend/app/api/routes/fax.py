@@ -61,7 +61,7 @@ async def list_faxes(
         "faxes": [_public(f) for f in rows],
         "fax_numbers": [n.e164 for n in numbers if (n.provisioning or {}).get("fax_mode")],
         "numbers": [
-            {"id": str(n.id), "e164": n.e164, "carrier": n.carrier,
+            {"id": str(n.id), "e164": n.e164,
              "fax_mode": bool((n.provisioning or {}).get("fax_mode"))}
             for n in numbers
         ],

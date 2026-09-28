@@ -31,7 +31,13 @@ from app.services import credentials as credentials_svc
 from app.services import provider_accounts as provider_accounts_svc
 from app.services import sweeper as sweeper_svc
 from app.services.number_orders import poll_pending_number_orders
-from tests.conftest import auth_headers, create_org, make_settings, register_and_login
+from tests.conftest import (
+    auth_headers,
+    create_org,
+    make_platform_operator,
+    make_settings,
+    register_and_login,
+)
 
 
 class BandwidthHarness(BandwidthNumberProviderMixin):
@@ -896,6 +902,28 @@ async def app_with_number_carrier(engine):
         yield c, fake, application
 
 
+_HIDDEN_NUMBER_KEYS = (
+    "carrier", "provider_account_id", "provider_account_label",
+    "purchase_cost_cents", "monthly_cost_cents", "order_detail",
+)
+
+
+async def _db_number(session, body: dict) -> OrgNumber:
+    """The persisted row behind an API body. The columns are still written; the API no
+    longer returns them, so these tests read them from the database."""
+    for key in _HIDDEN_NUMBER_KEYS:
+        assert key not in body, key
+    row = (
+        await session.execute(
+            sa.select(OrgNumber)
+            .where(OrgNumber.id == uuid.UUID(body["id"]))
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one()
+    await session.refresh(row)
+    return row
+
+
 async def _approve_kyc(session, org_id, owner_email: str) -> None:
     """POST /orgs (create_org) always makes an 'individual' account_type org with
     number_subscription_required=True and an unapproved KycProfile (app/api/routes/
@@ -949,10 +977,10 @@ async def test_order_route_env_carrier_persists_costs_and_leaves_provider_accoun
 
     # No P17 DB account exists for "fakecarrier" at all - registry_org.db_backed_providers
     # must never attribute this purchase to one.
-    assert body["provider_account_id"] is None
-    assert body["provider_account_label"] is None
-    assert body["monthly_cost_cents"] == 199
-    assert body["purchase_cost_cents"] == 99
+    row = await _db_number(session, body)
+    assert row.provider_account_id is None
+    assert row.monthly_cost_cents == 199
+    assert row.purchase_cost_cents == 99
     assert body["purchased_at"] is not None
     assert body["status"] == "pending"
     assert not hasattr(fake, "order_status")
@@ -993,7 +1021,7 @@ async def test_order_route_pollable_carrier_pending_result_is_not_active(engine,
         assert hasattr(fake, "order_status")
         assert body["status"] == "pending"
         assert body["is_active"] is False
-    assert body["order_detail"] == "pending"
+    assert (await _db_number(session, body)).order_detail == "pending"
 
 
 async def test_order_route_active_result_has_no_order_detail_and_is_active(
@@ -1023,9 +1051,10 @@ async def test_order_route_active_result_has_no_order_detail_and_is_active(
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["is_active"] is True
-    assert body["order_detail"] is None
-    assert body["monthly_cost_cents"] is None
-    assert body["purchase_cost_cents"] is None
+    row = await _db_number(session, body)
+    assert row.order_detail is None
+    assert row.monthly_cost_cents is None
+    assert row.purchase_cost_cents is None
 
 
 async def test_order_route_uses_client_supplied_cost_when_carrier_reports_none(
@@ -1062,8 +1091,9 @@ async def test_order_route_uses_client_supplied_cost_when_carrier_reports_none(
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["monthly_cost_cents"] == 149
-    assert body["purchase_cost_cents"] == 0
+    row = await _db_number(session, body)
+    assert row.monthly_cost_cents == 149
+    assert row.purchase_cost_cents == 0
 
 
 async def test_order_route_carrier_cost_wins_over_client_supplied_cost(
@@ -1100,8 +1130,9 @@ async def test_order_route_carrier_cost_wins_over_client_supplied_cost(
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["monthly_cost_cents"] == 299
-    assert body["purchase_cost_cents"] == 50
+    row = await _db_number(session, body)
+    assert row.monthly_cost_cents == 299
+    assert row.purchase_cost_cents == 50
 
 
 async def test_order_route_rejects_negative_monthly_cost_cents(app_with_number_carrier):
@@ -1156,6 +1187,7 @@ async def test_order_route_db_backed_carrier_sets_provider_account_id_and_label(
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         email = "p18-order-db@example.com"
         token = await register_and_login(client, email)
+        await make_platform_operator(email)
         org = await create_org(client, token, "Org P18 DB")
         await _approve_kyc(session, org["id"], email)
         headers = auth_headers(token, org["id"])
@@ -1207,10 +1239,10 @@ async def test_order_route_db_backed_carrier_sets_provider_account_id_and_label(
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
-        assert body["provider_account_id"] == account_id
-        assert body["provider_account_label"] == "DB Telnyx"
-        assert body["monthly_cost_cents"] == 500
-        assert body["purchase_cost_cents"] == 250
+        row = await _db_number(session, body)
+        assert str(row.provider_account_id) == account_id
+        assert row.monthly_cost_cents == 500
+        assert row.purchase_cost_cents == 250
 
 
 # ==================================================================================
@@ -1528,13 +1560,14 @@ async def test_list_numbers_batches_provider_account_label_query(
     resp = await client.get("/api/v1/numbers", headers=headers)
     assert resp.status_code == 200
     assert len(resp.json()) == 10
-    assert all(row["provider_account_label"] == "Batched Label" for row in resp.json())
+    for row in resp.json():
+        for key in _HIDDEN_NUMBER_KEYS:
+            assert key not in row, key
 
+    # The customer list no longer labels the buying provider account at all, so listing
+    # 10 numbers must not touch provider_accounts (and certainly not once per row).
     provider_account_queries = [s for s in query_counter.statements if "provider_accounts" in s]
-    assert len(provider_account_queries) == 1, (
-        "expected exactly one batched provider_accounts query for the whole list, got "
-        f"{len(provider_account_queries)}: {provider_account_queries}"
-    )
+    assert provider_account_queries == [], provider_account_queries
 
 
 async def test_poll_pending_number_orders_sql_filters_unpollable_carriers_first(session):

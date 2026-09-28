@@ -23,8 +23,18 @@ from tests.conftest import (
     create_org,
     make_org_with_number,
     make_settings,
-    register_and_login,
+    make_platform_operator,
+    register_and_login as _register_and_login,
 )
+
+
+async def register_and_login(client, email: str, *args, **kwargs) -> str:
+    """Provider accounts and carrier spend/rates are operator-only (require_org_operator),
+    so every user these tests sign in is also an active platform operator. Non-operator
+    denial is covered in test_hide_carrier_cost.py."""
+    token = await _register_and_login(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return token
 
 
 @pytest.fixture

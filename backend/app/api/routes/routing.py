@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from app.auth.deps import OrgContext, require_permission
+from app.auth.deps import OrgContext, require_org_operator
 from app.errors import ValidationFailedError
 from app.routing import router as routing_svc
 
@@ -79,7 +79,7 @@ def _registry(request: Request):
 @router.get("/carriers", response_model=list[CarrierStatusOut])
 async def list_carriers(
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:read"))],
 ) -> list[CarrierStatusOut]:
     """Which carriers this deployment can actually use, and how each one is behaving.
 
@@ -92,7 +92,7 @@ async def list_carriers(
 @router.get("/catalog", response_model=list[CarrierCatalogOut])
 async def carrier_catalog(
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:read"))],
 ) -> list[CarrierCatalogOut]:
     """The bring-your-own-key view: every supported carrier, whether it is live, and if
     not, the exact variables that would make it live."""
@@ -133,7 +133,7 @@ async def carrier_catalog(
 async def probe_carrier(
     name: str,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:write"))],
 ) -> ProbeOut:
     """Ask the carrier whether these credentials work. Operator-triggered ONLY - see
     providers/probes.py for why this never runs on boot."""
@@ -167,7 +167,7 @@ async def probe_carrier(
 
 @router.get("/policy", response_model=PolicyOut)
 async def get_policy(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:read"))],
 ) -> PolicyOut:
     policy = await routing_svc.get_policy(ctx.session, ctx.org.id)
     await ctx.session.commit()
@@ -184,7 +184,7 @@ async def get_policy(
 async def update_policy(
     payload: PolicyIn,
     request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:write"))],
 ) -> PolicyOut:
     registry = _registry(request)
     known = set(registry.names()) if registry else set()

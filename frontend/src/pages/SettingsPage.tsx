@@ -355,13 +355,25 @@ function BillingSettingsSection() {
 }
 
 function BillingUsageSection() {
-  const { api } = useAuth();
+  const { api, me } = useAuth();
   const navigate = useNavigate();
+  const isOperator = Boolean(me?.is_platform_operator);
   const accountsQuery = useQuery({
     queryKey: ["provider-accounts"],
     queryFn: () => fetchProviderAccounts(api),
     retry: false,
+    enabled: isOperator,
   });
+
+  if (!isOperator) {
+    return (
+      <Section title="Billing & usage">
+        <p className="text-sm text-muted-foreground">
+          Your usage and charges are shown on the Credits tab.
+        </p>
+      </Section>
+    );
+  }
 
   return (
     <Section title="Billing & usage">
@@ -401,6 +413,7 @@ function BillingUsageSection() {
 }
 
 function SectionContent({ id }: { id: SettingsSectionId }) {
+  const { me } = useAuth();
   switch (id) {
     case "workspace":
       return <WorkspaceSection />;
@@ -413,7 +426,11 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
     case "numbers":
       return <NumbersPage />;
     case "providers":
-      return <ProvidersPage />;
+      return me?.is_platform_operator ? (
+        <ProvidersPage />
+      ) : (
+        <Navigate to="/settings/workspace" replace />
+      );
     case "messaging":
       return <MessagingSection />;
     case "calling":
@@ -423,7 +440,13 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
     case "billing":
       return <BillingSettingsSection />;
     case "developers":
-      return <PlatformPage />;
+      return me?.is_platform_operator ? (
+        <PlatformPage />
+      ) : (
+        <SurfaceCard>
+          <p className="text-[13.5px] font-medium">You do not have access to this setting.</p>
+        </SurfaceCard>
+      );
     case "profile":
       return <SettingsProfilePage />;
   }

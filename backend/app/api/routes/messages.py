@@ -135,7 +135,7 @@ def _out(m: Message, links: list | None = None) -> MessageOut:
         error_code=m.error_code,
         hold_until=m.hold_until,
         created_at=m.created_at,
-        route_reason=m.route_reason,
+        route_reason=None,  # names the carrier; never shown to customers
     )
 
 
