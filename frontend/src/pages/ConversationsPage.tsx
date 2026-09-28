@@ -1,7 +1,7 @@
 import "@fontsource-variable/archivo";
 import "@/components/conversations/ringliteInbox.css";
 import * as React from "react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { PanelRight, PanelLeftOpen, MessagesSquare } from "lucide-react";
 import { hasPermission, useAuth } from "@/auth/AuthContext";
@@ -37,7 +37,10 @@ import "@fontsource-variable/martian-mono/wght.css";
 import "@/components/conversations/consoleTheme.css";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { ColumnSplitter } from "@/components/shell/ColumnSplitter";
-import { NeedsYouChips } from "@/components/conversations/NeedsYouChips";
+import { NeedsYouChips, type NeedsYouKey } from "@/components/conversations/NeedsYouChips";
+
+/** Chips backed by a list filter; "unread" reuses the per-line unread counts instead. */
+const NEEDS_YOU_FILTERS = ["missed", "unresponded", "voicemail", "assigned", "overdue"] as const;
 import { PhoneDock } from "@/components/conversations/PhoneDock";
 import { useColumnWidths } from "@/components/shell/useColumnWidths";
 
@@ -157,23 +160,29 @@ export function ConversationsPage() {
   // Phase 1b "needs you" chips: counts from the existing list filters (one page each, so
   // a full page reads as "50+"). Missed calls / voicemails / assigned-to-me need backend
   // filters that do not exist yet, so they are not shown rather than faked.
-  const waitingQuery = useQuery({
-    queryKey: ["needs-you", "unresponded"],
-    queryFn: () => fetchConversations(api, { filter: "unresponded" }),
-    staleTime: 15000,
-    refetchInterval: 30000,
-  });
-  const overdueQuery = useQuery({
-    queryKey: ["needs-you", "overdue"],
-    queryFn: () => fetchConversations(api, { filter: "overdue" }),
-    staleTime: 15000,
-    refetchInterval: 30000,
-  });
   const unreadQuery = useQuery({
     queryKey: ["inbox-unread-counts"],
     queryFn: () => fetchUnreadByInbox(api),
     staleTime: 5000,
     refetchInterval: 15000,
+  });
+  const needsYouQueries = useQueries({
+    queries: NEEDS_YOU_FILTERS.map((key) => ({
+      queryKey: ["needs-you", key],
+      queryFn: () => fetchConversations(api, { filter: key }),
+      staleTime: 15000,
+      refetchInterval: 30000,
+    })),
+  });
+  const needsYouCounts: Partial<Record<NeedsYouKey, { n: number; more: boolean }>> = {
+    unread: {
+      n: Object.values(unreadQuery.data?.counts ?? {}).reduce((a, b) => a + b, 0),
+      more: unreadQuery.data?.truncated ?? false,
+    },
+  };
+  NEEDS_YOU_FILTERS.forEach((key, i) => {
+    const page = needsYouQueries[i]?.data;
+    if (page) needsYouCounts[key] = { n: page.items.length, more: page.next_cursor != null };
   });
 
   const urlInboxId = searchParams.get("inbox");
@@ -436,19 +445,8 @@ export function ConversationsPage() {
       onCollapse={isBelowSm ? undefined : toggleRail}
       needsYou={
         <NeedsYouChips
-          counts={{
-            unread: {
-              n: Object.values(unreadQuery.data?.counts ?? {}).reduce((a, b) => a + b, 0),
-              more: unreadQuery.data?.truncated ?? false,
-            },
-            unresponded: waitingQuery.data
-              ? { n: waitingQuery.data.items.length, more: waitingQuery.data.next_cursor != null }
-              : undefined,
-            overdue: overdueQuery.data
-              ? { n: overdueQuery.data.items.length, more: overdueQuery.data.next_cursor != null }
-              : undefined,
-          }}
-          active={filter === "unread" || filter === "unresponded" || filter === "overdue" ? filter : null}
+          counts={needsYouCounts}
+          active={(["unread", ...NEEDS_YOU_FILTERS] as string[]).includes(filter) ? (filter as NeedsYouKey) : null}
           onPick={(key) => {
             setFilter(key ?? "open");
             if (key) handleInboxSelect({ kind: "all" });

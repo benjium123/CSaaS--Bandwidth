@@ -1586,3 +1586,45 @@ async def test_unread_thread_between_two_full_source_frontiers_is_found_via_pagi
             raise AssertionError("too many pages - per-source frontier paging not converging")
 
     assert real_unread_contact in found
+
+
+async def test_needs_you_filters_missed_voicemail_assigned(client, session):
+    """Phase 1b "needs you" chips: filter=missed / voicemail / assigned."""
+    owner_token = await register_and_login(client, "p16needs@example.com")
+    org = await create_org(client, owner_token, "P16 Needs You")
+    org_id = uuid.UUID(org["id"])
+    h = auth_headers(owner_token, org["id"])
+    set_org_context(session, org_id)
+    me = await users_repo.get_by_email(session, "p16needs@example.com")
+
+    A = "+12145550100"
+    await _make_number(session, org_id, A)
+    c_missed, c_answered, c_vm, c_mine, c_other = (
+        "+19725550801", "+19725550802", "+19725550803", "+19725550804", "+19725550805",
+    )
+
+    t = FROZEN_NOW - timedelta(minutes=20)
+    await _make_call(session, org_id, our_e164=A, contact_e164=c_missed, direction="inbound",
+                     status="no_answer", created_at=t, ended_at=t)
+    await _make_call(session, org_id, our_e164=A, contact_e164=c_answered, direction="inbound",
+                     status="completed", created_at=t, ended_at=t)
+    vm_call = await _make_call(session, org_id, our_e164=A, contact_e164=c_vm, direction="inbound",
+                               status="no_answer", created_at=t, ended_at=t)
+    await _make_voicemail(session, org_id, call_id=vm_call.id, transcript="call me back", created_at=t)
+
+    th_mine = await _make_thread(session, org_id, A, c_mine, last_message_at=t)
+    await _make_message(session, org_id, th_mine, direction="inbound", body="hi", created_at=t)
+    th_other = await _make_thread(session, org_id, A, c_other, last_message_at=t)
+    await _make_message(session, org_id, th_other, direction="inbound", body="yo", created_at=t)
+    set_org_context(session, org_id)
+    th_mine.assigned_user_id = me.id
+    await session.commit()
+
+    async def contacts(filter_: str) -> set[str]:
+        r = await client.get("/api/v1/conversations", params={"filter": filter_}, headers=h)
+        assert r.status_code == 200, r.text
+        return {item["contact_e164"] for item in r.json()["items"]}
+
+    assert await contacts("missed") == {c_missed}
+    assert await contacts("voicemail") == {c_vm}
+    assert await contacts("assigned") == {c_mine}

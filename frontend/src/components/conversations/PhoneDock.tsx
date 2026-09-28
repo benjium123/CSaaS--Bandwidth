@@ -8,6 +8,8 @@
  */
 import * as React from "react";
 import { Phone } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/primitives";
 import { useSoftphone } from "@/softphone/SoftphoneProvider";
 
@@ -36,6 +38,8 @@ export function PhoneDock(props: {
   const [from, setFrom] = React.useState(fromOptions[0]?.e164 ?? "");
   const [placing, setPlacing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // The server refuses calls until the caller has a 911 address on file (e911 gate).
+  const [needs911, setNeeds911] = React.useState(false);
   const [elapsed, setElapsed] = React.useState(0);
 
   const activeId = activeCall?.id ?? null;
@@ -60,9 +64,11 @@ export function PhoneDock(props: {
 
   const run = async (action: () => Promise<void>) => {
     setError(null);
+    setNeeds911(false);
     try {
       await action();
     } catch (err) {
+      if (err instanceof ApiError && err.code === "e911_address_required") setNeeds911(true);
       setError(messageOf(err));
     }
   };
@@ -71,10 +77,12 @@ export function PhoneDock(props: {
     if (callDisabled) return;
     setPlacing(true);
     setError(null);
+    setNeeds911(false);
     try {
       await onCall({ to: trimmed, from: selectedFrom });
       setTo("");
     } catch (err) {
+      if (err instanceof ApiError && err.code === "e911_address_required") setNeeds911(true);
       setError(messageOf(err));
     } finally {
       setPlacing(false);
@@ -183,7 +191,14 @@ export function PhoneDock(props: {
         </>
       )}
 
-      {error ? (
+      {needs911 ? (
+        <p role="alert" className="text-sm text-destructive">
+          Add your 911 address before you call.{" "}
+          <Link to="/settings/profile" className="font-medium underline">
+            Add it in My profile
+          </Link>
+        </p>
+      ) : error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>

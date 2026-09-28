@@ -1,5 +1,5 @@
 import * as React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PhoneDock } from "./PhoneDock";
@@ -184,5 +184,27 @@ describe("PhoneDock", () => {
     await user.click(screen.getByRole("button", { name: "End" }));
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Network down"));
+  });
+});
+
+
+describe("PhoneDock: 911 address required", () => {
+  it("links to My profile when the server refuses the call for a missing 911 address", async () => {
+    const { ApiError } = await import("@/api/client");
+    const { MemoryRouter } = await import("react-router-dom");
+    const user = userEvent.setup();
+    const onCall = vi.fn().mockRejectedValue(
+      new ApiError(403, "e911_address_required", "Add your 911 address in Settings, My profile before you call or text."),
+    );
+    render(
+      <MemoryRouter>
+        <PhoneDock fromOptions={[{ e164: "+14695550100", label: "Main" }]} onCall={onCall} />
+      </MemoryRouter>,
+    );
+    await user.type(screen.getByLabelText("Number to call"), "4695550199");
+    await user.click(screen.getByRole("button", { name: "Call" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Add your 911 address before you call.");
+    expect(within(alert).getByRole("link", { name: "Add it in My profile" })).toHaveAttribute("href", "/settings/profile");
   });
 });

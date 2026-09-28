@@ -686,7 +686,7 @@ async def list_conversations(
     filter_: str = Query(
         "open",
         alias="filter",
-        pattern="^(open|unread|unresponded|all|important|snoozed|overdue)$",
+        pattern="^(open|unread|unresponded|all|important|snoozed|overdue|missed|voicemail|assigned)$",
     ),
     q: str | None = None,
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -787,6 +787,12 @@ async def list_conversations(
     elif filter_ == "overdue":
         thread_stmt = thread_stmt.where(
             MessageThread.sla_breached_at.is_not(None),
+            MessageThread.status != "closed",
+        )
+    elif filter_ == "assigned":
+        # "Needs you" chip: open conversations assigned to the caller.
+        thread_stmt = thread_stmt.where(
+            MessageThread.assigned_user_id == ctx.actor_user_id,
             MessageThread.status != "closed",
         )
 
@@ -1057,6 +1063,25 @@ async def list_conversations(
             pair.get("sla_breached_at") is None or pair["status"] == "closed"
         ):
             continue
+        # "Needs you" chips (Phase 1b): a missed call still unread, a voicemail nobody has
+        # followed up on (a reply or call-back would be the newer event), and open
+        # conversations assigned to me. Call-derived ones need calls:read, like the rest.
+        if filter_ == "missed" and not (
+            pair["last_event_type"] == "call" and pair["unread"] and pair["status"] != "closed"
+        ):
+            continue
+        if filter_ == "voicemail" and not (
+            pair["last_event_type"] == "voicemail" and pair["status"] != "closed"
+        ):
+            continue
+        if filter_ == "assigned":
+            pair_thread: MessageThread | None = pair.get("thread")
+            if (
+                pair_thread is None
+                or pair_thread.assigned_user_id != ctx.actor_user_id
+                or pair["status"] == "closed"
+            ):
+                continue
 
         contact_obj = contact_by_e164.get(pair["contact_e164"])
         if q:

@@ -24,11 +24,15 @@ describe("NeedsYouChips", () => {
         unread: { n: 1, more: false },
         unresponded: { n: 2, more: false },
         overdue: { n: 3, more: false },
+        missed: { n: 4, more: false },
+        voicemail: { n: 5, more: false },
+        assigned: { n: 6, more: false },
       },
     });
 
+    // Most urgent first (missed calls), overdue last.
     const names = screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"));
-    expect(names).toEqual(["Unread: 1", "Waiting: 2", "Overdue: 3"]);
+    expect(names).toEqual(["Missed: 4", "Waiting: 2", "Voicemails: 5", "Assigned: 6", "Unread: 1", "Overdue: 3"]);
   });
 
   it("shows a trailing + when the count is capped", () => {

@@ -100,7 +100,11 @@ export type ConversationFilter =
   | "important"
   | "all"
   | "snoozed"
-  | "overdue";
+  | "overdue"
+  // Phase 1b "needs you" chips (backend filters of the same names).
+  | "missed"
+  | "voicemail"
+  | "assigned";
 
 export interface CursorPage<T> {
   items: T[];

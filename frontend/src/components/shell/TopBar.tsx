@@ -16,6 +16,7 @@ import { SETTINGS_ITEM, useRailNav } from "@/components/shell/Sidebar";
 import { Button } from "@/components/ui/primitives";
 import { openCommandPalette } from "@/components/ui/CommandPalette";
 import { StatusPill } from "@/components/shell/StatusPill";
+import { useOptionalSoftphone } from "@/softphone/SoftphoneProvider";
 import { NotificationBell } from "@/components/shell/NotificationBell";
 import { HelpMenu } from "@/components/shell/HelpMenu";
 import { ThemeToggle } from "@/auth/ThemeToggle";
@@ -204,6 +205,7 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
       </Button>
 
       <div className="flex items-center gap-1">
+        <LiveCallPill />
         <StatusPill />
         <NotificationBell />
         <HelpMenu />
@@ -249,5 +251,36 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
         </div>
       </div>
     </header>
+  );
+}
+
+/** "On a call · 03:12" while a call is live, on every page (spec §1). */
+function LiveCallPill() {
+  const softphone = useOptionalSoftphone();
+  const call = softphone?.activeCall ?? null;
+  const [startedAt, setStartedAt] = React.useState<number | null>(null);
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    if (!call) {
+      setStartedAt(null);
+      return undefined;
+    }
+    setStartedAt(Date.now());
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [call?.id]);
+  if (!call || startedAt === null) return null;
+  const secs = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const mmss = `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
+  return (
+    <span
+      role="status"
+      aria-label={`On a call with ${call.contact}, ${mmss}`}
+      className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400"
+    >
+      <span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-500" />
+      On a call
+      <span className="font-mono font-normal">{mmss}</span>
+    </span>
   );
 }

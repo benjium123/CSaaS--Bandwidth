@@ -522,8 +522,30 @@ export function SettingsPage() {
                 aria-label="Finish setting up your workspace"
                 className="mt-2 hidden flex-col rounded-[10px] border border-[hsl(var(--cx-line))] px-[10px] py-[8px] text-[12.5px] hover:bg-[hsl(var(--cx-overlay))] sm:flex"
               >
-                <span className="font-semibold text-[hsl(var(--cx-text))]">Finish setting up</span>
-                <span className="text-[hsl(var(--cx-accent,var(--cx-subtle)))]">Open the setup checklist</span>
+                {(() => {
+                  const org = gate.org!;
+                  const steps: [boolean, string][] =
+                    org.account_type === "individual"
+                      ? [[org.has_provider, "Connect a phone service"], [org.has_number, "Get a number"]]
+                      : [
+                          [org.has_provider, "Connect a phone service"],
+                          [org.has_number, "Get a number"],
+                          [org.member_count > 1, "Invite your team"],
+                          [org.registration_state !== "none", "Register for texting"],
+                        ];
+                  const done = steps.filter(([ok]) => ok).length;
+                  const next = steps.find(([ok]) => !ok)?.[1];
+                  return (
+                    <>
+                      <span className="font-semibold text-[hsl(var(--cx-text))]">
+                        Setup {done} of {steps.length} done
+                      </span>
+                      {next ? (
+                        <span className="text-[hsl(var(--cx-accent,var(--cx-subtle)))]">Next: {next}</span>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </NavLink>
             ) : null}
             {SETTINGS_GROUPS.map((group) => {

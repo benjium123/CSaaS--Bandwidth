@@ -300,6 +300,9 @@ describe("p26 filter chips", () => {
       "all",
       "snoozed",
       "overdue",
+      "missed",
+      "voicemail",
+      "assigned",
     ];
     for (const filter of filters) {
       expect(FILTER_LABELS[filter]).toBeTruthy();
