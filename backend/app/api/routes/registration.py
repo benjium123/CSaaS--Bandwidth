@@ -711,6 +711,7 @@ class CampaignOut(BaseModel):
     carrier_refs: dict
     last_error: str | None
     number_count: int
+    number_cap: int = reg.MAX_NUMBERS_PER_CAMPAIGN
     missing_for_submission: list[str]
 
 
