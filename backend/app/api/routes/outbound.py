@@ -587,6 +587,9 @@ async def dial_next(
     if campaign is None:
         raise NotFoundError("Campaign not found")
     settings = request.app.state.settings
+    from app.services import e911
+
+    await e911.require_personal_address(ctx.session, settings, ctx)
     api = getattr(request.app.state, "livekit", None)
     bus = getattr(request.app.state, "event_bus", None)
     row = await dialer_svc.dial_next(ctx.session, api, settings, bus, campaign)

@@ -58,6 +58,8 @@ async def app_with_agent(engine):
         # otherwise trip the per-IP auth rate limit partway through the file.
         rate_limit_enabled=False,
         kyc_enforced=False,
+        # These tests text and dial as people with no 911 address.
+        e911_personal_required=False,
         # P42: these tests authenticate with bearer tokens and weak test passwords.
         auth_bearer_compat=True,
         hibp_enabled=False,

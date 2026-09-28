@@ -99,6 +99,9 @@ def make_settings(**overrides) -> Settings:
         # P44e: pre-P44 tests dial from numbers that have no 911 address; the E911 tests
         # opt back in explicitly.
         "e911_enforced": False,
+        # Personal 911 address before calling/texting: pre-existing tests send and dial as
+        # people with no address; tests/test_e911_personal_required.py opts back in.
+        "e911_personal_required": False,
         # P44b: pre-P44 tests create brand-new orgs and expect auto-recharge, unlimited
         # concurrent calls and no daily spend ceiling; test_p44b_exposure opts back in.
         "fraud_exposure_enforced": False,

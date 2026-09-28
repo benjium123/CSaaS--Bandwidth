@@ -446,6 +446,9 @@ async def dial_callback_now(
     entry = await ctx.session.get(QueueEntry, entry_id)
     if entry is None or entry.state != "callback_requested" or not entry.callback_e164:
         raise NotFoundError("No callback-requested entry found")
+    from app.services import e911
+
+    await e911.require_personal_address(ctx.session, request.app.state.settings, ctx)
 
     now = qh._now()  # noqa: SLF001 - same module-level, test-frozen clock qh.evaluate uses
 

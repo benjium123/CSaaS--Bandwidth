@@ -47,7 +47,9 @@ async def test_update_profile_name(client, session):
     assert r.status_code == 422, r.text
 
 
-async def test_set_emergency_address_applies_to_numbers(client, session, monkeypatch):
+async def test_set_emergency_address_applies_to_numbers(client, session, settings, monkeypatch):
+    # The carrier push is off by default (address saved on our side only); this covers it.
+    settings.e911_carrier_push = True
     mailer.outbox.clear()
     enabled = []
 
