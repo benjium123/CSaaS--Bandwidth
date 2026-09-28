@@ -52,6 +52,7 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
         monitor_calls,
         monitor_cohorts,
         monitor_exam,
+        monitor_oversight,
         monitor_score,
         monitor_text,
     )
@@ -86,6 +87,11 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
             ("unchecked_texts", lambda s: monitor_text.unchecked_tick(s, settings)),
             ("public_reports", lambda s: monitoring_routes.assess_reports_tick(s, settings)),
             ("recordings_purge", lambda s: lkrec.purge_tick(s, settings, app.state.media_store)),
+            # Oversight: none of these restricts anyone (services/monitor_oversight.py).
+            ("rescore", lambda s: monitor_oversight.rescore_tick(s, settings)),
+            ("recipient_overlap", lambda s: monitor_oversight.overlap_tick(s, settings)),
+            ("monitor_digest", lambda s: monitor_oversight.digest_tick(s, settings)),
+            ("spot_check", lambda s: monitor_oversight.spot_check_tick(s, settings)),
         ]
 
         async def canary(s):  # noqa: ANN001, ANN202

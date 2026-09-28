@@ -503,6 +503,13 @@ class Settings(BaseSettings):
     #: unbounded amount on one account.
     monitor_review_max_ai_calls: int = 25
     monitor_signal_window_days: int = 30
+    #: Oversight (services/monitor_oversight.py). A recipient reached by at least this many
+    #: workspaces in 24h is "shared"; a workspace with this many shared recipients gets a
+    #: shared_recipients signal (the same list worked from several accounts).
+    monitor_overlap_min_workspaces: int = 3
+    monitor_overlap_min_recipients: int = 5
+    #: Workspaces picked at random each week for an operator spot check.
+    monitor_spot_check_count: int = 3
     #: Daily caps while restricted (when the business has no lower limit of its own).
     monitor_restricted_daily_texts: int = 200
     monitor_restricted_daily_calls: int = 100

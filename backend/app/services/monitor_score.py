@@ -55,6 +55,8 @@ WEIGHTS: dict[str, int] = {
     "blocked_destination": 15,
     "spend_spike": 20,
     "short_call_burst": 15,
+    # Oversight: the same recipients worked from several workspaces (monitor_oversight.py)
+    "shared_recipients": 10,
 }
 LEVEL_ORDER = {"normal": 0, "watch": 1, "restricted": 2, "paused": 3}
 #: Signals outsiders can create (anyone can file a report or text back "scam"). On their own
@@ -222,7 +224,15 @@ def enter_pause(state: OrgMonitoring, *, reason: str) -> dict:
     return {"score": state.score, "reason": reason}
 
 
-async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitoring) -> None:
+async def recompute(
+    session: AsyncSession,
+    settings: Settings,
+    state: OrgMonitoring,
+    *,
+    repeat_recommendation: bool = True,
+) -> None:
+    """Re-derive score and level. ``repeat_recommendation=False`` (the hourly rescore) does
+    not file the same recommendation again while an identical one is still pending."""
     state.score = await current_score(session, settings, state)
     target = level_for(settings, state.score)
     if target == "paused":
@@ -251,6 +261,8 @@ async def recompute(session: AsyncSession, settings: Settings, state: OrgMonitor
         and not auto_pause
         and LEVEL_ORDER[target] >= LEVEL_ORDER["restricted"]
     ):
+        if not repeat_recommendation and recommended_level(state) == target:
+            return
         recommend(state, target, reason=f"Risk score {state.score}")
         audit_svc.record(
             session,
