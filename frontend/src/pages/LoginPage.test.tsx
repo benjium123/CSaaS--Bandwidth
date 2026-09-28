@@ -98,7 +98,7 @@ describe("LoginPage", () => {
     expect(verify?.init.json).toEqual({ pending_token: "pending-mail", code: "654321" });
   });
 
-  it("with an app and email codes, starts on the app and only emails when asked", async () => {
+  it("with an app and email codes, starts on the email code and the app is one tab away", async () => {
     const client = makeStubClient({
       "/api/v1/auth/login": {
         access_token: null,
@@ -116,13 +116,15 @@ describe("LoginPage", () => {
     await userEvent.type(screen.getByLabelText("Password"), "correct-horse-battery");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
-    await screen.findByLabelText("Authenticator code");
-    expect(client.calls.some((c) => c.path.includes("/2fa/email/"))).toBe(false);
-
-    // Choosing the Email code tab is the ask: it sends once, and only then.
-    await userEvent.click(screen.getByRole("tab", { name: "Email code" }));
+    // Email code is the primary factor: selected first and sent once.
     expect(await screen.findByLabelText("Email code")).toBeInTheDocument();
-    expect(client.calls.filter((c) => c.path.endsWith("/2fa/email/login/send"))).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "Email code" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() =>
+      expect(client.calls.filter((c) => c.path.endsWith("/2fa/email/login/send"))).toHaveLength(1),
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Authenticator app" }));
+    expect(await screen.findByLabelText("Authenticator code")).toBeInTheDocument();
   });
   async function toSecondStep(login: Record<string, unknown>) {
     const client = makeStubClient({
@@ -138,12 +140,19 @@ describe("LoginPage", () => {
     return client;
   }
 
-  it("shows only the factors the account holds: email alone means no tabs and a hint", async () => {
+  it("email alone: the authenticator tab is shown and says it needs setting up", async () => {
     await toSecondStep({ methods: ["email"], recovery_codes_available: true });
     expect(await screen.findByLabelText("Email code")).toBeInTheDocument();
-    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "Email code",
+      "Authenticator app",
+    ]);
     expect(screen.getByText(/Faster next time/)).toBeInTheDocument();
     expect(screen.queryByText(/not turned on for this account/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Authenticator app" }));
+    expect(screen.getByText(/needs an authenticator app set up first/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Authenticator code")).toBeNull();
   });
 
   it("offers a tab per held factor and no hint when passkey and app are both set", async () => {

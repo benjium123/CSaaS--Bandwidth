@@ -41,7 +41,7 @@ import {
 /** Ties the passkey control to the sentence explaining why it cannot be used here. */
 const PASSKEY_NOTE_ID = "login-passkey-unsupported";
 
-/** Sign-in step 2 shows a tab only for the factors this account actually holds. */
+/** Sign-in step 2 tabs: email and passkey only when held; the authenticator tab always. */
 const FACTOR_TABS = [
   ["email", "Email code"],
   ["passkey", "Passkey"],
@@ -84,7 +84,7 @@ export function LoginPage() {
       setMethods(res.methods);
       setHasRecoveryCodes(res.recoveryCodes);
       setFactor(
-        res.methods.includes("totp") ? "totp" : res.methods.includes("passkey") ? "passkey" : "email",
+        res.methods.includes("email") ? "email" : res.methods.includes("passkey") ? "passkey" : "totp",
       );
       return;
     }
@@ -121,7 +121,9 @@ export function LoginPage() {
   const totpAllowed =
     !secondStep || useRecoveryCode || (factor === "totp" && methods.includes("totp"));
   const passkeyOffered = showTabs && factor === "passkey" && methods.includes("passkey");
-  const availableTabs = FACTOR_TABS.filter(([key]) => methods.includes(key));
+  // The authenticator tab is always listed; on an account without one it explains the setup.
+  const availableTabs = FACTOR_TABS.filter(([key]) => key === "totp" || methods.includes(key));
+  const totpNotSetUp = showTabs && factor === "totp" && !methods.includes("totp");
   // The button stays visible when the browser has no WebAuthn - hiding the only named
   // route would be more confusing than explaining why it cannot be taken - but it is
   // disabled and accompanied by the reason and an alternative.
@@ -268,6 +270,13 @@ export function LoginPage() {
                 ) : null}
               </div>
             )}
+
+            {totpNotSetUp && !noMethodOffered ? (
+              <AuthNotice>
+                This account needs an authenticator app set up first. Sign in with another option
+                above, then add one in Settings, Security.
+              </AuthNotice>
+            ) : null}
 
             {noMethodOffered ? (
               <AuthNotice>
