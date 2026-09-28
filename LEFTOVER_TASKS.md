@@ -32,6 +32,11 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
 
 ## A. Needs the user (do these first — nothing to code until answered)
 
+   **DONE 2026-09-28 17:00 UTC (Claude, owner's request):** platform_prices rows written via the
+   console route's logic (note on each row): recording_min 2500, transcription_min 20000,
+   summary_min 3500 micros; open price_unset alerts for recording/transcription marked reviewed.
+   Verified through telephony_billing.platform_price. Owner said to LEAVE the per-workspace
+   switch-on of call_summary / external_transfer - both still off everywhere.
 1. **[USER] Prices DECIDED 2026-09-28** (industry −20%, user-set): `recording_min` **$0.0025**,
    `transcription_min` **$0.02**, `summary_min` **$0.0035** (per call minute). Set them in
    Switchboard → Console → Prices after the deploy (summary_min exists only after 4faa3eb ships),
@@ -72,6 +77,8 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
    (Postmark or Resend) as primary for codes: user creates the account, adds DNS for
    `mail.ringlite.io`, puts the key in `/opt/csaas/.env`; then [CODE] reorder `services/mailer.py`
    `send()` so codes try that provider first, Telnyx fallback, and re-measure.
+   **DONE 2026-09-28 (Claude, via Stripe API):** we_1UIdIT744iNFjjqnsFf9UBaX now has 18 events incl.
+   invoice.payment_failed (already there), invoice.voided and charge.refunded (added).
 7. **[USER] Stripe webhook events** — add `invoice.payment_failed` and `invoice.voided` to
    `https://ringlite.io/api/v1/webhooks/stripe` in the Stripe dashboard (code already handles them).
 8. ~~Refund claw-back decision~~ DECIDED + BUILT 2026-09-28 (dbb1d01, 70d0f74): refundable = ONLY unused paid credit, less Stripe fees (customer bears card fees both ways); bundles/spent credit/plans/number+10DLC fees never. Ops -> Billing -> "Refund unused credit" issues it; refunds made in Stripe take back the unused part (fee-grossed), excess -> `refund_shortfall` alert; P&L nets refunds, keeps fees. [USER] add `charge.refunded` to the Stripe webhook; policy page /legal/refunds = Ringlite branch.
@@ -80,6 +87,11 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
 9. ~~Invoiced packages roll-over?~~ DECIDED 2026-09-28 (user): NOTHING rolls over - plan allowances, invoiced packages and bought bundles all expire at the monthly renewal (already the code: plans per period, bundles.expire_unused, invoice packages = purchase entries). Stated on the bundle card; legal pages = Ringlite.
    Original: **Invoiced packages roll-over?** — today they expire at monthly renewal like bought bundles
    (entry_type "purchase"). Roll-over = new entry_type in `custom_invoices.apply_paid` + 2b's `expire_unused` rule.
+   **DONE b5e623c, DEPLOYED 2026-09-28 17:47 UTC** (owner: "do others"): services/monitor_oversight.py
+   (rescore hourly, shared_recipients signal, daily ops digest, weekly spot checks) + sweeper wiring,
+   monitor_score.recompute(repeat_recommendation=False), config monitor_overlap_* / spot_check_count,
+   tests/test_monitor_oversight.py (8, mutation-checked). Nothing pauses/restricts. DB backup
+   backups/pre-oversight-2026-09-28-1733.sql.gz.
 10. **[USER] Monitoring steps 2–5 file-list OK** (2b) — each needs its file list approved (>3-files
     rule); security logic → build directly, not delegated. User policy (verbatim): "major actions like
     pausing or deleting organisation or disableing it. or any feature should be only for human" —
@@ -90,6 +102,10 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
     - 4: daily digest email to ops admins (new pauses, recommendations, top scores) via
       `break_glass.admin_emails` + `mailer.send`.
     - 5: weekly random spot-check queue of workspaces for a thorough review.
+
+## B. (checked 2026-09-28 16:30 UTC) B1 ok (no pauses, no monitor errors); B2 key present, no
+groq errors, but NO transcription jobs in 3 days - Groq path still unexercised; B3 3/3 scored
+calls have summaries; B4 no suspicious verdicts, stt without Parakeet; B5 67 passes, 0 expiries.
 
 ## B. Verify right after this deploy (650ab15)
 
@@ -111,7 +127,10 @@ Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to bui
    (`DEEPGRAM_URL`, `_utterances_to_segments`, `_meter_deepgram`) and their test
    `tests/test_lkrec_wiring.py::test_monitor_deepgram_request_is_metered_as_platform_cost`.
    Keep `deepgram_api_key` in config (the live call-monitor worker still uses nova-3 as lkrec fallback).
-3. **[CODE] Full backend suite runtime** — locally it runs >30 min / appeared to hang once; find the
+3. ~~Full backend suite runtime~~ RESOLVED (90edabd xdist + pytest-timeout): 2026-09-28 on this
+   laptop `pytest -n 8 --timeout=300` = 3803 passed, 16 skipped, 0 failed in 44 min; no hang;
+   slowest test 75 s (test_outbound_campaigns 500-row list). Windows needs `--basetemp`.
+   Original: 3. **[CODE] Full backend suite runtime** — locally it runs >30 min / appeared to hang once; find the
    slow/hanging test (`pytest --durations=25`), consider pytest-timeout (ask before adding the dependency).
 
 ## D. Box cleanup
