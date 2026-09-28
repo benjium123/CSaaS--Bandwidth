@@ -150,6 +150,37 @@ async def test_rejecting_a_recommendation_does_not_leave_it_to_reappear(session,
     assert state.level == "normal"
 
 
+async def test_a_signal_stamped_at_the_operators_decision_is_not_counted_again(
+    session, detect_only
+):
+    """A signal in the SAME clock tick as the reject/unpause was part of what the operator
+    reviewed. Windows' clock is ~15 ms coarse, so this is the common case in tests; pin it
+    by setting cleared_before to exactly the newest signal's timestamp."""
+    org_id = await _org(session)
+    state = await _pile_on_signals(session, detect_only, org_id, weight=40, count=3)
+    assert monitor_score.recommended_level(state) == "paused"
+
+    newest = (
+        await session.execute(
+            sa.select(sa.func.max(MonitorSignal.created_at)).where(
+                MonitorSignal.org_id == org_id
+            )
+        )
+    ).scalar_one()
+    monitor_score.clear_recommendation(state)
+    state.cleared_before = newest
+    state.score = 0
+    await session.commit()
+
+    await monitor_score.recompute(session, detect_only, state)
+    await session.commit()
+    assert state.score == 0, "signals at the decision's instant were counted again"
+    assert monitor_score.recommended_level(state) is None
+
+    evidence = await monitor_score.case_evidence(session, org_id, state)
+    assert evidence["signals"] == []
+
+
 # ======================================================================================
 # 2 + 3. On demand, and per customer at scale
 # ======================================================================================
