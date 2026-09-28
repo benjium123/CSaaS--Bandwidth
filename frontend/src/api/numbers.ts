@@ -2,8 +2,7 @@
  * Numbers domain (Phase 18 upgrade).
  *
  * `GET /numbers` and `GET /numbers/available` now return purchase/account bookkeeping
- * fields (provider_account_id/label, purchase/monthly cost cents, purchased_at,
- * order_detail, setup_cost_cents) that the generated `types.gen.ts` doesn't know about
+ * fields (purchased_at, setup_cost_cents) that the generated `types.gen.ts` doesn't know about
  * yet - it's generated from the OpenAPI schema as it existed before this phase's backend
  * routes shipped. Intersecting with the generated types here (rather than hand-copying
  * every base field) keeps this correct once the schema is regenerated, per the phase-18
@@ -26,16 +25,15 @@ export type EmergencyStatus =
   | "missing"
   | "unsupported";
 
-export type NumberOut = Omit<GeneratedNumberOut, "status"> & {
+export type NumberOut = Omit<GeneratedNumberOut, "status" | "carrier"> & {
   status: NumberStatus;
-  provider_account_id: string | null;
-  provider_account_label: string | null;
+  /** true = the 10DLC association lives at the carrier and cannot be cleared here. */
+  carrier_campaign_locked: boolean;
+  /** true = this number supports E911 provisioning. */
+  e911_supported: boolean;
   // Backend NumberOut schema already returns inbox_name; the generated types predate it.
   inbox_name: string | null;
-  purchase_cost_cents: number | null;
-  monthly_cost_cents: number | null;
   purchased_at: string | null;
-  order_detail: string | null;
   /** P23b: who picks up when this number rings. The handoff specifies the WRITE
    * (`PATCH /numbers/{id}/answered-by`); the read shape is not pinned, so it is optional
    * here and read through `answeredBy()` below, which accepts either the nested object or
@@ -187,8 +185,6 @@ export function useOrderNumber(api: ApiClient) {
       e164: string;
       carrier?: string;
       campaign_id?: string;
-      monthly_cost_cents?: number;
-      setup_cost_cents?: number;
     }) => api.request<NumberOut>("/api/v1/numbers/order", { method: "POST", json: vars }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: NUMBERS_QUERY_KEY });

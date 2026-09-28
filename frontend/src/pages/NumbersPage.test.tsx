@@ -89,13 +89,9 @@ function numberFixture(overrides: Record<string, unknown> = {}) {
   return {
     id: "num-1",
     e164: "+12145550100",
-    carrier: "bandwidth",
-    provider_account_id: null,
-    provider_account_label: null,
-    purchase_cost_cents: null,
-    monthly_cost_cents: 150,
+    carrier_campaign_locked: false,
+    e911_supported: false,
     purchased_at: "2025-01-01T00:00:00Z",
-    order_detail: null,
     is_active: true,
     number_type: "local",
     status: "active",
@@ -145,18 +141,19 @@ const ORDERED_NUMBER = numberFixture({
   registration_detail: "",
 });
 
-// P19: "Spend MTD" column - num-1's carrier is "bandwidth" (see numberFixture above).
-const SPEND_SUMMARY = {
-  total_micros: 2_500_000,
-  total_usd: "$2.50",
-  by_provider: {
-    bandwidth: {
-      cost_micros: 2_500_000,
-      by_metric: {},
-      numbers: [{ number_id: "num-1", e164: "+12145550100", cost_micros: 2_500_000 }],
-    },
-  },
+const OPERATOR_ME = {
+  id: "u-op",
+  email: "op@example.com",
+  full_name: "Operator",
+  memberships: [{ org_id: "org-1", org_name: "Acme", org_slug: "acme", role_name: "owner" }],
+  is_platform_operator: true,
 };
+
+const CUSTOMER_ME = { ...OPERATOR_ME, id: "u-cust", is_platform_operator: false };
+
+function operatorStubs(overrides: Record<string, unknown> = {}) {
+  return baseStubs({ "/api/v1/auth/me": OPERATOR_ME, ...overrides });
+}
 
 /**
  * NOTE on key order: test/harness.tsx's stub client resolves a request by
@@ -184,14 +181,14 @@ function baseStubs(overrides: Record<string, unknown> = {}) {
     "/api/v1/routing/catalog": CATALOG,
     "/api/v1/provider-accounts": PROVIDER_ACCOUNTS,
     "/api/v1/numbers": [numberFixture()],
-    "/api/v1/spend/summary": SPEND_SUMMARY,
+    "/api/v1/auth/me": CUSTOMER_ME,
     ...overrides,
   };
 }
 
 describe("NumbersPage", () => {
-  it("renders the live carrier union and disables providers that are not live", async () => {
-    const client = makeStubClient(baseStubs());
+  it("renders the live carrier union and disables providers that are not live (operator only)", async () => {
+    const client = makeStubClient(operatorStubs());
     renderWithProviders(<NumbersPage />, client);
 
     // Telnyx is live via both the env catalog AND a DB-backed account - the account
@@ -214,14 +211,13 @@ describe("NumbersPage", () => {
     expect(plivo).toHaveAttribute("title", "Missing auth_token");
   });
 
-  it("formats costs from cents and falls back to the legacy monthly_cost string", async () => {
+  it("formats search-result prices from cents and falls back to the legacy monthly_cost string", async () => {
     const client = makeStubClient(
       baseStubs({ "/api/v1/numbers/available": AVAILABLE_WITH_FALLBACK }),
     );
     renderWithProviders(<NumbersPage />, client);
 
-    // List row: monthly_cost_cents = 150 -> "$1.50".
-    expect(await screen.findByText("$1.50")).toBeInTheDocument();
+    await screen.findByText("(214) 555-0100");
 
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -271,7 +267,7 @@ describe("NumbersPage", () => {
 
   it("orders using the carrier the results were searched with, not whatever the live dropdown shows now", async () => {
     const client = makeStubClient(
-      baseStubs({
+      operatorStubs({
         "/api/v1/numbers/available": AVAILABLE,
         "/api/v1/numbers/order": ORDERED_NUMBER,
       }),
@@ -279,6 +275,7 @@ describe("NumbersPage", () => {
     renderWithProviders(<NumbersPage />, client);
 
     const carrierSelect = await screen.findByLabelText("Provider"); // renamed visible label from Carrier to Provider
+    await screen.findByRole("option", { name: "Bandwidth (shared)" });
     await userEvent.selectOptions(carrierSelect, "bandwidth");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -295,13 +292,13 @@ describe("NumbersPage", () => {
       expect(orderCall?.init.json).toEqual({
         e164: "+12145550111",
         carrier: "bandwidth",
-        monthly_cost_cents: 1200,
-        setup_cost_cents: 400,
       });
+      expect(orderCall?.init.json).not.toHaveProperty("monthly_cost_cents");
+      expect(orderCall?.init.json).not.toHaveProperty("setup_cost_cents");
     });
   });
 
-  it("omits monthly_cost_cents/setup_cost_cents from the order body when the row has null cents", async () => {
+  it("never sends cost cents in the order body, even when the row is priced", async () => {
     const nullCostRow = {
       e164: "+12145550113",
       number_type: "local",
@@ -313,7 +310,7 @@ describe("NumbersPage", () => {
       capabilities: {},
     };
     const client = makeStubClient(
-      baseStubs({
+      operatorStubs({
         "/api/v1/numbers/available": [nullCostRow],
         "/api/v1/numbers/order": numberFixture({
           id: "num-3",
@@ -325,6 +322,7 @@ describe("NumbersPage", () => {
     renderWithProviders(<NumbersPage />, client);
 
     const carrierSelect = await screen.findByLabelText("Provider"); // renamed visible label from Carrier to Provider
+    await screen.findByRole("option", { name: "Bandwidth (shared)" });
     await userEvent.selectOptions(carrierSelect, "bandwidth");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -396,7 +394,7 @@ describe("NumbersPage", () => {
     expect(screen.queryByText("No numbers found.")).not.toBeInTheDocument();
   });
 
-  it("shows the order_detail for a failed number", async () => {
+  it("shows a neutral message for a failed number and never the backend order detail", async () => {
     const client = makeStubClient(
       baseStubs({
         "/api/v1/numbers": [
@@ -410,7 +408,8 @@ describe("NumbersPage", () => {
     renderWithProviders(<NumbersPage />, client);
 
     expect(await screen.findByText("Failed")).toBeInTheDocument();
-    expect(screen.getByText("Bandwidth order failed: no inventory")).toBeInTheDocument();
+    expect(screen.getByText("Order failed - contact support")).toBeInTheDocument();
+    expect(screen.queryByText(/Bandwidth/)).not.toBeInTheDocument();
   });
 
   it("still requires release confirm before calling DELETE", async () => {
@@ -448,48 +447,6 @@ describe("NumbersPage", () => {
       expect(call?.init.method).toBe("PATCH");
       expect(call?.init.json).toEqual({ campaign_id: "camp-1" });
     });
-  });
-
-  // P19: "Spend MTD" column looks up num-1's cost from the spend summary by number_id,
-  // scoped to the row's own carrier ("bandwidth" - see SPEND_SUMMARY above).
-  it("shows the Spend MTD column looked up from the spend summary", async () => {
-    const client = makeStubClient(baseStubs());
-    renderWithProviders(<NumbersPage />, client);
-
-    expect(await screen.findByText(/Spend MTD/)).toBeInTheDocument();
-    expect(await screen.findByText("$2.50")).toBeInTheDocument();
-  });
-
-  it("shows $0.00 in the Spend MTD column when the number has no spend rows", async () => {
-    const client = makeStubClient(
-      baseStubs({
-        "/api/v1/spend/summary": { total_micros: 0, total_usd: "$0.00", by_provider: {} },
-      }),
-    );
-    renderWithProviders(<NumbersPage />, client);
-
-    await screen.findByText("(214) 555-0100");
-    expect(screen.getByText("$0.00")).toBeInTheDocument();
-  });
-
-  // P19 fix-required #5: never show a fabricated $0.00 while the spend summary is loading
-  // or has failed (a 403/500) - that would misread as "genuinely zero spend".
-  it("shows an em dash in Spend MTD while the spend summary is unavailable", async () => {
-    const client = makeStubClient(
-      baseStubs({
-        "/api/v1/spend/summary": () => {
-          throw new Error("spend summary down");
-        },
-      }),
-    );
-    renderWithProviders(<NumbersPage />, client);
-
-    await screen.findByText("(214) 555-0100");
-    await waitFor(() => {
-      const cells = screen.getAllByRole("cell").filter((c) => c.textContent === "—");
-      expect(cells.length).toBeGreaterThan(0);
-    });
-    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
   });
 
   it("shows a retry alert and refetches when the numbers list fails to load", async () => {
@@ -578,12 +535,39 @@ describe("NumbersPage", () => {
     expect(await screen.findByText("Not in an inbox")).toBeInTheDocument();
   });
 
-  it("shows the friendly provider label instead of the raw carrier slug", async () => {
-    const client = makeStubClient(baseStubs());
+  it("shows no Provider, Cost or Spend column and no carrier name for a customer", async () => {
+    const client = makeStubClient(
+      baseStubs({ "/api/v1/numbers": [numberFixture({ carrier: "bandwidth" })] }),
+    );
     renderWithProviders(<NumbersPage />, client);
 
-    expect(await screen.findByText("Bandwidth")).toBeInTheDocument();
-    expect(screen.queryByText("bandwidth")).not.toBeInTheDocument();
+    await screen.findByText("(214) 555-0100");
+    expect(screen.queryByRole("columnheader", { name: /Provider/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /Spend/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /^Cost/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/bandwidth|telnyx|signalwire|twilio|plivo/i)).not.toBeInTheDocument();
+    // No provider picker for a customer, and none of the operator-only endpoints are hit.
+    expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
+    expect(client.calls.some((c) => c.path.startsWith("/api/v1/spend"))).toBe(false);
+    expect(client.calls.some((c) => c.path.startsWith("/api/v1/provider-accounts"))).toBe(false);
+  });
+
+  it("orders without a carrier or any cost cents for a customer", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/numbers/available": AVAILABLE,
+        "/api/v1/numbers/order": ORDERED_NUMBER,
+      }),
+    );
+    renderWithProviders(<NumbersPage />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Search" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Order" }));
+
+    await waitFor(() => {
+      const orderCall = client.calls.find((c) => c.path === "/api/v1/numbers/order");
+      expect(orderCall?.init.json).toEqual({ e164: "+12145550111" });
+    });
   });
 
   it("shows the Answered by column header", async () => {

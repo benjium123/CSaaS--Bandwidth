@@ -19,12 +19,11 @@ type Step = {
  * dead link to an empty page or a missing link to a page with work on it.
  */
 export function isWorkspaceFullySetUp(org: OrgCapabilities): boolean {
-  // Individual accounts only need a provider and a number; no team or texting registration.
+  // Individual accounts only need a number; no team or texting registration.
   if (org.account_type === "individual") {
-    return org.has_provider && org.has_number;
+    return org.has_number;
   }
   return (
-    org.has_provider &&
     org.has_number &&
     org.member_count > 1 &&
     org.registration_state !== "none"
@@ -43,11 +42,9 @@ export function OnboardingChecklist() {
 
   const steps: Step[] = individual
     ? [
-        { label: "Connect a provider", to: "/settings/providers", done: org.has_provider },
         { label: "Get a phone number", to: "/settings/numbers", done: org.has_number },
       ]
     : [
-        { label: "Connect a provider", to: "/settings/providers", done: org.has_provider },
         { label: "Get a phone number", to: "/settings/numbers", done: org.has_number },
         { label: "Invite your team", to: "/settings/team", done: org.member_count > 1 },
         {
@@ -62,7 +59,7 @@ export function OnboardingChecklist() {
     <Card>
       <Section
         title="Finish setting up"
-        description={individual ? "Two steps and you are live." : "Four steps and you are live."}
+        description={individual ? "One step and you are live." : "Three steps and you are live."}
       >
         <ol aria-label="Setup steps" className="space-y-3">
           {steps.map((step, index) => (

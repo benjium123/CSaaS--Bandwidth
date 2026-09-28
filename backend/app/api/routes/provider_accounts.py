@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 
-from app.auth.deps import OrgContext, get_settings, require_permission
+from app.auth.deps import OrgContext, get_settings, require_org_operator
 from app.config import Settings
 from app.errors import CarrierNotConfiguredError
 from app.models import OrgNumber, ProviderSpendDaily
@@ -168,7 +168,7 @@ async def _account_stats(session, account) -> tuple[int, int]:
 
 @router.get("", response_model=list[ProviderAccountOut])
 async def list_provider_accounts(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:read"))],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> list[ProviderAccountOut]:
     _require_master_key(settings)
@@ -192,7 +192,7 @@ async def list_provider_accounts(
 @router.post("", response_model=ProviderAccountOut, status_code=status.HTTP_201_CREATED)
 async def create_provider_account(
     payload: ProviderAccountCreateIn,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:write"))],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ProviderAccountOut:
     _require_master_key(settings)
@@ -238,7 +238,7 @@ async def create_provider_account(
 async def patch_provider_account(
     account_id: uuid.UUID,
     payload: ProviderAccountPatchIn,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:write"))],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ProviderAccountOut:
     _require_master_key(settings)
@@ -286,7 +286,7 @@ async def patch_provider_account(
 @router.post("/{account_id}/probe", response_model=ProviderAccountOut)
 async def probe_provider_account(
     account_id: uuid.UUID,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:write"))],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ProviderAccountOut:
     _require_master_key(settings)
@@ -324,7 +324,7 @@ async def probe_provider_account(
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def disable_provider_account(
     account_id: uuid.UUID,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+    ctx: Annotated[OrgContext, Depends(require_org_operator("settings:write"))],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Response:
     _require_master_key(settings)

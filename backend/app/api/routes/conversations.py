@@ -12,7 +12,6 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from app.api.routes.calls import _livekit_route_reason
 from app.api.routes.inbox import _get_thread
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
@@ -1407,7 +1406,7 @@ async def conversation_timeline(
                 "status": msg.status,
                 "occurred_at": msg.created_at,
                 "error_code": msg.error_code,
-                "route_reason": msg.route_reason,
+                "route_reason": None,  # names the carrier; never shown to customers
                 # P28: the bubble shows the plain sentence, not the code; and a tracked
                 # link shows how many times it was actually opened.
                 "failure_reason_public": msg.failure_reason_public,
@@ -1454,7 +1453,7 @@ async def conversation_timeline(
                 "has_voicemail": call.id in has_voicemail_by_call,
                 # Stored sentence for provider-API calls; derived trunk sentence for LiveKit
                 # room calls (same rule as GET /calls, see routes/calls.py).
-                "route_reason": call.route_reason or _livekit_route_reason(call),
+                "route_reason": None,  # names the carrier; never shown to customers
                 "assistant": {
                     "name": assistant_names.get(score.profile_id)
                     if score is not None and score.profile_id is not None

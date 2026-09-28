@@ -29,7 +29,30 @@ from app.models.numbers import Brand, Campaign
 from app.providers.domain import CarrierError, SendResult
 from app.providers.health import COOLDOWN_SECONDS, FAILURE_THRESHOLD, Breaker
 from app.providers.registry import CarrierRegistry
-from tests.conftest import FakeCarrier, auth_headers, make_org_with_number, register_and_login
+from tests.conftest import (
+    FakeCarrier,
+    auth_headers,
+    make_org_with_number as _make_org_with_number,
+    register_and_login as _register_and_login,
+    make_platform_operator,
+)
+
+
+async def register_and_login(client, email: str, *args, **kwargs) -> str:
+    """The routing console (/routing/*) is operator-only (require_org_operator), so users
+    these tests sign in are also active platform operators. Non-operator denial is covered
+    in test_hide_carrier_cost.py."""
+    token = await _register_and_login(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return token
+
+
+async def make_org_with_number(client, email: str, *args, **kwargs):
+    """Same as conftest's, but the owner is also an active platform operator: the routing
+    console (/routing/*) is operator-only (require_org_operator)."""
+    result = await _make_org_with_number(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return result
 
 BW = "+12145550100"
 BW2 = "+12145550101"

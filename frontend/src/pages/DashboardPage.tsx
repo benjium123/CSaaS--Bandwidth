@@ -412,7 +412,7 @@ function TranscriptSearch({ api }: { api: ReturnType<typeof useAuth>["api"] }) {
 }
 
 export function DashboardPage() {
-  const { api } = useAuth();
+  const { api, me } = useAuth();
   const [days, setDays] = React.useState<(typeof RANGE_OPTIONS)[number]>(30);
   const { data, isLoading, error } = useAnalyticsOverview(api, days);
   // The ref is what the palette is read off: --cx-* lives on the `.console-surface`
@@ -477,9 +477,11 @@ export function DashboardPage() {
               <AssistantAnalyticsStrip days={days} />
             </SurfaceCard>
           </div>
-          <div className="md:col-span-2">
-            <SpendTile />
-          </div>
+          {me?.is_platform_operator ? (
+            <div className="md:col-span-2">
+              <SpendTile />
+            </div>
+          ) : null}
           <div className="md:col-span-2">
             <MessagingHealthCard days={days} />
           </div>

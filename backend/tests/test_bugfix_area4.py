@@ -11,10 +11,11 @@ import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
+from app.db.session import get_sessionmaker
 from app.models import KycProfile, Message, Org, OrgMembership, OrgNumber, ProviderSpendDaily
 from app.providers.numbers import OrderResult
 from app.services import spend
-from tests.conftest import auth_headers, create_org, register_and_login
+from tests.conftest import auth_headers, create_org, make_platform_operator, register_and_login
 
 
 async def _approve_kyc(org_id: uuid.UUID) -> None:
@@ -411,6 +412,7 @@ async def test_4_9_probe_uses_org_db_account_when_present(client, session, monke
     from app.providers import registry_org
 
     token = await register_and_login(client, "area49@example.com")
+    await make_platform_operator("area49@example.com")  # /routing/* is operator-only
     org = await create_org(client, token, "Area49 Org")
     org_id = uuid.UUID(org["id"])
 
@@ -655,7 +657,16 @@ async def test_add_number_detects_the_owning_carrier(engine, settings):
             headers=auth_headers(token, org["id"]),
         )
         assert r.status_code == 201, r.text
-        assert r.json()["carrier"] == "signalwire"
+        assert "carrier" not in r.json()
+        async with get_sessionmaker()() as check:
+            stored = (
+                await check.execute(
+                    sa.select(OrgNumber.carrier)
+                    .where(OrgNumber.id == uuid.UUID(r.json()["id"]))
+                    .execution_options(allow_unscoped=True)
+                )
+            ).scalar_one()
+        assert stored == "signalwire"
         assert "+16824231003" in first.lookup_calls
         assert "+16824231003" in second.lookup_calls
 

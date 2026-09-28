@@ -10,18 +10,34 @@ fails on the concrete ``telnyx.create_calls`` count.
 from __future__ import annotations
 
 import inspect
+import uuid
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
+from app.db.base import ALLOW_UNSCOPED_KEY
 from app.main import create_app
+from app.models.voice import Call
 from app.providers.domain import CarrierError
 from app.providers.health import HealthRegistry
 from app.providers.registry import CarrierRegistry
 from app.providers.voice import CreateCallResult
 from app.services import calls as calls_svc
 from app.services import smart_routing
-from tests.conftest import auth_headers, make_org_with_number
+from tests.conftest import (
+    auth_headers,
+    make_org_with_number as _make_org_with_number,
+    make_platform_operator,
+)
+
+
+async def make_org_with_number(client, email: str, *args, **kwargs):
+    """Same as conftest's, but the owner is also an active platform operator: the routing
+    console (/routing/*) is operator-only (require_org_operator)."""
+    result = await _make_org_with_number(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return result
 from tests.test_voice_webhooks import FakeVoiceCarrier
 
 PRIMARY_NUM = "+12145550100"
@@ -175,7 +191,9 @@ async def test_voice_failover_refused_when_cross_carrier_failover_is_off(two_voi
     assert telnyx.create_calls == [], "must NOT cross providers when the org said not to"
 
 
-async def test_voice_failover_allowed_when_cross_carrier_failover_is_on(two_voice_carriers):
+async def test_voice_failover_allowed_when_cross_carrier_failover_is_on(
+    two_voice_carriers, session
+):
     """The same call, the same dead credential, the switch ON - the walk happens.
 
     Paired deliberately with the test above: together they prove the ONLY thing deciding
@@ -203,7 +221,19 @@ async def test_voice_failover_allowed_when_cross_carrier_failover_is_on(two_voic
     assert body["status"] != "failed"
     assert len(bandwidth.create_calls) == 1
     assert len(telnyx.create_calls) == 1
-    assert "Failed over to Telnyx" in (body["route_reason"] or "")
+    # The customer API never returns the routing sentence (it names the carrier); the
+    # column is still written, so read it from the row.
+    assert body["route_reason"] is None
+    assert "carrier" not in body
+    stored = (
+        await session.execute(
+            sa.select(Call)
+            .where(Call.id == uuid.UUID(body["id"]))
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).scalar_one()
+    await session.refresh(stored)
+    assert "Failed over to Telnyx" in (stored.route_reason or "")
 
 
 async def test_voice_pinned_carrier_is_not_left_for_a_fallback(two_voice_carriers):

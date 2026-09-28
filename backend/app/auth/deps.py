@@ -401,6 +401,28 @@ def require_permission(permission: str):
     return _check
 
 
+def require_org_operator(permission: str):
+    """``require_permission`` plus: the caller is an active platform operator.
+
+    For workspace routes that expose which carrier carries the traffic or what it costs us
+    (provider accounts, carrier spend and rates). Customers - owners included - never see
+    those; the ops console has its own routes for them.
+    """
+    inner = require_permission(permission)
+
+    # Depends() sits in the default, not the annotation: this module postpones annotations,
+    # and a closure-local name inside one cannot be resolved later.
+    async def _check(ctx: OrgContext = Depends(inner)) -> OrgContext:
+        from app.services import operators as operators_svc
+
+        user_id = ctx.actor_user_id
+        if user_id is None or await operators_svc.get_active(ctx.session, user_id) is None:
+            raise PermissionDeniedError("Platform operator access required")
+        return ctx
+
+    return _check
+
+
 def requires_feature(key: str):
     """Dependency factory: 403 feature_disabled unless the workspace has ``key`` switched on
     (services/entitlements.py). Used as ``dependencies=[Depends(requires_feature("fax"))]``

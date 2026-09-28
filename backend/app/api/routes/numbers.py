@@ -21,7 +21,7 @@ from app.errors import (
     StepUpRequiredError,
     ValidationFailedError,
 )
-from app.models import AgentProfile, Inbox, OrgNumber, ProviderAccount, User
+from app.models import AgentProfile, Inbox, OrgNumber, User
 from app.models.callflow import CallFlow
 from app.models.numbers import Campaign
 from app.providers import numbers as numbers_api
@@ -66,9 +66,16 @@ class AnsweredByOut(BaseModel):
 
 
 class NumberOut(BaseModel):
+    """A number as the CUSTOMER console sees it.
+
+    Which carrier carries it, which provider account bought it, what it costs us and the
+    carrier's raw order error are never sent to a workspace (owners included); the ops
+    console reads those from its own routes. The two flags below carry the only
+    carrier-dependent facts the console needs to behave correctly.
+    """
+
     id: uuid.UUID
     e164: str
-    carrier: str
     is_active: bool
     number_type: str = "local"
     status: str = "active"
@@ -78,17 +85,14 @@ class NumberOut(BaseModel):
     #: operator learns a number cannot send BEFORE trying to send from it.
     registration: str = "unknown"
     registration_detail: str = ""
-    #: P18: which P17 provider account bought this number, if any (NULL = env-configured
-    #: carrier, or added by hand).
-    provider_account_id: uuid.UUID | None = None
-    provider_account_label: str | None = None
     #: The Inbox row's name for this number, or null when the number has no inbox row.
     inbox_name: str | None = None
-    purchase_cost_cents: int | None = None
-    monthly_cost_cents: int | None = None
     purchased_at: datetime | None = None
-    #: Last provider order status/error (async orders are polled by the sweeper).
-    order_detail: str | None = None
+    #: True when the 10DLC campaign association lives at the carrier and cannot be
+    #: cleared from here.
+    carrier_campaign_locked: bool = False
+    #: True when this number's carrier registers a 911 address through us.
+    e911_supported: bool = False
     #: P23b derived fields: "assistant" when this number is bound to an assistant flow.
     #: Who picks this number up. Derived from the bound flow, never stored: a one-node
     #: ASSISTANT flow means an assistant answers, anything else means a person does.
@@ -294,12 +298,6 @@ async def list_numbers(
     ctx: Annotated[OrgContext, Depends(require_permission("numbers:read"))],
 ) -> list[NumberOut]:
     rows = list((await ctx.session.execute(sa.select(OrgNumber))).scalars().all())
-    # P18: one query for every distinct provider_account_id in the page, not one
-    # session.get() per row - a list endpoint over N numbers must not cost N extra
-    # round trips just to label which P17 account bought each one.
-    labels = await _provider_account_labels(
-        ctx.session, {n.provider_account_id for n in rows if n.provider_account_id is not None}
-    )
     inbox_names = await _inbox_names(ctx.session, {n.id for n in rows})
 
     # P23b: same batching convention as account labels and inbox names - fetch every
@@ -342,7 +340,6 @@ async def list_numbers(
         await _out(
             ctx.session,
             n,
-            account_label=labels.get(n.provider_account_id) if n.provider_account_id else None,
             inbox_name=inbox_names.get(n.id),
             flow=flows_by_id.get(n.call_flow_id),
             profile_names=profile_names,
@@ -353,25 +350,8 @@ async def list_numbers(
 
 _TOLLFREE_PREFIXES = frozenset({"+1800", "+1833", "+1844", "+1855", "+1866", "+1877", "+1888"})
 
-#: Sentinel distinguishing "_out's caller did not pass a label - look it up" from
-#: "the caller looked it up already (possibly as None)". `None` itself is a valid,
-#: meaningful value (no provider_account_id, or an account with a blank label).
-_LABEL_UNSET = object()
 _INBOX_UNSET = object()
 _FLOW_UNSET = object()
-
-
-async def _provider_account_labels(session, account_ids: set[uuid.UUID]) -> dict:
-    if not account_ids:
-        return {}
-    rows = (
-        await session.execute(
-            sa.select(ProviderAccount.id, ProviderAccount.label).where(
-                ProviderAccount.id.in_(account_ids)
-            )
-        )
-    ).all()
-    return {row.id: (row.label or None) for row in rows}
 
 
 async def _inbox_names(session, number_ids: set[uuid.UUID]) -> dict:
@@ -389,24 +369,13 @@ async def _out(
     session,
     n: OrgNumber,
     *,
-    account_label=_LABEL_UNSET,
     inbox_name=_INBOX_UNSET,
     flow=_FLOW_UNSET,
     profile_names: dict | None = None,
 ) -> NumberOut:
     state = await registration.registration_state(session, n)
-    if account_label is _LABEL_UNSET:
-        account_label = None
-        if n.provider_account_id is not None:
-            # Single-row callers (add_number/order/release/assign_campaign) only ever
-            # build one NumberOut, so a per-call session.get() here is not the N+1 that
-            # list_numbers() would have been - it already fetches its own labels above
-            # and always passes account_label explicitly.
-            account = await session.get(ProviderAccount, n.provider_account_id)
-            if account is not None:
-                account_label = account.label or None
     if inbox_name is _INBOX_UNSET:
-        # Same reasoning as account_label: single-row callers may look this up here;
+        # Single-row callers may look this up here;
         # list_numbers() batches it with _inbox_names() and always passes the value.
         inbox_name = (
             await session.execute(sa.select(Inbox.name).where(Inbox.number_id == n.id))
@@ -449,7 +418,6 @@ async def _out(
     return NumberOut(
         id=n.id,
         e164=n.e164,
-        carrier=n.carrier,
         is_active=n.is_active,
         number_type=n.number_type,
         status=n.status,
@@ -457,13 +425,10 @@ async def _out(
         campaign_id=n.campaign_id,
         registration=state.verdict,
         registration_detail=state.detail,
-        provider_account_id=n.provider_account_id,
-        provider_account_label=account_label,
         inbox_name=inbox_name,
-        purchase_cost_cents=n.purchase_cost_cents,
-        monthly_cost_cents=n.monthly_cost_cents,
         purchased_at=n.purchased_at,
-        order_detail=n.order_detail,
+        carrier_campaign_locked=_is_telnyx_number(n),
+        e911_supported=_e911_supported(n),
         answered_by=answered_by,
         emergency_status=_e911_status(n)["status"],
         emergency_address_id=_e911_status(n)["address_id"],
@@ -476,6 +441,12 @@ def _e911_status(n: OrgNumber) -> dict:
     from app.services import e911
 
     return e911.status_of(n)
+
+
+def _e911_supported(n: OrgNumber) -> bool:
+    from app.services import e911
+
+    return (n.carrier or "").strip().lower() in e911.SUPPORTED_CARRIERS
 
 
 def _carrier_or_primary(request: Request, name: str | None):
@@ -523,7 +494,18 @@ async def search_available(
     merging results would hide which carrier a number would come from - which is exactly
     what decides its registration regime and its routing.
     """
-    provider = numbers_api.as_provider(_carrier_or_primary(request, carrier))
+    carrier_obj = _carrier_or_primary(request, carrier)
+    provider = numbers_api.as_provider(carrier_obj)
+    # The customer sees what THEY pay (our price, less their discount), never the
+    # carrier's cost.
+    monthly_micros = await telephony_billing.unit_price(
+        ctx.session, ctx.org.id, carrier_obj.name, "number_mrc"
+    )
+    setup_micros = await telephony_billing.unit_price(
+        ctx.session, ctx.org.id, carrier_obj.name, "number_setup"
+    )
+    monthly_cents = monthly_micros // 10_000
+    setup_cents = setup_micros // 10_000
     found = await provider.search_numbers(
         numbers_api.NumberSearch(
             area_code=area_code,
@@ -540,11 +522,11 @@ async def search_available(
             number_type=n.number_type,
             region=n.region,
             locality=n.locality,
-            monthly_cost=n.monthly_cost,
-            setup_cost=n.setup_cost,
+            monthly_cost=f"${monthly_cents / 100:.2f}",
+            setup_cost=f"${setup_cents / 100:.2f}" if setup_cents else "",
             capabilities=n.capabilities,
-            monthly_cost_cents=n.monthly_cost_cents,
-            setup_cost_cents=n.setup_cost_cents,
+            monthly_cost_cents=monthly_cents,
+            setup_cost_cents=setup_cents,
         )
         for n in found
     ]
@@ -940,7 +922,6 @@ class NumberReputationOut(BaseModel):
     every field here is computed from our own `messages` rows."""
 
     e164: str
-    carrier: str
     window_start: datetime
     window_end: datetime
     volume: int
@@ -961,7 +942,6 @@ async def number_reputation(
     return [
         NumberReputationOut(
             e164=s.e164,
-            carrier=s.carrier,
             window_start=s.window_start,
             window_end=s.window_end,
             volume=s.volume,

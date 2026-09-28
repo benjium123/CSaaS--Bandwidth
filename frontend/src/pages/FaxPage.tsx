@@ -251,7 +251,6 @@ function FaxLinesCard({ api, numbers }: { api: ApiClient; numbers: FaxNumberOut[
             <thead>
               <tr>
                 <th className={HEAD}>Number</th>
-                <th className={HEAD}>Carrier</th>
                 <th className={HEAD}>Fax mode</th>
               </tr>
             </thead>
@@ -261,7 +260,6 @@ function FaxLinesCard({ api, numbers }: { api: ApiClient; numbers: FaxNumberOut[
                   <td className={cn(CELL_L, "whitespace-nowrap font-semibold text-foreground")}>
                     {formatPhone(n.e164)}
                   </td>
-                  <td className={cn(CELL, "text-muted-foreground")}>{n.carrier}</td>
                   <td className={CELL_R}>
                     <Button
                       type="button"

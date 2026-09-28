@@ -106,10 +106,10 @@ describe("IndividualAccountPresentation", () => {
 
     await waitForGateResolved("business");
     const list = await screen.findByRole("list", { name: "Setup steps" });
-    expect(within(list).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
   });
 
-  it("pending individual setup shows two steps", async () => {
+  it("pending individual setup shows one step", async () => {
     renderWithProviders(
       <>
         <GateProbe />
@@ -130,8 +130,8 @@ describe("IndividualAccountPresentation", () => {
 
     await waitForGateResolved("individual");
     const list = await screen.findByRole("list", { name: "Setup steps" });
-    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
-    expect(screen.getByRole("listitem", { name: "Connect a provider" })).toBeInTheDocument();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.queryByRole("listitem", { name: "Connect a provider" })).not.toBeInTheDocument();
     expect(screen.getByRole("listitem", { name: "Get a phone number" })).toBeInTheDocument();
     expect(screen.queryByRole("listitem", { name: "Invite your team" })).not.toBeInTheDocument();
     expect(screen.queryByRole("listitem", { name: "Register for texting" })).not.toBeInTheDocument();

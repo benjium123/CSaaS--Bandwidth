@@ -63,7 +63,7 @@ describe("OnboardingChecklist", () => {
     expect(screen.queryByLabelText("Setup steps")).not.toBeInTheDocument();
   });
 
-  it("renders the four steps and marks completed ones", async () => {
+  it("renders the three steps and marks completed ones", async () => {
     renderChecklist({
       permissions: ["settings:read"],
       org: {
@@ -75,11 +75,9 @@ describe("OnboardingChecklist", () => {
     });
 
     const list = await screen.findByRole("list", { name: "Setup steps" });
-    expect(within(list).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
 
-    expect(
-      screen.getByRole("listitem", { name: "Connect a provider done" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("listitem", { name: /Connect a provider/ })).not.toBeInTheDocument();
     expect(screen.getByRole("listitem", { name: "Get a phone number" })).toBeInTheDocument();
     expect(screen.getByRole("listitem", { name: "Invite your team" })).toBeInTheDocument();
     expect(screen.getByRole("listitem", { name: "Register for texting" })).toBeInTheDocument();

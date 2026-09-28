@@ -106,7 +106,6 @@ export const SEARCH_RESULT = {
 export const ORDERED_NUMBER = {
   id: "num-e",
   e164: "+15550199999",
-  carrier: "bandwidth",
   is_active: true,
   status: "active",
 };

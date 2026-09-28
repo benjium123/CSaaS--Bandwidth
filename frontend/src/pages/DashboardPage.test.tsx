@@ -64,6 +64,13 @@ function spendDailyRows() {
 
 const SPEND_DAILY = spendDailyRows();
 
+const OPERATOR_ME = {
+  id: "u1",
+  email: "op@example.com",
+  full_name: "Op",
+  memberships: [{ org_id: "org-1", org_name: "Acme", org_slug: "acme", role_name: "owner" }],
+};
+
 function baseStubs(overrides: Record<string, unknown> = {}) {
   return {
     "/api/v1/spend/summary": SPEND_SUMMARY,
@@ -153,10 +160,11 @@ describe("DashboardPage", () => {
   });
 
   // P19: the spend tile - MTD total, per-provider breakdown, and a 30-day bar per day.
-  it("renders the spend tile with MTD total and 30 daily bars", async () => {
+  it("renders the spend tile with MTD total and 30 daily bars for a platform operator", async () => {
     const client = makeStubClient(
       baseStubs({
         "/api/v1/analytics/overview": EMPTY_OVERVIEW,
+        "/api/v1/auth/me": { ...OPERATOR_ME, is_platform_operator: true },
       }),
     );
     renderWithProviders(<DashboardPage />, client);
@@ -167,6 +175,20 @@ describe("DashboardPage", () => {
     expect(
       screen.getAllByRole("img", { name: /^Spend \d{4}-\d{2}-\d{2}: /}),
     ).toHaveLength(30);
+  });
+
+  it("hides the spend tile from a customer and never requests spend data", async () => {
+    const client = makeStubClient(
+      baseStubs({
+        "/api/v1/analytics/overview": EMPTY_OVERVIEW,
+        "/api/v1/auth/me": { ...OPERATOR_ME, is_platform_operator: false },
+      }),
+    );
+    renderWithProviders(<DashboardPage />, client);
+
+    await screen.findByText("Messages in / out");
+    expect(screen.queryByText("$12.00")).not.toBeInTheDocument();
+    expect(client.calls.some((c) => c.path.startsWith("/api/v1/spend"))).toBe(false);
   });
 
   // P41: the messaging-health card shares the page's range state, so it appears here.

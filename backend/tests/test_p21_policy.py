@@ -2,7 +2,21 @@
 
 from __future__ import annotations
 
-from tests.conftest import auth_headers, create_org, register_and_login
+from tests.conftest import (
+    auth_headers,
+    create_org,
+    register_and_login as _register_and_login,
+    make_platform_operator,
+)
+
+
+async def register_and_login(client, email: str, *args, **kwargs) -> str:
+    """The routing console (/routing/*) is operator-only (require_org_operator), so users
+    these tests sign in are also active platform operators. Non-operator denial is covered
+    in test_hide_carrier_cost.py."""
+    token = await _register_and_login(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return token
 
 
 async def test_policy_get_includes_smart_routing_default_true(client):

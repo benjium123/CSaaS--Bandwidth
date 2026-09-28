@@ -211,18 +211,11 @@ export function AddTeammateDrawer({
         return;
       }
 
-      // Step 2 - the money. Omit the cost fields entirely rather than sending null when
-      // the provider did not quote them (same rule as NumbersPage's order()).
+      // Step 2 - the money. Only the number goes out; the server prices the order.
       let orderedE164: string;
       try {
         const ordered = await orderNumber.mutateAsync({
           e164: choice.result.e164,
-          ...(typeof choice.result.monthly_cost_cents === "number"
-            ? { monthly_cost_cents: choice.result.monthly_cost_cents }
-            : {}),
-          ...(typeof choice.result.setup_cost_cents === "number"
-            ? { setup_cost_cents: choice.result.setup_cost_cents }
-            : {}),
         });
         orderedE164 = ordered.e164;
       } catch (err) {

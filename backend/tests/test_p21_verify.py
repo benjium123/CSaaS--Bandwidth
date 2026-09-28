@@ -44,9 +44,27 @@ from tests.conftest import (
     FakeCarrier,
     auth_headers,
     create_org,
-    make_org_with_number,
-    register_and_login,
+    make_org_with_number as _make_org_with_number,
+    register_and_login as _register_and_login,
+    make_platform_operator,
 )
+
+
+async def register_and_login(client, email: str, *args, **kwargs) -> str:
+    """The routing console (/routing/*) is operator-only (require_org_operator), so users
+    these tests sign in are also active platform operators. Non-operator denial is covered
+    in test_hide_carrier_cost.py."""
+    token = await _register_and_login(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return token
+
+
+async def make_org_with_number(client, email: str, *args, **kwargs):
+    """Same as conftest's, but the owner is also an active platform operator: the routing
+    console (/routing/*) is operator-only (require_org_operator)."""
+    result = await _make_org_with_number(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return result
 from tests.test_carrier_routing import _register_telnyx_campaign
 from tests.test_voice_webhooks import FakeVoiceCarrier
 
@@ -658,7 +676,8 @@ async def test_sms_route_reason_is_plain_and_names_only_dialled_providers(sms_ap
     set_org_context(session, org_id)
     stored = await session.get(Message, uuid.UUID(body["id"]))
     assert stored.carrier == "telnyx", "the send failed over"
-    reason = body["route_reason"]
+    assert body["route_reason"] is None, "the customer API never shows the routing sentence"
+    reason = stored.route_reason
     assert reason == "Failed over to Telnyx — Bandwidth unavailable", reason
     _assert_plain(reason)
 
@@ -672,9 +691,13 @@ async def test_sms_route_reason_is_plain_and_names_only_dialled_providers(sms_ap
         "/api/v1/messages", json={"to": "+19725556666", "from": second, "body": "hi"}, headers=h
     )
     assert r2.status_code == 201, r2.text
-    assert (r2.json()["route_reason"] or "").startswith("Sent via Telnyx"), r2.json()
-    _assert_plain(r2.json()["route_reason"] or "")
-    assert "Bandwidth" not in (r2.json()["route_reason"] or ""), (
+    assert r2.json()["route_reason"] is None
+    stored2 = await session.get(Message, uuid.UUID(r2.json()["id"]))
+    await session.refresh(stored2)
+    r2_reason = stored2.route_reason or ""
+    assert r2_reason.startswith("Sent via Telnyx"), r2_reason
+    _assert_plain(r2_reason)
+    assert "Bandwidth" not in r2_reason, (
         "a send that never touched bandwidth must not name it"
     )
 
@@ -743,7 +766,8 @@ async def test_room_call_reason_is_derived_and_the_column_stays_null(session):
         h = auth_headers(token, org["id"])
         r = await client.post("/api/v1/calls", json={"to": CONTACT, "via": "room"}, headers=h)
         assert r.status_code == 201, r.text
-        assert r.json()["route_reason"] == smart_routing.LIVEKIT_TRUNK_REASON
+        assert r.json()["route_reason"] is None, "the customer API never shows the trunk sentence"
+        assert "carrier" not in r.json()
 
         call_id = uuid.UUID(r.json()["id"])
         await voice_service.wait_for_pending_dial_tasks()
@@ -997,12 +1021,12 @@ async def test_timeline_message_event_carries_the_stored_route_reason(sms_app, s
     )
     assert r.status_code == 201, r.text
     message_id = r.json()["id"]
-    reason = r.json()["route_reason"]
-    assert reason, "the real send path must write a sentence"
-
+    assert r.json()["route_reason"] is None
     set_org_context(session, org_id)
     stored = await session.get(Message, uuid.UUID(message_id))
-    assert stored.route_reason == reason
+    await session.refresh(stored)
+    reason = stored.route_reason
+    assert reason, "the real send path must write a sentence"
 
     t = await client.get(
         f"/api/v1/conversations/{CONTACT}/timeline", params={"our_e164": ours}, headers=h
@@ -1010,8 +1034,8 @@ async def test_timeline_message_event_carries_the_stored_route_reason(sms_app, s
     assert t.status_code == 200, t.text
     events = [i for i in t.json()["items"] if i["kind"] == "message" and i["id"] == message_id]
     assert len(events) == 1, t.json()
-    assert events[0]["route_reason"] == stored.route_reason
-    _assert_plain(events[0]["route_reason"])
+    assert events[0]["route_reason"] is None, "the timeline never shows the routing sentence"
+    _assert_plain(stored.route_reason)
     assert len(carriers["bandwidth"].sent) == 1
 
 
@@ -1055,7 +1079,7 @@ async def test_timeline_room_call_event_shows_the_trunk_sentence_with_a_null_col
         assert t.status_code == 200, t.text
         events = [i for i in t.json()["items"] if i["kind"] == "call" and i["id"] == call_id]
         assert len(events) == 1, t.json()
-        assert events[0]["route_reason"] == smart_routing.LIVEKIT_TRUNK_REASON
+        assert events[0]["route_reason"] is None
 
         set_org_context(session, uuid.UUID(org["id"]))
         row = await session.get(Call, uuid.UUID(call_id))

@@ -38,7 +38,6 @@ export interface FaxOut {
 export interface FaxNumberOut {
   id: string;
   e164: string;
-  carrier: string;
   fax_mode: boolean;
 }
 

@@ -30,7 +30,20 @@ from app.providers.domain import CarrierError, SendResult
 from app.providers.health import COOLDOWN_SECONDS, FAILURE_THRESHOLD, Breaker, HealthRegistry
 from app.providers.registry import CarrierRegistry
 from app.providers.voice import CreateCallResult
-from tests.conftest import FakeCarrier, auth_headers, make_org_with_number
+from tests.conftest import (
+    FakeCarrier,
+    auth_headers,
+    make_org_with_number as _make_org_with_number,
+    make_platform_operator,
+)
+
+
+async def make_org_with_number(client, email: str, *args, **kwargs):
+    """Same as conftest's, but the owner is also an active platform operator: the routing
+    console (/routing/*) is operator-only (require_org_operator)."""
+    result = await _make_org_with_number(client, email, *args, **kwargs)
+    await make_platform_operator(email)
+    return result
 from tests.test_voice_webhooks import FakeVoiceCarrier
 
 PRIMARY_NUM = "+12145550100"
