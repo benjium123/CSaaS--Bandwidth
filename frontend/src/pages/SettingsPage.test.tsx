@@ -13,8 +13,8 @@ vi.mock("@/pages/TeamPage", () => ({
 vi.mock("@/pages/SettingsSecurityPage", () => ({
   SettingsSecurityPage: () => <div>Security page</div>,
 }));
-vi.mock("@/pages/InboxSettingsPage", () => ({
-  InboxSettingsPage: () => <div>Inboxes settings page</div>,
+vi.mock("@/pages/DepartmentsPage", () => ({
+  DepartmentsPage: () => <div>Inboxes settings page</div>,
 }));
 vi.mock("@/pages/NumbersPage", () => ({
   NumbersPage: () => <div>Numbers page</div>,
