@@ -7557,6 +7557,8 @@ export interface components {
             full_name: string;
             /** Role Name */
             role_name: string;
+            /** Reports To User Id (org hierarchy, 0092) */
+            reports_to_user_id?: string | null;
             /**
              * User Id
              * Format: uuid

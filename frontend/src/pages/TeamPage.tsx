@@ -39,6 +39,8 @@ import {
   MemberNumbersCell,
   MemberNumbersPanel,
 } from "@/components/team/MemberNumbersPanel";
+import { OrgTreePanel } from "@/components/team/OrgTreePanel";
+import { useAllAssignments, useSetManager } from "@/api/orgMembers";
 import { cn } from "@/lib/utils";
 
 /* ── The console's list shape, from docs/design/console-reference.html ──────────────────
@@ -78,7 +80,7 @@ function statusBadgeTone(status: InviteStatus): PillTone {
 
 export function TeamPage() {
   const { api, me, orgId } = useAuth();
-  const [activeTab, setActiveTab] = React.useState<"members" | "roles">("members");
+  const [activeTab, setActiveTab] = React.useState<"members" | "org" | "roles">("members");
 
   const {
     data: members,
@@ -252,6 +254,18 @@ export function TeamPage() {
           onClick={() => setActiveTab("members")}
         >
           Members
+        </Button>
+        <Button
+          type="button"
+          role="tab"
+          id="tab-org"
+          aria-controls="panel-org"
+          aria-selected={activeTab === "org"}
+          variant={activeTab === "org" ? "default" : "ghost"}
+          className="h-8 rounded-full px-4 text-[12.5px]"
+          onClick={() => setActiveTab("org")}
+        >
+          Org chart
         </Button>
         <Button
           type="button"
@@ -576,6 +590,12 @@ export function TeamPage() {
         </div>
       )}
 
+      {activeTab === "org" && (
+        <div role="tabpanel" id="panel-org" aria-labelledby="tab-org">
+          <OrgChartTab />
+        </div>
+      )}
+
       {activeTab === "roles" && (
         <div
           role="tabpanel"
@@ -822,5 +842,50 @@ function ResetMemberTwoFactor({ userId }: { userId: string }) {
         </span>
       )}
     </div>
+  );
+}
+
+/** Org hierarchy (0092): who reports to whom. Only someone who already manages every line
+ *  may redraw it (the server enforces the same rule). */
+function OrgChartTab() {
+  const { api, me, orgId } = useAuth();
+  const members = useOrgMembers(api);
+  const canEdit =
+    hasPermission(me, orgId, "members:update") && hasPermission(me, orgId, "inboxes:admin");
+  const assignments = useAllAssignments(api, canEdit);
+  const setManager = useSetManager(api);
+
+  const noLineUserIds = React.useMemo(() => {
+    const out = new Set<string>();
+    for (const entry of assignments.data ?? []) {
+      const holdsAny = entry.assignments.some(
+        (a) => a.direct_role != null || a.via_department.length > 0,
+      );
+      if (!holdsAny) out.add(entry.user_id);
+    }
+    return out;
+  }, [assignments.data]);
+
+  if (members.isPending) return <Spinner />;
+  if (members.error) {
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        {getErrorMessage(members.error)}
+      </p>
+    );
+  }
+  return (
+    <OrgTreePanel
+      members={members.data ?? []}
+      noLineUserIds={noLineUserIds}
+      canEdit={canEdit}
+      onSetManager={async (userId, managerUserId) => {
+        try {
+          await setManager.mutateAsync({ userId, managerUserId });
+        } catch (err) {
+          throw new Error(getErrorMessage(err));
+        }
+      }}
+    />
   );
 }

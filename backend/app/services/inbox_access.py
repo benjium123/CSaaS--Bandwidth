@@ -10,7 +10,11 @@ docstring - this module is the runtime resolver for that contract):
     treated as admin FOR THIS GATE ONLY, preserving the pre-P15 behaviour those callers
     already had. Tiered access is a per-human concept.
   * Everyone else sees exactly the union of grants made directly to them and grants made
-    to a department they belong to. No grant, no access. When both a direct and a
+    to a department they belong to. No grant, no access.
+  * Org hierarchy (0092): a manager ALSO holds every grant made directly to anyone below
+    them in the reports-to tree, at any depth, with the same role (member stays member,
+    viewer stays viewer). Department grants of reports are NOT inherited - a manager of
+    one salesperson does not see all of Sales. When both a direct and a
     department path exist for the same number, "member" always wins over "viewer" -
     grants only ever ADD capability, never take it away.
 """
@@ -26,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Department, DepartmentMember, Inbox, InboxGrant, OrgNumber
 from app.models.rbac import WILDCARD
+from app.services import org_tree
 
 log = structlog.get_logger("inbox_access")
 
@@ -37,6 +42,9 @@ class InboxAccess:
     member_e164s: frozenset[str]
     #: Read-only. A number here is never also in ``member_e164s`` - see ``resolve_access``.
     viewer_e164s: frozenset[str]
+    #: Org hierarchy (0092): numbers held ONLY because someone below the caller holds them
+    #: (a subset of member/viewer). A manager may act on them but is not rung for them.
+    inherited_e164s: frozenset[str] = frozenset()
 
     def can_view(self, e164: str) -> bool:
         return self.is_admin or e164 in self.member_e164s or e164 in self.viewer_e164s
@@ -52,6 +60,8 @@ async def resolve_access(
     session: AsyncSession,
     actor_user_id: uuid.UUID | None,
     permissions: list[str],
+    *,
+    include_reports: bool = True,
 ) -> InboxAccess:
     """Resolve one caller's access for the CURRENT org context on ``session``.
 
@@ -85,8 +95,12 @@ async def resolve_access(
         .all()
     )
 
+    # Direct grants of the caller AND of everyone who reports to them, transitively.
+    # ``include_reports=False`` is for "numbers that are MINE" (profile / 911 address).
+    report_ids = await org_tree.descendants(session, actor_user_id) if include_reports else set()
+    direct_user_ids = [actor_user_id, *report_ids]
     conditions = [
-        sa.and_(InboxGrant.grantee_type == "user", InboxGrant.grantee_id == actor_user_id)
+        sa.and_(InboxGrant.grantee_type == "user", InboxGrant.grantee_id.in_(direct_user_ids))
     ]
     if dept_ids:
         conditions.append(
@@ -98,7 +112,7 @@ async def resolve_access(
 
     rows = (
         await session.execute(
-            sa.select(InboxGrant.role, OrgNumber.e164)
+            sa.select(InboxGrant.role, OrgNumber.e164, InboxGrant.grantee_type, InboxGrant.grantee_id)
             .join(Inbox, Inbox.id == InboxGrant.inbox_id)
             .join(OrgNumber, OrgNumber.id == Inbox.number_id)
             .where(sa.or_(*conditions))
@@ -107,7 +121,13 @@ async def resolve_access(
 
     member: set[str] = set()
     viewer: set[str] = set()
-    for role, e164 in rows:
+    own: set[str] = set()
+    via_reports: set[str] = set()
+    for role, e164, grantee_type, grantee_id in rows:
+        if grantee_type == "user" and grantee_id in report_ids:
+            via_reports.add(e164)
+        else:
+            own.add(e164)
         if role == "member":
             member.add(e164)
         elif role == "viewer":
@@ -139,5 +159,8 @@ async def resolve_access(
     viewer -= member
 
     return InboxAccess(
-        is_admin=False, member_e164s=frozenset(member), viewer_e164s=frozenset(viewer)
+        is_admin=False,
+        member_e164s=frozenset(member),
+        viewer_e164s=frozenset(viewer),
+        inherited_e164s=frozenset((via_reports - own) & (member | viewer)),
     )

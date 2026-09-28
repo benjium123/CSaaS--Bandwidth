@@ -51,6 +51,25 @@ export function useCreateMember(api: ApiClient) {
   });
 }
 
+/** Org hierarchy (0092): set or clear who `userId` reports to. A manager gets every line of
+ *  the people below them, so the member list and everyone's line access change together. */
+export function useSetManager(api: ApiClient) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (vars: { userId: string; managerUserId: string | null }) =>
+      api.request<MemberOut>(`${MEMBERS_PATH}/${vars.userId}/manager`, {
+        method: "PUT",
+        json: { manager_user_id: vars.managerUserId },
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["org-members"] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox-assignments"] });
+      void queryClient.invalidateQueries({ queryKey: ["inboxes"] });
+    },
+  });
+}
+
 /**
  * Every user's assignments in one request. `enabled` lets the caller hold the request until
  * the drawer that needs it is actually open.

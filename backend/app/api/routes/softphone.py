@@ -499,6 +499,10 @@ async def _event_visible(
             return False
         if to not in access.member_e164s:
             return False
+        # Org hierarchy: a manager may pick up a report's line but is not rung for every
+        # call on it (alerts cover missed calls); parked calls stay visible to them.
+        if event_type == "call.ring" and to in access.inherited_e164s:
+            return False
         ring_user_ids = event.get("ring_user_ids")
         if ring_user_ids:
             return str(user_id) in {str(u) for u in ring_user_ids}

@@ -32,6 +32,8 @@ from app.models import (
     Role,
 )
 
+from app.services import org_tree
+
 log = structlog.get_logger("notifications")
 
 #: how far back missed_call_tick looks for calls it has not yet announced
@@ -351,6 +353,10 @@ async def recipients_for_number(session: AsyncSession, e164: str) -> set[uuid.UU
         )
     ).scalars().all()
     recipients.update(direct_user_grants)
+    # Org hierarchy (0092): every manager above a direct grantee holds that line too
+    # (services/inbox_access.py), so they are alerted for it as well.
+    if direct_user_grants:
+        recipients.update(await org_tree.ancestors(session, set(direct_user_grants)))
 
     department_grants = (
         await session.execute(

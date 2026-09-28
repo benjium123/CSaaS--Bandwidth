@@ -38,7 +38,9 @@ async def assigned_numbers(session: AsyncSession, org_id: uuid.UUID, user_id: uu
     )
     if int(members) > 1:
         # Empty permissions: explicit member grants only, never admin-wide access.
-        access = await inbox_access.resolve_access(session, user_id, [])
+        # include_reports=False: a manager's reports' lines are never "theirs" here - their
+        # 911 address must not be pushed onto numbers other people sit at.
+        access = await inbox_access.resolve_access(session, user_id, [], include_reports=False)
         if not access.member_e164s:
             return []
         stmt = stmt.where(OrgNumber.e164.in_(sorted(access.member_e164s)))

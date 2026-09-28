@@ -28,6 +28,7 @@ from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import account_security, contact_visibility, password_policy
 from app.services import audit as audit_svc
+from app.services import org_tree
 from app.services import calling_settings as calling_settings_svc
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
@@ -60,6 +61,13 @@ class MemberOut(BaseModel):
     email: str
     full_name: str
     role_name: str
+    #: Org hierarchy (0092): this member's manager, or None.
+    reports_to_user_id: uuid.UUID | None = None
+
+
+class ManagerIn(BaseModel):
+    #: The new manager's user id (a member of this workspace), or None to clear.
+    manager_user_id: uuid.UUID | None = None
 
 
 class RetentionOut(BaseModel):
@@ -353,10 +361,88 @@ async def current_org_members(
     rows = (await ctx.session.execute(stmt)).all()
     return [
         MemberOut(
-            user_id=u.id, email=u.email, full_name=u.full_name, role_name=r.name
+            user_id=u.id,
+            email=u.email,
+            full_name=u.full_name,
+            role_name=r.name,
+            reports_to_user_id=m.reports_to_user_id,
         )
-        for _m, u, r in rows
+        for m, u, r in rows
     ]
+
+
+@router.put("/current/members/{user_id}/manager", response_model=MemberOut)
+async def set_member_manager(
+    user_id: uuid.UUID,
+    payload: ManagerIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("members:update"))],
+) -> MemberOut:
+    """Org hierarchy (0092): set or clear who ``user_id`` reports to.
+
+    A manager inherits every line granted directly to anyone below them, so this edge
+    is an ACCESS grant. Only a caller who already sees every line (``inboxes:admin`` or
+    the wildcard) may draw it - otherwise a members:update holder could make themselves
+    anyone's manager and read their lines. Both ends must be members of THIS workspace,
+    the target's role must be one the caller could assign (same subset rule as
+    update_member), and a loop is refused.
+    """
+    perms = ctx.role.permissions or []
+    if WILDCARD not in perms and "inboxes:admin" not in perms:
+        raise PermissionDeniedError("Only someone who manages every line can change who reports to whom")
+
+    row = (
+        await ctx.session.execute(
+            sa.select(OrgMembership, User, Role)
+            .join(User, User.id == OrgMembership.user_id)
+            .join(Role, Role.id == OrgMembership.role_id)
+            .where(OrgMembership.org_id == ctx.org.id, OrgMembership.user_id == user_id)
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError("Member not found")
+    membership, user, role = row
+    if not _role_assignable_by(ctx.role, role):
+        raise PermissionDeniedError("You cannot change the manager of someone with a higher role than your own")
+
+    manager_id = payload.manager_user_id
+    if manager_id is not None:
+        manager = (
+            await ctx.session.execute(
+                sa.select(OrgMembership.id).where(
+                    OrgMembership.org_id == ctx.org.id, OrgMembership.user_id == manager_id
+                )
+            )
+        ).scalar_one_or_none()
+        if manager is None:
+            raise NotFoundError("Manager is not a member of this workspace")
+        if await org_tree.would_cycle(ctx.session, user_id, manager_id):
+            raise ConflictError("That would make someone their own manager")
+
+    previous = membership.reports_to_user_id
+    membership.reports_to_user_id = manager_id
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        actor_user_id=ctx.actor_user_id,
+        actor_api_key_id=ctx.api_key.id if ctx.api_key else None,
+        action="member.manager_set",
+        target_type="org_membership",
+        target_id=str(user_id),
+        detail={
+            "user_id": str(user_id),
+            "manager_user_id": str(manager_id) if manager_id else None,
+            "previous_manager_user_id": str(previous) if previous else None,
+        },
+    )
+    await ctx.session.commit()
+    set_org_context(ctx.session, ctx.org.id)
+    return MemberOut(
+        user_id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role_name=role.name,
+        reports_to_user_id=manager_id,
+    )
 
 
 class MemberUpdateIn(BaseModel):
@@ -598,6 +684,9 @@ async def remove_member(
             raise ConflictError("Cannot remove the last owner of an organisation")
 
     await ctx.session.delete(membership)
+    # Org hierarchy (0092): nobody reports to someone who has left - otherwise re-adding
+    # them later would silently hand back every line of their old reports.
+    await org_tree.detach_reports(ctx.session, ctx.org.id, user_id)
     audit_svc.record(
         ctx.session,
         ctx.org.id,

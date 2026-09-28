@@ -33,7 +33,7 @@ from app.db.session import get_session
 from app.models import Org, OrgMembership, Role, ScimToken, SecurityAlert, User
 from app.models.rbac import is_privileged_permissions
 from app.rate_limit import enforce_rate_limit
-from app.services import account_security, sso_provisioning
+from app.services import account_security, org_tree, sso_provisioning
 from app.services import audit as audit_svc
 
 router = APIRouter(prefix="/scim/v2", tags=["scim"])
@@ -209,6 +209,7 @@ async def _deprovision(ctx: ScimContext, user: User, membership: OrgMembership, 
     if _is_owner_role(role):
         raise ScimError(403, "Workspace owners cannot be removed through SCIM", "mutability")
     await ctx.session.delete(membership)
+    await org_tree.detach_reports(ctx.session, ctx.org.id, user.id)
     revoked = await account_security.revoke_sessions(
         ctx.session, ctx.settings, user.id, revoked_by=ctx.token.created_by or user.id
     )

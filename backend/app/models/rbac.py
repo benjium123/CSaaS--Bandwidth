@@ -163,6 +163,12 @@ class OrgMembership(Base, TenantScoped, TimestampMixin):
     #: Calling preferences (services/call_prefs.py): {"dnd": bool, "forward_to": user id
     #: str | None}. NULL = available, no forwarding. Forwarding never leaves the workspace.
     call_prefs: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
+    #: Org hierarchy (0092): the user id of this member's manager in the SAME workspace,
+    #: or NULL. A manager gets every line granted directly to anyone below them
+    #: (services/org_tree.py). Set only via PUT /orgs/current/members/{id}/manager.
+    reports_to_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), nullable=True, index=True
+    )
 
     def __repr__(self) -> str:
         return f"<OrgMembership user={self.user_id} org={self.org_id}>"
