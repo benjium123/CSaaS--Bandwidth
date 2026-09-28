@@ -636,3 +636,30 @@ async def test_first_card_ensures_the_customer_from_the_workspace_identity(
     assert len(stored) == 1
     assert stored[0].stripe_customer_id == "cus_created_for_this_workspace"
     assert stored[0].stripe_customer_id != "cus_some_other_business"
+
+
+async def test_usage_window_includes_a_row_stamped_at_its_end(client, session):
+    """The default window ends at "now". A row stamped in the same clock tick as the
+    request (Windows' clock is ~15 ms coarse) must still be counted."""
+    from datetime import datetime, timezone
+
+    token = await register_and_login(client, "usage-edge@example.com")
+    org = await create_org(client, token, "Usage Edge Org")
+    org_id = uuid.UUID(org["id"])
+    at = datetime.now(timezone.utc).replace(microsecond=0)
+
+    await ai_usage.record(
+        session,
+        org_id,
+        provider="deepgram",
+        kind="stt",
+        metric="stt_seconds",
+        quantity=60,
+        source="worker",
+        idempotency_key="usage-edge",
+        occurred_at=at,
+    )
+    await session.commit()
+
+    rows = await ai_usage.usage_summary(session, org_id, start=at, end=at)
+    assert [row["metric"] for row in rows] == ["stt_seconds"]

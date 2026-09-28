@@ -915,7 +915,10 @@ async def usage_summary(
             )
             .where(
                 AiUsageEvent.occurred_at >= start,
-                AiUsageEvent.occurred_at < end,
+                # Inclusive: the route's window ends at "now" (or 23:59:59.999999 of the
+                # last day), and on a coarse clock a row stamped in the same tick as the
+                # request would otherwise vanish from the total.
+                AiUsageEvent.occurred_at <= end,
             )
             .group_by(AiUsageEvent.metric)
             .order_by(AiUsageEvent.metric)
