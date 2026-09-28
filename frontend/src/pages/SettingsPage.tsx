@@ -28,7 +28,7 @@ import { Search } from "lucide-react";
 import { isWorkspaceFullySetUp } from "@/components/onboarding/OnboardingChecklist";
 import { TeamPage } from "@/pages/TeamPage";
 import { SettingsSecurityPage } from "@/pages/SettingsSecurityPage";
-import { InboxSettingsPage } from "@/pages/InboxSettingsPage";
+import { DepartmentsPage } from "@/pages/DepartmentsPage";
 import { NumbersPage } from "@/pages/NumbersPage";
 import { ProvidersPage } from "@/pages/ProvidersPage";
 import { FlowsPage } from "@/pages/FlowsPage";
@@ -414,7 +414,7 @@ function SectionContent({ id }: { id: SettingsSectionId }) {
     case "team":
       return <TeamSettingsSection />;
     case "inboxes":
-      return <InboxSettingsPage />;
+      return <DepartmentsPage />;
     case "numbers":
       return <NumbersPage />;
     case "providers":
