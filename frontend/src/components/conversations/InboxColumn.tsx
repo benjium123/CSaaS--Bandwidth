@@ -375,6 +375,8 @@ function LineRow({
 }
 
 const FOLDS_STORAGE_KEY = "ringlite.inbox.folds";
+/** Lines the sidebar shows before folding the rest behind "+N more" (fits ~720px). */
+const MAX_VISIBLE_LINES = 14;
 
 export type InboxGroup = { id: string; name: string; inboxes: Inbox[] };
 
@@ -502,6 +504,31 @@ export function InboxColumn({
     ? groups.reduce((n, g) => n + (closedFolds[g.id] ? 0 : g.inboxes.length), 0)
     : inboxes.length;
 
+  // Overflow rule (spec §2): past MAX_VISIBLE_LINES even compact rows would scroll, so each
+  // open fold keeps the lines that need you (unread, or the one you are on) plus the first
+  // few others, and the rest sit behind "+N more" until that fold is expanded.
+  const [expandedFolds, setExpandedFolds] = React.useState<Record<string, boolean>>({});
+  const openFoldCount = groups ? groups.filter((g) => !closedFolds[g.id]).length : 0;
+  const overflowing = visibleLineCount > MAX_VISIBLE_LINES;
+  function linesToShow(group: InboxGroup): Inbox[] {
+    if (!overflowing || expandedFolds[group.id]) return group.inboxes;
+    const limit = Math.max(3, Math.floor(MAX_VISIBLE_LINES / Math.max(1, openFoldCount)));
+    const keep = new Set(
+      group.inboxes
+        .filter(
+          (inbox) =>
+            (unread[inbox.id] ?? 0) > 0 ||
+            (selection.kind === "inbox" && selection.inboxId === inbox.id),
+        )
+        .map((inbox) => inbox.id),
+    );
+    for (const inbox of group.inboxes) {
+      if (keep.size >= limit) break;
+      keep.add(inbox.id);
+    }
+    return group.inboxes.filter((inbox) => keep.has(inbox.id));
+  }
+
   // The drawer is MOUNTED, not just opened: an open flag would leave its three queries
   // running behind a closed panel. Holding the inbox that was acted on (null = closed)
   // means closing unmounts the drawer and the queries stop, and the next open re-seeds
@@ -623,7 +650,7 @@ export function InboxColumn({
                         </button>
                         {open && (
                           <ul className="space-y-0.5">
-                            {group.inboxes.map((inbox) => (
+                            {linesToShow(group).map((inbox) => (
                               <li key={inbox.id}>
                                 <LineRow
                                   inbox={inbox}
@@ -636,6 +663,18 @@ export function InboxColumn({
                                 />
                               </li>
                             ))}
+                            {linesToShow(group).length < group.inboxes.length && (
+                              <li>
+                                <button
+                                  type="button"
+                                  aria-label={`Show ${group.inboxes.length - linesToShow(group).length} more in ${group.name}`}
+                                  onClick={() => setExpandedFolds((prev) => ({ ...prev, [group.id]: true }))}
+                                  className="w-full rounded-md px-2.5 py-1 text-left text-[0.75rem] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                >
+                                  +{group.inboxes.length - linesToShow(group).length} more
+                                </button>
+                              </li>
+                            )}
                           </ul>
                         )}
                       </li>

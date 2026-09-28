@@ -192,8 +192,9 @@ describe("settings section routing", () => {
     ]) {
       expect(ids.has(target as never)).toBe(true);
     }
-    // + "profile" (every member's own name and 911 address).
-    expect(SETTINGS_SECTIONS).toHaveLength(12);
+    // + "profile" (every member's own name and 911 address) + "notifications" (Phase 1c:
+    // desktop alerts, ringtone, microphone and speaker).
+    expect(SETTINGS_SECTIONS).toHaveLength(13);
   });
 
   it("an unknown /settings/:section bounces to workspace exactly once", async () => {

@@ -338,6 +338,21 @@ describe("InboxColumn: department folds (Phase 1b)", () => {
     expect(groupInboxesByDepartment([inbox({ id: "x" })])).toBeNull();
   });
 
+  it("puts lines past the limit behind '+N more', keeping unread ones visible", async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem("ringlite.inbox.folds");
+    const many = Array.from({ length: 16 }, (_, i) =>
+      inbox({ id: `m${i}`, name: `Line ${i}`, e164: `+1469555${String(1000 + i)}`, departments: [sales] }),
+    );
+    renderColumn({ inboxes: many, unread: { m15: 1 } });
+
+    expect(await screen.findByRole("button", { name: "Line 15" })).toBeInTheDocument(); // unread kept
+    expect(screen.queryByRole("button", { name: "Line 14" })).toBeNull();
+    const more = screen.getByRole("button", { name: /^Show \d+ more in Sales$/ });
+    await user.click(more);
+    expect(screen.getByRole("button", { name: "Line 14" })).toBeInTheDocument();
+  });
+
   it("folds a department and shows its unread total while folded", async () => {
     const user = userEvent.setup();
     localStorage.removeItem("ringlite.inbox.folds");
