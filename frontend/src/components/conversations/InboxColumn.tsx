@@ -1,5 +1,4 @@
 import * as React from "react";
-import { NavLink } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -19,14 +18,12 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  ChevronDown,
   GripVertical,
   PanelLeftClose,
-  LogOut,
   MessageSquare,
   Phone,
   Plus,
-  Search,
-  ShieldCheck,
   Users2,
 } from "lucide-react";
 import { Badge, Button, Spinner } from "@/components/ui/primitives";
@@ -34,11 +31,6 @@ import { putInboxOrder, type Inbox } from "@/api/conversations";
 import type { NewConversationKind } from "@/components/conversations/NewConversationPanel";
 import { useAuth } from "@/auth/AuthContext";
 import { useGate } from "@/api/capabilities";
-import { openCommandPalette } from "@/components/ui/CommandPalette";
-import { NotificationBell } from "@/components/shell/NotificationBell";
-import { INBOX_RAIL_PATHS, SETTINGS_ITEM, useRailNav } from "@/components/shell/Sidebar";
-import { ThemeToggle } from "@/auth/ThemeToggle";
-import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { NumberAccessDrawer } from "@/components/conversations/NumberAccessDrawer";
 import { formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -249,90 +241,6 @@ function RailSection({ children }: { children: React.ReactNode }) {
   );
 }
 
-const NAV_ITEM_CLASS =
-  "flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left text-[0.8125rem] text-muted-foreground hover:bg-muted hover:text-foreground";
-
-/**
- * The reference's `.brand`: the workspace mark and name. It is also the workspace
- * SWITCHER - the icon rail's switcher was the same initial in a circle, and with that rail
- * hidden on /inbox this has to be the way to a second workspace.
- */
-function BrandHeader() {
-  const { me, orgId, selectOrg } = useAuth();
-  const [open, setOpen] = React.useState(false);
-  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
-
-  const org = me?.memberships.find((m) => m.org_id === orgId);
-  const name = org?.org_name ?? "Workspace";
-
-  React.useEffect(() => {
-    if (!open) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
-  return (
-    <div className="ri-brand relative px-1 pb-3 pt-1">
-      <div className="ri-wordmark" aria-label="Ringlite"><span className="ri-signal" aria-hidden="true"><i /><i /><i /></span>ringlite<span className="ri-edition">WORKSPACE</span></div>
-      <Button
-        ref={triggerRef}
-        type="button"
-        variant="ghost"
-        aria-label="Switch workspace"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center justify-start gap-3 rounded-[10px] px-2 py-1.5 text-left hover:bg-muted"
-      >
-        <span
-          aria-hidden="true"
-          // The reference's `.brand-mark` is a GRADIENT disc, not a flat accent fill:
-          // `linear-gradient(145deg, var(--accent), var(--accent-2))`. Tailwind cannot
-          // express that pair, so the treatment lives in consoleTheme.css as
-          // `.cx-brand-mark`, which also carries the 50% radius.
-          className="cx-brand-mark grid h-[30px] w-[30px] shrink-0 place-items-center text-[0.78rem] font-bold"
-        >
-          {name.slice(0, 1).toUpperCase()}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[0.9375rem] font-semibold text-foreground">
-          {name}
-        </span>
-      </Button>
-
-      {open ? (
-        <div
-          role="menu"
-          aria-label="Workspaces"
-          className="absolute left-2 top-12 z-50 w-56 rounded-md border border-border bg-background p-1 shadow-lg"
-        >
-          {me?.memberships.map((m) => (
-            <Button
-              key={m.org_id}
-              type="button"
-              variant="ghost"
-              role="menuitem"
-              aria-current={m.org_id === orgId ? "true" : undefined}
-              className="w-full justify-start font-normal"
-              onClick={() => {
-                selectOrg(m.org_id);
-                setOpen(false);
-              }}
-            >
-              {m.org_name}
-            </Button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 /** One line row: the reference's `.ln` - avatar, name, number beneath, unread count. */
 function LineRow({
   inbox,
@@ -466,6 +374,33 @@ function LineRow({
   );
 }
 
+const FOLDS_STORAGE_KEY = "ringlite.inbox.folds";
+
+export type InboxGroup = { id: string; name: string; inboxes: Inbox[] };
+
+/** Department folds for the Lines list, in the inboxes' own display order. Returns null
+ * when no line belongs to any department, so the caller keeps the flat list. */
+export function groupInboxesByDepartment(inboxes: Inbox[]): InboxGroup[] | null {
+  if (!inboxes.some((inbox) => (inbox.departments ?? []).length > 0)) return null;
+  const byId = new Map<string, InboxGroup>();
+  const other: InboxGroup = { id: "__other", name: "Other lines", inboxes: [] };
+  for (const inbox of inboxes) {
+    const dept = [...(inbox.departments ?? [])].sort((a, b) => a.name.localeCompare(b.name))[0];
+    if (!dept) {
+      other.inboxes.push(inbox);
+      continue;
+    }
+    let group = byId.get(dept.id);
+    if (!group) {
+      group = { id: dept.id, name: dept.name, inboxes: [] };
+      byId.set(dept.id, group);
+    }
+    group.inboxes.push(inbox);
+  }
+  const groups = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return other.inboxes.length ? [...groups, other] : groups;
+}
+
 /** P44: the sortable wrapper around one LineRow - the ONLY thing dnd-kit needs to know
  * about is this <li> (its ref, transform and transition), so LineRow itself stays
  * unaware it can be dragged and keeps working byte-for-byte in every non-draggable
@@ -508,6 +443,8 @@ export function InboxColumn({
   canCompose,
   canComposeLoading,
   onCollapse,
+  needsYou,
+  dock,
   className,
 }: {
   inboxes: Inbox[];
@@ -524,16 +461,12 @@ export function InboxColumn({
   canCompose?: boolean;
   canComposeLoading?: boolean;
   onCollapse?: () => void;
+  /** Phase 1b: "needs you" chips under New message, and the phone dock at the bottom. */
+  needsYou?: React.ReactNode;
+  dock?: React.ReactNode;
   className?: string;
 }): React.JSX.Element {
-  const { me, api, logout } = useAuth();
-  const { theme, toggle } = useSurfaceTheme();
-  // ONE gate, shared with Sidebar - see useRailNav. The rail lists only the destinations
-  // named in INBOX_RAIL_PATHS; `/inbox` is dropped because this rail IS the inbox, and
-  // everything else useRailNav returns (Calls, Setup) is reached through Settings instead.
-  // Filtering an already-gated list can only ever REMOVE an item, never reveal one.
-  const { items, canSeeSettings, isLoading: gateLoading } = useRailNav();
-  const workspaceItems = items.filter((item) => INBOX_RAIL_PATHS.includes(item.to));
+  const { api } = useAuth();
 
   // Who may edit "manage them" is a SEPARATE gate from the nav: it is a capability on the
   // number, not a destination. `useGate` fails CLOSED while capabilities load, so for an
@@ -542,6 +475,32 @@ export function InboxColumn({
   // decides what to render.
   const gate = useGate();
   const canManageAccess = gate.can("inboxes:admin");
+
+  // Phase 1b: lines grouped into department folds (a line granted to several departments
+  // is listed under the first, alphabetically). No departments at all -> the flat,
+  // drag-to-reorder list exactly as before. Fold state is remembered per browser.
+  const groups = React.useMemo(() => groupInboxesByDepartment(inboxes), [inboxes]);
+  const [closedFolds, setClosedFolds] = React.useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(FOLDS_STORAGE_KEY) ?? "{}") as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  });
+  function toggleFold(id: string) {
+    setClosedFolds((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try {
+        localStorage.setItem(FOLDS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable: the fold still toggles for this session */
+      }
+      return next;
+    });
+  }
+  const visibleLineCount = groups
+    ? groups.reduce((n, g) => n + (closedFolds[g.id] ? 0 : g.inboxes.length), 0)
+    : inboxes.length;
 
   // The drawer is MOUNTED, not just opened: an open flag would leave its three queries
   // running behind a closed panel. Holding the inbox that was acted on (null = closed)
@@ -581,90 +540,31 @@ export function InboxColumn({
         aria-label="Inbox column"
       >
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2 pt-4">
-          <BrandHeader />
-          {onCollapse && <button type="button" className="ri-collapse" onClick={onCollapse}><PanelLeftClose size={16} aria-hidden="true" />Collapse sidebar</button>}
-
-          {/* Search and the bell sit above the navigation, not inside it: neither is a
-              place you go. The magnifier opens the SAME command palette the icon rail
-              opened (openCommandPalette), and the bell is the same component. */}
-          <Button
-            type="button"
-            variant="ghost"
-            aria-label="Search"
-            title="Search (Ctrl K)"
-            onClick={() => openCommandPalette()}
-            className={NAV_ITEM_CLASS}
-          >
-            <Search className="h-[17px] w-[17px] shrink-0" aria-hidden="true" />
-            Search
-          </Button>
-
-          {/* The bell is the SAME component the icon rail mounts, label and all ("Alerts",
-              or "Alerts, N unread"). The word beside it is the reference's caption and is
-              aria-hidden so it cannot become a second, differently-named control. */}
-          <div className="flex items-center gap-2 pt-0.5 text-[0.8125rem] text-muted-foreground">
-            <NotificationBell />
-            <span aria-hidden="true">Notifications</span>
+          {/* Phase 1 (INBOX_NAV_SPEC.md): brand, workspace switcher, search, bell and the
+              Workspace links live in the top bar now. This column is only the inbox. */}
+          <div className="flex items-center gap-2 pb-2">
+            {onNew && (
+              <div className="min-w-0 flex-1">
+                <NewConversationMenu disabled={!canCompose} isLoading={canComposeLoading} onNew={onNew} />
+              </div>
+            )}
+            {onCollapse && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Collapse sidebar"
+                title="Collapse sidebar"
+                onClick={onCollapse}
+                className="ml-auto h-8 w-8 shrink-0"
+              >
+                <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            )}
           </div>
+          {needsYou}
 
-          <nav aria-label="Workspace" aria-busy={gateLoading}>
-            <RailSection>Workspace</RailSection>
-            {workspaceItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                aria-label={item.label}
-                className={({ isActive }) =>
-                  cn(NAV_ITEM_CLASS, isActive && "bg-muted text-foreground")
-                }
-              >
-                <item.icon className="h-[17px] w-[17px] shrink-0" aria-hidden="true" />
-                {item.label}
-              </NavLink>
-            ))}
-
-            {/* Settings is LAST in the group, after Contacts and Campaigns, because it is
-                also the way to everything that used to sit in this rail: Calls, Setup and
-                Trust & safety are rows in SettingsPage's own section nav now, each still
-                carrying the gate it had here.
-
-                THE ONE EXCEPTION, and it is a stranding fix rather than a second opinion
-                about the design. Trust & safety is gated on is_platform_operator, which is
-                independent of every settings permission, and /settings bounces a caller who
-                can open no section straight back to /inbox (SettingsIndexRedirect). So a
-                platform operator who is only an agent in this workspace gets no Settings row
-                to reach it through - and with the icon rail hidden here, /ops would have no
-                door at all. That caller, and only that caller, keeps the direct row. The two
-                are mutually exclusive, so nobody ever sees both. */}
-            {canSeeSettings ? (
-              <NavLink
-                to={SETTINGS_ITEM.to}
-                aria-label={SETTINGS_ITEM.label}
-                className={({ isActive }) =>
-                  cn(NAV_ITEM_CLASS, isActive && "bg-muted text-foreground")
-                }
-              >
-                <SETTINGS_ITEM.icon
-                  className="h-[17px] w-[17px] shrink-0"
-                  aria-hidden="true"
-                />
-                {SETTINGS_ITEM.label}
-              </NavLink>
-            ) : me?.is_platform_operator ? (
-              <NavLink
-                to="/ops"
-                aria-label="Trust & safety"
-                className={({ isActive }) =>
-                  cn(NAV_ITEM_CLASS, isActive && "bg-muted text-foreground")
-                }
-              >
-                <ShieldCheck className="h-[17px] w-[17px] shrink-0" aria-hidden="true" />
-                Trust &amp; safety
-              </NavLink>
-            ) : null}
-          </nav>
-
-          <nav aria-label="Inboxes">
+          <nav aria-label="Inboxes" className={cn(visibleLineCount > 6 && "ri-lines-compact")}>
             <RailSection>Lines</RailSection>
 
             {isLoading ? (
@@ -694,6 +594,54 @@ export function InboxColumn({
                   </Button>
                 </li>
 
+                {groups ? (
+                  groups.map((group) => {
+                    const open = !closedFolds[group.id];
+                    const groupUnread = group.inboxes.reduce((n, inbox) => n + (unread[inbox.id] ?? 0), 0);
+                    return (
+                      <li key={group.id}>
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          onClick={() => toggleFold(group.id)}
+                          className="flex w-full items-center gap-1.5 rounded-md px-2 pb-1 pt-2 text-left text-[0.75rem] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                          <ChevronDown
+                            className={cn("h-3.5 w-3.5 shrink-0 transition-transform", !open && "-rotate-90")}
+                            aria-hidden="true"
+                          />
+                          <span className="truncate">{group.name}</span>
+                          <span className="font-normal text-muted-foreground/70">{group.inboxes.length}</span>
+                          {!open && groupUnread > 0 && (
+                            <span
+                              aria-label={`${groupUnread} unread in ${group.name}`}
+                              className="ml-auto rounded-full bg-primary px-1.5 text-[0.65rem] font-semibold text-primary-foreground"
+                            >
+                              {groupUnread}
+                            </span>
+                          )}
+                        </button>
+                        {open && (
+                          <ul className="space-y-0.5">
+                            {group.inboxes.map((inbox) => (
+                              <li key={inbox.id}>
+                                <LineRow
+                                  inbox={inbox}
+                                  selected={selection.kind === "inbox" && selection.inboxId === inbox.id}
+                                  count={unread[inbox.id] ?? 0}
+                                  unreadTruncated={unreadTruncated}
+                                  canManageAccess={canManageAccess}
+                                  onSelect={() => onSelect({ kind: "inbox", inboxId: inbox.id })}
+                                  onManageAccess={() => setAccessInbox(inbox)}
+                                />
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })
+                ) : (
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}
@@ -720,6 +668,7 @@ export function InboxColumn({
                     ))}
                   </SortableContext>
                 </DndContext>
+                )}
 
                 {/* P28: a send-later message is not a conversation and has no row in the
                     conversation list, so this opens its own panel rather than setting a
@@ -742,53 +691,7 @@ export function InboxColumn({
           </nav>
         </div>
 
-        {onNew && (
-          <div className="flex items-center border-t border-border p-3">
-            <NewConversationMenu
-              disabled={!canCompose}
-              isLoading={canComposeLoading}
-              onNew={onNew}
-            />
-          </div>
-        )}
-
-        {/* "Settings icon and access appears below the phone numbers" - this cluster, sitting
-            directly under the Lines group, is that access. It holds the two utility controls
-            that are NOT destinations and so have nowhere in a nav to move to: the theme
-            toggle and Sign out. Both are here because <Sidebar/> is hidden on /inbox; delete
-            them and neither has a control on the console's busiest page.
-
-            There is deliberately no second Settings link here. Settings is already the last
-            row of the Workspace group above, and a duplicate would be two controls with the
-            same accessible name in one rail - ambiguous to a screen reader and to every
-            `getByRole("link", { name: "Settings" })` in the suites.
-
-            The `console-surface` + theme class on this wrapper is load-bearing and is not
-            decoration - see the identical note in Sidebar.tsx. themeToggle.css is written
-            entirely against `--ex-*` tokens, and consoleTheme.light.css's palette block is
-            `.console-surface.console-surface.is-light`, so a `console-surface` carrying the
-            theme class only on an ANCESTOR would hand a light rail a dark-palette button. */}
-        <div
-          role="group"
-          aria-label="Settings and account"
-          className={cn(
-            "console-surface",
-            surfaceThemeClass(theme),
-            "flex items-center gap-1 border-t border-border px-3 py-2",
-          )}
-        >
-          <ThemeToggle theme={theme} onToggle={toggle} />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Sign out"
-            onClick={logout}
-          >
-            <LogOut className="h-4 w-4" aria-hidden="true" />
-            <span className="sr-only">Sign out</span>
-          </Button>
-        </div>
+        {dock}
       </aside>
 
       {accessInbox ? (

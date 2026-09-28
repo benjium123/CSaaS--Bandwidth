@@ -22,6 +22,9 @@ export interface Inbox {
    * both (null or a number). */
   sla_first_response_minutes?: number | null;
   sla_resolution_minutes?: number | null;
+  /** Active departments holding a grant on this line (sidebar grouping). Optional:
+   * older servers and fixtures omit it, which means "no grouping". */
+  departments?: { id: string; name: string }[];
 }
 
 export interface ContactPhone {

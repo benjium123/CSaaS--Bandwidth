@@ -150,3 +150,9 @@
 }
 .console-surface.ringlite-inbox .ri-splitter-slot { position: absolute; top: 0; bottom: 0; display: none; z-index: 20; }
 @media (min-width: 1024px) { .console-surface.ringlite-inbox .ri-splitter-slot { display: flex; } }
+
+/* Phase 1b: more than 6 lines showing -> compact rows (number beside the name) so the
+   sidebar fits without scrolling. */
+.console-surface.ringlite-inbox .ri-lines-compact .cx-row { padding-top: 4px; padding-bottom: 4px; }
+.console-surface.ringlite-inbox .ri-lines-compact .cx-line-avatar { width: 22px; height: 22px; }
+.console-surface.ringlite-inbox .ri-lines-compact .cx-row > span.flex-col { flex-direction: row; align-items: baseline; gap: 6px; }

@@ -4,7 +4,7 @@ import * as React from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { PanelRight, PanelLeftOpen, MessagesSquare } from "lucide-react";
-import { useAuth } from "@/auth/AuthContext";
+import { hasPermission, useAuth } from "@/auth/AuthContext";
 import {
   fetchConversations,
   fetchInboxes,
@@ -37,6 +37,8 @@ import "@fontsource-variable/martian-mono/wght.css";
 import "@/components/conversations/consoleTheme.css";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { ColumnSplitter } from "@/components/shell/ColumnSplitter";
+import { NeedsYouChips } from "@/components/conversations/NeedsYouChips";
+import { PhoneDock } from "@/components/conversations/PhoneDock";
 import { useColumnWidths } from "@/components/shell/useColumnWidths";
 
 /** Item 2: the list is kept fresh two ways - a background poll while the tab is visible
@@ -83,7 +85,8 @@ export function ConversationsPage() {
   // src/auth/useSurfaceTheme.ts: this is a shared store, so the toggle in the sidebar moves
   // every wrapper in the console on the same commit rather than only its own.
   const { theme } = useSurfaceTheme();
-  const { api, orgId } = useAuth();
+  const { api, me, orgId } = useAuth();
+  const canPlaceCalls = hasPermission(me, orgId, "calls:place");
   const softphone = useSoftphone();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -151,6 +154,21 @@ export function ConversationsPage() {
   // d.pages.map(...)), so anything sharing that prefix but not shaped like an infinite
   // query would throw inside onMutate and kill the mutation before it ever fired. The
   // message.received effect below invalidates this key explicitly instead.
+  // Phase 1b "needs you" chips: counts from the existing list filters (one page each, so
+  // a full page reads as "50+"). Missed calls / voicemails / assigned-to-me need backend
+  // filters that do not exist yet, so they are not shown rather than faked.
+  const waitingQuery = useQuery({
+    queryKey: ["needs-you", "unresponded"],
+    queryFn: () => fetchConversations(api, { filter: "unresponded" }),
+    staleTime: 15000,
+    refetchInterval: 30000,
+  });
+  const overdueQuery = useQuery({
+    queryKey: ["needs-you", "overdue"],
+    queryFn: () => fetchConversations(api, { filter: "overdue" }),
+    staleTime: 15000,
+    refetchInterval: 30000,
+  });
   const unreadQuery = useQuery({
     queryKey: ["inbox-unread-counts"],
     queryFn: () => fetchUnreadByInbox(api),
@@ -416,6 +434,29 @@ export function ConversationsPage() {
       canCompose={canCompose}
       canComposeLoading={inboxesQuery.isLoading}
       onCollapse={isBelowSm ? undefined : toggleRail}
+      needsYou={
+        <NeedsYouChips
+          counts={{
+            unread: {
+              n: Object.values(unreadQuery.data?.counts ?? {}).reduce((a, b) => a + b, 0),
+              more: unreadQuery.data?.truncated ?? false,
+            },
+            unresponded: waitingQuery.data
+              ? { n: waitingQuery.data.items.length, more: waitingQuery.data.next_cursor != null }
+              : undefined,
+            overdue: overdueQuery.data
+              ? { n: overdueQuery.data.items.length, more: overdueQuery.data.next_cursor != null }
+              : undefined,
+          }}
+          active={filter === "unread" || filter === "unresponded" || filter === "overdue" ? filter : null}
+          onPick={(key) => {
+            setFilter(key ?? "open");
+            if (key) handleInboxSelect({ kind: "all" });
+            setMobileInboxSheetOpen(false);
+          }}
+        />
+      }
+      dock={canPlaceCalls ? <PhoneDock fromOptions={fromOptions} onCall={handleComposeCall} /> : undefined}
       className={cn("h-full", isBelowSm ? "!w-full border-r-0" : "")}
     />
   );

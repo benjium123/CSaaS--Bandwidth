@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { InboxColumn, lineInitials } from "./InboxColumn";
+import { groupInboxesByDepartment, InboxColumn, lineInitials } from "./InboxColumn";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
 import type { Inbox } from "@/api/conversations";
 import { openCommandPalette } from "@/components/ui/CommandPalette";
@@ -96,181 +96,16 @@ beforeEach(() => {
   vi.mocked(openCommandPalette).mockClear();
 });
 
-describe("InboxColumn: the reference's nav block", () => {
-  it("renders the workspace name in the brand header", async () => {
-    renderColumn();
-
-    const brand = await screen.findByRole("button", { name: "Switch workspace" });
-    expect(brand).toHaveTextContent("Acme Plumbing");
-    // The round mark is the workspace INITIAL, not a truncation of the name.
-    expect(brand.querySelector('span[aria-hidden="true"]')).toHaveTextContent("A");
-  });
-
-  it("Search opens the existing command palette", async () => {
-    renderColumn();
-
-    await userEvent.click(screen.getByRole("button", { name: "Search" }));
-
-    expect(openCommandPalette).toHaveBeenCalledTimes(1);
-  });
-
-  it("mounts the existing notification bell", async () => {
-    renderColumn();
-
-    // NotificationBell's own trigger name - proof it is that component and not a new
-    // bell drawn to match the mockup.
-    expect(await screen.findByRole("button", { name: "Alerts" })).toBeInTheDocument();
-  });
-
-  it('groups the destinations under a "Workspace" heading', async () => {
-    renderColumn();
-
-    const nav = await screen.findByRole("navigation", { name: "Workspace" });
-    expect(within(nav).getByText("Workspace")).toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: "Contacts" })).toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: "Campaigns" })).toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: "Settings" })).toBeInTheDocument();
-    // The rail IS the inbox - a link back to where you already are is noise.
-    expect(within(nav).queryByRole("link", { name: "Inbox" })).not.toBeInTheDocument();
-  });
-
-  it("hides a gated item from a member without the permission", async () => {
+// Phase 1 (docs/design/INBOX_NAV_SPEC.md): brand, workspace switcher, search, bell,
+// Workspace links, theme toggle and Sign out moved to the top bar; their gating and
+// behaviour are covered in components/shell/TopBar.test.tsx.
+describe("InboxColumn: only the inbox", () => {
+  it("renders no navigation other than the Lines list, for any role", async () => {
     renderColumn({}, AGENT_CAPS);
-
-    const nav = await screen.findByRole("navigation", { name: "Workspace" });
-    // Contacts is held by the agent role, so its presence proves the nav rendered at
-    // all and the Campaigns assertion below is not passing on an empty list.
-    expect(within(nav).getByRole("link", { name: "Contacts" })).toBeInTheDocument();
-    expect(within(nav).queryByRole("link", { name: "Campaigns" })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
-  });
-
-  /**
-   * THE rail contract, in one assertion: the operator asked for brand / Search /
-   * Notifications / Workspace (Contacts, Campaigns, Settings) / Lines, in that order,
-   * "and nothing else". This reads the accessible names off the Workspace nav in DOM
-   * order, so a re-added row fails here rather than being noticed in a screenshot.
-   */
-  it("lists exactly Contacts, Campaigns, Settings under Workspace, in that order", async () => {
-    renderColumn();
-
-    const nav = await screen.findByRole("navigation", { name: "Workspace" });
-    expect(
-      within(nav)
-        .getAllByRole("link")
-        .map((link) => link.getAttribute("aria-label")),
-    ).toEqual(["Contacts", "Campaigns", "Settings"]);
-  });
-
-  /**
-   * The three destinations a previous pass carried here. They are NOT deleted - they moved
-   * into the Settings surface (SettingsPage's section nav) - but the rail must not show
-   * them, and this caller holds every permission each of them is gated on, so their
-   * absence is the placement and not a gate quietly refusing.
-   */
-  it("no longer carries Calls, Setup or Trust & safety anywhere in the rail", async () => {
-    renderColumn({}, {
-      ...FULL_CAPS,
-      // A workspace with work left on the checklist, so Setup WOULD be offered by
-      // useRailNav - otherwise this test could pass because there was nothing to show.
-      org: { ...FULL_CAPS.org, has_number: false },
-    });
-
-    // The nav has rendered before we assert absences.
-    await screen.findByRole("link", { name: "Contacts" });
-    for (const label of ["Calls", "Setup", "Trust & safety", "Inbox"]) {
-      expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
-    }
-  });
-
-  it("useRailNav really would offer Setup for that workspace - the absence above is not vacuous", async () => {
-    // Same capabilities, rendered through the icon Sidebar, which lists the full set.
-    // If this ever stops finding Setup, the test above proves nothing.
-    const { Sidebar } = await import("@/components/shell/Sidebar");
-    const client = makeStubClient({
-      "/api/v1/auth/me": ME,
-      "/api/v1/me/capabilities": {
-        ...FULL_CAPS,
-        org: { ...FULL_CAPS.org, has_number: false },
-      },
-      "/api/v1/notifications": { items: [], unread_count: 0 },
-    });
-    renderWithProviders(<Sidebar />, client);
-
-    expect(await screen.findByRole("link", { name: "Setup" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Calls" })).toBeInTheDocument();
-  });
-
-  /**
-   * The regression the trim could have caused. <Sidebar/> is hidden on /inbox, so if Sign
-   * out came out of this rail with the rest of the icon rail's cargo there would be no way
-   * to sign out on the page users spend all day on. It lives in the cluster beneath the
-   * lines - the "settings access below the phone numbers" - alongside the theme toggle.
-   */
-  it("keeps Sign out and the theme toggle reachable, below the lines", async () => {
-    renderColumn();
-
-    const cluster = await screen.findByRole("group", { name: "Settings and account" });
-    expect(within(cluster).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
-    // ThemeToggle's own accessible name, whichever way round the stored theme is.
-    expect(
-      within(cluster).getByRole("button", {
-        name: /^Switch to the (light|dark) theme$/,
-      }),
-    ).toBeInTheDocument();
-  });
-
-  it("signing out still ends the session rather than merely rendering a button", async () => {
-    const { client } = renderColumn();
-
-    const cluster = await screen.findByRole("group", { name: "Settings and account" });
-    await userEvent.click(within(cluster).getByRole("button", { name: "Sign out" }));
-
-    // AuthContext.logout POSTs to the session endpoint and clears the token. A
-    // decorative button would leave both untouched.
-    expect(client.calls.map((c) => c.path)).toContain("/api/v1/auth/logout");
-    expect(client.auth.token).toBeNull();
-  });
-
-  /**
-   * Trust & safety's gate is `is_platform_operator`, which no settings permission implies.
-   * A platform operator who is only an agent here gets no Settings row, and /settings
-   * bounces such a caller back to /inbox - so without this fallback /ops would have no door
-   * on the inbox at all.
-   */
-  it("gives a platform operator with no settings access a direct Trust & safety row", async () => {
-    renderColumn({}, AGENT_CAPS, { ...ME, is_platform_operator: true });
-
-    const nav = await screen.findByRole("navigation", { name: "Workspace" });
-    expect(within(nav).getByRole("link", { name: "Trust & safety" })).toBeInTheDocument();
-    expect(within(nav).queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
-  });
-
-  it("but an operator who CAN open Settings gets Settings only - never both", async () => {
-    renderColumn({}, FULL_CAPS, { ...ME, is_platform_operator: true });
-
-    const nav = await screen.findByRole("navigation", { name: "Workspace" });
-    expect(within(nav).getByRole("link", { name: "Settings" })).toBeInTheDocument();
-    expect(
-      within(nav).queryByRole("link", { name: "Trust & safety" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows no Trust & safety row to a non-operator, whatever their permissions", async () => {
-    renderColumn({}, AGENT_CAPS);
-
-    await screen.findByRole("navigation", { name: "Workspace" });
-    expect(
-      screen.queryByRole("link", { name: "Trust & safety" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("renders no navigation at all while capabilities are still loading", async () => {
-    renderColumn({}, new Promise<never>(() => undefined));
-
-    const nav = await screen.findByRole("navigation", { name: "Workspace" });
-    expect(nav).toHaveAttribute("aria-busy", "true");
-    expect(within(nav).queryAllByRole("link")).toHaveLength(0);
+    await screen.findByRole("navigation", { name: "Inboxes" });
+    expect(screen.queryByRole("navigation", { name: "Workspace" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Search" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
   });
 });
 
@@ -478,6 +313,46 @@ describe("InboxColumn: the Lines group", () => {
     expect(
       screen.queryByText("You have no inbox access yet — ask an admin"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("InboxColumn: department folds (Phase 1b)", () => {
+  const sales = { id: "d1", name: "Sales" };
+  const dispo = { id: "d2", name: "Dispo" };
+  const grouped = [
+    inbox({ id: "a", name: "Hamza 1", e164: "+14693818973", departments: [sales] }),
+    inbox({ id: "b", name: "Ali 1", e164: "+16824231003", departments: [dispo, sales] }),
+    inbox({ id: "c", name: "Main line", e164: "+14694617576" }),
+  ];
+
+  it("groups by first department alphabetically, with 'Other lines' last", () => {
+    const groups = groupInboxesByDepartment(grouped)!;
+    expect(groups.map((g) => [g.name, g.inboxes.map((i) => i.id)])).toEqual([
+      ["Dispo", ["b"]],
+      ["Sales", ["a"]],
+      ["Other lines", ["c"]],
+    ]);
+  });
+
+  it("returns null (flat list) when no line has a department", () => {
+    expect(groupInboxesByDepartment([inbox({ id: "x" })])).toBeNull();
+  });
+
+  it("folds a department and shows its unread total while folded", async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem("ringlite.inbox.folds");
+    renderColumn({ inboxes: grouped, unread: { a: 2 } });
+
+    const fold = await screen.findByRole("button", { name: /Sales/ });
+    expect(fold).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Hamza 1" })).toBeInTheDocument();
+
+    await user.click(fold);
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Hamza 1" })).toBeNull();
+    expect(screen.getByLabelText("2 unread in Sales")).toBeInTheDocument();
+    // Remembered for next time.
+    expect(JSON.parse(localStorage.getItem("ringlite.inbox.folds") ?? "{}")).toEqual({ d1: true });
   });
 });
 
