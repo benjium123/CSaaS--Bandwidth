@@ -30,6 +30,7 @@ from app.services import agent as agent_svc
 from app.services import audit as audit_svc
 from app.services import flows as flows_svc
 from app.services import provider_accounts as provider_accounts_svc
+from app.services import registration as registration_svc
 from app.services import reputation as reputation_svc
 from app.services import telephony_access, telephony_billing, telnyx_number_association
 from app.voice_plane import trunk_sync
@@ -681,6 +682,8 @@ async def order(
     ).first()
     if existing is not None:
         raise ConflictError(f"{normalized} is already registered")
+    if payload.campaign_id is not None:
+        await registration_svc.ensure_campaign_has_room(ctx.session, payload.campaign_id)
 
     await telephony_access.require_telephony_allowed(ctx.session, ctx.org.id, "number")
     await _bulk_order_step_up(request, ctx)
@@ -824,6 +827,11 @@ async def assign_campaign(
     campaign = await ctx.session.get(Campaign, payload.campaign_id)
     if campaign is None:
         raise NotFoundError("Campaign not found")
+    # Re-assigning a number to the campaign it is already on never uses a new slot.
+    if number.campaign_id != campaign.id:
+        await registration_svc.ensure_campaign_has_room(
+            ctx.session, campaign.id, number_id=number.id
+        )
 
     if _is_telnyx_number(number):
         # Telnyx numbers are associated AT THE CARRIER. The service re-reads the number

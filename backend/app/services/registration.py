@@ -180,3 +180,35 @@ async def numbers_on_campaign(session: AsyncSession, campaign_id: uuid.UUID) -> 
             )
         ).scalar_one()
     )
+
+
+#: Telnyx accepts at most this many numbers on one 10DLC campaign.
+MAX_NUMBERS_PER_CAMPAIGN = 50
+CAMPAIGN_FULL_MESSAGE = (
+    f"This campaign is full ({MAX_NUMBERS_PER_CAMPAIGN} numbers). Attach another campaign."
+)
+
+
+async def ensure_campaign_has_room(
+    session: AsyncSession, campaign_id: uuid.UUID, *, number_id: uuid.UUID | None = None
+) -> None:
+    """Refuse a number joining a campaign that already holds the maximum.
+
+    The campaign row is locked first so two concurrent assignments cannot both see a free
+    slot. ``number_id`` is excluded from the count: a number already on this campaign is
+    not joining it again.
+    """
+    from app.models import OrgNumber
+
+    await session.execute(
+        sa.select(Campaign.id).where(Campaign.id == campaign_id).with_for_update()
+    )
+    query = (
+        sa.select(sa.func.count())
+        .select_from(OrgNumber)
+        .where(OrgNumber.campaign_id == campaign_id)
+    )
+    if number_id is not None:
+        query = query.where(OrgNumber.id != number_id)
+    if int((await session.execute(query)).scalar_one()) >= MAX_NUMBERS_PER_CAMPAIGN:
+        raise ConflictError(CAMPAIGN_FULL_MESSAGE, code="campaign_full")
