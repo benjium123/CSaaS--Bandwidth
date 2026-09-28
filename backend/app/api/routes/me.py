@@ -341,6 +341,8 @@ async def set_my_inbox_order(
 class CallPrefsIn(BaseModel):
     dnd: bool
     forward_to: uuid.UUID | None = None
+    #: When DND switches itself off; omitted = until turned off.
+    dnd_until: datetime | None = None
 
 
 @router.get("/call-prefs")
@@ -367,7 +369,11 @@ async def set_my_call_prefs(
     if ctx.membership is None:
         raise ValidationFailedError("Only workspace members have calling preferences")
     prefs = await call_prefs.set_prefs(
-        ctx.session, ctx.membership, dnd=payload.dnd, forward_to=payload.forward_to
+        ctx.session,
+        ctx.membership,
+        dnd=payload.dnd,
+        forward_to=payload.forward_to,
+        dnd_until=payload.dnd_until,
     )
     await ctx.session.commit()
     return prefs

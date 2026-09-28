@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 import structlog
@@ -28,9 +29,29 @@ _CACHE_TTL_SECONDS = 5.0
 _cache: dict[uuid.UUID, tuple[float, dict[str, str | None]]] = {}
 
 
-def _clean(prefs: dict | None) -> dict:
+def _parse_until(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        until = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return until if until.tzinfo else until.replace(tzinfo=timezone.utc)
+
+
+def _clean(prefs: dict | None, now: datetime | None = None) -> dict:
+    """DND with an end time (``dnd_until``) switches itself off once that time passes;
+    no end time means until the member turns it off."""
     prefs = prefs or {}
-    return {"dnd": bool(prefs.get("dnd")), "forward_to": prefs.get("forward_to") or None}
+    until = _parse_until(prefs.get("dnd_until"))
+    dnd = bool(prefs.get("dnd"))
+    if dnd and until is not None and (now or datetime.now(timezone.utc)) >= until:
+        dnd = False
+    return {
+        "dnd": dnd,
+        "dnd_until": until.isoformat() if dnd and until is not None else None,
+        "forward_to": prefs.get("forward_to") or None,
+    }
 
 
 async def dnd_users(session: AsyncSession, org_id: uuid.UUID) -> dict[str, str | None]:
@@ -118,8 +139,14 @@ async def set_prefs(
     *,
     dnd: bool,
     forward_to: uuid.UUID | None,
+    dnd_until: datetime | None = None,
 ) -> dict:
     """Validate and store. Does not commit."""
+    if dnd_until is not None:
+        if dnd_until.tzinfo is None:
+            dnd_until = dnd_until.replace(tzinfo=timezone.utc)
+        if dnd_until <= datetime.now(timezone.utc):
+            raise ValidationFailedError("Do not disturb must end in the future")
     if forward_to is not None:
         if forward_to == membership.user_id:
             raise ValidationFailedError("You cannot forward calls to yourself")
@@ -129,7 +156,11 @@ async def set_prefs(
         }
         if str(forward_to) not in allowed:
             raise ValidationFailedError("Calls can only be forwarded to a teammate who takes calls")
-    prefs = {"dnd": bool(dnd), "forward_to": str(forward_to) if forward_to else None}
+    prefs = {
+        "dnd": bool(dnd),
+        "dnd_until": dnd_until.isoformat() if dnd and dnd_until is not None else None,
+        "forward_to": str(forward_to) if forward_to else None,
+    }
     membership.call_prefs = prefs
     _cache.pop(membership.org_id, None)
-    return prefs
+    return _clean(prefs)
