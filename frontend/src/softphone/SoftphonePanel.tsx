@@ -80,6 +80,8 @@ function formatElapsed(totalSeconds: number): string {
 }
 
 const RINGTONE_MUTE_KEY = "csaas.softphone.ringtoneMuted";
+/** Must match RINGTONE_MUTED_EVENT in pages/NotificationsSoundPage.tsx. */
+const RINGTONE_MUTED_EVENT = "csaas:ringtone-muted";
 
 /** A subtle repeating two-tone ring, no audio asset. Silently no-ops where AudioContext
  * isn't available (jsdom in tests, locked-down browsers).
@@ -290,6 +292,26 @@ export function SoftphonePanel() {
   const isEmergencyDial = (value: string) => ["911", "933"].includes(value.replace(/\s/g, ""));
 
   useRingTone(softphone.incoming.length > 0, ringtoneMuted);
+
+  // Pick up a mute change made on the Notifications & sound page without a reload: the
+  // custom event covers this tab, the storage event covers other tabs. Muting flips the
+  // state useRingTone watches, whose cleanup stops a ring that is already playing.
+  React.useEffect(() => {
+    function onCustom(e: Event) {
+      const detail = (e as CustomEvent<{ muted?: unknown }>).detail;
+      if (typeof detail?.muted === "boolean") setRingtoneMuted(detail.muted);
+    }
+    function onStorage(e: StorageEvent) {
+      if (e.key !== RINGTONE_MUTE_KEY) return;
+      setRingtoneMuted(e.newValue === "true");
+    }
+    window.addEventListener(RINGTONE_MUTED_EVENT, onCustom);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(RINGTONE_MUTED_EVENT, onCustom);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
 
   function toggleRingtoneMuted() {
     setRingtoneMuted((prev) => {
