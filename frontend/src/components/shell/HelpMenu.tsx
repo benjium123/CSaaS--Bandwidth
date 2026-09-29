@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { getErrorMessage } from "@/api/contacts";
 import { useAuth } from "@/auth/AuthContext";
 import { Button, Input, Textarea } from "@/components/ui/primitives";
+import { openSupportChat } from "./ConsoleSupportChat";
 
 /** Support/help links exposed by the backend (routes/support.py). Any field may be null. */
 export interface SupportContacts {
@@ -119,6 +120,20 @@ export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement
           aria-label="Help"
           className={`absolute ${PLACEMENT_CLASS[placement]} z-50 max-h-[calc(100vh-5rem)] w-64 overflow-y-auto rounded-md border border-border bg-background p-1 text-foreground shadow-lg`}
         >
+          {/* First, and the only item here that does not leave the console: it opens the
+              assistant in place rather than mailing or phoning anyone. */}
+          <button
+            type="button"
+            role="menuitem"
+            className={MENU_ITEM}
+            onClick={() => {
+              close();
+              openSupportChat();
+            }}
+          >
+            Chat with us
+          </button>
+
           <button type="button" role="menuitem" className={MENU_ITEM} onClick={openContact}>
             Contact support
           </button>

@@ -1,0 +1,12 @@
+/*
+ * The console's copy of the marketing chat.
+ *
+ * site.base.css is safe to pull in here: every selector in it is `.ms-*` or `.rl-*` prefixed, so
+ * nothing in it can reach the console's own classes. The chat's colours already read from those
+ * `--rl-*` custom properties, so the block below is the whole of the console re-theming - it
+ * points them at the console palette, which the `.console-surface` wrapper on ConsoleSupportChat
+ * supplies.
+ */
+@import "@/marketing/site.base.css";
+
+.rl-console-chat{--rl-bg:hsl(var(--cx-base));--rl-surface:hsl(var(--cx-surface));--rl-ink:hsl(var(--cx-text));--rl-soft:hsl(var(--cx-subtle));--rl-line:hsl(var(--cx-line));--rl-blue:hsl(var(--cx-accent));--rl-action:hsl(var(--cx-accent-2));--rl-live:hsl(var(--cx-live));color:var(--rl-ink)}

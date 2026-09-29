@@ -28,6 +28,7 @@ import { BannerRegion } from "@/components/shell/BannerSlot";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 import { DesktopAlerts } from "@/components/shell/DesktopAlerts";
+import { ConsoleSupportChat } from "@/components/shell/ConsoleSupportChat";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { LowBalanceBanner } from "@/components/billing/LowBalanceBanner";
 import { VerificationBanner } from "@/components/kyc/VerificationBanner";
@@ -176,6 +177,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <SoftphonePanel />
       {/* Inert in a browser: only the Ringlite desktop app exposes window.ringliteDesktop. */}
       <DesktopAlerts />
+      {/* The Help menu's "Chat with us" opens this; it stays inert until it is asked for. */}
+      <ConsoleSupportChat />
       <StepUpDialog />
     </SoftphoneProvider>
   );

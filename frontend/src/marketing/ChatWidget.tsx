@@ -4,6 +4,11 @@
  * Answers questions from the shared FAQ list first, falls back to the backend assistant, and can
  * hand the conversation to the team (leaving a form, then polling the live chat for replies).
  * All styling lives in the `ms-chat-*` classes in `marketing/site.css`.
+ *
+ * The console's Help menu renders the SAME widget with `variant="console"`: there is no launcher
+ * and no teaser, the caller owns the open state, and a signed-in customer hands off with the
+ * identity we already hold instead of being asked for it a second time. With no props at all the
+ * component behaves exactly as it always has on the marketing site.
  */
 import * as React from "react";
 import { useLocation } from "react-router-dom";
@@ -30,6 +35,17 @@ interface HandoffResponse {
   chat_id: string;
   token: string;
   staffed: boolean;
+}
+
+/** The POST body the handoff endpoint takes; both the form and the console path build one. */
+interface HandoffBody {
+  name: string;
+  email: string;
+  phone: string | null;
+  sms_consent: boolean;
+  reason: string;
+  page: string;
+  transcript: { role: "visitor" | "assistant"; text: string }[];
 }
 
 interface LiveMessage {
@@ -63,6 +79,14 @@ function nextId(): string {
   return `rl-chat-${sequence}`;
 }
 
+/** The last forty visitor/assistant turns, in the shape the handoff endpoint expects. */
+function transcriptOf(messages: ChatMessage[]): { role: "visitor" | "assistant"; text: string }[] {
+  return messages
+    .filter(message => message.role === "visitor" || message.role === "assistant")
+    .slice(-40)
+    .map(message => ({ role: message.role as "visitor" | "assistant", text: message.text.slice(0, 1000) }));
+}
+
 function readSession(key: string): string | null {
   try {
     return window.sessionStorage.getItem(key);
@@ -87,7 +111,24 @@ function clearSession(key: string): void {
   }
 }
 
-export function ChatWidget() {
+export interface ChatWidgetProps {
+  /** "site" keeps the marketing launcher and teaser; "console" is driven entirely by the caller. */
+  variant?: "site" | "console";
+  /** Console only: whether the panel is showing. */
+  open?: boolean;
+  /** Console only: called whenever the widget wants to open or close (close button, Escape). */
+  onOpenChange?: (open: boolean) => void;
+  /** Console only: the signed-in customer; `context` is their workspace name. */
+  identity?: { name: string; email: string; context?: string };
+}
+
+export function ChatWidget({
+  variant = "site",
+  open: controlledOpen,
+  onOpenChange,
+  identity,
+}: ChatWidgetProps = {}) {
+  const isConsole = variant === "console";
   const { api } = useAuth();
   const location = useLocation();
 
@@ -101,7 +142,8 @@ export function ChatWidget() {
   const lastAtRef = React.useRef("");
   const apiRef = React.useRef(api);
 
-  const [open, setOpen] = React.useState(false);
+  // The console's caller owns `open`; the marketing site keeps its own state.
+  const [siteOpen, setSiteOpen] = React.useState(false);
   const [teaser, setTeaser] = React.useState(false);
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   const [chips, setChips] = React.useState<string[]>(CHIPS);
@@ -118,6 +160,27 @@ export function ChatWidget() {
   const [formError, setFormError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
 
+  const open = isConsole ? Boolean(controlledOpen) : siteOpen;
+  // A site visitor's live chat and a signed-in customer's live chat are two different
+  // conversations; they must never resume each other's transcript.
+  const liveKey = isConsole ? `${LIVE_KEY}:console` : LIVE_KEY;
+
+  /** Every open/close goes through here, so the console caller always hears about it. */
+  const setOpen = React.useCallback(
+    (next: boolean) => {
+      if (isConsole) {
+        onOpenChange?.(next);
+        return;
+      }
+      setSiteOpen(next);
+    },
+    [isConsole, onOpenChange],
+  );
+
+  const identityReady = Boolean(
+    identity && identity.name.trim().length > 0 && EMAIL.test(identity.email.trim()),
+  );
+
   React.useEffect(() => {
     apiRef.current = api;
   }, [api]);
@@ -126,14 +189,69 @@ export function ChatWidget() {
     setMessages(prev => [...prev, { id: nextId(), role, text, at }]);
   }, []);
 
+  /**
+   * The POST and everything that follows it, shared by the form and the console handoff so
+   * the two cannot drift apart. Returns whether the conversation went live.
+   */
+  const startHandoff = React.useCallback(async (body: HandoffBody): Promise<boolean> => {
+    try {
+      const res = await api.request<HandoffResponse>("/api/v1/public/site-chat/handoff", {
+        method: "POST",
+        json: body,
+      });
+      writeSession(liveKey, JSON.stringify({ chatId: res.chat_id, token: res.token }));
+      lastAtRef.current = "";
+      setAgentName(null);
+      setChatId(res.chat_id);
+      setToken(res.token);
+      setMode("live");
+      push(
+        "system",
+        res.staffed
+          ? "Connecting you to the team…"
+          : "We're offline right now. We'll reply by email, usually within one business day.",
+      );
+      return true;
+    } catch {
+      setFormError("We couldn't send that just now. Please try again in a moment.");
+      return false;
+    }
+  }, [api, liveKey, push]);
+
   const openForm = React.useCallback((reason: string) => {
     reasonRef.current = reason;
     setChips([]);
-    setMode("form");
-  }, []);
 
-  // Teaser bubble: once per session, eight seconds after the page settles.
+    if (isConsole && identityReady && identity) {
+      // The customer is signed in: we already know who they are, so the form would be a
+      // stutter. Hand the chat over straight away.
+      const trimmedName = identity.name.trim();
+      const trimmedEmail = identity.email.trim();
+      const context = identity.context ?? "";
+      const body: HandoffBody = {
+        name: trimmedName,
+        email: trimmedEmail,
+        phone: null,
+        sms_consent: false,
+        reason: "customer",
+        page: `[customer] ${context} ${location.pathname}`.trim().slice(0, 200),
+        transcript: transcriptOf(messages),
+      };
+      void startHandoff(body).then(ok => {
+        // The console has no visible form error line, so a handoff that could not be sent
+        // falls back to the form rather than looking like nothing happened.
+        if (!ok) setMode("form");
+      });
+      return;
+    }
+
+    setMode("form");
+  }, [identity, identityReady, isConsole, location.pathname, messages, startHandoff]);
+
+  // Teaser bubble: once per session, eight seconds after the page settles. The console has no
+  // teaser at all, so it never schedules one.
   React.useEffect(() => {
+    if (isConsole) return;
     if (open || teaser) return;
     if (readSession(TEASER_KEY)) return;
     const timer = window.setTimeout(() => {
@@ -141,7 +259,7 @@ export function ChatWidget() {
       setTeaser(true);
     }, TEASER_DELAY);
     return () => window.clearTimeout(timer);
-  }, [open, teaser]);
+  }, [isConsole, open, teaser]);
 
   // Greeting on first open, while we are still just the assistant.
   React.useEffect(() => {
@@ -170,7 +288,7 @@ export function ChatWidget() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, setOpen]);
 
   React.useEffect(() => {
     const log = logRef.current;
@@ -178,9 +296,9 @@ export function ChatWidget() {
     log.scrollTop = log.scrollHeight;
   }, [messages, typing, mode, open]);
 
-  // Resume a live conversation the visitor already started in this session.
+  // Resume a live conversation this session already started.
   React.useEffect(() => {
-    const stored = readSession(LIVE_KEY);
+    const stored = readSession(liveKey);
     if (!stored) return;
     try {
       const parsed: unknown = JSON.parse(stored);
@@ -191,9 +309,9 @@ export function ChatWidget() {
       setToken(value.token);
       setMode("live");
     } catch {
-      clearSession(LIVE_KEY);
+      clearSession(liveKey);
     }
-  }, []);
+  }, [liveKey]);
 
   // Live polling: only while the tab is visible, every four seconds.
   React.useEffect(() => {
@@ -226,7 +344,7 @@ export function ChatWidget() {
         }
         if (res.status === "closed") {
           stopped = true;
-          clearSession(LIVE_KEY);
+          clearSession(liveKey);
           lastAtRef.current = "";
           setAgentName(null);
           setChatId(null);
@@ -250,7 +368,7 @@ export function ChatWidget() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [mode, chatId, token, push]);
+  }, [mode, chatId, token, liveKey, push]);
 
   const send = async (raw: string) => {
     const text = raw.trim();
@@ -345,35 +463,15 @@ export function ChatWidget() {
     setFormError(null);
     setSubmitting(true);
     try {
-      const res = await api.request<HandoffResponse>("/api/v1/public/site-chat/handoff", {
-        method: "POST",
-        json: {
-          name: trimmedName,
-          email: trimmedEmail,
-          phone: phone.trim() || null,
-          sms_consent: smsConsent,
-          page: location.pathname,
-          reason: reasonRef.current,
-          transcript: messages
-            .filter(message => message.role === "visitor" || message.role === "assistant")
-            .slice(-40)
-            .map(message => ({ role: message.role as "visitor" | "assistant", text: message.text.slice(0, 1000) })),
-        },
+      await startHandoff({
+        name: trimmedName,
+        email: trimmedEmail,
+        phone: phone.trim() || null,
+        sms_consent: smsConsent,
+        page: location.pathname,
+        reason: reasonRef.current,
+        transcript: transcriptOf(messages),
       });
-      writeSession(LIVE_KEY, JSON.stringify({ chatId: res.chat_id, token: res.token }));
-      lastAtRef.current = "";
-      setAgentName(null);
-      setChatId(res.chat_id);
-      setToken(res.token);
-      setMode("live");
-      push(
-        "system",
-        res.staffed
-          ? "Connecting you to the team…"
-          : "We're offline right now. We'll reply by email, usually within one business day.",
-      );
-    } catch {
-      setFormError("We couldn't send that just now. Please try again in a moment.");
     } finally {
       setSubmitting(false);
     }
@@ -382,7 +480,7 @@ export function ChatWidget() {
   const toggleOpen = () => {
     setTeaser(false);
     writeSession(TEASER_KEY, "1");
-    setOpen(current => !current);
+    setOpen(!open);
   };
 
   const dismissTeaser = () => {
@@ -417,30 +515,32 @@ export function ChatWidget() {
 
   return (
     <>
-      {teaser && !open && (
+      {!isConsole && teaser && !open && (
         <div className="ms-chat-teaser">
           <button type="button" className="ms-chat-teaser-open" onClick={toggleOpen}>{TEASER_TEXT}</button>
           <button type="button" className="ms-chat-teaser-close" onClick={dismissTeaser} aria-label="Dismiss chat message"><X size={13} /></button>
         </div>
       )}
 
-      <button
-        ref={launcherRef}
-        type="button"
-        className="ms-chat-launch"
-        aria-label={open ? "Close chat" : "Open chat"}
-        aria-expanded={open}
-        aria-controls={open ? PANEL_ID : undefined}
-        onClick={toggleOpen}
-      >
-        {open ? <X size={20} /> : <MessageCircle size={20} />}
-      </button>
+      {!isConsole && (
+        <button
+          ref={launcherRef}
+          type="button"
+          className="ms-chat-launch"
+          aria-label={open ? "Close chat" : "Open chat"}
+          aria-expanded={open}
+          aria-controls={open ? PANEL_ID : undefined}
+          onClick={toggleOpen}
+        >
+          {open ? <X size={20} /> : <MessageCircle size={20} />}
+        </button>
+      )}
 
       {open && (
         <div className="ms-chat-panel" id={PANEL_ID} role="dialog" aria-label="Ringlite assistant">
           <div className="ms-chat-head">
             <span className="rl-mark" aria-hidden="true"><span /><span /><span /></span>
-            <span className="ms-chat-head-text"><strong>Ringlite</strong><small>{status}</small></span>
+            <span className="ms-chat-head-text"><strong>{isConsole ? "Ringlite support" : "Ringlite"}</strong><small>{status}</small></span>
             <button type="button" className="ms-chat-close" onClick={() => setOpen(false)} aria-label="Close chat"><X size={16} /></button>
           </div>
 

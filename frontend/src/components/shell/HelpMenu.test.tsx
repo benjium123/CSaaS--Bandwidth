@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -134,6 +134,29 @@ describe("HelpMenu", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("menu", { name: "Help" })).toBeNull());
   });
+
+  it("asks the console to open the support chat from the first item, and closes the menu", async () => {
+    const client = stub(FULL);
+    renderWithProviders(<HelpMenu />, client);
+    const user = userEvent.setup();
+    const dispatch = vi.spyOn(window, "dispatchEvent");
+
+    await openMenu(user);
+
+    const items = screen.getAllByRole("menuitem");
+    expect(items[0].textContent).toBe("Chat with us");
+
+    await user.click(items[0]);
+
+    const forwarded = dispatch.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event instanceof Event && event.type === "ringlite:open-support-chat");
+    expect(forwarded).toHaveLength(1);
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "Help" })).toBeNull());
+
+    dispatch.mockRestore();
+  });
+
   it("opens downward and right-aligned in the top bar, with readable text", async () => {
     renderWithProviders(<HelpMenu placement="topbar" />, stub(FULL));
     const menu = await openMenu(userEvent.setup());
