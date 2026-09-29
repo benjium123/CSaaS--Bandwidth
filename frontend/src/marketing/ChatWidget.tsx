@@ -195,10 +195,17 @@ export function ChatWidget({
    */
   const startHandoff = React.useCallback(async (body: HandoffBody): Promise<boolean> => {
     try {
-      const res = await api.request<HandoffResponse>("/api/v1/public/site-chat/handoff", {
-        method: "POST",
-        json: body,
-      });
+      // A signed-in customer goes through the authenticated endpoint: the server takes the
+      // name, email and workspace from the session, so operators can trust who is asking.
+      const res = isConsole
+        ? await api.request<HandoffResponse>("/api/v1/support/chat", {
+            method: "POST",
+            json: { page: body.page, transcript: body.transcript },
+          })
+        : await api.request<HandoffResponse>("/api/v1/public/site-chat/handoff", {
+            method: "POST",
+            json: body,
+          });
       writeSession(liveKey, JSON.stringify({ chatId: res.chat_id, token: res.token }));
       lastAtRef.current = "";
       setAgentName(null);
@@ -216,7 +223,7 @@ export function ChatWidget({
       setFormError("We couldn't send that just now. Please try again in a moment.");
       return false;
     }
-  }, [api, liveKey, push]);
+  }, [api, isConsole, liveKey, push]);
 
   const openForm = React.useCallback((reason: string) => {
     reasonRef.current = reason;

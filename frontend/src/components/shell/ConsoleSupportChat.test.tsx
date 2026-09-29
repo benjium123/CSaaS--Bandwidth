@@ -32,7 +32,7 @@ const ME = {
 
 function stubClient(extra: Record<string, unknown> = {}) {
   return makeStubClient({
-    "/api/v1/public/site-chat/handoff": { chat_id: "chat-1", token: "tok-1", staffed: true },
+    "/api/v1/support/chat": { chat_id: "chat-1", token: "tok-1", staffed: true },
     ...extra,
   });
 }
@@ -78,22 +78,18 @@ describe("ConsoleSupportChat", () => {
     await user.type(within(dialog).getByLabelText("Message"), "I want to talk to a human{Enter}");
 
     await waitFor(() => {
-      expect(client.calls.some((call) => call.path === "/api/v1/public/site-chat/handoff")).toBe(true);
+      expect(client.calls.some((call) => call.path === "/api/v1/support/chat")).toBe(true);
     });
 
     // The form the site shows is skipped entirely for a customer.
     expect(screen.queryByLabelText("Name")).toBeNull();
 
-    const call = client.calls.find((entry) => entry.path === "/api/v1/public/site-chat/handoff");
+    // Signed-in customers use the authenticated endpoint; identity comes from the session.
+    expect(client.calls.some((entry) => entry.path === "/api/v1/public/site-chat/handoff")).toBe(false);
+    const call = client.calls.find((entry) => entry.path === "/api/v1/support/chat");
     expect(call?.init.method).toBe("POST");
     const body = call?.init.json as Record<string, unknown>;
-    expect(body).toMatchObject({
-      name: "Dana Diaz",
-      email: "dana@acme.test",
-      phone: null,
-      sms_consent: false,
-      reason: "customer",
-    });
+    expect(Object.keys(body).sort()).toEqual(["page", "transcript"]);
     expect(String(body.page).startsWith("[customer] Acme")).toBe(true);
     expect(String(body.page).length).toBeLessThanOrEqual(200);
     expect(await screen.findByText("Connecting you to the team…")).toBeTruthy();

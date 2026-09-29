@@ -67,6 +67,15 @@ class SiteChat(Base, TimestampMixin):
     last_message_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True, index=True
     )
+    #: 0095: set when a signed-in customer started the chat from the console (NULL for an
+    #: anonymous website visitor). Taken from the authenticated session, never the client.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True, index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    #: The operator who owns the chat; NULL = every operator is alerted.
+    assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True, index=True)
+    #: Last time an operator opened the chat; unread = last_visitor_at is newer.
+    agent_read_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    last_visitor_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
 
 class SiteChatMessage(Base):

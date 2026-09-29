@@ -317,6 +317,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(monitoring_routes.public_router)
     app.include_router(site_routes.public_router)
     app.include_router(site_routes.ops_router)
+    app.include_router(site_routes.customer_router)
     app.include_router(monitoring_routes.ops_router)
     app.include_router(number_routes.router)
     app.include_router(telephony_routes.router)

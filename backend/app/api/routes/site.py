@@ -5,6 +5,7 @@
   GET  /api/v1/public/site-chat/{id}/messages       the visitor polls for replies (token required)
   POST /api/v1/public/site-chat/{id}/messages       the visitor writes after the handoff
   POST /api/v1/public/sales-leads                   the "Talk to sales" form
+  POST /api/v1/support/chat                         a signed-in customer hands the chat to the team
   /api/v1/ops/site/...                              operators read leads and answer chats
 
 Everything public is unauthenticated, so: every route is rate-limited per IP, every field is
@@ -30,10 +31,18 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import OperatorContext, get_settings, require_operator_permission
+from app.auth.deps import (
+    OperatorContext,
+    OrgContext,
+    get_current_org,
+    get_current_user,
+    get_settings,
+    require_operator_permission,
+)
 from app.config import Settings
 from app.db.session import get_session
 from app.errors import ConflictError, NotFoundError, ValidationFailedError
+from app.models import User
 from app.models.security import SecurityAlert
 from app.models.site import SiteChat, SiteChatMessage, SiteLead
 from app.rate_limit import enforce_rate_limit
@@ -43,6 +52,8 @@ log = structlog.get_logger()
 
 public_router = APIRouter(prefix="/api/v1/public", tags=["site"])
 ops_router = APIRouter(prefix="/api/v1/ops/site", tags=["ops-site"])
+#: Signed-in customers (0095): the console's "Chat with us" handoff.
+customer_router = APIRouter(prefix="/api/v1/support", tags=["support-chat"])
 Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))]
 Site = Annotated[OperatorContext, Depends(require_operator_permission("ops:site"))]
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -179,28 +190,43 @@ class HandoffIn(BaseModel):
     transcript: list[Turn] = Field(default_factory=list, max_length=200)
 
 
-@public_router.post("/site-chat/handoff", status_code=201)
-async def site_chat_handoff(payload: HandoffIn, request: Request, session: Session) -> dict:
-    ip = _ip(request)
-    await enforce_rate_limit(request, f"site-chat-handoff:{ip}")
+async def _create_chat(
+    session: AsyncSession,
+    request: Request,
+    *,
+    name: str,
+    email: str,
+    phone: str | None,
+    sms_consent: bool,
+    reason: str | None,
+    page: str | None,
+    transcript: list[Turn],
+    org_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
+) -> dict:
+    """Creates a handed-off chat (visitor or signed-in customer) and alerts the operators."""
     token = secrets.token_urlsafe(32)
     now = _now()
     chat = SiteChat(
         id=uuid.uuid4(),
         token_hash=_hash(token),
         status="waiting",
-        name=payload.name.strip(),
-        email=payload.email.strip().lower(),
-        phone=(payload.phone or "").strip() or None,
-        sms_consent=payload.sms_consent and bool((payload.phone or "").strip()),
-        reason=payload.reason,
-        page=payload.page,
-        ip=ip,
+        name=name.strip(),
+        email=email.strip().lower(),
+        phone=(phone or "").strip() or None,
+        sms_consent=sms_consent and bool((phone or "").strip()),
+        reason=reason,
+        page=page,
+        ip=_ip(request),
         last_message_at=now,
+        last_visitor_at=now,
+        org_id=org_id,
+        user_id=user_id,
     )
     session.add(chat)
-    for turn in payload.transcript[-MAX_TRANSCRIPT:]:
+    for turn in transcript[-MAX_TRANSCRIPT:]:
         session.add(SiteChatMessage(id=uuid.uuid4(), chat_id=chat.id, role=turn.role, text=turn.text, created_at=now))
+    who = "A customer" if org_id else "A website visitor"
     session.add(
         SecurityAlert(
             id=uuid.uuid4(),
@@ -209,13 +235,119 @@ async def site_chat_handoff(payload: HandoffIn, request: Request, session: Sessi
                 "chat_id": str(chat.id),
                 "reason": chat.reason,
                 "page": chat.page,
-                "action": "A website visitor asked for a person. Answer in Ops -> Website.",
+                "action": f"{who} asked for a person. Answer in Ops -> Website.",
             },
         )
     )
     await session.commit()
-    log.info("site_chat.handoff", chat_id=str(chat.id), reason=chat.reason)
+    log.info("site_chat.handoff", chat_id=str(chat.id), reason=chat.reason, customer=org_id is not None)
+    _alert_operators(request, chat, title=f"New chat: {chat.name}", body=_last_visitor_text(transcript))
     return {"chat_id": str(chat.id), "token": token, "staffed": staffed_now(now)}
+
+
+def _last_visitor_text(transcript: list[Turn]) -> str:
+    for turn in reversed(transcript):
+        if turn.role == "visitor" and turn.text.strip():
+            return turn.text.strip()[:200]
+    return "Asked to talk to a person"
+
+
+def _alert_operators(request: Request, chat: SiteChat, *, title: str, body: str) -> None:
+    """Best-effort phone push to whoever should answer: the assignee, else every active
+    operator allowed to answer chats. Never fails the request that triggered it."""
+    from app.services import device_push, fcm
+
+    try:
+        settings = request.app.state.settings
+        if not fcm.enabled(settings):
+            return
+        device_push.schedule(
+            settings, _push_operators(settings, chat.id, chat.assigned_user_id, title, body)
+        )
+    except Exception:
+        log.warning("site_chat.alert_failed", exc_info=True)
+
+
+async def _push_operators(
+    settings: Settings, chat_id: uuid.UUID, assignee: uuid.UUID | None, title: str, body: str
+) -> None:
+    from app.db.session import get_sessionmaker
+    from app.models.security import PlatformOperator
+    from app.services import device_push
+    from app.services import operators as operators_svc
+
+    if assignee is not None:
+        user_ids = [assignee]
+    else:
+        now = _now()
+        async with get_sessionmaker()() as session:
+            rows = (
+                await session.execute(
+                    sa.select(PlatformOperator.user_id, PlatformOperator.role).where(
+                        PlatformOperator.is_active.is_(True),
+                        sa.or_(PlatformOperator.expires_at.is_(None), PlatformOperator.expires_at > now),
+                    )
+                )
+            ).all()
+        user_ids = [uid for uid, role in rows if operators_svc.has_permission(role, "ops:site")]
+    if not user_ids:
+        return
+    await device_push.push_to_users(
+        settings,
+        user_ids,
+        "support_chat",
+        {"chat_id": str(chat_id)},
+        title=title[:120],
+        body=body[:200],
+        collapse_key=f"support-chat-{chat_id}",
+    )
+
+
+@public_router.post("/site-chat/handoff", status_code=201)
+async def site_chat_handoff(payload: HandoffIn, request: Request, session: Session) -> dict:
+    ip = _ip(request)
+    await enforce_rate_limit(request, f"site-chat-handoff:{ip}")
+    return await _create_chat(
+        session,
+        request,
+        name=payload.name,
+        email=payload.email,
+        phone=payload.phone,
+        sms_consent=payload.sms_consent,
+        reason=payload.reason,
+        page=payload.page,
+        transcript=payload.transcript,
+    )
+
+
+class CustomerHandoffIn(BaseModel):
+    page: str | None = Field(default=None, max_length=200)
+    transcript: list[Turn] = Field(default_factory=list, max_length=200)
+
+
+@customer_router.post("/chat", status_code=201)
+async def support_chat_handoff(
+    payload: CustomerHandoffIn,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """A signed-in customer asks for a person. Identity and workspace come from the session,
+    never from the client, so operators can trust who they are talking to."""
+    await enforce_rate_limit(request, f"support-chat-handoff:{user.id}")
+    return await _create_chat(
+        ctx.session,
+        request,
+        name=(user.full_name or user.email.split("@")[0])[:120],
+        email=user.email,
+        phone=None,
+        sms_consent=False,
+        reason="customer",
+        page=payload.page,
+        transcript=payload.transcript,
+        org_id=ctx.org.id,
+        user_id=user.id,
+    )
 
 
 async def _chat_for_visitor(session: AsyncSession, chat_id: uuid.UUID, token: str) -> SiteChat:
@@ -269,7 +401,9 @@ async def site_chat_visitor_message(
     msg = SiteChatMessage(id=uuid.uuid4(), chat_id=chat.id, role="visitor", text=payload.text, created_at=now)
     session.add(msg)
     chat.last_message_at = now
+    chat.last_visitor_at = now
     await session.commit()
+    _alert_operators(request, chat, title=f"{chat.name} wrote", body=payload.text[:200])
     return {"id": str(msg.id), "at": now.isoformat()}
 
 
@@ -342,17 +476,39 @@ def _chat_summary(chat: SiteChat, last: str | None) -> dict:
         "created_at": chat.created_at.isoformat(),
         "last_message_at": chat.last_message_at.isoformat() if chat.last_message_at else None,
         "last_message": last,
+        "kind": "customer" if chat.org_id else "visitor",
+        "org_id": str(chat.org_id) if chat.org_id else None,
+        "assigned_user_id": str(chat.assigned_user_id) if chat.assigned_user_id else None,
+        "unread": _is_unread(chat),
     }
+
+
+def _is_unread(chat: SiteChat) -> bool:
+    """The customer wrote after an operator last opened the chat (closed chats never count)."""
+    if chat.status == "closed" or chat.last_visitor_at is None:
+        return False
+    return chat.agent_read_at is None or chat.last_visitor_at > chat.agent_read_at
 
 
 @ops_router.get("/chats")
 async def ops_list_chats(
-    op: Reader, status: Annotated[str | None, Query(max_length=16)] = None
+    op: Reader,
+    status: Annotated[str | None, Query(max_length=16)] = None,
+    kind: Annotated[Literal["customer", "visitor"] | None, Query()] = None,
+    mine: bool = False,
 ) -> dict:
     session = op.session
     stmt = sa.select(SiteChat).order_by(SiteChat.last_message_at.desc().nullslast()).limit(200)
-    if status:
+    if status == "open":
+        stmt = stmt.where(SiteChat.status != "closed")
+    elif status:
         stmt = stmt.where(SiteChat.status == status)
+    if kind == "customer":
+        stmt = stmt.where(SiteChat.org_id.is_not(None))
+    elif kind == "visitor":
+        stmt = stmt.where(SiteChat.org_id.is_(None))
+    if mine:
+        stmt = stmt.where(SiteChat.assigned_user_id == op.user.id)
     chats = (await session.execute(stmt)).scalars().all()
     out = []
     for chat in chats:
@@ -365,7 +521,69 @@ async def ops_list_chats(
             )
         ).scalar_one_or_none()
         out.append(_chat_summary(chat, last))
+    names = await _org_names(session, {c.org_id for c in chats if c.org_id})
+    assignees = await _user_names(session, {c.assigned_user_id for c in chats if c.assigned_user_id})
+    for item in out:
+        item["org_name"] = names.get(item["org_id"]) if item["org_id"] else None
+        item["assigned_name"] = assignees.get(item["assigned_user_id"]) if item["assigned_user_id"] else None
     return {"chats": out, "staffed": staffed_now()}
+
+
+async def _org_names(session: AsyncSession, ids: set) -> dict[str, str]:
+    from app.models.org import Org
+
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(
+            sa.select(Org.id, Org.name).where(Org.id.in_(ids)).execution_options(allow_unscoped=True)
+        )
+    ).all()
+    return {str(i): n for i, n in rows}
+
+
+async def _user_names(session: AsyncSession, ids: set) -> dict[str, str]:
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(
+            sa.select(User.id, User.full_name, User.email)
+            .where(User.id.in_(ids))
+            .execution_options(allow_unscoped=True)
+        )
+    ).all()
+    return {str(i): (n or e) for i, n, e in rows}
+
+
+@ops_router.get("/chats/unread")
+async def ops_unread_chats(op: Reader) -> dict:
+    """Open chats with a customer message the operator has not seen, limited to chats that are
+    unassigned or assigned to the caller (what the console alerts on)."""
+    rows = (
+        await op.session.execute(
+            sa.select(SiteChat)
+            .where(
+                SiteChat.status != "closed",
+                SiteChat.last_visitor_at.is_not(None),
+                sa.or_(SiteChat.agent_read_at.is_(None), SiteChat.last_visitor_at > SiteChat.agent_read_at),
+                sa.or_(SiteChat.assigned_user_id.is_(None), SiteChat.assigned_user_id == op.user.id),
+            )
+            .order_by(SiteChat.last_visitor_at.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    return {
+        "count": len(rows),
+        "chats": [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "kind": "customer" if c.org_id else "visitor",
+                "last_visitor_at": c.last_visitor_at.isoformat() if c.last_visitor_at else None,
+            }
+            for c in rows
+        ],
+    }
 
 
 @ops_router.get("/chats/{chat_id}")
@@ -380,7 +598,71 @@ async def ops_get_chat(chat_id: uuid.UUID, op: Reader) -> dict:
             .order_by(SiteChatMessage.created_at)
         )
     ).scalars().all()
-    return {**_chat_summary(chat, None), "messages": [_message_out(m) for m in rows]}
+    out = {**_chat_summary(chat, None), "messages": [_message_out(m) for m in rows]}
+    out["customer"] = await _customer_context(chat) if chat.org_id else None
+    if chat.assigned_user_id:
+        out["assigned_name"] = (await _user_names(op.session, {chat.assigned_user_id})).get(
+            str(chat.assigned_user_id)
+        )
+    return out
+
+
+async def _customer_context(chat: SiteChat) -> dict | None:
+    """Workspace facts an operator needs while answering. Read in its own session because the
+    billing helpers set a tenant context on the session they are given."""
+    from app.db.session import get_sessionmaker
+    from app.models.org import Org
+    from app.services import credits, plans
+
+    try:
+        async with get_sessionmaker()() as session:
+            org = (
+                await session.execute(
+                    sa.select(Org).where(Org.id == chat.org_id).execution_options(allow_unscoped=True)
+                )
+            ).scalar_one_or_none()
+            if org is None:
+                return None
+            plan = await plans.plan_for(session, org.id)
+            balance_micros = await credits.balance(session, org.id)
+            return {
+                "org_id": str(org.id),
+                "org_name": org.name,
+                "plan": plan.name if plan else None,
+                "balance_usd": round(balance_micros / 1_000_000, 2),
+            }
+    except Exception:
+        log.warning("site_chat.customer_context_failed", exc_info=True)
+        return None
+
+
+@ops_router.post("/chats/{chat_id}/read")
+async def ops_mark_read(chat_id: uuid.UUID, op: Reader) -> dict:
+    chat = await op.session.get(SiteChat, chat_id)
+    if chat is None:
+        raise NotFoundError("Chat not found")
+    chat.agent_read_at = _now()
+    await op.session.commit()
+    return {"unread": False}
+
+
+class AssignIn(BaseModel):
+    #: true = assign to the caller, false = unassign.
+    to_me: bool
+
+
+@ops_router.post("/chats/{chat_id}/assign")
+async def ops_assign(chat_id: uuid.UUID, payload: AssignIn, op: Site) -> dict:
+    chat = await op.session.get(SiteChat, chat_id)
+    if chat is None:
+        raise NotFoundError("Chat not found")
+    chat.assigned_user_id = op.user.id if payload.to_me else None
+    await op.session.commit()
+    names = await _user_names(op.session, {chat.assigned_user_id}) if chat.assigned_user_id else {}
+    return {
+        "assigned_user_id": str(chat.assigned_user_id) if chat.assigned_user_id else None,
+        "assigned_name": names.get(str(chat.assigned_user_id)) if chat.assigned_user_id else None,
+    }
 
 
 class ReplyIn(BaseModel):
@@ -409,6 +691,7 @@ async def ops_reply(chat_id: uuid.UUID, payload: ReplyIn, op: Site) -> dict:
     chat.status = "active"
     chat.agent_name = chat.agent_name or _operator_name(op)
     chat.last_message_at = now
+    chat.agent_read_at = now
     await op.session.commit()
     return _message_out(msg)
 
