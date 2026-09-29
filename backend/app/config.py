@@ -241,6 +241,8 @@ class Settings(BaseSettings):
     app_latest_android_code: int = 0
     app_latest_android_name: str = ""
     app_android_manifest_url: str = ""
+    #: Path to the Google service-account JSON used for FCM HTTP v1 push; "" disables native push.
+    fcm_service_account_file: str = ""
     #: SSO/SCIM may only enforce for, or link new people from, DNS-verified email domains.
     sso_require_verified_domain: bool = True
     #: DNS-over-HTTPS resolver used to check domain verification TXT records.

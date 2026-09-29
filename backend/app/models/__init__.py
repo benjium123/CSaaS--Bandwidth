@@ -74,6 +74,7 @@ from app.models.credentials import (
     RecoveryCode,
 )
 from app.models.enterprise_sso import OrgDomain, ScimToken
+from app.models.device_push import DevicePushToken
 from app.models.identity import LOGIN_OUTCOMES, DeviceLinkCode, LoginEvent, Session
 from app.models.inbox_pro import NOTIFICATION_KINDS, Notification, ThreadNote
 from app.models.inboxes import (
@@ -387,6 +388,7 @@ __all__ = [
     "LoginEvent",
     "Session",
     "DeviceLinkCode",
+    "DevicePushToken",
     "AI_USAGE_KINDS",
     "AI_USAGE_METRICS",
     "AI_USAGE_SOURCES",

@@ -58,6 +58,7 @@ from app.api.routes import telephony as telephony_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
 from app.api.routes import device_auth as device_auth_routes
+from app.api.routes import device_push as device_push_routes
 from app.api.routes import webhooks as webhook_routes
 from app.config import Settings, load_settings, set_active_settings
 from app.db.session import dispose_engine, init_engine
@@ -283,6 +284,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(twofa_routes.router)
     app.include_router(device_auth_routes.router)
     app.include_router(device_auth_routes.app_router)
+    app.include_router(device_push_routes.router)
     app.include_router(passkey_routes.router)
     app.include_router(account_routes.router)
     app.include_router(kyc_routes.router)

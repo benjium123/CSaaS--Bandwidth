@@ -1063,6 +1063,42 @@ async def ingest_event(
     return Outcome.DEAD_LETTER
 
 
+async def _push_inbound_to_devices(session, org_id, thread, message, event) -> None:  # noqa: ANN001
+    from app.config import get_active_settings
+    from app.services import device_push, fcm
+    from app.services.notifications import recipients_for_number
+
+    try:
+        settings = session.info.get("settings") or get_active_settings()
+        if not fcm.enabled(settings):
+            return
+        user_ids = await recipients_for_number(session, event.our_number)
+        if not user_ids:
+            return
+        preview = (message.body or "").strip() or "New message"
+        device_push.schedule(
+            settings,
+            device_push.push_to_users(
+                settings,
+                user_ids,
+                "new_inbound",
+                {
+                    "org_id": str(org_id),
+                    "thread_id": str(thread.id),
+                    "message_id": str(message.id),
+                    "our_e164": event.our_number,
+                    "contact_e164": event.from_,
+                },
+                title=event.from_,
+                body=preview[:200],
+                collapse_key=str(thread.id),
+            ),
+        )
+    except Exception:
+        # Push is best effort: it must never fail inbound ingestion.
+        log.warning("inbound_device_push_failed", exc_info=True)
+
+
 async def _ingest_inbound(
     session: AsyncSession,
     carrier_name: str,
@@ -1222,6 +1258,9 @@ async def _ingest_inbound(
         session.info[CARRIER_SESSION_KEY] = carrier
     await gate.on_inbound(session, org_id, message.id)
     await session.commit()
+
+    # Ringlite apps P2: phone push for a new inbound text to everyone who holds this line.
+    await _push_inbound_to_devices(session, org_id, thread, message, event)
 
     # P10 DR-2: post-commit, fire-and-forget. Imported locally to avoid a module cycle -
     # sms_agent imports this module at its own top level for send_message/AI_SEND_KEY, so

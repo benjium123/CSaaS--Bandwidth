@@ -143,7 +143,34 @@ async def create(
             # A dead websocket consumer must never fail the write that caused this.
             log.warning("notification_event_publish_failed", exc_info=True)
 
+    # Ringlite apps P2: the same notification as a phone push (per-user prefs apply).
+    _push_to_devices(row, kind, body, thread_id)
+
     return row
+
+
+def _push_to_devices(
+    row: Notification, kind: str, body: str, thread_id: uuid.UUID | None
+) -> None:
+    from app.config import get_active_settings
+    from app.services import device_push, fcm
+
+    try:
+        settings = get_active_settings()
+        if not fcm.enabled(settings):
+            return
+        data = {"notification_id": str(row.id), "org_id": str(row.org_id)}
+        if thread_id is not None:
+            data["thread_id"] = str(thread_id)
+        device_push.schedule(
+            settings,
+            device_push.push_to_users(
+                settings, [row.user_id], kind, data, title="Ringlite", body=body
+            ),
+        )
+    except Exception:
+        # Push is best effort: it must never fail the write that caused it.
+        log.warning("notification_device_push_failed", exc_info=True)
 
 
 async def list_for_user(
