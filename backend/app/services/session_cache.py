@@ -159,6 +159,15 @@ async def remember(settings: Settings, sid: uuid.UUID, revoked: bool) -> None:
 async def mark_revoked(settings: Settings, sid: uuid.UUID) -> None:
     """Write the revoked bit immediately so a revoke takes effect NOW, not after TTL."""
     await _write(settings, _key(sid), "1")
+    # Ringlite apps P2: every revocation path lands here - tell that device to sign out
+    # now (best effort, background; a no-op for web sessions and when FCM is off).
+    try:
+        from app.services import device_push, fcm
+
+        if fcm.enabled(settings):
+            device_push.schedule(settings, device_push.push_logout(settings, sid))
+    except Exception:
+        structlog.get_logger(__name__).warning("device_logout_push_failed", exc_info=True)
 
 
 def reset_memory_cache() -> None:

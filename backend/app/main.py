@@ -159,6 +159,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.media_store_backend, root=settings.media_local_root
     )
     app.state.event_bus = EventBus()
+    # Ringlite apps P3: ring the phone apps for the same calls the console rings.
+    from app.services import device_ring
+
+    app.state.event_bus.add_tap(device_ring.make_tap(settings))
     app.state.livekit = voice_service.make_api(settings)
 
     if settings.cors_origin_list:

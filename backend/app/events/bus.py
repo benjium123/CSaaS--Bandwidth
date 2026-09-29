@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 import structlog
@@ -28,6 +28,12 @@ QUEUE_MAXSIZE = 256
 class EventBus:
     def __init__(self) -> None:
         self._subscribers: dict[uuid.UUID, set[asyncio.Queue]] = {}
+        #: Ringlite apps P3: sync callbacks that see EVERY published event (all orgs), e.g.
+        #: services/device_ring turning call.ring into phone pushes. Must not block or raise.
+        self._taps: list[Callable[[uuid.UUID, dict], None]] = []
+
+    def add_tap(self, tap: Callable[[uuid.UUID, dict], None]) -> None:
+        self._taps.append(tap)
 
     @asynccontextmanager
     async def subscribe(self, org_id: uuid.UUID) -> AsyncIterator[asyncio.Queue]:
@@ -46,6 +52,11 @@ class EventBus:
         """Sync and non-blocking on purpose: this is called from the webhook path, which
         must never wait on a slow (or dead) websocket consumer.
         """
+        for tap in self._taps:
+            try:
+                tap(org_id, event)
+            except Exception:
+                logger.warning("event_bus_tap_failed", exc_info=True)
         for queue in list(self._subscribers.get(org_id, ())):
             try:
                 queue.put_nowait(event)
