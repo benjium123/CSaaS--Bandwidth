@@ -1,6 +1,6 @@
 import * as React from "react";
 import { NavLink } from "react-router-dom";
-import { Contact, Inbox, LogOut, Megaphone, Phone, Printer, Rocket, Search, Settings, ShieldCheck } from "lucide-react";
+import { Contact, Inbox, LogOut, Megaphone, Printer, Rocket, Search, Settings, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useGate, type Gate } from "@/api/capabilities";
 import { isWorkspaceFullySetUp } from "@/components/onboarding/OnboardingChecklist";
@@ -24,7 +24,6 @@ export type RailItem = {
 export const RAIL_ITEMS: RailItem[] = [
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/contacts", label: "Contacts", icon: Contact, permission: "contacts:read" },
-  { to: "/calls", label: "Calls", icon: Phone, permission: "calls:read" },
   { to: "/fax", label: "Fax", icon: Printer, permission: "inbox:read" },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone, permission: "campaigns:read" },
 ];
@@ -36,8 +35,10 @@ const MOBILE_ITEMS: RailItem[] = RAIL_ITEMS.filter((i) => i.to !== "/campaigns")
  *
  * The operator's approved rail is brand / Search / Notifications / Workspace (Contacts,
  * Campaigns, Settings) / Lines, and nothing else. Everything else `useRailNav` returns -
- * today Calls and Setup - now lives behind the Settings destination instead, and
- * SettingsPage reads the COMPLEMENT of this list to render it.
+ * today Fax and Setup - now lives behind the Settings destination instead, and
+ * SettingsPage reads the COMPLEMENT of this list to render it. Calls used to be one of them
+ * and is NOT any more: the inbox's own Calls tab replaced that page, so /calls is a redirect
+ * into the inbox and no navigation offers a second way there.
  *
  * It is one exported constant rather than two hand-kept lists precisely so a future entry
  * in RAIL_ITEMS cannot fall down the gap between them: anything not named here is picked

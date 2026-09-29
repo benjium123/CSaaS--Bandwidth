@@ -329,4 +329,29 @@ describe("NotificationBell", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("mark failed");
   });
+
+  it("anchors the panel to the viewport when it sits in the top bar", async () => {
+    const client = makeBellClient(pageOf([makeNotification({ id: "n1" })], 1));
+    renderWithProviders(<NotificationBell placement="topbar" />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Alerts, 1 unread" }));
+    const menu = await screen.findByRole("menu", { name: "Alerts" });
+
+    await waitFor(() => expect(menu.style.position).toBe("fixed"));
+    // No rail offsets: the position comes from the measured style, not a class.
+    expect(menu.className).not.toContain("left-11");
+    expect(menu.className).toContain("max-h-[70vh]");
+    expect(menu.className).toContain("overflow-y-auto");
+  });
+
+  it("keeps the rail panel beside the trigger by default", async () => {
+    const client = makeBellClient(pageOf([makeNotification({ id: "n1" })], 1));
+    renderWithProviders(<NotificationBell />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Alerts, 1 unread" }));
+    const menu = await screen.findByRole("menu", { name: "Alerts" });
+
+    expect(menu.className).toContain("left-11");
+    expect(menu.style.position).toBe("");
+  });
 });

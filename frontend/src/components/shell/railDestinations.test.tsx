@@ -1,16 +1,20 @@
 /**
  * Where the inbox rail's former rows went.
  *
- * The operator's rail is Contacts / Campaigns / Settings and nothing else, so Calls, Setup
- * and Trust & safety - all three full routes - moved into the Settings surface. This file
- * is the other half of InboxColumn.test.tsx's "no longer carries Calls, Setup or Trust &
- * safety": proving they are gone from the rail is only half an answer, and a destination
- * that is gone from both places is a stranded page, not a simplification.
+ * The operator's rail is Contacts / Campaigns / Settings and nothing else, so Setup and
+ * Trust & safety - both full routes - live inside the Settings surface as well as in the top
+ * bar. This file is the other half of InboxColumn.test.tsx's "no longer carries Calls, Setup
+ * or Trust & safety": proving they are gone from the rail is only half an answer, and a
+ * destination that is gone from both places is a stranded page, not a simplification.
  *
- * It also pins the gating, which is the part a move can quietly break. Calls is gated on
- * `calls:read` and Setup on workspace state, both by way of the SAME `useRailNav` the rails
- * use; Trust & safety is gated on `is_platform_operator`, which is not a capability at all.
- * A member without the permission must still not see the row here.
+ * Calls used to be in that list and is deliberately NOT any more. The inbox's own Calls tab
+ * replaced the page, so /calls is now a redirect into it and NOTHING offers a navigation row
+ * for it - not the rail, not the top bar, not Settings. That absence is asserted below.
+ *
+ * It also pins the gating, which is the part a move can quietly break. Setup is gated on
+ * workspace state by way of the SAME `useRailNav` the rails use; Trust & safety is gated on
+ * `is_platform_operator`, which is not a capability at all. A member without the permission
+ * must still not see the row here.
  *
  * Every case renders a section the caller CANNOT view, so SettingsPage shows its
  * access-denied card instead of mounting a real settings page - the nav is what is under
@@ -37,6 +41,8 @@ const SETUP_INCOMPLETE = {
   member_count: 1,
   registration_state: "none",
 };
+
+const DENIED = "You do not have access to this setting.";
 
 const ME: Me = {
   id: "u1",
@@ -78,22 +84,17 @@ async function settingsNav() {
   return screen.findByRole("navigation", { name: "Settings" });
 }
 
+/** The denied card is the signal that the page has settled, so an absence below is real. */
+async function settled() {
+  return screen.findByText(DENIED);
+}
+
 describe("the destinations that moved out of the inbox rail", () => {
-  it("offers Calls to a member who holds calls:read", async () => {
+  it("no longer offers Calls in Settings - the inbox's Calls tab replaced the page", async () => {
     renderSettings({ permissions: ["calls:read"] });
 
     const nav = await settingsNav();
-    const calls = await within(nav).findByRole("link", { name: "Calls" });
-    expect(calls).toHaveAttribute("href", "/calls");
-  });
-
-  it("hides Calls from a member who does not - the gate survived the move", async () => {
-    renderSettings({ permissions: ["contacts:read"] });
-
-    const nav = await settingsNav();
-    // Something rendered: the nav is present and the page reached its denied state, so
-    // the absence below is not "nothing has loaded yet".
-    expect(await screen.findByText("You do not have access to this setting.")).toBeInTheDocument();
+    await settled();
     expect(within(nav).queryByRole("link", { name: "Calls" })).not.toBeInTheDocument();
   });
 
@@ -109,7 +110,7 @@ describe("the destinations that moved out of the inbox rail", () => {
     renderSettings({ permissions: [], org: SETUP_DONE });
 
     const nav = await settingsNav();
-    expect(await screen.findByText("You do not have access to this setting.")).toBeInTheDocument();
+    await settled();
     expect(within(nav).queryByRole("link", { name: "Setup" })).not.toBeInTheDocument();
   });
 
@@ -125,19 +126,16 @@ describe("the destinations that moved out of the inbox rail", () => {
     renderSettings({ permissions: ["calls:read"] });
 
     const nav = await settingsNav();
-    // Calls proves the "More" group rendered at all.
-    await within(nav).findByRole("link", { name: "Calls" });
-    expect(
-      within(nav).queryByRole("link", { name: "Trust & safety" }),
-    ).not.toBeInTheDocument();
+    await settled();
+    expect(within(nav).queryByRole("link", { name: "Trust & safety" })).not.toBeInTheDocument();
   });
 
-  it("does not repeat the destinations the inbox rail already lists", async () => {
+  it("does not repeat what the inbox rail already lists - or the Calls tab", async () => {
     renderSettings({ permissions: ["contacts:read", "campaigns:read", "calls:read"] });
 
     const nav = await settingsNav();
-    await within(nav).findByRole("link", { name: "Calls" });
-    for (const label of ["Contacts", "Campaigns", "Inbox"]) {
+    await settled();
+    for (const label of ["Contacts", "Campaigns", "Inbox", "Calls"]) {
       expect(within(nav).queryByRole("link", { name: label })).not.toBeInTheDocument();
     }
   });

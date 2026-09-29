@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { getErrorMessage } from "@/api/contacts";
 import { useAuth } from "@/auth/AuthContext";
 import { Button, Input, Textarea } from "@/components/ui/primitives";
+import { useAnchoredPosition } from "@/components/ui/useAnchoredPosition";
 import { openSupportChat } from "./ConsoleSupportChat";
 
 /** Support/help links exposed by the backend (routes/support.py). Any field may be null. */
@@ -31,15 +32,16 @@ function externalProps(href: string): { target?: string; rel?: string } {
 }
 
 /**
- * Where the menu opens relative to its button: `rail` (left sidebar, opens up and to the right) or
- * `topbar` (top-right header, opens downward, right-aligned so it never leaves the viewport).
+ * Where the menu opens relative to its button: `rail` (left sidebar, opens up and to the
+ * right) or `topbar` (top-right header). The top bar's position is MEASURED rather than
+ * classed - see useAnchoredPosition - because a class cannot know where the trigger landed
+ * on screen, and the old `right-0 top-full` could still be drawn under the bar on a narrow
+ * window.
  */
 export type HelpMenuPlacement = "rail" | "topbar";
 
-const PLACEMENT_CLASS: Record<HelpMenuPlacement, string> = {
-  rail: "bottom-0 left-14",
-  topbar: "right-0 top-full mt-2",
-};
+/** The rail button sits at the very bottom of the left sidebar, so the menu opens upward. */
+const RAIL_POSITION_CLASS = "absolute bottom-0 left-14";
 
 export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement } = {}): JSX.Element {
   const { api } = useAuth();
@@ -49,6 +51,9 @@ export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement
   const [body, setBody] = React.useState("");
   const [sent, setSent] = React.useState(false);
   const wrapper = React.useRef<HTMLDivElement>(null);
+  const buttonRef = React.useRef<HTMLButtonElement | null>(null);
+
+  const anchoredStyle = useAnchoredPosition(buttonRef, open && placement === "topbar", 256);
 
   const contacts = useQuery({
     queryKey: ["support", "contacts"],
@@ -93,6 +98,7 @@ export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement
 
   const c = contacts.data;
   const canSend = subject.trim().length > 0 && body.trim().length > 0;
+  const positionClass = placement === "rail" ? RAIL_POSITION_CLASS : "";
 
   const openContact = () => {
     send.reset();
@@ -103,6 +109,7 @@ export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement
   return (
     <div ref={wrapper} className="relative">
       <Button
+        ref={buttonRef}
         type="button"
         variant="ghost"
         size="icon"
@@ -118,7 +125,8 @@ export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement
         <div
           role="menu"
           aria-label="Help"
-          className={`absolute ${PLACEMENT_CLASS[placement]} z-50 max-h-[calc(100vh-5rem)] w-64 overflow-y-auto rounded-md border border-border bg-background p-1 text-foreground shadow-lg`}
+          style={placement === "topbar" ? anchoredStyle : undefined}
+          className={`${positionClass} z-50 max-h-[calc(100vh-5rem)] w-64 overflow-y-auto rounded-md border border-border bg-background p-1 text-foreground shadow-lg`}
         >
           {/* First, and the only item here that does not leave the console: it opens the
               assistant in place rather than mailing or phoning anyone. */}

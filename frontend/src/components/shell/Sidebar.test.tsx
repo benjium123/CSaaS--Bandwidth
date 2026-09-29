@@ -86,19 +86,22 @@ function renderMobile(capabilities: unknown = FULL_CAPS) {
 }
 
 describe("Sidebar rail", () => {
-  it("shows only the four work links and nothing from the old sidebar", async () => {
+  it("shows only the permanent work links and nothing from the old sidebar", async () => {
     renderRail();
 
     expect(await screen.findByRole("link", { name: "Inbox" })).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Sidebar" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(4);
+    expect(within(nav).getAllByRole("link")).toHaveLength(3);
+
+    // Calls left the rail: the inbox's own Calls tab replaced the page.
+    expect(within(nav).queryByRole("link", { name: "Calls" })).not.toBeInTheDocument();
 
     for (const label of ["Analytics", "Lists", "More", "Legacy inbox", "Providers", "Numbers", "Team"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
   });
 
-  it("hides Campaigns when campaigns:read is missing but keeps Inbox, Contacts and Calls", async () => {
+  it("hides Campaigns when campaigns:read is missing but keeps Inbox and Contacts", async () => {
     renderRail({
       capabilities: {
         permissions: ["contacts:read", "calls:read", "settings:read"],
@@ -108,11 +111,12 @@ describe("Sidebar rail", () => {
 
     expect(await screen.findByRole("link", { name: "Inbox" })).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Sidebar" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(3);
+    expect(within(nav).getAllByRole("link")).toHaveLength(2);
 
     expect(within(nav).getByRole("link", { name: "Inbox" })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "Contacts" })).toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: "Calls" })).toBeInTheDocument();
+    // calls:read no longer buys a rail destination either - the gate is gone with the page.
+    expect(within(nav).queryByRole("link", { name: "Calls" })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: "Campaigns" })).not.toBeInTheDocument();
   });
 
@@ -182,7 +186,7 @@ describe("Sidebar rail", () => {
 });
 
 describe("MobileTabBar", () => {
-  it("renders Inbox, Contacts, Calls and Settings under the bottom navigation label", async () => {
+  it("renders Inbox, Contacts and Settings under the bottom navigation label", async () => {
     renderMobile();
 
     const nav = await screen.findByRole("navigation", { name: "Bottom navigation" });
@@ -190,7 +194,6 @@ describe("MobileTabBar", () => {
     expect(links.map((link) => link.getAttribute("aria-label"))).toEqual([
       "Inbox",
       "Contacts",
-      "Calls",
       "Settings",
     ]);
   });
@@ -209,11 +212,11 @@ describe("Setup rail entry", () => {
     expect(setup).toHaveAttribute("href", "/setup");
 
     const nav = screen.getByRole("navigation", { name: "Sidebar" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(5);
+    expect(within(nav).getAllByRole("link")).toHaveLength(4);
     // It sits with the primary destinations, after them, and does not displace Inbox.
     expect(
       within(nav).getAllByRole("link").map((l) => l.getAttribute("aria-label")),
-    ).toEqual(["Inbox", "Contacts", "Calls", "Campaigns", "Setup"]);
+    ).toEqual(["Inbox", "Contacts", "Campaigns", "Setup"]);
   });
 
   it("is absent once every setup step is done", async () => {
@@ -240,14 +243,14 @@ describe("Setup rail entry", () => {
     expect(screen.queryByRole("link", { name: "Setup" })).not.toBeInTheDocument();
   });
 
-  it("reaches the mobile bar too, between Calls and Settings", async () => {
+  it("reaches the mobile bar too, next to Settings", async () => {
     renderMobile({ ...FULL_CAPS, org: SETUP_INCOMPLETE });
 
     const nav = await screen.findByRole("navigation", { name: "Bottom navigation" });
     await within(nav).findByRole("link", { name: "Setup" });
     expect(
       within(nav).getAllByRole("link").map((l) => l.getAttribute("aria-label")),
-    ).toEqual(["Inbox", "Contacts", "Calls", "Setup", "Settings"]);
+    ).toEqual(["Inbox", "Contacts", "Setup", "Settings"]);
   });
 });
 
@@ -274,12 +277,17 @@ describe("INBOX_RAIL_PATHS: the split between the inbox rail and Settings", () =
     expect(INBOX_RAIL_PATHS).not.toContain("/inbox");
   });
 
+  it("no longer carries a /calls destination anywhere", async () => {
+    const { RAIL_ITEMS } = await import("./Sidebar");
+    expect(RAIL_ITEMS.map((i) => i.to)).not.toContain("/calls");
+  });
+
   it("the icon rail is unaffected by the split - it still lists everything", async () => {
     renderRail({ capabilities: { ...FULL_CAPS, org: SETUP_INCOMPLETE } });
 
     const nav = await screen.findByRole("navigation", { name: "Sidebar" });
     expect(
       within(nav).getAllByRole("link").map((l) => l.getAttribute("aria-label")),
-    ).toEqual(["Inbox", "Contacts", "Calls", "Campaigns", "Setup"]);
+    ).toEqual(["Inbox", "Contacts", "Campaigns", "Setup"]);
   });
 });

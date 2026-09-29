@@ -11,7 +11,6 @@ import { LifecycleGate } from "@/auth/LifecycleGate";
 import { ConversationsPage } from "@/pages/ConversationsPage";
 import { ContactsPage } from "@/pages/ContactsPage";
 import { CampaignsPage } from "@/pages/CampaignsPage";
-import { CallsPage } from "@/pages/CallsPage";
 import { FaxPage } from "@/pages/FaxPage";
 import { OrgPickerPage } from "@/pages/OrgPickerPage";
 import { LoginPage } from "@/pages/LoginPage";
@@ -294,7 +293,10 @@ export function App() {
 
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/contacts/:contactId" element={<ContactsPage />} />
-        <Route path="/calls" element={<CallsPage />} />
+        {/* The Calls page is folded into the inbox: its calls live on the inbox's Calls
+            tab, so the old route is a redirect into that tab rather than a second place
+            to find the same thing. CallsPage still exists for the tab to reuse. */}
+        <Route path="/calls" element={<Navigate to="/inbox?tab=calls" replace />} />
         <Route path="/fax" element={<FaxPage />} />
         <Route path="/campaigns" element={<CampaignsPage />} />
         <Route path="/ops" element={<OpsPage />} />

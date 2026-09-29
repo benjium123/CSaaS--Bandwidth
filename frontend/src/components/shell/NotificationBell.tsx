@@ -13,6 +13,7 @@ import {
 import { useOptionalSoftphone } from "@/softphone/SoftphoneProvider";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useAnchoredPosition } from "@/components/ui/useAnchoredPosition";
 import { Badge, Button, MutationStatus } from "@/components/ui/primitives";
 
 const ORDERED_KINDS = ["mention", "assignment", "overdue", "missed_call"] as const;
@@ -51,12 +52,23 @@ function groupNotifications(items: Notification[]): NotificationGroup[] {
   return [...ordered, ...remaining];
 }
 
-export function NotificationBell() {
+/**
+ * `rail` (the 56px sidebar) hangs the panel off the button's right, which is what the narrow
+ * rail has room for, and is unchanged. `topbar` measures instead: that button is near the
+ * top-right of the viewport, so a FIXED panel clamped to the viewport is the only thing that
+ * cannot run off the right edge on a narrow window.
+ */
+export type NotificationBellPlacement = "rail" | "topbar";
+
+export function NotificationBell({
+  placement = "rail",
+}: { placement?: NotificationBellPlacement } = {}) {
   const { api } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [open, setOpen] = React.useState(false);
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const buttonRef = React.useRef<HTMLButtonElement | null>(null);
 
   const notificationsQuery = useQuery({
     queryKey: ["notifications"],
@@ -112,9 +124,12 @@ export function NotificationBell() {
     };
   }, [open]);
 
+  const panelStyle = useAnchoredPosition(buttonRef, open && placement === "topbar", 320);
+
   return (
     <div ref={wrapperRef} className="relative">
       <Button
+        ref={buttonRef}
         type="button"
         variant="ghost"
         size="icon"
@@ -139,7 +154,13 @@ export function NotificationBell() {
         <div
           role="menu"
           aria-label="Alerts"
-          className="absolute left-11 top-0 z-50 w-80 rounded-md border border-border bg-background p-1 shadow-lg"
+          style={placement === "topbar" ? panelStyle : undefined}
+          className={cn(
+            "rounded-md border border-border bg-background p-1 shadow-lg",
+            placement === "topbar"
+              ? "z-50 max-h-[70vh] overflow-y-auto"
+              : "absolute left-11 top-0 z-50 w-80",
+          )}
         >
           <div className="flex items-center justify-between px-3 py-2">
             <p className="text-xs font-medium text-foreground">Alerts</p>
@@ -214,7 +235,13 @@ export function NotificationBell() {
                         }
                       }}
                     >
-                      <span className="flex-1 whitespace-pre-wrap">{item.body}</span>
+                      {/* Two lines, never a single truncation: a notification body cut to
+                          one line reads as a different sentence. `line-clamp-2` clamps it
+                          where the utility exists; `whitespace-normal break-words` keeps it
+                          wrapping rather than overflowing where it does not. */}
+                      <span className="flex-1 line-clamp-2 whitespace-normal break-words">
+                        {item.body}
+                      </span>
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {relativeTime(item.created_at)}
                       </span>

@@ -1,20 +1,27 @@
 /**
- * The console's top bar: the 52px band that replaces the icon rail's utility column on a
+ * The console's top bar: the 56px band that replaces the icon rail's utility column on a
  * real screen. Phones keep MobileTabBar - this is `hidden sm:flex` on purpose.
  *
  * The navigation here is the SAME one the rail renders, taken from useRailNav rather than
  * re-derived, so the two can never disagree about what a member may see. Settings is
  * appended when it is visible, exactly as the rail does.
+ *
+ * It is deliberately BOLDER than the rail it replaced: 56px tall, every destination drawn as
+ * an icon AND its name, and the current one marked with a filled pill *and* an underline. The
+ * icon rail could only show the icon, so a destination had no name until you hovered it. The
+ * price of names is width, and the nav pays it: it is the only thing here that scrolls
+ * sideways, so a member with every permission never gets a page-wide horizontal scrollbar.
  */
 import * as React from "react";
 import { NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchUnreadByInbox } from "@/api/conversations";
-import { ChevronDown, Search } from "lucide-react";
-import { useAuth } from "@/auth/AuthContext";
-import { SETTINGS_ITEM, useRailNav } from "@/components/shell/Sidebar";
+import { ChevronDown, Radio, Search, ShieldCheck } from "lucide-react";
+import { hasPermission, useAuth } from "@/auth/AuthContext";
+import { SETTINGS_ITEM, useRailNav, type RailItem } from "@/components/shell/Sidebar";
 import { Button } from "@/components/ui/primitives";
 import { openCommandPalette } from "@/components/ui/CommandPalette";
+import { useAnchoredPosition } from "@/components/ui/useAnchoredPosition";
 import { StatusPill } from "@/components/shell/StatusPill";
 import { useOptionalSoftphone } from "@/softphone/SoftphoneProvider";
 import { NotificationBell } from "@/components/shell/NotificationBell";
@@ -22,6 +29,7 @@ import { HelpMenu } from "@/components/shell/HelpMenu";
 import { ThemeToggle } from "@/auth/ThemeToggle";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { SupportUnreadPill } from "@/components/shell/SupportUnreadPill";
+import { LiveCallsSupervisor } from "@/components/calls/LiveCallsSupervisor";
 import { cn } from "@/lib/utils";
 
 function initials(me: { full_name?: string | null; email?: string | null } | null | undefined): string {
@@ -107,24 +115,31 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
     };
   }, [wsOpen]);
 
-  // Trust & safety (platform operators only) was a rail link; it stays one click away here.
-  const navItems = [
+  // Trust & safety (platform operators only) was a rail link; it stays one click away here,
+  // and carries the same shield the rail gave it.
+  const navItems: RailItem[] = [
     ...items,
     ...(canSeeSettings ? [SETTINGS_ITEM] : []),
-    ...(me?.is_platform_operator ? [{ to: "/ops", label: "Trust & safety" }] : []),
+    ...(me?.is_platform_operator
+      ? [{ to: "/ops", label: "Trust & safety", icon: ShieldCheck }]
+      : []),
   ];
+
+  // Live-call supervision used to be the rail's Calls entry. Calls are the inbox's job now,
+  // but the people who hold this permission watch calls WHILE they work, so it is a panel.
+  const canSupervise = hasPermission(me, orgId, "calls:supervise");
 
   return (
     <header
       aria-label="Top bar"
-      className="hidden h-[52px] w-full items-center gap-2 border-b border-border bg-background px-3 sm:flex"
+      className="hidden h-14 w-full min-w-0 items-center gap-2 border-b border-border bg-background px-4 sm:flex"
     >
-      <NavLink to="/inbox" aria-label="Ringlite home" className="flex items-center">
+      <NavLink to="/inbox" aria-label="Ringlite home" className="flex shrink-0 items-center">
         <span className="ri-wordmark">ringlite</span>
       </NavLink>
 
       {/* Moved from the icon rail: same names, same menu, same selectOrg. */}
-      <div className="relative">
+      <div className="relative min-w-0 shrink-0">
         <Button
           ref={wsRef}
           type="button"
@@ -165,7 +180,13 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
         ) : null}
       </div>
 
-      <nav aria-label="Main" aria-busy={isLoading} className="flex flex-1 items-center gap-1">
+      {/* The only horizontally scrolling thing on the page, so long names never push the
+          layout sideways. `min-w-0` is what lets a flex child actually shrink to scroll. */}
+      <nav
+        aria-label="Main"
+        aria-busy={isLoading}
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+      >
         {navItems.map((item) => (
           <NavLink
             key={item.to}
@@ -173,16 +194,18 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
             aria-label={item.label}
             className={({ isActive }) =>
               cn(
-                "relative flex items-center rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted",
-                isActive && "bg-muted text-foreground",
+                "relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-muted hover:text-foreground",
+                isActive &&
+                  "bg-primary/15 font-semibold text-primary after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary after:content-['']",
               )
             }
           >
+            <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span>{item.label}</span>
             {item.to === "/inbox" && unreadTotal > 0 ? (
               <span
                 aria-label={`${unreadTotal} unread`}
-                className="ml-1 rounded-full bg-destructive px-1.5 text-[11px] font-medium text-background"
+                className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-xs font-semibold text-white"
               >
                 {unreadTotal}
               </span>
@@ -195,7 +218,7 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
         type="button"
         variant="ghost"
         aria-label="Search"
-        className="gap-2"
+        className="shrink-0 gap-2"
         onClick={() => openCommandPalette()}
       >
         <Search className="h-4 w-4" aria-hidden="true" />
@@ -205,15 +228,25 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
         </kbd>
       </Button>
 
-      <div className="flex items-center gap-1">
+      <div className="flex min-w-0 shrink-0 items-center gap-2">
         <SupportUnreadPill />
+        {canSupervise ? <LiveCallsButton /> : null}
         <LiveCallPill />
         <StatusPill />
-        <NotificationBell />
-        <HelpMenu placement="topbar" />
+        {/* Each utility control keeps `text-foreground` rather than the muted tint it would
+            otherwise inherit, and names itself on hover. */}
+        <div title="Notifications" className="text-foreground">
+          <NotificationBell placement="topbar" />
+        </div>
+        <div title="Help" className="text-foreground">
+          <HelpMenu placement="topbar" />
+        </div>
         {/* Light / dark, always visible (was a rail button). The console-surface wrapper is
             load-bearing for themeToggle.css tokens - see the note in Sidebar.tsx. */}
-        <span className={cn("console-surface", surfaceThemeClass(theme), "contents")}>
+        <span
+          title="Theme"
+          className={cn("console-surface", surfaceThemeClass(theme), "text-foreground")}
+        >
           <ThemeToggle theme={theme} onToggle={toggle} />
         </span>
         <div className="relative">
@@ -253,6 +286,73 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
         </div>
       </div>
     </header>
+  );
+}
+
+/**
+ * Live-call supervision, folded into the top bar (§1).
+ *
+ * It was the rail's Calls entry. The inbox's own Calls tab replaced the page, so the only
+ * thing left of it a supervisor still needs is the live view - and they need that WHILE they
+ * work, not on a page they have to leave the inbox to reach. The panel is measured to the
+ * viewport (useAnchoredPosition) rather than hung off the button, because the button is in
+ * the top-right cluster.
+ */
+function LiveCallsButton() {
+  const [open, setOpen] = React.useState(false);
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const buttonRef = React.useRef<HTMLButtonElement | null>(null);
+  const panelStyle = useAnchoredPosition(buttonRef, open, 420);
+
+  React.useEffect(() => {
+    if (!open) return undefined;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    const onMouseDown = (event: MouseEvent) => {
+      if (wrapperRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onMouseDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <Button
+        ref={buttonRef}
+        type="button"
+        variant="ghost"
+        aria-label="Live"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="gap-1.5"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Radio className="h-4 w-4" aria-hidden="true" />
+        <span>Live</span>
+      </Button>
+
+      {open ? (
+        <div
+          role="dialog"
+          aria-label="Live calls"
+          style={panelStyle}
+          className="z-50 max-h-[70vh] overflow-y-auto rounded-md border border-border bg-background p-2 shadow-lg"
+        >
+          <LiveCallsSupervisor />
+        </div>
+      ) : null}
+    </div>
   );
 }
 

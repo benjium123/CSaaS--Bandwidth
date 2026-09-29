@@ -97,7 +97,10 @@ export function ConversationsPage() {
   const { inboxId: routeInboxId } = useParams<{ inboxId?: string; threadId?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [tab, setTab] = React.useState<ConversationTab>("chats");
+  // /calls now redirects here with ?tab=calls (the Calls page was folded into the inbox).
+  const [tab, setTab] = React.useState<ConversationTab>(() =>
+    searchParams.get("tab") === "calls" ? "calls" : "chats",
+  );
   const [filter, setFilter] = React.useState<ConversationFilter>("open");
   const [q, setQ] = React.useState("");
   const debouncedQ = useDebouncedValue(q, 300);

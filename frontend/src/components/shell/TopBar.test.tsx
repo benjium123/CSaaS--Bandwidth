@@ -67,7 +67,7 @@ describe("TopBar", () => {
       within(nav)
         .getAllByRole("link")
         .map((link) => link.getAttribute("aria-label")),
-    ).toEqual(["Inbox", "Contacts", "Calls", "Campaigns", "Settings"]);
+    ).toEqual(["Inbox", "Contacts", "Campaigns", "Settings"]);
   });
 
   it("marks the nav busy and empty while capabilities load", async () => {
