@@ -5,13 +5,14 @@
   GET  /api/v1/public/site-chat/{id}/messages       the visitor polls for replies (token required)
   POST /api/v1/public/site-chat/{id}/messages       the visitor writes after the handoff
   POST /api/v1/public/sales-leads                   the "Talk to sales" form
-  POST /api/v1/support/chat                         a signed-in customer hands the chat to the team
+  POST /api/v1/support/ask                          the assistant, for a signed-in customer (sees their account)
+  POST /api/v1/support/chat                         a signed-in customer starts a stored chat
   /api/v1/ops/site/...                              operators read leads and answer chats
 
 Everything public is unauthenticated, so: every route is rate-limited per IP, every field is
-length-capped, a chat is reachable only with its token (stored as SHA-256), and the assistant
-answers only from the Ringlite facts the site sends plus the fixed facts below. The worst a
-visitor can do with crafted "facts" is mislead themselves.
+length-capped, and a chat is reachable only with its token (stored as SHA-256). The assistant
+(services/support_agent.py) answers from the help docs and the conversation; in a stored chat it
+answers each visitor message until it hands off or an operator takes over (``ai_state``).
 """
 
 from __future__ import annotations
@@ -20,14 +21,13 @@ import hashlib
 import hmac
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-import httpx
 import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,6 +47,7 @@ from app.models.security import SecurityAlert
 from app.models.site import SiteChat, SiteChatMessage, SiteLead
 from app.rate_limit import enforce_rate_limit
 from app.services import identity as identity_svc
+from app.services import support_agent
 
 log = structlog.get_logger()
 
@@ -63,28 +64,20 @@ STAFFED_TZ = ZoneInfo("America/Chicago")
 STAFFED_DAYS = range(0, 5)  # Monday-Friday
 STAFFED_HOURS = range(9, 18)  # 9:00-17:59
 
-HANDOFF_TOKEN = "HANDOFF"
 MAX_TRANSCRIPT = 40
 #: Paid assistant calls allowed per day across ALL visitors; past it the chat offers a person.
 ASK_GLOBAL_DAILY_MAX = 3000
-
-FIXED_FACTS = """- Ringlite is a business phone service: numbers, browser calling, business texting, one shared inbox.
-- Calls and texts reach the 48 contiguous US states only. No Canada, Alaska, Hawaii or international.
-- Ringlite never sells "unlimited" calling. Starter is pay as you go; Team includes 200 and Business 1,000 call minutes a month, shared by the workspace; then a published per-minute rate.
-- Plans: Starter $15/month (1 user + 1 number, up to 5 users), Team $45/month (3 users + 3 numbers, up to 15 users), Business $130/month (10 users + 10 numbers, no user limit), Custom via sales. Extra users $15/month ($12 on Business), extra numbers $5/month.
-- Paying yearly gets 2 months free: Starter $150, Team $450, Business $1,300 a year.
-- Every account is identity-verified before it can call. Texting needs 10DLC carrier approval.
-- Ringlite is not HIPAA compliant and does not hold SOC 2."""
-
-SYSTEM_PROMPT = f"""You are the assistant on ringlite.io, the website of Ringlite, a business phone service.
-Answer the visitor's question in 1-3 short, friendly sentences, using ONLY the facts below.
-Never invent prices, limits, features, dates or promises that are not in the facts.
-Never ask for passwords, card numbers or identity documents. Never discuss other topics.
-If the facts do not answer the question, or the visitor needs account-specific help
-(billing, refunds, a declined check, a blocked account), reply with exactly: {HANDOFF_TOKEN}
-
-Fixed facts:
-{FIXED_FACTS}"""
+#: Assistant replies in one stored chat before it hands the chat to the team regardless.
+AI_REPLIES_PER_CHAT = 40
+#: ``site_chats.ai_state`` values in which the assistant answers visitor messages:
+#: "active" = the assistant alone (the team is not alerted); "assist" = a person was asked
+#: for out of staffed hours, so the team is alerted as usual AND the assistant keeps helping.
+AI_ANSWERS = ("active", "assist")
+NOT_SURE = "I'm not sure about that one. A person from our team can help."
+TEAM_TAKES_OVER = (
+    "I'll pass this to our team. People answer Monday-Friday 9am-6pm Central; "
+    "otherwise we reply by email, usually within one business day."
+)
 
 
 def _now() -> datetime:
@@ -118,33 +111,8 @@ class Fact(BaseModel):
 
 class AskIn(BaseModel):
     question: str = Field(min_length=1, max_length=500)
-    history: list[Turn] = Field(default_factory=list, max_length=10)
+    history: list[Turn] = Field(default_factory=list, max_length=30)
     context: list[Fact] = Field(default_factory=list, max_length=10)
-
-
-#: Tests replace this to avoid the network.
-_client_factory = httpx.AsyncClient
-
-
-async def _ask_llm(settings: Settings, payload: AskIn) -> str:
-    api_key = settings.deepseek_api_key.get_secret_value().strip()
-    if not api_key:
-        return HANDOFF_TOKEN
-    facts = "\n".join(f"Q: {f.q}\nA: {f.a}" for f in payload.context)
-    messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\nSite facts:\n{facts}"}]
-    for turn in payload.history[-10:]:
-        messages.append({"role": "user" if turn.role == "visitor" else "assistant", "content": turn.text})
-    messages.append({"role": "user", "content": payload.question})
-    url = settings.deepseek_base_url.rstrip("/") + "/chat/completions"
-    async with _client_factory() as client:
-        res = await client.post(
-            url,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={"model": settings.ai_guard_model, "messages": messages, "max_tokens": 220, "temperature": 0.2},
-            timeout=20.0,
-        )
-        res.raise_for_status()
-        return (res.json()["choices"][0]["message"]["content"] or "").strip()
 
 
 async def _global_ask_budget_spent(settings: Settings) -> bool:
@@ -157,25 +125,117 @@ async def _global_ask_budget_spent(settings: Settings) -> bool:
     return bool(retry)
 
 
+async def _agent_answer(
+    settings: Settings, history: list[tuple[str, str]], account: dict | None
+) -> support_agent.Reply:
+    if await _global_ask_budget_spent(settings):
+        return support_agent.Reply("", True)
+    return await support_agent.reply(settings, history, account)
+
+
+def _ask_out(answer: support_agent.Reply) -> dict:
+    if answer.handoff or not answer.text:
+        return {"answer": (answer.text or NOT_SURE)[:1000], "handoff": True}
+    # Capped at the Turn limit: the widget sends past answers back as history.
+    return {"answer": answer.text[:1000], "handoff": False}
+
+
 @public_router.post("/site-chat/ask")
 async def site_chat_ask(
     payload: AskIn, request: Request, settings: Annotated[Settings, Depends(get_settings)]
 ) -> dict:
     await enforce_rate_limit(request, f"site-chat-ask:{_ip(request)}")
-    if await _global_ask_budget_spent(settings):
-        return {"answer": "I'm not sure about that one. A person from our team can help.", "handoff": True}
+    history = [(t.role, t.text) for t in payload.history] + [("visitor", payload.question)]
+    return _ask_out(await _agent_answer(settings, history, None))
+
+
+@customer_router.post("/ask")
+async def support_ask(
+    payload: AskIn,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """The assistant for a signed-in customer: same as /site-chat/ask plus a read-only summary
+    of THEIR workspace, taken from the session, never from the client."""
+    await enforce_rate_limit(request, f"support-ask:{user.id}")
+    history = [(t.role, t.text) for t in payload.history] + [("visitor", payload.question)]
+    account = await support_agent.account_summary(ctx.org.id)
+    return _ask_out(await _agent_answer(settings, history, account))
+
+
+async def _ai_turn(settings: Settings, chat_id: uuid.UUID, trigger_id: uuid.UUID) -> None:
+    """Background: the assistant answers the visitor message ``trigger_id`` in a stored chat,
+    with the whole chat as history. Skips when a newer message arrived (a newer visitor
+    message's own turn answers with the fuller history) or an operator took over meanwhile.
+    Never raises."""
+    from app.db.session import get_sessionmaker
+
     try:
-        answer = await _ask_llm(settings, payload)
-    except Exception as exc:  # noqa: BLE001 - any provider failure becomes a handoff offer
-        log.warning("site_chat.ask_failed", error=str(exc)[:200])
-        answer = HANDOFF_TOKEN
-    if not answer or HANDOFF_TOKEN in answer:
-        return {
-            "answer": "I'm not sure about that one. A person from our team can help.",
-            "handoff": True,
-        }
-    # Capped at the Turn limit: the widget sends past answers back as history.
-    return {"answer": answer[:1000], "handoff": False}
+        async with get_sessionmaker()() as session:
+            chat = await session.get(SiteChat, chat_id)
+            if chat is None or chat.ai_state not in AI_ANSWERS or chat.status == "closed":
+                return
+            rows = await _chat_messages(session, chat_id)
+            if not rows or rows[-1].id != trigger_id:
+                return
+            history = [(m.role, m.text) for m in rows]
+            spent = sum(1 for m in rows if m.role == "ai") >= AI_REPLIES_PER_CHAT
+            org_id = chat.org_id
+        account = await support_agent.account_summary(org_id) if org_id else None
+        if spent:
+            answer = support_agent.Reply("", True)
+        else:
+            answer = await _agent_answer(settings, history, account)
+
+        async with get_sessionmaker()() as session:
+            chat = await session.get(SiteChat, chat_id)
+            if chat is None or chat.ai_state not in AI_ANSWERS:
+                return
+            was = chat.ai_state
+            rows = await _chat_messages(session, chat_id)
+            if not rows or rows[-1].id != trigger_id:
+                return
+            now = _now()
+            text = answer.text or TEAM_TAKES_OVER
+            session.add(
+                SiteChatMessage(id=uuid.uuid4(), chat_id=chat.id, role="ai", text=text, created_at=now)
+            )
+            chat.last_message_at = now
+            # In "assist" the team was already alerted when the person was asked for.
+            alert = answer.handoff and was == "active"
+            if answer.handoff:
+                chat.ai_state = "handoff"
+            if alert:
+                session.add(_handoff_alert(chat, "The assistant handed a chat to the team."))
+            await session.commit()
+            log.info("site_chat.ai_reply", chat_id=str(chat_id), handoff=answer.handoff)
+            if alert:
+                _alert(settings, chat, title=f"Chat needs a person: {chat.name}", body=_last_text(rows))
+    except Exception:
+        log.warning("site_chat.ai_turn_failed", chat_id=str(chat_id), exc_info=True)
+
+
+async def _chat_messages(session: AsyncSession, chat_id: uuid.UUID) -> list[SiteChatMessage]:
+    return list(
+        (
+            await session.execute(
+                sa.select(SiteChatMessage)
+                .where(SiteChatMessage.chat_id == chat_id)
+                .order_by(SiteChatMessage.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _last_text(rows: list[SiteChatMessage]) -> str:
+    for m in reversed(rows):
+        if m.role == "visitor" and m.text.strip():
+            return m.text.strip()[:200]
+    return "Needs a reply"
 
 
 # --- handoff to a person --------------------------------------------------------------
@@ -203,8 +263,15 @@ async def _create_chat(
     transcript: list[Turn],
     org_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    want_person: bool = True,
+    background: BackgroundTasks | None = None,
 ) -> dict:
-    """Creates a handed-off chat (visitor or signed-in customer) and alerts the operators."""
+    """Creates a stored chat (visitor or signed-in customer).
+
+    ``want_person``: the visitor asked for a person, so the team is alerted. The assistant
+    answers alone (``ai_state="active"``) when nobody asked for a person, and alongside the team
+    (``"assist"``) out of staffed hours so the visitor is not left alone until the email reply.
+    When nobody asked for a person it answers the transcript's last visitor message right away."""
     token = secrets.token_urlsafe(32)
     now = _now()
     chat = SiteChat(
@@ -222,27 +289,44 @@ async def _create_chat(
         last_visitor_at=now,
         org_id=org_id,
         user_id=user_id,
+        ai_state="active" if not want_person else (None if staffed_now(now) else "assist"),
     )
     session.add(chat)
-    for turn in transcript[-MAX_TRANSCRIPT:]:
-        session.add(SiteChatMessage(id=uuid.uuid4(), chat_id=chat.id, role=turn.role, text=turn.text, created_at=now))
-    who = "A customer" if org_id else "A website visitor"
-    session.add(
-        SecurityAlert(
-            id=uuid.uuid4(),
-            kind="site_chat_handoff",
-            detail={
-                "chat_id": str(chat.id),
-                "reason": chat.reason,
-                "page": chat.page,
-                "action": f"{who} asked for a person. Answer in Ops -> Website.",
-            },
+    last_visitor: SiteChatMessage | None = None
+    # Microsecond steps keep the transcript in order (it all arrives in one request).
+    for i, turn in enumerate(transcript[-MAX_TRANSCRIPT:]):
+        m = SiteChatMessage(
+            id=uuid.uuid4(), chat_id=chat.id, role=turn.role, text=turn.text,
+            created_at=now + timedelta(microseconds=i),
         )
-    )
+        session.add(m)
+        last_visitor = m if turn.role == "visitor" else None
+    who = "A customer" if org_id else "A website visitor"
+    if want_person:
+        session.add(_handoff_alert(chat, f"{who} asked for a person. Answer in Ops -> Website."))
     await session.commit()
-    log.info("site_chat.handoff", chat_id=str(chat.id), reason=chat.reason, customer=org_id is not None)
-    _alert_operators(request, chat, title=f"New chat: {chat.name}", body=_last_visitor_text(transcript))
-    return {"chat_id": str(chat.id), "token": token, "staffed": staffed_now(now)}
+    log.info(
+        "site_chat.created", chat_id=str(chat.id), reason=chat.reason, customer=org_id is not None,
+        want_person=want_person, ai=chat.ai_state,
+    )
+    if want_person:
+        _alert_operators(request, chat, title=f"New chat: {chat.name}", body=_last_visitor_text(transcript))
+    elif last_visitor is not None and background is not None:
+        background.add_task(_ai_turn, request.app.state.settings, chat.id, last_visitor.id)
+    return {
+        "chat_id": str(chat.id),
+        "token": token,
+        "staffed": staffed_now(now),
+        "ai": chat.ai_state in AI_ANSWERS,
+    }
+
+
+def _handoff_alert(chat: SiteChat, action: str) -> SecurityAlert:
+    return SecurityAlert(
+        id=uuid.uuid4(),
+        kind="site_chat_handoff",
+        detail={"chat_id": str(chat.id), "reason": chat.reason, "page": chat.page, "action": action},
+    )
 
 
 def _last_visitor_text(transcript: list[Turn]) -> str:
@@ -255,10 +339,13 @@ def _last_visitor_text(transcript: list[Turn]) -> str:
 def _alert_operators(request: Request, chat: SiteChat, *, title: str, body: str) -> None:
     """Best-effort phone push to whoever should answer: the assignee, else every active
     operator allowed to answer chats. Never fails the request that triggered it."""
+    _alert(request.app.state.settings, chat, title=title, body=body)
+
+
+def _alert(settings: Settings, chat: SiteChat, *, title: str, body: str) -> None:
     from app.services import device_push, fcm
 
     try:
-        settings = request.app.state.settings
         if not fcm.enabled(settings):
             return
         device_push.schedule(
@@ -323,16 +410,19 @@ async def site_chat_handoff(payload: HandoffIn, request: Request, session: Sessi
 class CustomerHandoffIn(BaseModel):
     page: str | None = Field(default=None, max_length=200)
     transcript: list[Turn] = Field(default_factory=list, max_length=200)
+    #: True from "Talk to a person"; False (the app's chat screen) = the assistant answers first.
+    want_person: bool = False
 
 
 @customer_router.post("/chat", status_code=201)
 async def support_chat_handoff(
     payload: CustomerHandoffIn,
     request: Request,
+    background: BackgroundTasks,
     ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
-    """A signed-in customer asks for a person. Identity and workspace come from the session,
+    """A signed-in customer starts a chat (the assistant first, or a person when asked). Identity and workspace come from the session,
     never from the client, so operators can trust who they are talking to."""
     await enforce_rate_limit(request, f"support-chat-handoff:{user.id}")
     return await _create_chat(
@@ -347,6 +437,8 @@ async def support_chat_handoff(
         transcript=payload.transcript,
         org_id=ctx.org.id,
         user_id=user.id,
+        want_person=payload.want_person,
+        background=background,
     )
 
 
@@ -359,6 +451,16 @@ async def _chat_for_visitor(session: AsyncSession, chat_id: uuid.UUID, token: st
 
 def _message_out(m: SiteChatMessage) -> dict:
     return {"id": str(m.id), "role": m.role, "text": m.text, "at": m.created_at.isoformat()}
+
+
+def _visitor_message_out(m: SiteChatMessage) -> dict:
+    """What the visitor's client sees: the assistant's replies come as ``agent`` messages
+    (every client already renders those) flagged ``ai``."""
+    out = _message_out(m)
+    if m.role == "ai":
+        out["role"] = "agent"
+        out["ai"] = True
+    return out
 
 
 @public_router.get("/site-chat/{chat_id}/messages")
@@ -374,7 +476,7 @@ async def site_chat_messages(
     app reopening a chat can redraw the whole conversation (the site widget keeps its own copy)."""
     await enforce_rate_limit(request, f"site-chat-poll:{_ip(request)}")
     chat = await _chat_for_visitor(session, chat_id, token)
-    roles = ("visitor", "agent", "system") if history else ("agent", "system")
+    roles = ("visitor", "agent", "ai", "system") if history else ("agent", "ai", "system")
     stmt = sa.select(SiteChatMessage).where(
         SiteChatMessage.chat_id == chat.id, SiteChatMessage.role.in_(roles)
     )
@@ -385,7 +487,12 @@ async def site_chat_messages(
             raise ValidationFailedError("after must be an ISO timestamp") from exc
         stmt = stmt.where(SiteChatMessage.created_at > since)
     rows = (await session.execute(stmt.order_by(SiteChatMessage.created_at).limit(100))).scalars().all()
-    return {"status": chat.status, "agent_name": chat.agent_name, "messages": [_message_out(m) for m in rows]}
+    return {
+        "status": chat.status,
+        "agent_name": chat.agent_name,
+        "ai": chat.ai_state in AI_ANSWERS,
+        "messages": [_visitor_message_out(m) for m in rows],
+    }
 
 
 class VisitorMessageIn(BaseModel):
@@ -395,7 +502,11 @@ class VisitorMessageIn(BaseModel):
 
 @public_router.post("/site-chat/{chat_id}/messages", status_code=201)
 async def site_chat_visitor_message(
-    chat_id: uuid.UUID, payload: VisitorMessageIn, request: Request, session: Session
+    chat_id: uuid.UUID,
+    payload: VisitorMessageIn,
+    request: Request,
+    session: Session,
+    background: BackgroundTasks,
 ) -> dict:
     await enforce_rate_limit(request, f"site-chat-send:{_ip(request)}")
     chat = await _chat_for_visitor(session, chat_id, payload.token)
@@ -407,7 +518,10 @@ async def site_chat_visitor_message(
     chat.last_message_at = now
     chat.last_visitor_at = now
     await session.commit()
-    _alert_operators(request, chat, title=f"{chat.name} wrote", body=payload.text[:200])
+    if chat.ai_state in AI_ANSWERS:
+        background.add_task(_ai_turn, request.app.state.settings, chat.id, msg.id)
+    if chat.ai_state != "active":
+        _alert_operators(request, chat, title=f"{chat.name} wrote", body=payload.text[:200])
     return {"id": str(msg.id), "at": now.isoformat()}
 
 
@@ -484,12 +598,14 @@ def _chat_summary(chat: SiteChat, last: str | None) -> dict:
         "org_id": str(chat.org_id) if chat.org_id else None,
         "assigned_user_id": str(chat.assigned_user_id) if chat.assigned_user_id else None,
         "unread": _is_unread(chat),
+        "ai_state": chat.ai_state,
     }
 
 
 def _is_unread(chat: SiteChat) -> bool:
-    """The customer wrote after an operator last opened the chat (closed chats never count)."""
-    if chat.status == "closed" or chat.last_visitor_at is None:
+    """The customer wrote after an operator last opened the chat (closed chats never count, nor
+    chats the assistant is still answering)."""
+    if chat.status == "closed" or chat.last_visitor_at is None or chat.ai_state == "active":
         return False
     return chat.agent_read_at is None or chat.last_visitor_at > chat.agent_read_at
 
@@ -571,6 +687,7 @@ async def ops_unread_chats(op: Reader) -> dict:
                 SiteChat.last_visitor_at.is_not(None),
                 sa.or_(SiteChat.agent_read_at.is_(None), SiteChat.last_visitor_at > SiteChat.agent_read_at),
                 sa.or_(SiteChat.assigned_user_id.is_(None), SiteChat.assigned_user_id == op.user.id),
+                sa.or_(SiteChat.ai_state.is_(None), SiteChat.ai_state != "active"),
             )
             .order_by(SiteChat.last_visitor_at.desc())
             .limit(50)
@@ -661,6 +778,8 @@ async def ops_assign(chat_id: uuid.UUID, payload: AssignIn, op: Site) -> dict:
     if chat is None:
         raise NotFoundError("Chat not found")
     chat.assigned_user_id = op.user.id if payload.to_me else None
+    if payload.to_me and chat.ai_state in ("active", "assist", "handoff"):
+        chat.ai_state = "off"  # a person took the chat: the assistant stops answering
     await op.session.commit()
     names = await _user_names(op.session, {chat.assigned_user_id}) if chat.assigned_user_id else {}
     return {
@@ -696,6 +815,8 @@ async def ops_reply(chat_id: uuid.UUID, payload: ReplyIn, op: Site) -> dict:
     chat.agent_name = chat.agent_name or _operator_name(op)
     chat.last_message_at = now
     chat.agent_read_at = now
+    if chat.ai_state in ("active", "assist", "handoff"):
+        chat.ai_state = "off"  # a person replied: the assistant stops answering
     await op.session.commit()
     return _message_out(msg)
 

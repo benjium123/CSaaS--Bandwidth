@@ -39,8 +39,9 @@ interface ChatSummary {
   created_at: string;
   last_message_at: string | null;
   last_message: string | null;
+  ai_state?: string | null;
 }
-interface ChatMessage { id: string; role: "visitor" | "assistant" | "agent" | "system"; text: string; at: string }
+interface ChatMessage { id: string; role: "visitor" | "assistant" | "agent" | "system" | "ai"; text: string; at: string }
 interface ChatCustomer { org_id: string; org_name: string; plan: string | null; balance_usd: number }
 interface ChatDetail extends ChatSummary { messages: ChatMessage[]; customer: ChatCustomer | null }
 interface Lead {
@@ -63,7 +64,7 @@ interface Lead {
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
 const usd = (value: number) => `$${value.toFixed(2)}`;
 const TONE: Record<ChatStatus, PillTone> = { open: "info", waiting: "warning", active: "success", closed: "neutral" };
-const ROLE_LABEL = { visitor: "Visitor", assistant: "Assistant", agent: "Ringlite", system: "System" } as const;
+const ROLE_LABEL = { visitor: "Visitor", assistant: "Assistant", agent: "Ringlite", system: "System", ai: "AI assistant" } as const;
 
 type StatusFilter = "open" | "closed" | "all";
 type KindFilter = "all" | "customer" | "visitor";
@@ -202,7 +203,7 @@ function ChatThread({ id }: { id: string }) {
             <div className="text-xs text-muted-foreground">
               {m.role === "visitor" && c.kind === "customer" ? "Customer" : ROLE_LABEL[m.role]} · {when(m.at)}
             </div>
-            <div className="inline-block max-w-[85%] whitespace-pre-wrap rounded-md border border-border px-3 py-2 text-left text-sm">{m.text}</div>
+            <div className={cn("inline-block max-w-[85%] whitespace-pre-wrap rounded-md border border-border px-3 py-2 text-left text-sm", m.role === "ai" && "bg-muted text-muted-foreground")}>{m.text}</div>
           </li>
         ))}
       </ol>
@@ -359,6 +360,11 @@ function ChatsSection() {
                             <Pill tone="neutral">Visitor</Pill>
                           )}
                           <Pill tone={TONE[c.status]}>{c.status}</Pill>
+                          {c.ai_state === "active" || c.ai_state === "assist" ? (
+                            <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-foreground">AI answering</span>
+                          ) : c.ai_state === "handoff" ? (
+                            <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">AI handed off</span>
+                          ) : null}
                           <span className="ml-auto text-xs text-muted-foreground">{when(c.last_message_at)}</span>
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">

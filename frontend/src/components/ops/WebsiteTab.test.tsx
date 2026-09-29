@@ -51,6 +51,7 @@ const DETAIL = {
   ...CUSTOMER,
   messages: [
     { id: "m1", role: "visitor", text: "How much does it cost?", at: "2024-06-01T10:05:00.000Z" },
+    { id: "m2", role: "ai", text: "Growth is $29 a month.", at: "2024-06-01T10:06:00.000Z" },
   ],
   customer: { org_id: "org-9", org_name: "Acme Inc", plan: "growth", balance_usd: 12.34 },
 };
@@ -67,7 +68,7 @@ function stubClient() {
     "/api/v1/ops/site/chats/chat-c/read": () => ({ unread: false }),
     "/api/v1/ops/site/chats/chat-c/assign": () => ({ assigned_user_id: "me-1", assigned_name: "Me" }),
     "/api/v1/ops/site/chats/chat-c": () => DETAIL,
-    "/api/v1/ops/site/chats": () => ({ chats: [CUSTOMER, VISITOR], staffed: true }),
+    "/api/v1/ops/site/chats": () => ({ chats: [{ ...CUSTOMER, ai_state: "active" }, { ...VISITOR, ai_state: "handoff" }], staffed: true }),
     "/": {},
   });
 }
@@ -146,5 +147,18 @@ describe("WebsiteTab support inbox", () => {
       expect(call?.init.method).toBe("POST");
       expect(call?.init.json).toEqual({ to_me: true });
     });
+  });
+
+  it("shows the AI pills in the list and labels AI replies in the transcript", async () => {
+    const client = stubClient();
+    const user = userEvent.setup();
+    renderWithProviders(<WebsiteTab />, client);
+
+    expect(await screen.findByText("AI answering")).toBeTruthy();
+    expect(screen.getByText("AI handed off")).toBeTruthy();
+
+    await openCustomer(user);
+    expect(await screen.findByText(/^AI assistant ·/)).toBeTruthy();
+    expect(screen.getByText("Growth is $29 a month.")).toBeTruthy();
   });
 });

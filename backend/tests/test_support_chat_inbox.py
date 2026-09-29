@@ -24,6 +24,19 @@ from app.services import device_push, fcm
 from tests.conftest import auth_headers, create_org, make_settings, register_and_login
 
 
+@pytest.fixture(autouse=True)
+def _no_llm_and_staffed(monkeypatch):
+    """Never reach DeepSeek from a test (a test that wants answers installs its own fake), and
+    pin staffed hours so the human flows do not depend on the clock."""
+    def offline():
+        return httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(503)))
+
+    from app.services import support_agent as _agent
+
+    monkeypatch.setattr(_agent, "client_factory", offline)
+    monkeypatch.setattr(site_routes, "staffed_now", lambda now=None: True)
+
+
 @pytest.fixture
 def chat_settings():
     return make_settings()
@@ -75,7 +88,7 @@ async def _customer_chat(
     org = await create_org(client, token, org_name)
     r = await client.post(
         "/api/v1/support/chat",
-        json={"page": "/app", "transcript": [{"role": "visitor", "text": text}]},
+        json={"page": "/app", "transcript": [{"role": "visitor", "text": text}], "want_person": True},
         headers=auth_headers(token, org["id"]),
     )
     assert r.status_code == 201, r.text
@@ -115,12 +128,13 @@ async def test_signed_in_customer_handoff_records_identity_from_the_session(clie
             # The client does not get to choose who it claims to be: these must be ignored.
             "name": "Not The Customer",
             "email": "someone-else@example.com",
+            "want_person": True,
         },
         headers=auth_headers(token, org["id"]),
     )
     assert r.status_code == 201, r.text
     body = r.json()
-    assert set(body) == {"chat_id", "token", "staffed"}
+    assert set(body) == {"chat_id", "token", "staffed", "ai"}
     assert isinstance(body["staffed"], bool)
     assert len(body["token"]) > 20
 

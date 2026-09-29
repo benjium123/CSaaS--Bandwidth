@@ -10,11 +10,27 @@ import pytest
 import sqlalchemy as sa
 
 from app.api.routes import site as site_routes
+from app.services import support_agent
+
+_REAL_STAFFED_NOW = site_routes.staffed_now
 from app.main import create_app
 from app.models import SecurityAlert
 from app.models.site import SiteChat, SiteLead
 from tests.conftest import _install, FakeCarrier, auth_headers, make_settings
 from tests.test_p41_kyc import _make_operator
+
+
+@pytest.fixture(autouse=True)
+def _no_llm_and_staffed(monkeypatch):
+    """Never reach DeepSeek from a test (a test that wants answers installs its own fake), and
+    pin staffed hours so the human flows do not depend on the clock."""
+    def offline():
+        return httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(503)))
+
+    from app.services import support_agent as _agent
+
+    monkeypatch.setattr(_agent, "client_factory", offline)
+    monkeypatch.setattr(site_routes, "staffed_now", lambda now=None: True)
 
 
 @pytest.fixture
@@ -42,7 +58,7 @@ def _fake_llm(reply: str):
 
 
 async def test_ask_answers_from_facts(client, monkeypatch):
-    monkeypatch.setattr(site_routes, "_client_factory", _fake_llm("Team is $29 per number a month."))
+    monkeypatch.setattr(support_agent, "client_factory", _fake_llm("Team is $29 per number a month."))
     r = await client.post(
         "/api/v1/public/site-chat/ask",
         json={"question": "how much is team", "history": [], "context": [{"q": "Plans?", "a": "Team $29"}]},
@@ -52,7 +68,7 @@ async def test_ask_answers_from_facts(client, monkeypatch):
 
 
 async def test_ask_offers_a_person_when_the_model_cannot_answer(client, monkeypatch):
-    monkeypatch.setattr(site_routes, "_client_factory", _fake_llm("HANDOFF"))
+    monkeypatch.setattr(support_agent, "client_factory", _fake_llm("HANDOFF"))
     r = await client.post("/api/v1/public/site-chat/ask", json={"question": "can you fix my invoice"})
     assert r.json()["handoff"] is True
 
@@ -61,7 +77,7 @@ async def test_ask_survives_a_provider_failure(client, monkeypatch):
     def boom():
         return httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(500)))
 
-    monkeypatch.setattr(site_routes, "_client_factory", boom)
+    monkeypatch.setattr(support_agent, "client_factory", boom)
     r = await client.post("/api/v1/public/site-chat/ask", json={"question": "anything"})
     assert r.status_code == 200 and r.json()["handoff"] is True
 
@@ -153,6 +169,6 @@ async def test_sales_lead_rejects_a_bad_email(client):
 
 
 def test_staffed_hours_are_weekdays_nine_to_six_central():
-    assert site_routes.staffed_now(datetime(2026, 9, 28, 15, 0, tzinfo=timezone.utc))  # Mon 10:00 CDT
-    assert not site_routes.staffed_now(datetime(2026, 9, 28, 3, 0, tzinfo=timezone.utc))  # Sun 22:00 CDT
-    assert not site_routes.staffed_now(datetime(2026, 9, 27, 17, 0, tzinfo=timezone.utc))  # Sun noon
+    assert _REAL_STAFFED_NOW(datetime(2026, 9, 28, 15, 0, tzinfo=timezone.utc))  # Mon 10:00 CDT
+    assert not _REAL_STAFFED_NOW(datetime(2026, 9, 28, 3, 0, tzinfo=timezone.utc))  # Sun 22:00 CDT
+    assert not _REAL_STAFFED_NOW(datetime(2026, 9, 27, 17, 0, tzinfo=timezone.utc))  # Sun noon

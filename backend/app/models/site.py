@@ -76,6 +76,10 @@ class SiteChat(Base, TimestampMixin):
     #: Last time an operator opened the chat; unread = last_visitor_at is newer.
     agent_read_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
     last_visitor_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    #: 0096: NULL = no assistant, "active" = the assistant answers alone, "assist" = it answers
+    #: while the team is alerted (a person asked for out of hours), "handoff" = it passed the
+    #: chat to the team, "off" = an operator took over (routes/site.py, services/support_agent.py).
+    ai_state: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
 
 
 class SiteChatMessage(Base):

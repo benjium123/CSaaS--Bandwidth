@@ -24,6 +24,7 @@ interface ChatMessage {
   role: Role;
   text: string;
   at?: string;
+  ai?: boolean;
 }
 
 interface AskResponse {
@@ -35,6 +36,7 @@ interface HandoffResponse {
   chat_id: string;
   token: string;
   staffed: boolean;
+  ai?: boolean;
 }
 
 /** The POST body the handoff endpoint takes; both the form and the console path build one. */
@@ -53,6 +55,7 @@ interface LiveMessage {
   role: "agent" | "visitor";
   text: string;
   at: string;
+  ai?: boolean;
 }
 
 interface LiveResponse {
@@ -200,7 +203,7 @@ export function ChatWidget({
       const res = isConsole
         ? await api.request<HandoffResponse>("/api/v1/support/chat", {
             method: "POST",
-            json: { page: body.page, transcript: body.transcript },
+            json: { page: body.page, transcript: body.transcript, want_person: true },
           })
         : await api.request<HandoffResponse>("/api/v1/public/site-chat/handoff", {
             method: "POST",
@@ -216,7 +219,9 @@ export function ChatWidget({
         "system",
         res.staffed
           ? "Connecting you to the team…"
-          : "We're offline right now. We'll reply by email, usually within one business day.",
+          : res.ai
+            ? "Our team is offline right now and will reply by email, usually within one business day. The Ringlite assistant can keep helping here in the meantime."
+            : "We're offline right now. We'll reply by email, usually within one business day.",
       );
       return true;
     } catch {
@@ -342,7 +347,7 @@ export function ChatWidget({
             if (fresh.length === 0) return prev;
             return [
               ...prev,
-              ...fresh.map(message => ({ id: message.id, role: message.role, text: message.text, at: message.at })),
+              ...fresh.map(message => ({ id: message.id, role: message.role, text: message.text, at: message.at, ai: message.ai === true })),
             ];
           });
           for (const message of res.messages) {
@@ -432,7 +437,7 @@ export function ChatWidget({
     busyRef.current = true;
     setTyping(true);
     try {
-      const res = await api.request<AskResponse>("/api/v1/public/site-chat/ask", {
+      const res = await api.request<AskResponse>(isConsole ? "/api/v1/support/ask" : "/api/v1/public/site-chat/ask", {
         method: "POST",
         json: { question: text, history, context: relevantFaqs(text) },
       });
@@ -508,7 +513,7 @@ export function ChatWidget({
     if (message.role === "agent") {
       return (
         <div key={message.id} className="rl-bubble incoming">
-          <span className="ms-chat-who">{agentName ?? "Ringlite team"}</span>
+          <span className="ms-chat-who">{message.ai ? "Ringlite Assistant" : (agentName ?? "Ringlite team")}</span>
           {message.text}
         </div>
       );
