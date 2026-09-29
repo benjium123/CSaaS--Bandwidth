@@ -354,4 +354,14 @@ describe("NotificationBell", () => {
     expect(menu.className).toContain("left-11");
     expect(menu.style.position).toBe("");
   });
+
+  it("shows phone numbers in a notification formatted", async () => {
+    const client = makeBellClient(
+      pageOf([makeNotification({ id: "n1", body: "Missed call from +14694617576" })], 1),
+    );
+    renderWithProviders(<NotificationBell placement="topbar" />, client);
+    await userEvent.click(await screen.findByRole("button", { name: "Alerts, 1 unread" }));
+    const menu = await screen.findByRole("menu", { name: "Alerts" });
+    expect(menu).toHaveTextContent("Missed call from (469) 461-7576");
+  });
 });

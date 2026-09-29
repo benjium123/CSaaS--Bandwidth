@@ -11,7 +11,7 @@ import {
   type Notification,
 } from "@/api/inboxPro";
 import { useOptionalSoftphone } from "@/softphone/SoftphoneProvider";
-import { relativeTime } from "@/lib/format";
+import { formatPhone, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge, Button, MutationStatus } from "@/components/ui/primitives";
 
@@ -188,7 +188,7 @@ export function NotificationBell({
           {notifications.length === 0 ? (
             <p className="px-3 py-2 text-sm text-muted-foreground">Nothing new.</p>
           ) : (
-            <div className="max-h-80 overflow-y-auto">
+            <div className={placement === "topbar" ? "" : "max-h-80 overflow-y-auto"}>
               {groupNotifications(notifications).map((group) => (
                 // role="group" + aria-label, not a bare heading: inside a menu, an
                 // element that is neither a group nor a menuitem is ignored, so a
@@ -203,7 +203,7 @@ export function NotificationBell({
                 >
                   <p
                     aria-hidden="true"
-                    className="px-3 py-1 text-xs font-medium text-muted-foreground"
+                    className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
                   >
                     {group.heading}
                   </p>
@@ -214,8 +214,10 @@ export function NotificationBell({
                       variant="ghost"
                       role="menuitem"
                       className={cn(
-                        "flex w-full items-start justify-start gap-2 rounded-md px-3 py-2 text-left",
-                        item.read_at ? "" : "bg-muted",
+                        // h-auto: the Button's fixed height let a wrapped body spill over
+                        // the next row.
+                        "flex h-auto w-full items-start justify-start gap-2.5 rounded-md px-3 py-2.5 text-left font-normal",
+                        item.read_at ? "" : "bg-muted/60",
                       )}
                       onClick={() => {
                         markOneMutation.mutate(item.id);
@@ -236,10 +238,17 @@ export function NotificationBell({
                           one line reads as a different sentence. `line-clamp-2` clamps it
                           where the utility exists; `whitespace-normal break-words` keeps it
                           wrapping rather than overflowing where it does not. */}
-                      <span className="flex-1 line-clamp-2 whitespace-normal break-words">
-                        {item.body}
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                          item.read_at ? "bg-transparent" : "bg-primary",
+                        )}
+                      />
+                      <span className="min-w-0 flex-1 text-sm leading-snug text-foreground line-clamp-2 whitespace-normal break-words">
+                        {prettyBody(item.body)}
                       </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
+                      <span className="shrink-0 pt-0.5 text-xs text-muted-foreground">
                         {relativeTime(item.created_at)}
                       </span>
                       {item.read_at ? null : <span className="sr-only">Unread</span>}
@@ -253,4 +262,9 @@ export function NotificationBell({
       ) : null}
     </div>
   );
+}
+
+/** "+14694617576" inside a notification body reads as "(469) 461-7576". */
+function prettyBody(body: string): string {
+  return body.replace(/\+1\d{10}(?!\d)/g, (e164) => formatPhone(e164));
 }
