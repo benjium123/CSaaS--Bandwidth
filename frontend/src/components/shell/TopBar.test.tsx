@@ -106,6 +106,9 @@ describe("TopBar", () => {
     await user.click(await screen.findByRole("button", { name: "Account" }));
     const menu = await screen.findByRole("menu", { name: "Account" });
     expect(within(menu).getByRole("menuitem", { name: "Sign out" })).toBeInTheDocument();
+    const edit = within(menu).getByRole("menuitem", { name: /Edit profile/ });
+    expect(edit).toHaveAttribute("href", "/settings/profile");
+    expect(edit).toHaveTextContent("911 address");
   });
 
   it("switches workspace from the top bar", async () => {

@@ -16,6 +16,8 @@ export interface CallingSettings {
   record_calls: boolean;
   transcription_mode: TranscriptionMode;
   dispositions: string[];
+  /** Per-minute price in micros for this workspace (discount applied); null = not set yet. */
+  feature_prices?: { recording_min: number | null; transcription_min: number | null };
 }
 
 export type CallingSettingsPatch = Partial<

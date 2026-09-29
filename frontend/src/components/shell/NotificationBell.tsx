@@ -13,7 +13,6 @@ import {
 import { useOptionalSoftphone } from "@/softphone/SoftphoneProvider";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { useAnchoredPosition } from "@/components/ui/useAnchoredPosition";
 import { Badge, Button, MutationStatus } from "@/components/ui/primitives";
 
 const ORDERED_KINDS = ["mention", "assignment", "overdue", "missed_call"] as const;
@@ -124,7 +123,6 @@ export function NotificationBell({
     };
   }, [open]);
 
-  const panelStyle = useAnchoredPosition(buttonRef, open && placement === "topbar", 320);
 
   return (
     <div ref={wrapperRef} className="relative">
@@ -154,11 +152,10 @@ export function NotificationBell({
         <div
           role="menu"
           aria-label="Alerts"
-          style={placement === "topbar" ? panelStyle : undefined}
           className={cn(
             "rounded-md border border-border bg-background p-1 shadow-lg",
             placement === "topbar"
-              ? "z-50 max-h-[70vh] overflow-y-auto"
+              ? "absolute right-0 top-full mt-2 z-50 w-80 max-h-[70vh] overflow-y-auto"
               : "absolute left-11 top-0 z-50 w-80",
           )}
         >

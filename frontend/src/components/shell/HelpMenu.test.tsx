@@ -157,15 +157,13 @@ describe("HelpMenu", () => {
     dispatch.mockRestore();
   });
 
-  it("anchors itself on screen in the top bar, with readable text", async () => {
+  it("hangs right-aligned under its icon in the top bar, with readable text", async () => {
     renderWithProviders(<HelpMenu placement="topbar" />, stub(FULL));
     const menu = await openMenu(userEvent.setup());
 
-    // Measured, not classed: the panel is fixed to the viewport so it cannot be drawn off
-    // the right edge or under the bar.
-    await waitFor(() => expect(menu.style.position).toBe("fixed"));
+    expect(menu.style.position).toBe("");
+    expect(menu.className).toContain("absolute right-0 top-full mt-2");
     expect(menu.className).not.toContain("bottom-0");
-    expect(menu.className).not.toContain("top-full");
     expect(menu.className).toContain("max-h-[calc(100vh-5rem)]");
     expect(menu.className).toContain("overflow-y-auto");
     expect(menu.className).toContain("text-foreground");

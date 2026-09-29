@@ -36,6 +36,8 @@ async def test_settings_round_trip_record_calls_and_transcription_mode(p29_app):
     r = await client.get("/api/v1/orgs/current/calling", headers=headers)
     assert r.json()["record_calls"] is False
     assert r.json()["transcription_mode"] == "off"
+    # No platform price in the test DB: the page says "at the current rate".
+    assert r.json()["feature_prices"] == {"recording_min": None, "transcription_min": None}
 
     r = await client.patch(
         "/api/v1/orgs/current/calling",

@@ -178,7 +178,19 @@ async def update_org_settings(
 async def current_calling(
     ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
 ) -> dict:
-    return calling_settings_svc.as_dict(ctx.org)
+    return await _calling_out(ctx)
+
+
+async def _calling_out(ctx: OrgContext) -> dict:
+    """The calling settings plus what a recorded / transcribed minute costs this
+    workspace (discount applied; None while Ringlite has not set that price)."""
+    from app.services import telephony_billing
+
+    prices = {
+        metric: await telephony_billing.feature_minute_price(ctx.session, ctx.org.id, metric, feature)
+        for metric, feature in (("recording_min", "call_recording"), ("transcription_min", "call_transcription"))
+    }
+    return {**calling_settings_svc.as_dict(ctx.org), "feature_prices": prices}
 
 
 @router.patch("/current/calling")
@@ -254,7 +266,7 @@ async def update_calling_settings(
         detail={"fields": changed},
     )
     await ctx.session.commit()
-    return calling_settings_svc.as_dict(ctx.org)
+    return await _calling_out(ctx)
 
 
 @router.get("/current/retention", response_model=RetentionOut)

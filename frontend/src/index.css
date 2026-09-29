@@ -32,5 +32,17 @@
   --destructive: 0 72% 51%;
 }
 
+/* Native controls (the open list of a <select>, date pickers, scrollbars) are drawn by
+ * the browser from `color-scheme`, not from the tokens: without this a dark surface got a
+ * WHITE option list with light-grey text - unreadable. The option colours are set as well
+ * because Windows Chrome paints options from the select's own colour otherwise. */
+.dark { color-scheme: dark; }
+.dark option,
+.dark optgroup {
+  background-color: hsl(0 0% 10%);
+  color: hsl(0 0% 95%);
+}
+.dark option:disabled { color: hsl(0 0% 55%); }
+
 html, body, #root { height: 100%; }
 body { @apply bg-background text-foreground antialiased; }

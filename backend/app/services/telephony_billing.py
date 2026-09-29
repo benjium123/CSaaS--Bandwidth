@@ -1267,6 +1267,23 @@ async def charge_feature_minutes(
     return price
 
 
+async def feature_minute_price(
+    session: AsyncSession, org_id: uuid.UUID, metric: str, feature: str
+) -> int | None:
+    """What ONE minute of a per-minute feature costs this workspace, discount applied -
+    the same price ``charge_feature_minutes`` would charge. None while the price is unset
+    (no platform price and no workspace override): those minutes meter at $0."""
+    from app.services import discounts, price_alerts
+
+    override = await _feature_price_override(session, org_id, feature)
+    if override is not None:
+        bps = await discounts.active_bps(session, org_id, discounts.category_for_metric(metric))
+        return discounts.apply(override, bps)
+    if await price_alerts.is_unset(session, metric):
+        return None
+    return await unit_price(session, org_id, FEATURE_PROVIDER, metric)
+
+
 async def _feature_price_override(
     session: AsyncSession, org_id: uuid.UUID, feature: str
 ) -> int | None:

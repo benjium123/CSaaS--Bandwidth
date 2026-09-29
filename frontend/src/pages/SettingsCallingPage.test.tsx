@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SettingsCallingPage } from "./SettingsCallingPage";
+import { SettingsCallingPage, minuteCharge } from "./SettingsCallingPage";
 import { makeStubClient, renderWithProviders } from "@/test/harness";
 import type { Me } from "@/auth/AuthContext";
 import type { CallingSettings } from "@/api/calls";
@@ -69,6 +69,23 @@ function renderPage({
 }
 
 describe("SettingsCallingPage", () => {
+  it("shows the per-minute charge for recording and transcripts", async () => {
+    renderPage({
+      calling: { ...DEFAULT_CALLING, feature_prices: { recording_min: 2500, transcription_min: 20000 } },
+    });
+    expect(await screen.findByTestId("recording-price")).toHaveTextContent(
+      "Recording is charged at $0.0025 per minute of call time",
+    );
+    expect(screen.getByTestId("transcription-price")).toHaveTextContent(
+      "Transcription (including live captions) is charged at $0.02 per minute of call time",
+    );
+  });
+
+  it("an unset price says the current rate applies", () => {
+    expect(minuteCharge("Recording", null)).toMatch(/at the current rate/);
+    expect(minuteCharge("Recording", 1_500_000)).toMatch(/\$1\.50 per minute/);
+  });
+
   it("loads sections and says which calls get separate sides", async () => {
     renderPage();
 

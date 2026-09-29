@@ -6,7 +6,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { getErrorMessage } from "@/api/contacts";
 import { useAuth } from "@/auth/AuthContext";
 import { Button, Input, Textarea } from "@/components/ui/primitives";
-import { useAnchoredPosition } from "@/components/ui/useAnchoredPosition";
 import { openSupportChat } from "./ConsoleSupportChat";
 
 /** Support/help links exposed by the backend (routes/support.py). Any field may be null. */
@@ -33,10 +32,9 @@ function externalProps(href: string): { target?: string; rel?: string } {
 
 /**
  * Where the menu opens relative to its button: `rail` (left sidebar, opens up and to the
- * right) or `topbar` (top-right header). The top bar's position is MEASURED rather than
- * classed - see useAnchoredPosition - because a class cannot know where the trigger landed
- * on screen, and the old `right-0 top-full` could still be drawn under the bar on a narrow
- * window.
+ * right) or `topbar` (top-right header). In the top bar it hangs right-aligned under
+ * its own icon (`right-0 top-full`), like the account menu beside it. A viewport-measured
+ * fixed panel was tried and landed away from the icon on the desktop app.
  */
 export type HelpMenuPlacement = "rail" | "topbar";
 
@@ -53,7 +51,6 @@ export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement
   const wrapper = React.useRef<HTMLDivElement>(null);
   const buttonRef = React.useRef<HTMLButtonElement | null>(null);
 
-  const anchoredStyle = useAnchoredPosition(buttonRef, open && placement === "topbar", 256);
 
   const contacts = useQuery({
     queryKey: ["support", "contacts"],
@@ -98,7 +95,8 @@ export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement
 
   const c = contacts.data;
   const canSend = subject.trim().length > 0 && body.trim().length > 0;
-  const positionClass = placement === "rail" ? RAIL_POSITION_CLASS : "";
+  // Top bar: hung right-aligned under the icon, like the account menu next to it.
+  const positionClass = placement === "rail" ? RAIL_POSITION_CLASS : "absolute right-0 top-full mt-2";
 
   const openContact = () => {
     send.reset();
@@ -125,7 +123,6 @@ export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement
         <div
           role="menu"
           aria-label="Help"
-          style={placement === "topbar" ? anchoredStyle : undefined}
           className={`${positionClass} z-50 max-h-[calc(100vh-5rem)] w-64 overflow-y-auto rounded-md border border-border bg-background p-1 text-foreground shadow-lg`}
         >
           {/* First, and the only item here that does not leave the console: it opens the

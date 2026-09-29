@@ -337,8 +337,8 @@ describe("NotificationBell", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Alerts, 1 unread" }));
     const menu = await screen.findByRole("menu", { name: "Alerts" });
 
-    await waitFor(() => expect(menu.style.position).toBe("fixed"));
-    // No rail offsets: the position comes from the measured style, not a class.
+    // Right-aligned under the bell, no rail offsets.
+    expect(menu.className).toContain("absolute right-0 top-full mt-2");
     expect(menu.className).not.toContain("left-11");
     expect(menu.className).toContain("max-h-[70vh]");
     expect(menu.className).toContain("overflow-y-auto");

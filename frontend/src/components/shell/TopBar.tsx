@@ -13,7 +13,7 @@
  * sideways, so a member with every permission never gets a page-wide horizontal scrollbar.
  */
 import * as React from "react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchUnreadByInbox } from "@/api/conversations";
 import { ChevronDown, Radio, Search, ShieldCheck } from "lucide-react";
@@ -21,7 +21,6 @@ import { hasPermission, useAuth } from "@/auth/AuthContext";
 import { SETTINGS_ITEM, useRailNav, type RailItem } from "@/components/shell/Sidebar";
 import { Button } from "@/components/ui/primitives";
 import { openCommandPalette } from "@/components/ui/CommandPalette";
-import { useAnchoredPosition } from "@/components/ui/useAnchoredPosition";
 import { StatusPill } from "@/components/shell/StatusPill";
 import { useOptionalSoftphone } from "@/softphone/SoftphoneProvider";
 import { NotificationBell } from "@/components/shell/NotificationBell";
@@ -269,6 +268,19 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
               aria-label="Account"
               className="absolute right-0 z-50 mt-1 w-56 rounded-md border border-border bg-background p-2 shadow-lg"
             >
+              <div className="px-3 pb-2 pt-1">
+                <p className="truncate text-sm font-semibold text-foreground">{me?.full_name || me?.email}</p>
+                {me?.full_name ? <p className="truncate text-xs text-muted-foreground">{me.email}</p> : null}
+              </div>
+              <Link
+                to="/settings/profile"
+                role="menuitem"
+                className="flex w-full flex-col rounded-md px-3 py-2 text-sm text-foreground hover:bg-muted"
+                onClick={() => setAccountOpen(false)}
+              >
+                <span>Edit profile</span>
+                <span className="text-xs text-muted-foreground">Name and 911 address</span>
+              </Link>
               <Button
                 type="button"
                 variant="ghost"
@@ -294,15 +306,13 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
  *
  * It was the rail's Calls entry. The inbox's own Calls tab replaced the page, so the only
  * thing left of it a supervisor still needs is the live view - and they need that WHILE they
- * work, not on a page they have to leave the inbox to reach. The panel is measured to the
- * viewport (useAnchoredPosition) rather than hung off the button, because the button is in
- * the top-right cluster.
+ * work, not on a page they have to leave the inbox to reach. The panel hangs right-aligned
+ * under the button, like the other top-right menus.
  */
 function LiveCallsButton() {
   const [open, setOpen] = React.useState(false);
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   const buttonRef = React.useRef<HTMLButtonElement | null>(null);
-  const panelStyle = useAnchoredPosition(buttonRef, open, 420);
 
   React.useEffect(() => {
     if (!open) return undefined;
@@ -346,8 +356,7 @@ function LiveCallsButton() {
         <div
           role="dialog"
           aria-label="Live calls"
-          style={panelStyle}
-          className="z-50 max-h-[70vh] overflow-y-auto rounded-md border border-border bg-background p-2 shadow-lg"
+          className="absolute right-0 top-full mt-2 z-50 w-[420px] max-w-[calc(100vw-1rem)] max-h-[70vh] overflow-y-auto rounded-md border border-border bg-background p-2 shadow-lg"
         >
           <LiveCallsSupervisor />
         </div>

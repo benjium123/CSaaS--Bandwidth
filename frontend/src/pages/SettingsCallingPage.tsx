@@ -16,6 +16,16 @@ import { useAuth } from "@/auth/AuthContext";
 import { Button, Input, MutationStatus, Section, Spinner, Textarea } from "@/components/ui/primitives";
 import { SurfaceCard } from "@/components/ui/consoleChrome";
 
+/** "Recording is charged at $0.0025 per minute of call time." - micros to dollars with
+ * no trailing zeros past the cents; unknown price -> "at the current rate". */
+export function minuteCharge(label: string, micros: number | null | undefined): string {
+  if (micros == null) {
+    return `${label} is charged per minute of call time at the current rate (see Billing & usage).`;
+  }
+  const dollars = (micros / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.(\d)?$/, (_m, d) => `.${d ?? "0"}0`);
+  return `${label} is charged at $${dollars} per minute of call time, from your balance.`;
+}
+
 export function SettingsCallingPage() {
   const { api } = useAuth();
   const gate = useGate();
@@ -239,6 +249,9 @@ export function SettingsCallingPage() {
               The recording shows on the call about a minute after it ends. In headphones
               you hear your side in the left ear and the caller in the right.
             </p>
+            <p data-testid="recording-price" className="pl-[25px] text-[11.5px] font-medium text-foreground">
+              {minuteCharge("Recording", settings.feature_prices?.recording_min)}
+            </p>
 
             <label className="block text-[13.5px]">
               <span className="mb-[6px] block">Transcripts of recorded calls</span>
@@ -262,6 +275,9 @@ export function SettingsCallingPage() {
               Overnight transcripts are ready by 8 am Eastern. Live captions show in the phone
               panel while the call is on and need "Record every call" turned on. Anyone can
               press Transcribe on a single call to get it right away.
+            </p>
+            <p data-testid="transcription-price" className="text-[11.5px] font-medium text-foreground">
+              {minuteCharge("Transcription (including live captions)", settings.feature_prices?.transcription_min)}
             </p>
 
             {/* The helper is a description, not part of the name: a screen reader hears
