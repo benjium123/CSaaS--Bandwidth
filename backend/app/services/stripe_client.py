@@ -363,6 +363,61 @@ async def charge_off_session(
     return {"id": intent.get("id", ""), "status": intent.get("status", "")}
 
 
+async def charge_saved_card(
+    settings,
+    *,
+    amount_micros: int,
+    customer_id: str,
+    payment_method_id: str,
+    metadata: dict[str, str],
+    idempotency_key: str,
+    description: str,
+) -> dict:
+    """Charge the workspace's saved card for a purchase started in the app (no Checkout page).
+
+    The metadata is the same as a Checkout purchase's, so the payment_intent.succeeded webhook
+    credits it exactly like one. Returns ``{"status", "id", "intent"}`` where ``intent`` is a
+    plain dict (id, status, amount_received, metadata, payment_method, customer). A declined
+    card is a normal outcome: ``{"status": "failed", "reason", "code"}``; a card whose bank
+    insists on authentication gives ``{"status": "requires_action"}`` and nothing is charged.
+    """
+    stripe = _stripe(settings)
+    params = {
+        "amount": int(amount_micros) // 10_000,
+        "currency": settings.stripe_price_currency,
+        "customer": customer_id,
+        "payment_method": payment_method_id,
+        "confirm": True,
+        "off_session": True,
+        "description": description,
+        "metadata": metadata,
+        # A retried request (double tap, network retry) returns the same intent, never a
+        # second charge.
+        "idempotency_key": idempotency_key,
+    }
+    try:
+        intent = await _run_sync(stripe.PaymentIntent.create, **params)
+    except Exception as exc:
+        code = getattr(exc, "code", "") or ""
+        if not code:
+            raise
+        if code == "authentication_required":
+            return {"status": "requires_action", "code": code}
+        reason = getattr(exc, "user_message", None) or "We could not charge this card."
+        return {"status": "failed", "reason": str(reason), "code": str(code)}
+
+    raw_metadata = intent.get("metadata") or {}
+    plain = {
+        "id": intent.get("id", ""),
+        "status": intent.get("status", ""),
+        "amount_received": int(intent.get("amount_received") or 0),
+        "metadata": {str(k): str(v) for k, v in dict(raw_metadata).items()},
+        "payment_method": intent.get("payment_method"),
+        "customer": intent.get("customer"),
+    }
+    return {"status": plain["status"], "id": plain["id"], "intent": plain}
+
+
 def verify_webhook(settings, payload: bytes, signature: str) -> dict:
     """Verify a Stripe webhook signature and return the event."""
     webhook_secret_obj = getattr(settings, "stripe_webhook_secret", None)

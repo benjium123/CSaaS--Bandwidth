@@ -43,14 +43,19 @@ async def _by_intent(session: AsyncSession, intent_id: str) -> BillingPayment | 
 
 
 async def start_bundle_payment(
-    session: AsyncSession, org_id: uuid.UUID, *, kind: str, qty: int
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    kind: str,
+    qty: int,
+    payment_id: uuid.UUID | None = None,
 ) -> tuple[BillingPayment, dict[str, int]]:
     """Price the purchase and create its pending row (before Stripe is called). Does not
-    commit."""
+    commit. ``payment_id`` lets a caller make the row id deterministic (in-app retries)."""
     q = await bundles.quote(session, kind, qty, org_id)
     set_org_context(session, org_id)
     row = BillingPayment(
-        id=uuid.uuid4(),
+        id=payment_id or uuid.uuid4(),
         org_id=org_id,
         kind=f"{kind}_bundle",
         state="pending",

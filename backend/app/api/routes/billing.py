@@ -633,6 +633,53 @@ async def create_bundle_checkout(
     }
 
 
+class InAppPayIn(BaseModel):
+    kind: str = Field(pattern="^(credit|sms|mms|voice)$")
+    qty: int = Field(default=1, ge=1, le=500)
+    amount_micros: int = Field(default=0, ge=0)
+    #: One per checkout attempt, chosen by the app: a retry of the same request never
+    #: charges twice.
+    request_id: str = Field(min_length=8, max_length=64, pattern="^[A-Za-z0-9_-]+$")
+
+
+@router.get("/pay/quote")
+async def get_pay_quote(
+    ctx: Annotated[OrgContext, Depends(require_permission("org:billing"))],
+    kind: str = Query(pattern="^(credit|sms|mms|voice)$"),
+    qty: int = Query(default=1, ge=1, le=500),
+    amount_micros: int = Query(default=0, ge=0),
+) -> dict:
+    """The in-app checkout summary: server price and the saved card that would be charged."""
+    from app.services import inapp_pay
+
+    return await inapp_pay.quote(
+        ctx.session, ctx.org.id, kind=kind, qty=qty, amount_micros=amount_micros
+    )
+
+
+@router.post("/pay")
+async def pay_with_saved_card(
+    payload: InAppPayIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("org:billing"))],
+    request: Request,
+) -> dict:
+    """Buy credit or bundles in the app with the card on file (no Checkout page)."""
+    from app.services import inapp_pay
+
+    actor_user, actor_key = _actor(ctx)
+    return await inapp_pay.pay(
+        ctx.session,
+        request.app.state.settings,
+        ctx.org,
+        kind=payload.kind,
+        qty=payload.qty,
+        amount_micros=payload.amount_micros,
+        request_id=payload.request_id,
+        actor_user_id=actor_user,
+        actor_api_key_id=actor_key,
+    )
+
+
 @router.post("/subscription/checkout")
 async def create_subscription_checkout(
     payload: SubscriptionCheckoutIn,
