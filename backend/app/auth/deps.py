@@ -724,6 +724,9 @@ async def _operator_check(
         request, session, request.app.state.settings, user, org=None, privileged=True
     )
     row = await current_identity_session(request, session)
+    if row is not None and row.is_device:
+        # Ringlite apps: the operator console is browser-only.
+        raise PermissionDeniedError("Use the web console for operator access")
     if row is None or row.second_factor_at is None:
         # Signed in with a password alone (possible only before the account had a
         # factor): the operator console always needs a session that proved one.

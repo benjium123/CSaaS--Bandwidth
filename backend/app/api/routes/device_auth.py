@@ -8,6 +8,7 @@ ask for a device session instead of a cookie, and add refresh, logout and QR dev
 from __future__ import annotations
 
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
@@ -188,7 +189,8 @@ async def create_link_code(
     await enforce_rate_limit(request, f"device-link-create:{user.id}")
     settings = _settings(request)
     code, expires = await device_sessions.create_link_code(session, settings, row)
-    host = request.headers.get("host", "")
+    # Never the request's Host header: the app trusts this host, so it comes from config.
+    host = urlparse(settings.public_web_url).netloc
     return {
         "code": code,
         "qr_payload": f"ringlite://link?c={code}&h={host}",

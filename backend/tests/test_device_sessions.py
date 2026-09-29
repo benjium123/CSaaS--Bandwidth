@@ -303,6 +303,7 @@ async def test_refresh_rotates_and_keeps_expiry(browser, app_client, session):
 # 5. reusing a rotated refresh token kills the whole session
 # ----------------------------------------------------------------------------------
 async def test_refresh_reuse_revokes(browser, app_client, session):
+    """A rotated refresh token replayed AFTER the race grace window means it leaked."""
     email = "dev-reuse@example.com"
     await _register_confirm_and_login(browser, email)
     login = (await _device_login(app_client, email)).json()
@@ -312,6 +313,11 @@ async def test_refresh_reuse_revokes(browser, app_client, session):
     assert r.status_code == 200, r.text
     token_b = r.json()["refresh_token"]
     access_b = r.json()["access_token"]
+
+    session.expire_all()
+    row = await _device_row(session)
+    row.refresh_rotated_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await session.commit()
 
     replay = await _device_refresh(app_client, token_a)
     assert replay.status_code == 401, replay.text
@@ -323,6 +329,68 @@ async def test_refresh_reuse_revokes(browser, app_client, session):
 
     me = await app_client.get("/api/v1/me/sessions", headers=auth_headers(access_b))
     assert me.status_code == 401, me.text
+
+
+async def test_refresh_race_inside_grace_is_not_theft(browser, app_client, session):
+    email = "dev-race@example.com"
+    await _register_confirm_and_login(browser, email)
+    token_a = (await _device_login(app_client, email)).json()["refresh_token"]
+
+    first = await _device_refresh(app_client, token_a)
+    assert first.status_code == 200, first.text
+
+    racer = await _device_refresh(app_client, token_a)
+    assert racer.status_code == 409, racer.text
+    assert "refresh_in_progress" in racer.text
+
+    # The winner's tokens still work.
+    again = await _device_refresh(app_client, first.json()["refresh_token"])
+    assert again.status_code == 200, again.text
+
+
+async def test_unknown_refresh_secret_revokes_nothing(browser, app_client, session):
+    email = "dev-forged@example.com"
+    await _register_confirm_and_login(browser, email)
+    login = (await _device_login(app_client, email)).json()
+
+    forged = f"rt1.{login['session_id']}.not-the-secret"
+    r = await _device_refresh(app_client, forged)
+    assert r.status_code == 401, r.text
+
+    ok = await _device_refresh(app_client, login["refresh_token"])
+    assert ok.status_code == 200, ok.text
+
+
+async def test_linked_device_gets_no_fresh_step_up(browser, app_client, session):
+    email = "dev-link-stepup@example.com"
+    await _register_confirm_and_login(browser, email)
+    await _enroll_and_activate(browser)
+    session.expire_all()
+    web = await _web_row(session, email)
+    web.second_factor_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    code = (await browser.post("/api/v1/auth/device/link-codes", headers=_csrf(browser))).json()
+    r = await app_client.post(
+        "/api/v1/auth/device/link", json={"code": code["code"], "device": DEVICE}
+    )
+    assert r.status_code == 200, r.text
+
+    session.expire_all()
+    row = await _device_row(session)
+    assert row.second_factor_at is not None
+    assert datetime.now(timezone.utc) - _aware(row.second_factor_at) > timedelta(minutes=10)
+
+
+async def test_link_qr_host_comes_from_config(browser, session):
+    email = "dev-link-host@example.com"
+    await _register_confirm_and_login(browser, email)
+    r = await browser.post(
+        "/api/v1/auth/device/link-codes",
+        headers={**_csrf(browser), "Host": "evil.example"},
+    )
+    assert r.status_code == 200, r.text
+    assert "evil.example" not in r.json()["qr_payload"]
 
 
 # ----------------------------------------------------------------------------------

@@ -28,14 +28,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import ALGORITHM
 from app.config import Settings
-from app.errors import UnauthenticatedError, ValidationFailedError
-from app.models import DeviceLinkCode, User
+from app.errors import ConflictError, UnauthenticatedError, ValidationFailedError
+from app.models import DeviceLinkCode, Org, OrgMembership, User
 from app.models import Session as IdentitySession
 from app.services import identity as identity_svc
 from app.services import session_cache
 
 DEVICE_KINDS: frozenset[str] = frozenset({"android", "desktop", "ios"})
 REFRESH_PREFIX = "rt1"
+#: A refresh token replayed this soon after it was rotated is a race, not theft.
+REFRESH_REPLAY_GRACE = timedelta(seconds=30)
 
 
 @dataclass(frozen=True)
@@ -129,9 +131,17 @@ async def refresh(session: AsyncSession, settings: Settings, token: str) -> dict
     row = await session.get(IdentitySession, sid)
     if row is None or not row.is_device or row.revoked_at is not None:
         raise invalid
-    if _aware(row.expires_at) <= datetime.now(timezone.utc):
+    now = datetime.now(timezone.utc)
+    if _aware(row.expires_at) <= now:
+        raise invalid
+    # A workspace's maximum session age applies to devices too (auth/deps enforces it per
+    # request); refusing the refresh here stops an app looping on refresh -> 401.
+    max_hours = await _strictest_org_max_hours(session, row.user_id)
+    if max_hours and now - _aware(row.created_at) > timedelta(hours=max_hours):
+        await revoke(session, settings, row, revoked_by=row.user_id)
         raise invalid
 
+    presented = _hash(secret)
     new_secret = secrets.token_urlsafe(32)
     # Compare-and-swap on the stored hash: two concurrent refreshes with the same token
     # cannot both win, and a stale (already rotated) token matches nothing.
@@ -139,20 +149,42 @@ async def refresh(session: AsyncSession, settings: Settings, token: str) -> dict
         sa.update(IdentitySession)
         .where(
             IdentitySession.id == sid,
-            IdentitySession.refresh_hash == _hash(secret),
+            IdentitySession.refresh_hash == presented,
             IdentitySession.revoked_at.is_(None),
         )
         .values(
             refresh_hash=_hash(new_secret),
+            prev_refresh_hash=presented,
+            refresh_rotated_at=now,
             refresh_generation=(row.refresh_generation or 0) + 1,
-            last_seen_at=datetime.now(timezone.utc),
+            last_seen_at=now,
         )
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
-        # A refresh secret that no longer matches was either stolen and used, or used by
-        # us and replayed. Either way the session can no longer be trusted.
-        await revoke(session, settings, row, revoked_by=row.user_id)
+        await session.rollback()
+        await session.refresh(row)
+        if row.prev_refresh_hash is not None and presented == row.prev_refresh_hash:
+            rotated = _aware(row.refresh_rotated_at) if row.refresh_rotated_at else None
+            if rotated is not None and now - rotated <= REFRESH_REPLAY_GRACE:
+                # Two refreshes raced (two windows, a retried request): the other one won.
+                # The client re-reads its stored tokens; nothing is revoked.
+                raise ConflictError(
+                    "Your session was just refreshed. Try again.", code="refresh_in_progress"
+                )
+            # An already-rotated secret used later: it leaked. End the session.
+            owner = await session.get(User, row.user_id)
+            identity_svc.record_login_event(
+                session,
+                email=owner.email if owner else "",
+                outcome="revoked",
+                user_id=row.user_id,
+                org_id=row.org_id,
+                detail="refresh_reuse",
+            )
+            await revoke(session, settings, row, revoked_by=row.user_id)
+        # An unknown secret proves nothing about the session (a sid is readable from any
+        # access token), so it is refused without revoking anything.
         raise invalid
     await session.commit()
     await session.refresh(row)
@@ -160,6 +192,19 @@ async def refresh(session: AsyncSession, settings: Settings, token: str) -> dict
     if user is None or not user.is_active:
         raise invalid
     return token_pair(row, user, settings, f"{REFRESH_PREFIX}.{row.id}.{new_secret}")
+
+
+async def _strictest_org_max_hours(session: AsyncSession, user_id: uuid.UUID) -> int | None:
+    rows = (
+        await session.execute(
+            sa.select(Org.session_max_hours)
+            .join(OrgMembership, OrgMembership.org_id == Org.id)
+            .where(OrgMembership.user_id == user_id, Org.session_max_hours.is_not(None))
+            .execution_options(allow_unscoped=True)
+        )
+    ).scalars().all()
+    values = [int(v) for v in rows if v]
+    return min(values) if values else None
 
 
 async def revoke(
@@ -231,11 +276,26 @@ async def redeem_link_code(
     )
     apply_device(row, settings, device)
     row.auth_method = "device_link"
-    row.second_factor_at = creator.second_factor_at
+    # The device inherits that the user HAS proved a factor, never a fresh proof: step-up
+    # actions (password change, API keys...) still need a new 2FA from the device itself.
+    if creator.second_factor_at is not None:
+        stale = now - timedelta(minutes=settings.step_up_2fa_minutes, seconds=1)
+        row.second_factor_at = min(_aware(creator.second_factor_at), stale)
     refresh_token = issue_refresh(row)
     identity_svc.record_login_event(
         session, email=user.email, outcome="ok", user_id=user.id, org_id=link.org_id,
         request=request, detail="device_link",
     )
     await session.commit()
+    from app.services import account_security
+
+    what = device.name or device.kind
+    system = device.os or "unknown system"
+    await account_security.notify_now(
+        settings,
+        user.email,
+        "New device linked",
+        f"A device was linked to your account with a QR code: {what} ({system}). "
+        "You can sign it out from Settings > Security.",
+    )
     return token_pair(row, user, settings, refresh_token)

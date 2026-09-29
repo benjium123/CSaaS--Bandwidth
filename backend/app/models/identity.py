@@ -71,6 +71,12 @@ class Session(Base, TimestampMixin):
     #: SHA-256 of the current single-use refresh secret (device rows only).
     refresh_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     refresh_generation: Mapped[int | None] = mapped_column(sa.Integer(), nullable=True)
+    #: The hash rotated out by the last refresh, and when: a replay of it inside a short grace
+    #: window is a benign race (two windows, a lost response); after it, token theft.
+    prev_refresh_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    refresh_rotated_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
     @property
     def is_device(self) -> bool:

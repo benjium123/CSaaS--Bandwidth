@@ -25,6 +25,10 @@ def upgrade():
     op.add_column("sessions", sa.Column("app_version", sa.String(40), nullable=True))
     op.add_column("sessions", sa.Column("refresh_hash", sa.String(64), nullable=True))
     op.add_column("sessions", sa.Column("refresh_generation", sa.Integer(), nullable=True))
+    op.add_column("sessions", sa.Column("prev_refresh_hash", sa.String(64), nullable=True))
+    op.add_column(
+        "sessions", sa.Column("refresh_rotated_at", sa.DateTime(timezone=True), nullable=True)
+    )
 
     op.create_table(
         "device_link_codes",
@@ -52,6 +56,8 @@ def downgrade():
     op.drop_index("ix_device_link_codes_user_id", table_name="device_link_codes")
     op.drop_table("device_link_codes")
     for col in (
+        "refresh_rotated_at",
+        "prev_refresh_hash",
         "refresh_generation",
         "refresh_hash",
         "app_version",
