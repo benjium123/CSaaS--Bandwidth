@@ -291,7 +291,8 @@ async def test_call_ring_pushes_incoming_call_to_owner(browser, app_client, app,
     assert message["token"] == "tok-owner"
     assert message["data"]["kind"] == "incoming_call"
     assert message["data"]["call_id"] == call_id
-    assert message["data"]["from"] == "+15550001111"
+    assert message["data"]["caller"] == "+15550001111"
+    assert "from" not in message["data"]  # FCM-reserved key: the message would be rejected
     assert message["data"]["to"] == NUM
     assert message["data"]["room"] == "r1"
     assert message["android"]["priority"] == "HIGH"

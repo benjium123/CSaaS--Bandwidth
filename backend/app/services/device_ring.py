@@ -111,7 +111,9 @@ async def ring(settings: Settings, org_id: uuid.UUID, event: dict) -> None:
         {
             "call_id": call_id,
             "org_id": str(org_id),
-            "from": str(event.get("from") or ""),
+            # NOT "from": FCM reserves that data key and rejects the whole message (400), so
+            # no incoming_call push was ever delivered while it was named "from".
+            "caller": str(event.get("from") or ""),
             "to": str(event.get("to") or ""),
             "room": str(event.get("room") or ""),
             "sent_at": str(int(time.time())),
