@@ -368,11 +368,15 @@ async def site_chat_messages(
     session: Session,
     token: Annotated[str, Query(max_length=100)],
     after: Annotated[str | None, Query(max_length=40)] = None,
+    history: bool = False,
 ) -> dict:
+    """Replies since ``after``. ``history=true`` also returns the visitor's own messages, so an
+    app reopening a chat can redraw the whole conversation (the site widget keeps its own copy)."""
     await enforce_rate_limit(request, f"site-chat-poll:{_ip(request)}")
     chat = await _chat_for_visitor(session, chat_id, token)
+    roles = ("visitor", "agent", "system") if history else ("agent", "system")
     stmt = sa.select(SiteChatMessage).where(
-        SiteChatMessage.chat_id == chat.id, SiteChatMessage.role.in_(("agent", "system"))
+        SiteChatMessage.chat_id == chat.id, SiteChatMessage.role.in_(roles)
     )
     if after:
         try:

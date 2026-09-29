@@ -425,3 +425,26 @@ async def test_push_is_scheduled_for_a_new_customer_chat(client, monkeypatch):
         await asyncio.gather(*list(pending), return_exceptions=True)
 
     assert (chat_id, None) in calls
+
+
+async def test_history_poll_includes_the_customers_own_messages(client, session):
+    handoff = await client.post(
+        "/api/v1/public/site-chat/handoff",
+        json={"name": "Vi", "email": "vi@example.com", "transcript": [{"role": "visitor", "text": "hello"}]},
+    )
+    assert handoff.status_code == 201
+    chat_id, token = handoff.json()["chat_id"], handoff.json()["token"]
+    sent = await client.post(
+        f"/api/v1/public/site-chat/{chat_id}/messages", json={"token": token, "text": "anyone there?"}
+    )
+    assert sent.status_code == 201
+
+    plain = await client.get(f"/api/v1/public/site-chat/{chat_id}/messages", params={"token": token})
+    assert all(m["role"] in ("agent", "system") for m in plain.json()["messages"])
+
+    full = await client.get(
+        f"/api/v1/public/site-chat/{chat_id}/messages", params={"token": token, "history": "true"}
+    )
+    texts = [(m["role"], m["text"]) for m in full.json()["messages"]]
+    assert ("visitor", "hello") in texts
+    assert ("visitor", "anyone there?") in texts
