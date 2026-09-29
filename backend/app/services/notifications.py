@@ -144,13 +144,17 @@ async def create(
             log.warning("notification_event_publish_failed", exc_info=True)
 
     # Ringlite apps P2: the same notification as a phone push (per-user prefs apply).
-    _push_to_devices(row, kind, body, thread_id)
+    await _push_to_devices(session, row, kind, body, thread_id)
 
     return row
 
 
-def _push_to_devices(
-    row: Notification, kind: str, body: str, thread_id: uuid.UUID | None
+async def _push_to_devices(
+    session: AsyncSession,
+    row: Notification,
+    kind: str,
+    body: str,
+    thread_id: uuid.UUID | None,
 ) -> None:
     from app.config import get_active_settings
     from app.services import device_push, fcm
@@ -162,6 +166,11 @@ def _push_to_devices(
         data = {"notification_id": str(row.id), "org_id": str(row.org_id)}
         if thread_id is not None:
             data["thread_id"] = str(thread_id)
+            # The app addresses a thread by its number pair (like the console does).
+            thread = await session.get(MessageThread, thread_id)
+            if thread is not None:
+                data["our_e164"] = thread.our_e164
+                data["contact_e164"] = thread.contact_e164
         device_push.schedule(
             settings,
             device_push.push_to_users(

@@ -309,11 +309,9 @@ async def test_push_to_users_sends_one_request_per_live_token(
     assert message["data"]["kind"] == "mention"
     assert message["data"]["ticket_id"] == "t1"
     assert message["android"]["priority"] == "HIGH"
-    assert message["android"]["notification"] == {
-        "title": "You were mentioned",
-        "body": "Ticket t1",
-        "channel_id": "mention",
-    }
+    assert "notification" not in message["android"]
+    assert message["data"]["title"] == "You were mentioned"
+    assert message["data"]["body"] == "Ticket t1"
 
     session.expire_all()
     rows = await _rows(session)
@@ -345,9 +343,13 @@ async def test_revoked_session_is_not_pushed(
         {"call_id": "c1"},
     )
 
-    assert {m["message"]["token"] for m in fake_fcm.sends} == {"tok-two"}
+    rings = [m for m in fake_fcm.sends if m["message"]["data"]["kind"] == "incoming_call"]
+    assert {m["message"]["token"] for m in rings} == {"tok-two"}
     # incoming_call is data-only: no Android notification block.
-    assert "notification" not in fake_fcm.sends[0]["message"]["android"]
+    assert "notification" not in rings[0]["message"]["android"]
+    # P3: the revoked device was told to sign out.
+    logouts = [m for m in fake_fcm.sends if m["message"]["data"]["kind"] == "logout"]
+    assert {m["message"]["token"] for m in logouts} == {"tok-one"}
 
 
 # ----------------------------------------------------------------------------------

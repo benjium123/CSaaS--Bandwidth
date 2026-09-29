@@ -113,9 +113,14 @@ async def push_to_users(
 
         payload = dict(data or {})
         payload["kind"] = kind
+        # Data-only for every kind: the app renders notifications itself (inline reply,
+        # per-thread grouping, silence while that thread is open), which an Android
+        # notification block would bypass whenever the app is in the background.
         notification = None
-        if title and body and kind not in DATA_ONLY_KINDS:
-            notification = {"title": title, "body": body, "channel_id": kind}
+        if title:
+            payload["title"] = title
+        if body:
+            payload["body"] = body
 
         results = await asyncio.gather(
             *(
