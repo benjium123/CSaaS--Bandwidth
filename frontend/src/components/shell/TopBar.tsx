@@ -208,7 +208,7 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
         <LiveCallPill />
         <StatusPill />
         <NotificationBell />
-        <HelpMenu />
+        <HelpMenu placement="topbar" />
         {/* Light / dark, always visible (was a rail button). The console-surface wrapper is
             load-bearing for themeToggle.css tokens - see the note in Sidebar.tsx. */}
         <span className={cn("console-surface", surfaceThemeClass(theme), "contents")}>

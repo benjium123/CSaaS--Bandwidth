@@ -134,4 +134,19 @@ describe("HelpMenu", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("menu", { name: "Help" })).toBeNull());
   });
+  it("opens downward and right-aligned in the top bar, with readable text", async () => {
+    renderWithProviders(<HelpMenu placement="topbar" />, stub(FULL));
+    const menu = await openMenu(userEvent.setup());
+    expect(menu.className).toContain("top-full");
+    expect(menu.className).toContain("right-0");
+    expect(menu.className).not.toContain("bottom-0");
+    expect(menu.className).toContain("text-foreground");
+  });
+
+  it("keeps the rail placement by default", async () => {
+    renderWithProviders(<HelpMenu />, stub(FULL));
+    const menu = await openMenu(userEvent.setup());
+    expect(menu.className).toContain("bottom-0");
+    expect(menu.className).toContain("left-14");
+  });
 });

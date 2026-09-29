@@ -29,7 +29,18 @@ function externalProps(href: string): { target?: string; rel?: string } {
   return href.startsWith("https://") ? { target: "_blank", rel: "noreferrer" } : {};
 }
 
-export function HelpMenu(): JSX.Element {
+/**
+ * Where the menu opens relative to its button: `rail` (left sidebar, opens up and to the right) or
+ * `topbar` (top-right header, opens downward, right-aligned so it never leaves the viewport).
+ */
+export type HelpMenuPlacement = "rail" | "topbar";
+
+const PLACEMENT_CLASS: Record<HelpMenuPlacement, string> = {
+  rail: "bottom-0 left-14",
+  topbar: "right-0 top-full mt-2",
+};
+
+export function HelpMenu({ placement = "rail" }: { placement?: HelpMenuPlacement } = {}): JSX.Element {
   const { api } = useAuth();
   const [open, setOpen] = React.useState(false);
   const [contactOpen, setContactOpen] = React.useState(false);
@@ -106,7 +117,7 @@ export function HelpMenu(): JSX.Element {
         <div
           role="menu"
           aria-label="Help"
-          className="absolute bottom-0 left-14 z-50 w-64 rounded-md border border-border bg-background p-1 shadow-lg"
+          className={`absolute ${PLACEMENT_CLASS[placement]} z-50 max-h-[calc(100vh-5rem)] w-64 overflow-y-auto rounded-md border border-border bg-background p-1 text-foreground shadow-lg`}
         >
           <button type="button" role="menuitem" className={MENU_ITEM} onClick={openContact}>
             Contact support
