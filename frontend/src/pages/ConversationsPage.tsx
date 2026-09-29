@@ -128,13 +128,17 @@ export function ConversationsPage() {
   // `?compose=` is consumed once and stripped from the URL (replace, so Back doesn't
   // re-open it): the panel owns the value from here on, and a refresh should not
   // resurrect a half-typed message.
+  // `?call=` is the same for a call: the desktop app's tel:/callto: handler opens
+  // /inbox?call=<number> so a clicked phone link lands in a prefilled StartCallDialog.
   React.useEffect(() => {
-    const to = searchParams.get("compose");
+    const compose = searchParams.get("compose");
+    const to = compose ?? searchParams.get("call");
     if (!to) return;
     setComposeSeed({ to, from: searchParams.get("from") });
-    setComposeMode("message");
+    setComposeMode(compose ? "message" : "call");
     const next = new URLSearchParams(searchParams);
     next.delete("compose");
+    next.delete("call");
     next.delete("from");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);

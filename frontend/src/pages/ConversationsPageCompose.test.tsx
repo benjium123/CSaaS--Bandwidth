@@ -135,4 +135,14 @@ describe("ConversationsPageCompose", () => {
     const fromSelect = (await screen.findByLabelText("From")) as HTMLSelectElement;
     await waitFor(() => expect(fromSelect.value).toBe("+14694617576"));
   });
+
+  it("opens the Start a call dialog from ?call (desktop tel: links) and strips it", async () => {
+    const client = makeStubClient(routes());
+    renderPageAt("/inbox?call=%2B19725550199", client, <LocationProbe />);
+
+    await screen.findByRole("dialog", { name: "Start a call" });
+    await waitFor(() => {
+      expect(screen.getByTestId("location-search").textContent ?? "").not.toContain("call=");
+    });
+  });
 });

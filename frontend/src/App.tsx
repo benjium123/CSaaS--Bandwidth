@@ -27,6 +27,7 @@ import { ErrorBoundary, ErrorFallbackNav } from "@/components/shell/ErrorBoundar
 import { BannerRegion } from "@/components/shell/BannerSlot";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
+import { DesktopAlerts } from "@/components/shell/DesktopAlerts";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { LowBalanceBanner } from "@/components/billing/LowBalanceBanner";
 import { VerificationBanner } from "@/components/kyc/VerificationBanner";
@@ -173,6 +174,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <MobileTabBar />
       <CommandPalette />
       <SoftphonePanel />
+      {/* Inert in a browser: only the Ringlite desktop app exposes window.ringliteDesktop. */}
+      <DesktopAlerts />
       <StepUpDialog />
     </SoftphoneProvider>
   );
