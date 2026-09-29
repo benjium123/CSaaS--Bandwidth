@@ -21,6 +21,7 @@ import { NotificationBell } from "@/components/shell/NotificationBell";
 import { HelpMenu } from "@/components/shell/HelpMenu";
 import { ThemeToggle } from "@/auth/ThemeToggle";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
+import { SupportUnreadPill } from "@/components/shell/SupportUnreadPill";
 import { cn } from "@/lib/utils";
 
 function initials(me: { full_name?: string | null; email?: string | null } | null | undefined): string {
@@ -205,6 +206,7 @@ export function TopBar({ inboxUnread }: { inboxUnread?: number }) {
       </Button>
 
       <div className="flex items-center gap-1">
+        <SupportUnreadPill />
         <LiveCallPill />
         <StatusPill />
         <NotificationBell />

@@ -28,6 +28,7 @@ import { BannerRegion } from "@/components/shell/BannerSlot";
 import { SoftphoneProvider } from "@/softphone/SoftphoneProvider";
 import { SoftphonePanel } from "@/softphone/SoftphonePanel";
 import { DesktopAlerts } from "@/components/shell/DesktopAlerts";
+import { SupportAlerts } from "@/components/shell/SupportAlerts";
 import { ConsoleSupportChat } from "@/components/shell/ConsoleSupportChat";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { LowBalanceBanner } from "@/components/billing/LowBalanceBanner";
@@ -177,6 +178,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <SoftphonePanel />
       {/* Inert in a browser: only the Ringlite desktop app exposes window.ringliteDesktop. */}
       <DesktopAlerts />
+      {/* Operator-only: pings about waiting website support chats. Inert for everyone else. */}
+      <SupportAlerts />
       {/* The Help menu's "Chat with us" opens this; it stays inert until it is asked for. */}
       <ConsoleSupportChat />
       <StepUpDialog />
@@ -233,6 +236,7 @@ export function App() {
     return (
       <>
         <OpsPage />
+        <SupportAlerts />
         <StepUpDialog />
       </>
     );
@@ -249,6 +253,7 @@ export function App() {
             <Route path="/report" element={<ReportNumberPage />} />
             <Route path="*" element={<OrgPickerPage />} />
           </Routes>
+          <SupportAlerts />
           <StepUpDialog />
         </>
       );

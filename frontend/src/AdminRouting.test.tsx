@@ -34,6 +34,11 @@ vi.mock("@/pages/SecureAccountPage", () => ({
   SecureAccountPage: () => <div data-testid="secure-account-page" />,
 }));
 
+// Operator support-chat alerts poll with react-query; this routing test renders App without a
+// QueryClientProvider (like the pages mocked above), so stub them out.
+vi.mock("@/components/shell/SupportAlerts", () => ({
+  SupportAlerts: () => null,
+}));
 vi.mock("@/components/security/StepUpDialog", () => ({
   StepUpDialog: () => <div data-testid="step-up-dialog" />,
 }));
