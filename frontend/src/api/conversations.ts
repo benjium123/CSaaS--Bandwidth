@@ -435,6 +435,19 @@ export async function patchThread(
   });
 }
 
+/** Mark a conversation read by its number pair. Works for call-only pairs too (the
+ * backend upserts the thread first), which a thread_id-based mark-read cannot address. */
+export async function markPairRead(
+  api: ApiClient,
+  ourE164: string,
+  contactE164: string,
+): Promise<void> {
+  await api.request<void>("/api/v1/inbox/read-pair", {
+    method: "POST",
+    json: { our_e164: ourE164, contact_e164: contactE164 },
+  });
+}
+
 export async function putImportantPair(
   api: ApiClient,
   ourE164: string,

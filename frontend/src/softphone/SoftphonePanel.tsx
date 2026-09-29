@@ -661,7 +661,7 @@ export function SoftphonePanel() {
 
   return (
     <div
-      className={cn("console-surface", surfaceThemeClass(theme), "fixed bottom-4 right-4 z-50 w-80 rounded-lg border border-border bg-background shadow-xl")}
+      className={cn("console-surface", surfaceThemeClass(theme), "fixed bottom-4 right-4 z-50 w-80 rounded-lg border border-border bg-background text-foreground shadow-xl")}
       aria-label="Softphone"
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2">

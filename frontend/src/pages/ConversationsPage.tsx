@@ -9,6 +9,7 @@ import {
   fetchConversations,
   fetchInboxes,
   fetchUnreadByInbox,
+  markPairRead,
   type ConversationFilter,
   type ConversationTab,
 } from "@/api/conversations";
@@ -268,6 +269,25 @@ export function ConversationsPage() {
     () => items.find((item) => item.contact_e164 === urlContact) ?? null,
     [items, urlContact],
   );
+  // Opening a conversation marks it read (by number pair, so call-only pairs clear too).
+  // Keyed on the pair's latest event: something arriving while it is open is marked read
+  // again on the next list refresh. Errors (e.g. a viewer without manage access) are ignored.
+  const markedReadRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!selectedConversation?.unread) return;
+    const { our_e164, contact_e164, last_event_at } = selectedConversation;
+    const key = `${our_e164}|${contact_e164}|${last_event_at}`;
+    if (markedReadRef.current === key) return;
+    markedReadRef.current = key;
+    markPairRead(api, our_e164, contact_e164)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        void queryClient.invalidateQueries({ queryKey: ["inbox-unread-counts"] });
+        void queryClient.invalidateQueries({ queryKey: ["needs-you"] });
+      })
+      .catch(() => {});
+  }, [api, queryClient, selectedConversation]);
+
   // F13: the conversation's own our_e164 is authoritative once it's loaded - ?our is only
   // an initial seed so the timeline can start fetching before the list has resolved.
   const ourE164 =

@@ -175,6 +175,9 @@ describe("SoftphonePanel", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Open softphone" }));
 
     const fromSelect = (await screen.findByLabelText("Call from")) as HTMLSelectElement;
+    // The panel renders outside the inbox's themed wrapper, so it must set its own text
+    // colour - without it the number list inherited body's dark text on a dark panel.
+    expect(fromSelect.closest('[aria-label="Softphone"]')?.className).toContain("text-foreground");
     const optionLabels = Array.from(fromSelect.options).map((o) => o.textContent);
     expect(optionLabels).toEqual(["Any active number", "(214) 555-0100"]);
 

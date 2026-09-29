@@ -145,4 +145,63 @@ describe("ConversationsPageCompose", () => {
       expect(screen.getByTestId("location-search").textContent ?? "").not.toContain("call=");
     });
   });
+  it("marks an unread conversation read by number pair when it is opened", async () => {
+    const unreadConversation = {
+      our_e164: "+14694617576",
+      contact_e164: "+19725550199",
+      inbox_id: "i1",
+      thread_id: null,
+      contact: null,
+      snippet: null,
+      last_event_type: "call",
+      direction: "inbound",
+      last_event_at: "2026-09-19T10:00:00Z",
+      unread: true,
+      status: "open",
+    };
+    const client = makeStubClient({
+      ...routes(),
+      "/api/v1/conversations": { items: [unreadConversation], next_cursor: null },
+      "/api/v1/inbox/read-pair": null,
+    });
+    renderPageAt("/inbox?contact=%2B19725550199&our=%2B14694617576", client);
+
+    await waitFor(() => {
+      const calls = client.calls.filter((call) => call.path === "/api/v1/inbox/read-pair");
+      expect(calls).toHaveLength(1);
+      expect(calls[0].init.json).toEqual({
+        our_e164: "+14694617576",
+        contact_e164: "+19725550199",
+      });
+    });
+  });
+
+  it("does not mark an already-read conversation", async () => {
+    const client = makeStubClient({
+      ...routes(),
+      "/api/v1/conversations": {
+        items: [
+          {
+            our_e164: "+14694617576",
+            contact_e164: "+19725550199",
+            inbox_id: "i1",
+            thread_id: "t1",
+            contact: null,
+            snippet: "hi",
+            last_event_type: "message",
+            direction: "inbound",
+            last_event_at: "2026-09-19T10:00:00Z",
+            unread: false,
+            status: "open",
+          },
+        ],
+        next_cursor: null,
+      },
+      "/api/v1/inbox/read-pair": null,
+    });
+    renderPageAt("/inbox?contact=%2B19725550199&our=%2B14694617576", client);
+
+    await screen.findAllByText("hi");
+    expect(client.calls.some((call) => call.path === "/api/v1/inbox/read-pair")).toBe(false);
+  });
 });
