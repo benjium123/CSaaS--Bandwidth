@@ -10,6 +10,7 @@ import { ChatWidget } from "@/marketing/ChatWidget";
 import { PROOF_POINTS, SOLUTIONS } from "@/marketing/content";
 import { PLANS, RATES, minutePoolsLine, addOnLine, cents, money, packageLine } from "@/marketing/pricing.config";
 import { faqById, type Faq } from "@/marketing/faq";
+import { HOME_META, useReportPageMeta } from "@/marketing/pageMeta";
 
 type PreviewMode = "Calls" | "Messages" | "Team notes";
 const WAVE = [12, 23, 17, 34, 45, 24, 58, 38, 66, 47, 29, 53, 74, 40, 60, 31, 49, 68, 35, 54, 25, 42, 62, 33, 49, 19, 31, 15];
@@ -49,9 +50,10 @@ export function LandingPage() {
   const { theme } = useSurfaceTheme();
   const { me } = useAuth();
   const root = React.useRef<HTMLDivElement>(null);
+  useReportPageMeta(HOME_META);
   React.useEffect(() => {
     const previous = document.title;
-    document.title = "Ringlite — Your next great conversation starts here";
+    document.title = HOME_META.title;
     const targets = root.current?.querySelectorAll(".rl-reveal");
     if (!("IntersectionObserver" in window)) return () => { document.title = previous; };
     const observer = new IntersectionObserver(entries => entries.forEach(entry => {

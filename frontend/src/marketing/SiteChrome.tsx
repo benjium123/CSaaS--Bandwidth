@@ -9,6 +9,7 @@ import { COMPETITORS, PRODUCTS, SOLUTIONS, TEAM_SOLUTIONS, type IconName } from 
 import { COVERAGE, money, packageLine, planByCode } from "@/marketing/pricing.config";
 import { FAQS, faqById, faqsFor, type Faq, type FaqTopic } from "@/marketing/faq";
 import { ChatWidget } from "@/marketing/ChatWidget";
+import { useReportPageMeta } from "@/marketing/pageMeta";
 import "@fontsource-variable/archivo";
 import "@/pages/landing.css";
 import "@/marketing/site.css";
@@ -275,6 +276,7 @@ export function SitePage({ title, description, children }: { title: string; desc
   const { theme } = useSurfaceTheme();
   const { pathname } = useLocation();
   const root = React.useRef<HTMLDivElement>(null);
+  useReportPageMeta({ title: `${title} · Ringlite`, description });
 
   React.useEffect(() => {
     const previous = document.title;
