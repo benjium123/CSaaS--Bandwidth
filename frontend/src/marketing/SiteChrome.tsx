@@ -32,6 +32,8 @@ function Mark() {
 const TEAM_PRICE = planByCode("team").price ?? 0;
 
 const RESOURCES: { to: string; label: string; hint: string }[] = [
+  { to: "/blog", label: "Guides", hint: "Costs, 10DLC texting and switching" },
+  { to: "/calculator", label: "Cost calculator", hint: "Price your team against per-seat plans" },
   { to: "/faq", label: "FAQ", hint: "The questions we get most" },
   { to: "/trust", label: "Security", hint: "Verification, isolation, fraud controls" },
   { to: "/legal/911", label: "911 disclosure", hint: "How emergency calling works" },
@@ -220,6 +222,7 @@ export function SiteFooter() {
           <h2>Company</h2>
           <ul>
             <li><Link to="/pricing">Pricing</Link></li>
+            <li><Link to="/blog">Guides</Link></li>
             <li><Link to="/calculator">Cost calculator</Link></li>
             <li><Link to="/switch">Switch to Ringlite</Link></li>
             {COMPETITORS.filter(c => (ALTERNATIVE_SLUGS as readonly string[]).includes(c.slug)).map(c => <li key={c.slug}><Link to={`/alternatives/${c.slug}`}>{c.name.replace(/\s*\([^)]*\)$/, "")} alternative</Link></li>)}

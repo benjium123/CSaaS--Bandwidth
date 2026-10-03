@@ -293,4 +293,4 @@ export const PROOF_POINTS = [
 ];
 
 /** Slugs of the competitors that have their own /alternatives page. */
-export const ALTERNATIVE_SLUGS = ["quo", "ringcentral", "aircall"] as const;
+export const ALTERNATIVE_SLUGS = ["quo", "ringcentral", "aircall", "krispcall", "callhippo"] as const;

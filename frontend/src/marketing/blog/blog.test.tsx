@@ -44,11 +44,14 @@ function blockStrings(block: Block): string[] {
   }
 }
 
+/** The four per-competitor cost guides added on top of the base posts. */
+const COMPARISON_POSTS = POSTS.filter(post => post.slug.endsWith("-vs-ringlite-cost") && post.slug !== "quo-vs-ringlite-cost");
+
 describe("Blog", () => {
-  it("renders one h1 on /blog and links every draft post", () => {
+  it("renders one h1 on /blog and links every post", () => {
     open("/blog");
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    expect(POSTS).toHaveLength(4);
+    expect(POSTS).toHaveLength(8);
     for (const post of POSTS) {
       expect(screen.getByText(post.title).closest("a")).toHaveAttribute("href", `/blog/${post.slug}`);
     }
@@ -90,9 +93,33 @@ describe("Blog", () => {
     expect(xml.match(/<item>/g) ?? []).toHaveLength(POSTS.length);
   });
 
-  it("leaves blog paths out of the sitemap while every post is a draft", () => {
-    expect(PUBLISHED_POSTS).toHaveLength(0);
-    expect(POSTS.every(post => post.draft)).toBe(true);
-    expect(PUBLIC_ROUTES.some(route => route.path.startsWith("/blog"))).toBe(false);
+  it("adds published posts to the sitemap", () => {
+    expect(COMPARISON_POSTS).toHaveLength(4);
+    expect(PUBLISHED_POSTS).toHaveLength(POSTS.length);
+    expect(COMPARISON_POSTS.every(post => !post.draft)).toBe(true);
+    expect(PUBLIC_ROUTES.some(route => route.path.startsWith("/blog"))).toBe(true);
+  });
+
+  it("gives every comparison post a four-row cost table and no broken values", () => {
+    for (const post of COMPARISON_POSTS) {
+      const costTable = post.blocks.find(block => block.kind === "table" && block.rows.length === 4);
+      expect(costTable).toBeDefined();
+      for (const block of post.blocks) {
+        for (const text of blockStrings(block)) {
+          expect(text).not.toContain("NaN");
+          expect(text).not.toContain("undefined");
+        }
+      }
+    }
+  });
+
+  it("states where Ringlite and KrispCall are each cheaper", () => {
+    const post = POSTS.find(item => item.slug === "krispcall-vs-ringlite-cost");
+    expect(post).toBeDefined();
+    const para = post?.blocks.find(block => block.kind === "p" && block.text.includes("costs the same or less"));
+    expect(para).toBeDefined();
+    const text = para && para.kind === "p" ? para.text : "";
+    expect(text).toContain("KrispCall costs the same or less at 3 and 5 people");
+    expect(text).toContain("Ringlite costs less at 10 and 15 people");
   });
 });

@@ -1,3 +1,4 @@
+import { ALTERNATIVE_SLUGS, COMPETITORS } from "@/marketing/content";
 import {
   CALLS_PER_NUMBER,
   COMPETITORS_CHECKED,
@@ -10,6 +11,8 @@ import {
   cents,
   competitorCost,
   competitorTier,
+  minutePoolsLine,
+  missesNumberPrice,
   money,
   monthlyWhenYearly,
   planByCode,
@@ -96,7 +99,7 @@ const WHAT_IS_10DLC: Post = {
   published: "2026-10-03",
   topic: "Texting and 10DLC",
   readMinutes: 7,
-  draft: true,
+  draft: false,
   blocks: [
     {
       kind: "p",
@@ -208,7 +211,7 @@ const BUSINESS_TEXTS_NOT_DELIVERED: Post = {
   published: "2026-10-03",
   topic: "Texting and 10DLC",
   readMinutes: 6,
-  draft: true,
+  draft: false,
   blocks: [
     {
       kind: "p",
@@ -302,7 +305,7 @@ const BUSINESS_PHONE_SYSTEM_COST: Post = {
   published: "2026-10-03",
   topic: "Pricing",
   readMinutes: 8,
-  draft: true,
+  draft: false,
   blocks: [
     {
       kind: "p",
@@ -380,7 +383,7 @@ const QUO_VS_RINGLITE_COST: Post = {
   published: "2026-10-03",
   topic: "Switching",
   readMinutes: 7,
-  draft: true,
+  draft: false,
   blocks: [
     {
       kind: "p",
@@ -443,12 +446,140 @@ const QUO_VS_RINGLITE_COST: Post = {
   ],
 };
 
+/** The competitors that get their own side-by-side cost guide. */
+const COMPARE_SLUGS = ["ringcentral", "aircall", "krispcall", "callhippo"] as const;
+
+/** "Quo (OpenPhone)" reads as "Quo" in running copy. */
+function shortName(name: string): string {
+  return name.replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
+/** "3", "3 and 5", "3, 5 and 10". */
+function joinWords(parts: readonly (string | number)[]): string {
+  if (parts.length <= 1) return parts.join("");
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * A cost guide for one competitor: the same team priced on both, the honest split of which is
+ * cheaper at which size, and how a switch works. Every number and name is read from the copy
+ * and pricing sources, so nothing here can drift out of date on its own.
+ */
+function comparisonPost(slug: (typeof COMPARE_SLUGS)[number]): Post {
+  const c = COMPETITORS.find(item => item.slug === slug);
+  if (!c) throw new Error(`No competitor copy for ${slug}`);
+  const p = COMPETITOR_SEAT_PRICES.find(item => item.slug === slug);
+  if (!p) throw new Error(`No competitor price for ${slug}`);
+
+  const short = shortName(c.name);
+  const themMonthly = (users: number): number => Math.round(competitorCost(p, users, users));
+  const themYearly = (users: number): number => Math.round(competitorCost(p, users, users, "year"));
+
+  const cheaperForUs = SIZES.filter(n => ringliteMonthly(n) < themMonthly(n));
+  const cheaperForThem = SIZES.filter(n => themMonthly(n) <= ringliteMonthly(n));
+  const sentences: string[] = [];
+  if (cheaperForUs.length > 0) {
+    sentences.push(`Ringlite costs less at ${joinWords(cheaperForUs)} people.`);
+  }
+  if (cheaperForThem.length > 0) {
+    sentences.push(`${short} costs the same or less at ${joinWords(cheaperForThem)} people.`);
+  }
+
+  const missesNumbers = SIZES.some(n => missesNumberPrice(p, n, n));
+  const caption =
+    `Monthly and yearly list prices before usage and taxes, checked ${COMPETITORS_CHECKED}.` +
+    (missesNumbers
+      ? ` Extra numbers are left out of the ${short} total because ${short} does not publish their price.`
+      : "");
+
+  const costTable: Block = {
+    kind: "table",
+    head: [
+      "People and numbers",
+      "Ringlite monthly",
+      "Ringlite yearly, per month",
+      `${short} monthly`,
+      `${short} yearly, per month`,
+    ],
+    rows: SIZES.map(n => [
+      String(n),
+      `${recommend(n, n).plan.name} ${money(ringliteMonthly(n))}`,
+      money(monthlyWhenYearly(ringliteMonthly(n))),
+      `${competitorTier(p, n).name} ${money(themMonthly(n))}`,
+      competitorTier(p, n).yearly !== null ? money(themYearly(n)) : "Not published",
+    ]),
+    caption,
+  };
+
+  const differTable: Block = {
+    kind: "table",
+    head: ["", short, "Ringlite"],
+    rows: c.rows.map(row => [row.label, row.them, row.us]),
+  };
+
+  const links: string[] = [];
+  if ((ALTERNATIVE_SLUGS as readonly string[]).includes(slug)) {
+    links.push(`[the ${short} alternative page](/alternatives/${slug})`);
+  }
+  links.push(`[the full comparison](/compare/${slug})`);
+  links.push("[how switching works](/switch)");
+
+  return {
+    slug: `${slug}-vs-ringlite-cost`,
+    title: `${c.name} vs Ringlite: what a small team pays`,
+    description: `${short} vs Ringlite for teams of 3 to 15: monthly and yearly list prices side by side, where each one is cheaper, and how switching works.`,
+    published: "2026-10-03",
+    topic: "Switching",
+    readMinutes: 6,
+    draft: false,
+    blocks: [
+      {
+        kind: "p",
+        text: `${c.summary} This guide prices the same team on both, with list prices checked ${COMPETITORS_CHECKED}.`,
+      },
+      { kind: "h2", text: "What the same team pays" },
+      costTable,
+      { kind: "p", text: sentences.join(" ") },
+      { kind: "h2", text: "How the plans differ" },
+      differTable,
+      { kind: "h2", text: `Where ${short} is the better pick` },
+      {
+        kind: "list",
+        items: [
+          ...c.theyWin,
+          `Coverage: Ringlite covers ${COVERAGE} only, so teams calling Canada or other countries need a provider with wider coverage.`,
+        ],
+      },
+      { kind: "h2", text: "Where Ringlite is the better pick" },
+      { kind: "list", items: c.weWin },
+      { kind: "h2", text: "How usage is billed" },
+      {
+        kind: "p",
+        text: `Team and Business include a shared pool of call minutes (${minutePoolsLine()} a month). Starter is pay as you go. Calls past the pool cost ${cents(RATES.minute)} a minute, and texts cost ${cents(RATES.text)} per text. "Unlimited" plans elsewhere sit under fair use policies.`,
+      },
+      { kind: "h2", text: `Switching from ${short}` },
+      {
+        kind: "p",
+        text: `You can start on new Ringlite numbers the day you are approved, keep ${short} running while you do, and port your existing numbers on Team and Business, which usually takes one to two weeks.`,
+      },
+      { kind: "p", text: `Start with ${joinWords(links)}.` },
+      {
+        kind: "cta",
+        text: "Price your own team and numbers, monthly or yearly.",
+        label: "Open the calculator",
+        to: "/calculator",
+      },
+    ],
+  };
+}
+
 /** Every guide, newest first. Order ties on `published` by the order they appear here. */
 export const POSTS: Post[] = [
   WHAT_IS_10DLC,
   BUSINESS_TEXTS_NOT_DELIVERED,
   BUSINESS_PHONE_SYSTEM_COST,
   QUO_VS_RINGLITE_COST,
+  ...COMPARE_SLUGS.map(comparisonPost),
 ];
 
 /** Guides safe to show in a production build. */
