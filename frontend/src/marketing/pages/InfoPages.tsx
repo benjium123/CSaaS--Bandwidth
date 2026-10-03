@@ -292,7 +292,7 @@ export function FaqPage() {
   const matchingTopics = FAQ_TOPICS.filter(name => matches.some(faq => faq.topic === name));
 
   return (
-    <SitePage title="Questions and answers" description="Answers about Ringlite plans, numbers, calling and texting.">
+    <SitePage title="Business phone FAQ: plans, numbers and texting" description="Answers about Ringlite plans, numbers, calling and texting.">
       <section className="ms-page-hero rl-wrap">
         <p className="rl-eyebrow"><span /> FAQ</p>
         <h1 className="ms-h1">Before we say hello.</h1>
@@ -342,7 +342,7 @@ export function FaqPage() {
 
 export function SecurityPage() {
   return (
-    <SitePage title="Security" description="How Ringlite keeps accounts, numbers and customers safe.">
+    <SitePage title="Security and trust" description="How Ringlite keeps accounts, numbers and customers safe.">
       <section className="ms-page-hero rl-wrap">
         <p className="rl-eyebrow"><span /> SECURITY</p>
         <h1 className="ms-h1">Trust starts with who’s on the line.</h1>

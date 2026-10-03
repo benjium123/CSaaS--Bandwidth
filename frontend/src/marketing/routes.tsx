@@ -1,12 +1,15 @@
 import { Route, Routes } from "react-router-dom";
+import { AlternativePage } from "@/marketing/pages/AlternativePage";
+import { CalculatorPage } from "@/marketing/pages/CalculatorPage";
 import { ComparePage } from "@/marketing/pages/ComparePage";
 import { E911Page, FaqPage, SalesPage, SecurityPage } from "@/marketing/pages/InfoPages";
 import { PrivacyPage, RefundPage, TermsPage } from "@/marketing/pages/LegalPages";
 import { PricingPage } from "@/marketing/pages/PricingPage";
 import { ProductPage } from "@/marketing/pages/ProductPage";
 import { SolutionPage } from "@/marketing/pages/SolutionPage";
+import { SwitchPage } from "@/marketing/pages/SwitchPage";
 
-const MARKETING_PATH = /^\/(pricing|sales|faq|trust|legal\/911|legal\/privacy|legal\/terms|legal\/refunds|privacy|terms|refunds|(product|solutions|compare)\/[a-z0-9-]+)\/?$/;
+const MARKETING_PATH = /^\/(pricing|sales|faq|trust|legal\/911|legal\/privacy|legal\/terms|legal\/refunds|privacy|terms|refunds|calculator|switch|(product|solutions|compare|alternatives)\/[a-z0-9-]+)\/?$/;
 
 /** True for the public website's pages; they render outside the signed-in app shell. */
 export function isMarketingPath(pathname: string): boolean {
@@ -17,6 +20,8 @@ export function MarketingRoutes() {
   return (
     <Routes>
       <Route path="/pricing" element={<PricingPage />} />
+      <Route path="/calculator" element={<CalculatorPage />} />
+      <Route path="/switch" element={<SwitchPage />} />
       <Route path="/sales" element={<SalesPage />} />
       <Route path="/faq" element={<FaqPage />} />
       <Route path="/trust" element={<SecurityPage />} />
@@ -30,6 +35,7 @@ export function MarketingRoutes() {
       <Route path="/product/:slug" element={<ProductPage />} />
       <Route path="/solutions/:slug" element={<SolutionPage />} />
       <Route path="/compare/:slug" element={<ComparePage />} />
+      <Route path="/alternatives/:slug" element={<AlternativePage />} />
     </Routes>
   );
 }

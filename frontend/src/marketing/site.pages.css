@@ -272,3 +272,13 @@
 
 /* overflow:hidden makes the page a scroll container and breaks position:sticky; clip does not. */
 .rl-landing.ms-site { overflow: clip; }
+
+/* Plain text sections on the calculator, switch and alternative pages. */
+.ms-textblock { padding-top: 80px; display: grid; gap: 18px; }
+.rl-landing .ms-textblock h2 { font-size: clamp(30px, 3.4vw, 46px); }
+.ms-textblock > p { max-width: 70ch; color: var(--rl-soft); font-size: 15px; line-height: 1.8; }
+.ms-textblock-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; max-width: 70ch; }
+.ms-textblock-list li { position: relative; padding-left: 26px; font-size: 15px; line-height: 1.7; }
+.ms-textblock-list li::before { content: ""; position: absolute; left: 4px; top: .7em; width: 8px; height: 8px; border-radius: 50%; background: var(--rl-blue); }
+.ms-textblock .ms-footnote { margin-top: 0; }
+@media (max-width: 800px) { .ms-textblock { padding-top: 56px; } }

@@ -15,7 +15,7 @@ function open(path: string) {
 describe("Public landing routes", () => {
   it("renders the homepage before authentication resolves and links to signbox", () => {
     open("/");
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Small ring.");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your team.");
     expect(screen.getByRole("link", { name: "Get started" })).toHaveAttribute("href", "/signbox");
     expect(screen.getAllByText("MOST POPULAR").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: /Compare plans/ })).toHaveAttribute("href", "/pricing");

@@ -1,42 +1,31 @@
 /**
- * /pricing — the conversion page: a monthly/yearly switch, plan cards, a calculator that finds
- * the cheapest plan for a team and prices the same team at per-seat competitors, the rate
- * card, fair use, and the full feature comparison. Every price and limit comes from
- * @/marketing/pricing.config.
+ * /pricing — the conversion page: a monthly/yearly switch, plan cards, the team cost
+ * calculator, the rate card, fair use, and the full feature comparison. Every price and limit
+ * comes from @/marketing/pricing.config.
  */
 import * as React from "react";
 import { Link } from "react-router-dom";
 import { ArrowDown, Check, Minus } from "lucide-react";
 import { CtaBand, FaqList, SitePage } from "@/marketing/SiteChrome";
+import { BillingSwitch, TeamCostCalculator } from "@/marketing/TeamCostCalculator";
 import {
   CALLS_PER_NUMBER,
-  COMPETITORS_CHECKED,
-  COMPETITOR_SEAT_PRICES,
   COVERAGE,
-  CUSTOM_FROM_USERS,
   DAILY_OUTBOUND_PER_NUMBER,
   FEATURE_SECTIONS,
   PLANS,
   RATES,
-  YEARLY,
   cents,
-  competitorCost,
-  competitorTier,
   minutePoolsLine,
   minutesLine,
-  missesNumberPrice,
   money,
   monthlyWhenYearly,
   packageLine,
   perBill,
-  recommend,
   userLimitLine,
   type Billing,
   type Plan,
 } from "@/marketing/pricing.config";
-
-const MAX_USERS = 60;
-const MAX_NUMBERS = 40;
 
 function initialBilling(): Billing {
   try {
@@ -50,19 +39,6 @@ function initialBilling(): Billing {
 function ctaHref(plan: Plan, billing: Billing): string {
   if (plan.price === null) return plan.cta.to;
   return billing === "year" ? `${plan.cta.to}&billing=year` : plan.cta.to;
-}
-
-export function BillingSwitch({ billing, onChange }: { billing: Billing; onChange: (b: Billing) => void }) {
-  return (
-    <div className="ms-billing" role="radiogroup" aria-label="Billing">
-      <button type="button" role="radio" aria-checked={billing === "month"} onClick={() => onChange("month")}>
-        Monthly
-      </button>
-      <button type="button" role="radio" aria-checked={billing === "year"} onClick={() => onChange("year")}>
-        Yearly <em>{YEARLY.label}</em>
-      </button>
-    </div>
-  );
 }
 
 function PlanPrice({ plan, billing }: { plan: Plan; billing: Billing }) {
@@ -91,22 +67,6 @@ function Cell({ value }: { value: boolean | string }) {
 
 export function PricingPage() {
   const [billing, setBilling] = React.useState<Billing>(initialBilling);
-  const [users, setUsers] = React.useState(5);
-  const [numbers, setNumbers] = React.useState(3);
-
-  const q = recommend(users, numbers);
-  const ours = q.monthly === null ? null : billing === "year" ? monthlyWhenYearly(q.monthly) : q.monthly;
-  const barRows = [
-    ...(ours !== null ? [{ label: `Ringlite ${q.plan.name}`, value: ours, isUs: true, partial: false }] : []),
-    ...COMPETITOR_SEAT_PRICES.map(c => ({
-      label: competitorTier(c, users).name,
-      value: competitorCost(c, users, numbers, billing),
-      isUs: false,
-      partial: missesNumberPrice(c, users, numbers),
-    })),
-  ];
-  const barMax = Math.max(...barRows.map(row => row.value), 1);
-  const anyPartial = barRows.some(row => row.partial);
 
   const scrollToCompare = () => {
     const target = document.getElementById("compare");
@@ -116,7 +76,7 @@ export function PricingPage() {
   };
 
   return (
-    <SitePage title="Pricing" description="Simple plans with your team and phone numbers included. Pay monthly, or yearly and get two months free.">
+    <SitePage title="Business phone pricing for small teams" description="Simple plans with your team and phone numbers included. Pay monthly, or yearly and get two months free.">
       <section className="ms-page-hero ms-pricing-hero rl-wrap">
         <p className="rl-eyebrow"><span /> PRICING</p>
         <h1 className="ms-h1">Your team and your numbers. <span>One simple price.</span></h1>
@@ -160,73 +120,7 @@ export function PricingPage() {
         </button>
       </div>
 
-      <section className="ms-band ms-band-dark" aria-labelledby="calc-h">
-        <div className="ms-calc rl-wrap rl-reveal">
-          <p className="rl-eyebrow"><span /> CALCULATOR</p>
-          <h2 id="calc-h">What your team would pay</h2>
-          <div className="ms-calc-grid">
-            <div className="ms-calc-inputs">
-              <label htmlFor="calc-users">
-                <span>People <output htmlFor="calc-users">{users}</output></span>
-                <input id="calc-users" type="range" min={1} max={MAX_USERS} value={users}
-                  onChange={event => setUsers(Number(event.target.value))} />
-              </label>
-              <label htmlFor="calc-numbers">
-                <span>Phone numbers <output htmlFor="calc-numbers">{numbers}</output></span>
-                <input id="calc-numbers" type="range" min={1} max={MAX_NUMBERS} value={numbers}
-                  onChange={event => setNumbers(Number(event.target.value))} />
-              </label>
-              <BillingSwitch billing={billing} onChange={setBilling} />
-            </div>
-            <div className="ms-calc-result" aria-live="polite">
-              <p className="ms-calc-plan rl-mono">Best fit: {q.plan.name}</p>
-              {q.monthly !== null && ours !== null ? (
-                <>
-                  <p className="ms-calc-total">
-                    {money(ours)}<small> /mo + usage</small>
-                  </p>
-                  {billing === "year" && <p className="ms-calc-billed">Billed {money(perBill(q.monthly, "year"))} a year</p>}
-                  <ul className="ms-calc-lines">
-                    <li>{q.plan.name} {money(q.plan.price ?? 0)}: {packageLine(q.plan)}</li>
-                    {q.extraUsers > 0 && (
-                      <li>{q.extraUsers} extra {q.extraUsers === 1 ? "user" : "users"} × {money(q.plan.extraUser ?? 0)}</li>
-                    )}
-                    {q.extraNumbers > 0 && (
-                      <li>{q.extraNumbers} extra {q.extraNumbers === 1 ? "number" : "numbers"} × {money(q.plan.extraNumber ?? 0)}</li>
-                    )}
-                    <li>{minutesLine(q.plan)}</li>
-                    <li>Up to {q.callsAtOnce} {q.callsAtOnce === 1 ? "call" : "calls"} at once</li>
-                  </ul>
-                </>
-              ) : (
-                <p className="ms-calc-blocked">
-                  More than {CUSTOM_FROM_USERS} people? We'll put together a plan for you.{" "}
-                  <Link className="rl-text-link" to="/sales?plan=custom">Talk to sales</Link>
-                </p>
-              )}
-            </div>
-          </div>
-          <p className="ms-bars-title">The same {users} {users === 1 ? "person" : "people"} and {numbers} {numbers === 1 ? "number" : "numbers"} elsewhere, per month</p>
-          <div className="ms-bars">
-            {barRows.map(row => (
-              <div className="ms-bar-row" key={row.label}>
-                <span className="ms-bar-label">{row.label}</span>
-                <div className="ms-bar-track" aria-hidden="true">
-                  <div className={"ms-bar-fill" + (row.isUs ? " is-us" : "")} style={{ transform: `scaleX(${row.value / barMax})` }} />
-                </div>
-                <span className="ms-bar-amount">{money(row.isUs ? row.value : Math.round(row.value))}/mo{row.partial ? "*" : ""}</span>
-              </div>
-            ))}
-          </div>
-          <p className="ms-footnote">
-            List prices, {billing === "year" ? "paid yearly where the vendor offers it" : "paid monthly"}, {COMPETITORS_CHECKED}:
-            each seat at its plan price with that vendor's minimum seats, plus phone numbers beyond the
-            one each seat includes.{anyPartial ? " * That vendor does not publish its extra-number price, so extra numbers are left out of its total." : ""}{" "}
-            Competitors bundle "unlimited" calling under fair use policies; Ringlite includes an exact
-            pool and then charges {cents(RATES.minute)}/min, so compare usage too.
-          </p>
-        </div>
-      </section>
+      <TeamCostCalculator billing={billing} onBillingChange={setBilling} />
 
       <section className="ms-rates rl-wrap rl-reveal" aria-labelledby="rates-h">
         <h2 id="rates-h">The rate card</h2>

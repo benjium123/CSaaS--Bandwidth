@@ -47,7 +47,7 @@ export function ComparePage() {
   const saving = theirs !== null && r.monthly !== null ? theirs - r.monthly : null;
 
   return (
-    <SitePage title={`Ringlite vs ${c.name}`} description={c.summary}>
+    <SitePage title={`Ringlite vs ${c.name}: pricing compared`} description={c.summary}>
       <section className="ms-page-hero rl-wrap">
         <p className="rl-eyebrow"><span />COMPARE</p>
         <h1 className="ms-h1">Ringlite vs {c.name}</h1>

@@ -54,7 +54,7 @@ export function SolutionPage() {
   const allowance = `Team and Business include shared call minutes (${minutePoolsLine()} a month); after that, calls and texts are pay as you go at the published rates.`;
 
   return (
-    <SitePage title={solution.menu} description={solution.lede}>
+    <SitePage title={`Phone system for ${solution.menu.toLowerCase()}`} description={solution.lede}>
       <section className="ms-page-hero ms-split rl-wrap">
         <div className="ms-hero-copy">
           <p className="rl-eyebrow">

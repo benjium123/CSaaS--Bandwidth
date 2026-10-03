@@ -291,3 +291,6 @@ export const PROOF_POINTS = [
   "E911 on every number",
   "Rates published to the minute",
 ];
+
+/** Slugs of the competitors that have their own /alternatives page. */
+export const ALTERNATIVE_SLUGS = ["quo", "ringcentral", "aircall"] as const;

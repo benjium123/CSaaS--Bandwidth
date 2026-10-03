@@ -5,7 +5,7 @@ import { Link, useLocation } from "react-router-dom";
 import { ArrowUpRight, Bot, Briefcase, Building2, ChevronDown, Hash, Home, Inbox, KeyRound, ListChecks, Menu, MessageSquare, Moon, Phone, Plug, Plus, Printer, Scale, ShieldCheck, Sun, Users, Wrench, X } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
-import { COMPETITORS, PRODUCTS, SOLUTIONS, TEAM_SOLUTIONS, type IconName } from "@/marketing/content";
+import { ALTERNATIVE_SLUGS, COMPETITORS, PRODUCTS, SOLUTIONS, TEAM_SOLUTIONS, type IconName } from "@/marketing/content";
 import { COVERAGE, money, packageLine, planByCode } from "@/marketing/pricing.config";
 import { FAQS, faqById, faqsFor, type Faq, type FaqTopic } from "@/marketing/faq";
 import { ChatWidget } from "@/marketing/ChatWidget";
@@ -220,6 +220,9 @@ export function SiteFooter() {
           <h2>Company</h2>
           <ul>
             <li><Link to="/pricing">Pricing</Link></li>
+            <li><Link to="/calculator">Cost calculator</Link></li>
+            <li><Link to="/switch">Switch to Ringlite</Link></li>
+            {COMPETITORS.filter(c => (ALTERNATIVE_SLUGS as readonly string[]).includes(c.slug)).map(c => <li key={c.slug}><Link to={`/alternatives/${c.slug}`}>{c.name.replace(/\s*\([^)]*\)$/, "")} alternative</Link></li>)}
             <li><Link to="/sales">Talk to sales</Link></li>
             <li><Link to="/faq">FAQ</Link></li>
             <li><Link to="/trust">Security</Link></li>

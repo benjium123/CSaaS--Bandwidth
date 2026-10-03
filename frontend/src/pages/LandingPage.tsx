@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { ArrowDown, ArrowRight, ArrowUpRight, Check, CheckCheck, ChevronDown, Headphones, MessageSquare, Mic, Phone, PhoneCall, Plus, Search } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, CheckCheck, ChevronDown, Headphones, MessageSquare, Mic, Phone, PhoneCall, Plus, Search } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import "@fontsource-variable/archivo";
@@ -8,7 +8,7 @@ import "./landing.css";
 import { SiteHeader, SiteFooter } from "@/marketing/SiteChrome";
 import { ChatWidget } from "@/marketing/ChatWidget";
 import { PROOF_POINTS, SOLUTIONS } from "@/marketing/content";
-import { PLANS, RATES, minutePoolsLine, addOnLine, cents, money, packageLine } from "@/marketing/pricing.config";
+import { COMPETITORS_CHECKED, COMPETITOR_SEAT_PRICES, PLANS, RATES, competitorCost, competitorTier, minutePoolsLine, addOnLine, cents, money, packageLine, planByCode, recommend } from "@/marketing/pricing.config";
 import { faqById, type Faq } from "@/marketing/faq";
 import { HOME_META, useReportPageMeta } from "@/marketing/pageMeta";
 
@@ -41,6 +41,23 @@ function ProductPreview() {
   </div>;
 }
 
+/** The hero's price comparison: a 10-person team is where one package price beats per-seat billing most clearly. */
+const COST_TEAM = 10;
+
+function HeroCost() {
+  const ours = recommend(COST_TEAM, COST_TEAM);
+  const rows = [
+    { label: `Ringlite ${ours.plan.name}`, value: ours.monthly ?? 0, isUs: true },
+    ...COMPETITOR_SEAT_PRICES.map(c => ({ label: competitorTier(c, COST_TEAM).name, value: competitorCost(c, COST_TEAM, COST_TEAM), isUs: false })),
+  ].sort((a, b) => a.value - b.value);
+  const max = Math.max(...rows.map(row => row.value), 1);
+  return <div className="rl-cost rl-enter" aria-label={`Monthly cost for ${COST_TEAM} people and ${COST_TEAM} numbers`}>
+    <p className="rl-mono">{COST_TEAM} PEOPLE · {COST_TEAM} NUMBERS · PER MONTH</p>
+    <ul>{rows.map(row => <li key={row.label} className={row.isUs ? "is-us" : undefined}><span className="rl-cost-label">{row.label}</span><span className="rl-cost-track" aria-hidden="true"><span style={{ width: `${(row.value / max) * 100}%` }} /></span><b>{money(Math.round(row.value))}</b></li>)}</ul>
+    <p className="rl-cost-note">Monthly list prices, checked {COMPETITORS_CHECKED}. Calls past the shared minutes are {cents(RATES.minute)} a minute. <Link to="/calculator">Price your own team</Link></p>
+  </div>;
+}
+
 const FAQ = ["personal-email", "signup-steps", "texting-how", "plans", "users", "per-number"]
   .map(id => faqById(id))
   .filter((f): f is Faq => !!f)
@@ -63,21 +80,23 @@ export function LandingPage() {
     return () => { observer.disconnect(); document.title = previous; };
   }, []);
   const cta = me ? "/inbox" : "/signbox";
+  const team = planByCode("team");
+  const starter = planByCode("starter");
   return <div ref={root} className={`rl-landing console-surface ${surfaceThemeClass(theme)}`}>
     <a className="rl-skip" href="#main">Skip to content</a>
     <SiteHeader />
     <main id="main">
-      <section className="rl-hero rl-wrap"><div className="rl-hero-copy"><p className="rl-eyebrow rl-enter"><span /> A BETTER LINE OF COMMUNICATION</p><h1 className="rl-enter">Small ring.<br />Big <span>possibilities.</span></h1><div className="rl-hero-bottom rl-enter"><p>Your business number. Your calls and texts.<br className="rl-desktop-break" /> One inbox that keeps the whole story together.</p><div className="rl-hero-links"><Link className="rl-button" to={cta}>Find your next connection <ArrowUpRight size={19} /></Link><a className="rl-text-link" href="#product">Take a look inside <ArrowDown size={16} /></a></div><span className="rl-price-teaser">From <b>$15</b> / number / month <span>+ usage</span></span></div></div>
-        <div className="rl-orbit-scene rl-enter" aria-label="Illustration of a call and a follow-up conversation"><div className="rl-orbit rl-orbit-one" /><div className="rl-orbit rl-orbit-two" /><div className="rl-orbit rl-orbit-three" /><div className="rl-orbit-core"><Phone strokeWidth={1.3} /></div><span className="rl-orbit-label rl-mono">GOOD THINGS START WITH HELLO.</span><div className="rl-floating-call"><span className="rl-avatar">JP</span><div><strong>Jamie Parker</strong><small><i /> Incoming possibility</small></div><span className="rl-answer"><Phone size={20} /></span></div><div className="rl-floating-message"><MessageSquare size={18} /><p>“Let’s make it happen.”<span>The start of something good.</span></p><CheckCheck size={15} /></div><span className="rl-coordinate rl-mono">CALL. CONNECT. CONTINUE.</span></div>
+      <section className="rl-hero rl-hero-cost rl-wrap"><div className="rl-hero-copy"><p className="rl-eyebrow rl-enter"><span /> BUSINESS PHONE FOR SMALL TEAMS</p><h1 className="rl-enter">Your team.<br />Your numbers.<br /><span>One price.</span></h1><div className="rl-hero-bottom rl-enter"><p>Calls, texts and voicemail in one shared inbox. {team.name} is {money(team.price ?? 0)} a month for {team.included?.users} users, {team.included?.numbers} numbers and {(team.minutes ?? 0).toLocaleString("en-US")} call minutes. No fee per seat.</p><div className="rl-hero-links"><Link className="rl-button" to={cta}>Start with {team.name} <ArrowUpRight size={19} /></Link><Link className="rl-text-link" to="/calculator">See what your team would pay <ArrowRight size={16} /></Link></div><span className="rl-price-teaser">From <b>{money(starter.price ?? 0)}</b> / month <span>Bring your number on Team and Business</span></span></div></div>
+        <HeroCost />
       </section>
-      <div className="rl-ticker" aria-label="Calling, texting and teamwork"><span>YOUR NUMBER.</span><Mark /><span>YOUR PEOPLE.</span><Mark /><span>YOUR NEXT CHAPTER.</span><Mark /></div>
+      <div className="rl-ticker" aria-label="Calling, texting and teamwork"><span>NO FEE PER SEAT.</span><Mark /><span>ONE SHARED INBOX.</span><Mark /><span>REGISTERED TEXTING.</span><Mark /></div>
       <div className="ms-proof rl-wrap" aria-label="Why Ringlite">{PROOF_POINTS.map(p => <span key={p}><i aria-hidden="true" />{p}</span>)}</div>
-      <section id="product" className="rl-product-section rl-wrap rl-reveal"><div className="rl-section-heading"><p className="rl-eyebrow">01 / IN GOOD COMPANY</p><div><h2>A phone system.<br />With a longer memory.</h2><p>From the first ring to the next reply, keep the context close.<br />Explore a sample conversation below.</p></div></div><ProductPreview /><div className="rl-feature-strip"><div><Phone size={19} /><h3>Make it a conversation.</h3><p>Call from your browser with a dedicated number for your work.</p></div><div><MessageSquare size={19} /><h3>Pick up the thread.</h3><p>Keep calls and registered messaging together in one customer history.</p></div><div><Mic size={19} /><h3>Bring your team along.</h3><p>Share an inbox. Leave a note. Make the next handoff feel effortless.</p></div></div></section>
+      <section id="product" className="rl-product-section rl-wrap rl-reveal"><div className="rl-section-heading"><p className="rl-eyebrow">01 / IN GOOD COMPANY</p><div><h2>Every call and text.<br />One shared inbox.</h2><p>From the first ring to the next reply, keep the context close.<br />Explore a sample conversation below.</p></div></div><ProductPreview /><div className="rl-feature-strip"><div><Phone size={19} /><h3>Make it a conversation.</h3><p>Call from your browser with a dedicated number for your work.</p></div><div><MessageSquare size={19} /><h3>Pick up the thread.</h3><p>Keep calls and registered messaging together in one customer history.</p></div><div><Mic size={19} /><h3>Bring your team along.</h3><p>Share an inbox. Leave a note. Make the next handoff feel effortless.</p></div></div></section>
       <section id="how-it-works" className="rl-process rl-reveal"><div className="rl-wrap rl-process-grid"><div><p className="rl-eyebrow">02 / YOUR FIRST HELLO</p><h2>Start with you.<br />Grow from there.</h2><p>One signup, whether you work for yourself or with a team.</p><Link className="rl-text-link" to={cta}>Let’s get you connected <ArrowUpRight size={18} /></Link><div className="rl-process-art" aria-hidden="true"><span>you</span><div /><Mark /><div /><span>what’s next</span></div></div><ol>{[["01", "Make yourself at home.", "Sign up with a personal or work email, confirm it, and secure your account."], ["02", "A real person. A trusted line.", "Verify your identity with Didit and submit your application. Reviews typically take under one hour."], ["03", "Choose a number. Make a call.", "Once approved, find available numbers by area code, complete payment, and head to your inbox."]].map(([n, title, body]) => <li key={n}><span className="rl-step-number">{n}</span><div><h3>{title}</h3><p>{body}</p></div></li>)}<li className="rl-sms-step"><MessageSquare size={21} /><div><h3>Ready to text, too?</h3><p>Register your company and 10DLC campaign inside Ringlite. Carrier approval and number assignment unlock local-number messaging.</p></div></li></ol></div></section>
       <section id="pricing" className="rl-wrap rl-reveal ms-home-plans"><div className="rl-section-heading"><p className="rl-eyebrow">03 / ROOM TO GROW</p><div><h2>Your team and your numbers.<br />One simple price.</h2><p>Every plan includes users and phone numbers; Team and Business add shared call minutes ({minutePoolsLine()} a month). After that, calls are {cents(RATES.minute)} a minute and texts {cents(RATES.text)}.</p></div></div><div className="ms-plans ms-plans-4">{PLANS.map(plan => <article key={plan.code} className={plan.highlight ? "ms-plan is-highlight" : "ms-plan"}><div className="ms-plan-tag"><span className="rl-mono">{plan.name.toUpperCase()}</span>{plan.highlight ? <b className="rl-mono">MOST POPULAR</b> : null}</div><p className="ms-plan-tagline">{plan.tagline}</p><div className="ms-price">{plan.price !== null ? <><strong>{money(plan.price)}</strong><span>per month</span></> : <strong className="ms-price-custom">Let's talk</strong>}</div><ul className="ms-includes"><li>{packageLine(plan)}</li>{addOnLine(plan) ? <li>{addOnLine(plan)}</li> : null}</ul><Link className={plan.highlight ? "rl-button" : "ms-ghost"} to={plan.cta.to}>{plan.cta.label} <ArrowUpRight size={17} /></Link></article>)}</div><div className="ms-cta-row"><Link className="rl-text-link" to="/pricing">Compare plans and see the rate card <ArrowRight size={17} /></Link></div></section>
       <section className="rl-wrap rl-reveal ms-home-industries" aria-labelledby="industries-h"><p className="rl-eyebrow">BUILT FOR YOUR LINE OF WORK</p><h2 id="industries-h">Pick your world.</h2><div className="ms-chips">{SOLUTIONS.map(s => <Link key={s.slug} className="ms-chip" to={`/solutions/${s.slug}`}>{s.menu}</Link>)}</div></section>
       <section className="rl-faq rl-wrap rl-reveal" id="questions"><div><p className="rl-eyebrow">A FEW THINGS, ANSWERED</p><h2>Before we<br />say hello.</h2></div><div>{FAQ.map(([question, answer]) => <details key={question}><summary>{question}<Plus size={19} /></summary><p>{answer}</p></details>)}</div></section>
-      <section className="rl-final rl-reveal"><div className="rl-wrap"><p className="rl-eyebrow">THE NEXT CONVERSATION IS YOURS.</p><h2>Make room<br />for <span>hello.</span><ArrowUpRight aria-hidden="true" /></h2><Link className="rl-button" to={cta}>Get started with Ringlite <ArrowUpRight size={20} /></Link><p>Your number. Your inbox. A new way to connect.</p></div></section>
+      <section className="rl-final rl-reveal"><div className="rl-wrap"><p className="rl-eyebrow">YOUR TEAM. YOUR NUMBERS.</p><h2>One<br /><span>price.</span><ArrowUpRight aria-hidden="true" /></h2><Link className="rl-button" to={cta}>Get started with Ringlite <ArrowUpRight size={20} /></Link><p>Pick your numbers today. Bring the team when you are ready.</p></div></section>
     </main>
     <SiteFooter />
     <ChatWidget />
