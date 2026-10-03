@@ -1,10 +1,16 @@
-"""D2: the daily delivery digest - one email per workspace, plus a platform ops digest.
+"""D2: delivery reporting.
 
-The digest reads the P41 per-workspace rollup (``OrgMessagingDaily``) rather than the raw
-message tables, so a receipt that arrives late corrects the numbers on the next read. No
-customer-facing mail names a carrier: an owner reading "Blocked as spam" can act on it,
-whereas a carrier's name is our plumbing, not theirs. The ops digest is the one place
-carrier names are allowed - its audience is us.
+One report matters by default: the platform OPS digest, built once a day from the P41
+per-workspace rollup and mailed to operators, who are the only people who can act on a
+carrier or a workspace going bad. The CUSTOMER digest is opt-in - a platform operator
+switches it on for a workspace from the ops console - and a customer otherwise hears from
+us only when their own delivery rate breaches (services/messaging_health.notify_breaches).
+
+Counts always come from ``OrgMessagingDaily`` rather than the raw message tables, so a
+receipt that arrives late corrects them on the next read. A customer-facing mail never
+names a carrier: an owner reading "Blocked as spam" can act on it, whereas a carrier's
+name is our plumbing, not theirs. The ops digest is the one place carrier names belong -
+its audience is us.
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ValidationFailedError
 from app.models import (
     Message,
+    Notification,
     Org,
     OrgMembership,
     OrgMessagingDaily,
@@ -39,6 +46,8 @@ DEFAULT_HOUR = 8
 TICK_INTERVAL_SECONDS = 3600
 MAX_RECIPIENTS = 20
 TOP_NUMBERS = 10
+#: Delivery-floor thresholds: below CRITICAL a workspace is red, below LOW it is amber.
+OPS_CRITICAL_RATE = 0.80
 OPS_LOW_RATE = 0.90
 OPS_MIN_VOLUME = 20
 #: PlatformSetting key holding {"date": "YYYY-MM-DD"} - the last Chicago-local day the ops
@@ -52,7 +61,7 @@ FAILURE_LABELS = {
     "failed_opted_out": "Recipient opted out",
 }
 
-#: Roles that receive the digest when the workspace has not named anyone.
+#: Roles that receive the customer digest when the workspace has not named anyone.
 DEFAULT_RECIPIENT_ROLES = ("owner", "admin")
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -85,6 +94,24 @@ def _valid_tz(name: str) -> bool:
     return True
 
 
+def _params_enabled(params) -> bool:  # noqa: ANN001
+    """The one rule for "is this workspace opted in": the stored bool, or nothing."""
+    return isinstance(params, dict) and params.get("enabled") is True
+
+
+def _active_app_name() -> str:
+    """Product name for a mail built outside a request (the sweeper, the ops test-send).
+    Read from the active settings exactly as the other request-less services do; a
+    deployment with none pinned just gets the default the mailer itself uses."""
+    try:
+        from app.config import get_active_settings
+
+        settings = get_active_settings()
+    except Exception:  # noqa: BLE001 - no pinned settings must never fail a digest
+        settings = None
+    return getattr(settings, "app_name", None) or "Ringlite"
+
+
 def _format_number(e164: str | None) -> str:
     digits = re.sub(r"\D", "", e164 or "")
     if len(digits) == 11 and digits.startswith("1"):
@@ -96,16 +123,16 @@ def _format_number(e164: str | None) -> str:
 # Schedule
 # ==================================================================================
 def schedule_view(row: ReportSchedule | None) -> dict:
-    """The schedule as the API and the tick both read it. No row = enabled with defaults:
-    the digest is ON by default, and an invalid stored tz falls back to DEFAULT_TZ rather
-    than disabling the send."""
+    """The schedule as the API and the tick both read it. The customer digest is OPT-IN:
+    with no row, or with no ``enabled`` in the stored params, it is OFF. An invalid stored
+    tz falls back to DEFAULT_TZ rather than silently disabling an opted-in send."""
     params = (row.params or {}) if row is not None else {}
     if not isinstance(params, dict):
         params = {}
 
     enabled = params.get("enabled")
     if not isinstance(enabled, bool):
-        enabled = True
+        enabled = False
 
     hour = params.get("hour")
     if isinstance(hour, bool) or not isinstance(hour, int) or not (0 <= hour <= 23):
@@ -215,7 +242,7 @@ async def default_recipients(session: AsyncSession, org_id: uuid.UUID) -> list[s
 
 
 # ==================================================================================
-# The digest itself
+# The customer digest itself
 # ==================================================================================
 async def build(session: AsyncSession, org_id: uuid.UUID, day: date) -> dict | None:
     """One day's digest for one workspace, or None when nothing was sent that day."""
@@ -392,12 +419,278 @@ def render(digest: dict, *, app_name: str, day: date, base_url: str) -> tuple[st
 
 
 # ==================================================================================
+# The operator digest
+# ==================================================================================
+async def _digest_enabled_org_names(session: AsyncSession) -> list[str]:
+    """Workspaces with the customer digest switched ON, by name. No row (or a row without
+    an explicit bool) means OFF."""
+    # Unscoped and JUSTIFIED: which workspaces have the daily email on is a platform-wide
+    # question for the ops report, not one caller's org.
+    rows = (
+        await session.execute(
+            sa.select(ReportSchedule.org_id, ReportSchedule.params)
+            .where(ReportSchedule.report == "delivery")
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    enabled_ids: list[uuid.UUID] = []
+    for org_id, params in rows:
+        if _params_enabled(params) and org_id not in enabled_ids:
+            enabled_ids.append(org_id)
+    if not enabled_ids:
+        return []
+    # Unscoped and JUSTIFIED: names for the platform-wide list above.
+    names = dict(
+        (
+            await session.execute(
+                sa.select(Org.id, Org.name)
+                .where(Org.id.in_(enabled_ids))
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).all()
+    )
+    return sorted(names.get(org_id) or str(org_id) for org_id in enabled_ids)
+
+
+async def build_ops_digest(
+    session: AsyncSession, day: date, *, now: datetime | None = None
+) -> tuple[str, str]:
+    """The operator report for one day as (subject, body).
+
+    Takes no settings - the sweeper's tick and an operator's test-send share this one
+    implementation, and the product name comes from the active settings rather than a
+    parameter nobody else needs. The subject carries the BOTTOM LINE, because that is
+    what gets read first: either "all clear" or how many things need a human.
+    """
+    app_name = _active_app_name()
+    start, end = _day_bounds(day)
+    moment = _as_utc(now) if now is not None else end
+
+    # Unscoped and JUSTIFIED: the ops digest is a platform-wide report across every
+    # workspace at once.
+    per_org = (
+        await session.execute(
+            sa.select(
+                OrgMessagingDaily.org_id,
+                sa.func.coalesce(sa.func.sum(OrgMessagingDaily.sent), 0).label("sent"),
+                sa.func.coalesce(sa.func.sum(OrgMessagingDaily.delivered), 0).label("delivered"),
+                sa.func.coalesce(sa.func.sum(OrgMessagingDaily.failed), 0).label("failed"),
+                sa.func.coalesce(sa.func.sum(OrgMessagingDaily.failed_spam_blocked), 0).label(
+                    "spam_blocked"
+                ),
+                sa.func.coalesce(
+                    sa.func.sum(OrgMessagingDaily.failed_carrier_rejected), 0
+                ).label("carrier_rejected"),
+                sa.func.coalesce(
+                    sa.func.sum(OrgMessagingDaily.failed_invalid_destination), 0
+                ).label("invalid_destination"),
+                sa.func.coalesce(sa.func.sum(OrgMessagingDaily.failed_opted_out), 0).label(
+                    "opted_out"
+                ),
+            )
+            .where(OrgMessagingDaily.period_date == day)
+            .group_by(OrgMessagingDaily.org_id)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+
+    org_ids = [row[0] for row in per_org]
+    names: dict = {}
+    warned: set = set()
+    if org_ids:
+        # Unscoped and JUSTIFIED: names for the platform-wide table below.
+        names = dict(
+            (
+                await session.execute(
+                    sa.select(Org.id, Org.name)
+                    .where(Org.id.in_(org_ids))
+                    .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+                )
+            ).all()
+        )
+        # "Customer warned" = a messaging-health bell reached this workspace in the 7 days
+        # ending `day`. Unscoped and JUSTIFIED: it answers that question for EVERY
+        # workspace in the table, not for one caller's org.
+        warned = set(
+            (
+                await session.execute(
+                    sa.select(sa.distinct(Notification.org_id))
+                    .where(
+                        Notification.org_id.in_(org_ids),
+                        Notification.kind == "messaging_health",
+                        Notification.created_at >= start - timedelta(days=6),
+                        Notification.created_at < end,
+                    )
+                    .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    rows: list[dict] = []
+    for (
+        org_id,
+        sent,
+        delivered,
+        failed,
+        spam_blocked,
+        carrier_rejected,
+        invalid_destination,
+        opted_out,
+    ) in per_org:
+        sent, delivered, failed = int(sent), int(delivered), int(failed)
+        volume = delivered + failed
+        classes = {
+            "failed_spam_blocked": int(spam_blocked),
+            "failed_carrier_rejected": int(carrier_rejected),
+            "failed_invalid_destination": int(invalid_destination),
+            "failed_opted_out": int(opted_out),
+        }
+        top_key = max(classes, key=lambda key: classes[key]) if any(classes.values()) else None
+        rows.append(
+            {
+                "org_id": org_id,
+                "name": names.get(org_id) or "",
+                "sent": sent,
+                "delivered": delivered,
+                "failed": failed,
+                "rate": delivered / volume if volume else None,
+                "top_failure_label": FAILURE_LABELS[top_key] if top_key else "Other",
+                "warned": org_id in warned,
+            }
+        )
+    rows.sort(key=lambda item: item["sent"], reverse=True)
+
+    # Which workspaces above the volume floor are failing, worst first.
+    flagged: list[dict] = []
+    for row in rows:
+        if row["sent"] < OPS_MIN_VOLUME or row["rate"] is None:
+            continue
+        if row["rate"] < OPS_CRITICAL_RATE:
+            flagged.append(row)
+        elif row["rate"] < OPS_LOW_RATE:
+            flagged.append(row)
+    flagged.sort(key=lambda item: item["rate"])
+
+    # Which carriers are sending without receipts coming back. A carrier with no traffic
+    # yesterday is quiet because nobody used it, which is not an outage.
+    carrier_traffic = dict(
+        (
+            await session.execute(
+                sa.select(Message.carrier, sa.func.count(Message.id))
+                .where(
+                    Message.direction == "outbound",
+                    Message.created_at >= start,
+                    Message.created_at < end,
+                )
+                .group_by(Message.carrier)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).all()
+    )
+    receipts = await messaging_health.receipts_check(session)
+    silent: list[str] = []
+    for receipt in receipts:
+        if int(carrier_traffic.get(receipt["carrier"], 0)) <= 0:
+            continue
+        last = _as_aware(receipt["last_receipt_at"])
+        if last is None or (moment - last) > timedelta(hours=24):
+            silent.append(receipt["carrier"])
+    silent.sort()
+
+    total_sent = sum(row["sent"] for row in rows)
+    total_delivered = sum(row["delivered"] for row in rows)
+    total_failed = sum(row["failed"] for row in rows)
+    total_volume = total_delivered + total_failed
+    rate_text = f"{total_delivered / total_volume:.0%}" if total_volume else "n/a"
+    active_orgs = sum(1 for row in rows if row["sent"] > 0)
+
+    if total_sent == 0:
+        subject = f"{app_name}: ops report {day:%b %d} \u2014 all clear"
+        bottom = ["BOTTOM LINE: No texts sent yesterday."]
+    elif not flagged and not silent:
+        subject = f"{app_name}: ops report {day:%b %d} \u2014 all clear"
+        bottom = [
+            f"BOTTOM LINE: All clear. {total_sent} texts, {rate_text} delivered across "
+            f"{active_orgs} workspaces."
+        ]
+    else:
+        subject = (
+            f"{app_name}: ops report {day:%b %d} \u2014 ACTION NEEDED "
+            f"({len(flagged) + len(silent)})"
+        )
+        bottom = ["BOTTOM LINE: Action needed."]
+        for row in flagged:
+            bottom.append(
+                f"- {row['name'] or row['org_id']}: {row['rate']:.0%} delivered "
+                f"({row['failed']} of {row['sent']} failed), mostly "
+                f"{row['top_failure_label']}. Customer warned: "
+                f"{'yes' if row['warned'] else 'no'}."
+            )
+        for carrier in silent:
+            bottom.append(
+                f"- {carrier}: no delivery receipts in 24 h while sending \u2014 check the "
+                "webhook."
+            )
+
+    lines: list[str] = list(bottom)
+    lines.append("")
+    lines.append(
+        f"{total_sent} texts sent across all workspaces: {total_delivered} delivered, "
+        f"{total_failed} failed, {rate_text} delivery rate."
+    )
+
+    lines.append("")
+    lines.append("Busiest workspaces (top 10 by volume)")
+    if rows:
+        for row in rows[:10]:
+            row_rate = f"{row['rate']:.0%}" if row["rate"] is not None else "n/a"
+            lines.append(
+                f"{row['name'] or row['org_id']}: {row['sent']} sent, "
+                f"{row['delivered']} delivered, {row_rate}"
+            )
+    else:
+        lines.append("None")
+
+    lines.append("")
+    lines.append("Workspaces below the delivery floor")
+    if flagged:
+        for row in flagged:
+            lines.append(
+                f"{row['name'] or row['org_id']}: {row['rate']:.0%} of {row['sent']} texts"
+            )
+    else:
+        lines.append("None")
+
+    lines.append("")
+    lines.append("Carrier receipts")
+    for receipt in receipts:
+        last = _as_aware(receipt["last_receipt_at"])
+        if last is None or (moment - last) > timedelta(hours=24):
+            status = "NO RECEIPTS 24h"
+        else:
+            status = f"{receipt['receipts_24h']} in the last 24h"
+        lines.append(f"{receipt['carrier']}: {status}")
+
+    lines.append("")
+    lines.append("Customer daily emails ON")
+    enabled_names = await _digest_enabled_org_names(session)
+    if enabled_names:
+        lines.extend(enabled_names)
+    else:
+        lines.append("none")
+
+    return subject, "\n".join(lines)
+
+
+# ==================================================================================
 # Ticks
 # ==================================================================================
 async def digest_tick(
     session: AsyncSession, settings, now: datetime | None = None
 ) -> dict[str, int]:  # noqa: ANN001
-    """Sweeper entry point: one digest email per workspace per local day.
+    """Sweeper entry point: one digest email per OPTED-IN workspace per local day.
 
     The send marker is committed BEFORE the send (also for zero-volume days) so an hourly
     pass cannot re-mail the same day and a failed send cannot loop forever.
@@ -502,108 +795,12 @@ async def ops_digest_tick(
         session.add(PlatformSetting(key=OPS_SETTING_KEY, value=marker))
     else:
         setting.value = marker
-    # Commit the marker BEFORE sending, so a second pass the same day is a no-op and a
-    # failing mail cannot re-try every hour.
+    # Commit the marker BEFORE building or sending, so a second pass the same day is a
+    # no-op and a failing mail cannot re-try every hour.
     await session.commit()
 
     day = today_local - timedelta(days=1)
-
-    # Unscoped and JUSTIFIED: the ops digest is a platform-wide report across every
-    # workspace at once.
-    per_org = (
-        await session.execute(
-            sa.select(
-                OrgMessagingDaily.org_id,
-                sa.func.coalesce(sa.func.sum(OrgMessagingDaily.sent), 0).label("sent"),
-                sa.func.coalesce(sa.func.sum(OrgMessagingDaily.delivered), 0).label("delivered"),
-                sa.func.coalesce(sa.func.sum(OrgMessagingDaily.failed), 0).label("failed"),
-            )
-            .where(OrgMessagingDaily.period_date == day)
-            .group_by(OrgMessagingDaily.org_id)
-            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
-        )
-    ).all()
-
-    org_ids = [row[0] for row in per_org]
-    names: dict = {}
-    if org_ids:
-        # Unscoped and JUSTIFIED: names for the platform-wide table above.
-        names = dict(
-            (
-                await session.execute(
-                    sa.select(Org.id, Org.name)
-                    .where(Org.id.in_(org_ids))
-                    .execution_options(**{ALLOW_UNSCOPED_KEY: True})
-                )
-            ).all()
-        )
-
-    rows: list[dict] = []
-    for org_id, sent, delivered, failed in per_org:
-        sent, delivered, failed = int(sent), int(delivered), int(failed)
-        volume = delivered + failed
-        rows.append(
-            {
-                "org_id": org_id,
-                "name": names.get(org_id) or "",
-                "sent": sent,
-                "delivered": delivered,
-                "failed": failed,
-                "rate": delivered / volume if volume else None,
-            }
-        )
-    rows.sort(key=lambda item: item["sent"], reverse=True)
-
-    total_sent = sum(row["sent"] for row in rows)
-    total_delivered = sum(row["delivered"] for row in rows)
-    total_failed = sum(row["failed"] for row in rows)
-    total_volume = total_delivered + total_failed
-    rate_text = f"{total_delivered / total_volume:.0%}" if total_volume else "n/a"
-
-    lines = [
-        f"Platform delivery digest for {day.isoformat()}",
-        "",
-        f"{total_sent} texts sent across all workspaces: {total_delivered} delivered, "
-        f"{total_failed} failed, {rate_text} delivery rate.",
-        "",
-        "Busiest workspaces (top 10 by volume)",
-    ]
-    for row in rows[:10]:
-        row_rate = f"{row['rate']:.0%}" if row["rate"] is not None else "n/a"
-        lines.append(
-            f"{row['name'] or row['org_id']}: {row['sent']} sent, "
-            f"{row['delivered']} delivered, {row_rate}"
-        )
-
-    low = [
-        row
-        for row in rows
-        if row["sent"] >= OPS_MIN_VOLUME
-        and row["rate"] is not None
-        and row["rate"] < OPS_LOW_RATE
-    ]
-    lines.append("")
-    lines.append("Workspaces below the delivery floor")
-    if low:
-        for row in low:
-            lines.append(
-                f"{row['name'] or row['org_id']}: {row['rate']:.0%} of {row['sent']} texts"
-            )
-    else:
-        lines.append("None")
-
-    lines.append("")
-    lines.append("Carrier receipts")
-    for receipt in await messaging_health.receipts_check(session):
-        last = _as_aware(receipt["last_receipt_at"])
-        if last is None or (moment - last) > timedelta(hours=24):
-            status = "NO RECEIPTS 24h"
-        else:
-            status = f"{receipt['receipts_24h']} in the last 24h"
-        lines.append(f"{receipt['carrier']}: {status}")
-
-    body = "\n".join(lines)
-    subject = f"{settings.app_name}: platform delivery digest for {day.isoformat()}"
+    subject, body = await build_ops_digest(session, day, now=moment)
 
     recipients = await email_delivery._operator_emails()
     if not recipients:

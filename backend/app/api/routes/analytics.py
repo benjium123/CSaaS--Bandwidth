@@ -10,16 +10,13 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.auth.deps import OrgContext, require_permission, requires_feature
-from app.errors import PermissionDeniedError, ValidationFailedError
-from app.models import User
+from app.errors import ValidationFailedError
 from app.services import analytics as analytics_svc
-from app.services import delivery_digest as delivery_digest_svc
 from app.services import inbox_access as inbox_access_svc
-from app.services import mailer
 from app.services import messaging_health as messaging_health_svc
 from app.services import search as search_svc
 
@@ -196,104 +193,3 @@ async def analytics_messaging_health(
     return MessagingHealthOut(
         **await messaging_health_svc.health(ctx.session, ctx.org.id, days=days)
     )
-
-
-# ==================================================================================
-# D2 daily delivery digest. Reading the config is a read-only surface (settings:read);
-# changing it changes what we send, so it sits behind settings:write. Same analytics
-# feature gate as the health route above.
-# ==================================================================================
-class DeliveryDigestOut(BaseModel):
-    enabled: bool
-    hour: int
-    tz: str
-    recipients: list[str]
-    default_recipients: list[str]
-    last_sent_at: str | None
-
-
-class DeliveryDigestIn(BaseModel):
-    enabled: bool
-    hour: int
-    tz: str
-    recipients: list[str] = []
-
-
-async def _delivery_digest_out(ctx: OrgContext) -> DeliveryDigestOut:
-    row = await delivery_digest_svc.get_schedule(ctx.session, ctx.org.id)
-    view = delivery_digest_svc.schedule_view(row)
-    defaults = await delivery_digest_svc.default_recipients(ctx.session, ctx.org.id)
-    return DeliveryDigestOut(**view, default_recipients=defaults)
-
-
-@router.get(
-    "/analytics/delivery-digest",
-    response_model=DeliveryDigestOut,
-    dependencies=[Depends(requires_feature("analytics"))],
-)
-async def get_delivery_digest(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
-) -> DeliveryDigestOut:
-    return await _delivery_digest_out(ctx)
-
-
-@router.put(
-    "/analytics/delivery-digest",
-    response_model=DeliveryDigestOut,
-    dependencies=[Depends(requires_feature("analytics"))],
-)
-async def put_delivery_digest(
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
-    body: DeliveryDigestIn,
-) -> DeliveryDigestOut:
-    await delivery_digest_svc.save_schedule(
-        ctx.session,
-        ctx.org.id,
-        enabled=body.enabled,
-        hour=body.hour,
-        tz=body.tz,
-        recipients=body.recipients,
-        user_id=ctx.actor_user_id,
-    )
-    return await _delivery_digest_out(ctx)
-
-
-@router.post(
-    "/analytics/delivery-digest/test",
-    dependencies=[Depends(requires_feature("analytics"))],
-)
-async def post_delivery_digest_test(
-    request: Request,
-    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
-) -> dict:
-    # An API key has no inbox of its own to send to, and a key must never mail a person.
-    if ctx.actor_user_id is None:
-        raise PermissionDeniedError("This action needs a signed-in person, not an API key")
-
-    today = datetime.now(timezone.utc).date()
-    day: date | None = None
-    digest: dict | None = None
-    for offset in range(7):
-        candidate = today - timedelta(days=offset)
-        built = await delivery_digest_svc.build(ctx.session, ctx.org.id, candidate)
-        if built is not None:
-            day = candidate
-            digest = built
-            break
-    if day is None or digest is None:
-        return {"sent": False, "day": None}
-
-    user = await ctx.session.get(User, ctx.actor_user_id)
-    if user is None or not user.email:
-        return {"sent": False, "day": None}
-
-    settings = request.app.state.settings
-    subject, body = delivery_digest_svc.render(
-        digest,
-        app_name=settings.app_name,
-        day=day,
-        base_url=(getattr(settings, "public_web_url", "") or ""),
-    )
-    # A test send never touches last_sent_at: the real digest is still owed for the day.
-    sent = await mailer.send(settings, [user.email], subject, body)
-    return {"sent": bool(sent), "day": day.isoformat()}

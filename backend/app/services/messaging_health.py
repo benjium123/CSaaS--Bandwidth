@@ -21,6 +21,7 @@ from app.models import (
     OrgMembership,
     OrgMessagingDaily,
     Role,
+    User,
 )
 from app.services import notifications as notifications_svc
 from app.services import reputation as reputation_svc
@@ -240,11 +241,14 @@ async def rollup_day(session: AsyncSession, org_id: uuid.UUID, day: date) -> int
     return touched
 
 
-async def rollup_tick(session: AsyncSession, now: datetime | None = None) -> dict[str, int]:
+async def rollup_tick(
+    session: AsyncSession, now: datetime | None = None, *, settings=None
+) -> dict[str, int]:  # noqa: ANN001
     """Sweeper entry point. Rolls up every org with source activity in the last two days.
 
     Today AND yesterday on every pass: receipts arrive late, so yesterday's row is not
-    final at midnight.
+    final at midnight. ``settings`` is only passed on so a breach can also be emailed; a
+    caller without it (every pre-existing one) still gets the bell notifications.
     """
     moment = _as_utc(now)
     cutoff = moment - timedelta(days=2)
@@ -290,7 +294,7 @@ async def rollup_tick(session: AsyncSession, now: datetime | None = None) -> dic
         counts["orgs"] += 1
         counts["rows"] += touched
 
-    counts["notifications"] = await notify_breaches(session, now=moment)
+    counts["notifications"] = await notify_breaches(session, now=moment, settings=settings)
     return counts
 
 
@@ -464,11 +468,82 @@ async def _org_ids_in_window(
     )
 
 
-async def notify_breaches(session: AsyncSession, now: datetime | None = None) -> int:
+async def _email_breach(
+    session: AsyncSession,
+    settings,  # noqa: ANN001
+    org_id: uuid.UUID,
+    summary: dict,
+    emails: list[str],
+) -> bool:
+    """Email owner/admin about a breach, at most once per level per week.
+
+    The bell row is per (org, level, UTC day); that cadence is right for the app but wrong
+    for mail, so the mail is suppressed while a notification of the SAME level already
+    exists in the seven days before today. An escalation (warn -> critical) has no such
+    row, so it goes out immediately.
+    """
+    recipients = sorted({addr.strip().lower() for addr in emails if addr and addr.strip()})
+    if not recipients:
+        return False
+
+    today = summary.get("window_end")
+    if today is None:
+        return False
+    level = summary.get("level")
+    prefix = "Critical: " if level == "critical" else "Warning: "
+    window_start, _ = _day_bounds(today - timedelta(days=WINDOW_DAYS))
+    today_start, _ = _day_bounds(today)
+
+    # Unscoped and JUSTIFIED: the question is "has this workspace already been mailed
+    # about this level", asked while the session may hold another org's context.
+    already = (
+        await session.execute(
+            sa.select(Notification.id)
+            .where(
+                Notification.org_id == org_id,
+                Notification.kind == "messaging_health",
+                Notification.body.startswith(prefix),
+                Notification.created_at >= window_start,
+                Notification.created_at < today_start,
+            )
+            .limit(1)
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).first()
+    if already is not None:
+        return False
+
+    from app.services import mailer
+
+    subject = (
+        f"{settings.app_name}: texts are failing on your workspace"
+        if level == "critical"
+        else f"{settings.app_name}: delivery warning"
+    )
+    reasons = [str(reason) for reason in (summary.get("reasons") or [])]
+    body = "\n".join(reasons) if reasons else "Messaging health needs attention."
+    body += (
+        "\n\nWhat to do: check that your numbers are on an approved texting campaign, "
+        "avoid links/shorteners and all-caps, remove numbers that keep failing. Reply to "
+        "this email if you need help."
+    )
+    try:
+        await mailer.send(settings, recipients, subject, body)
+    except Exception:  # noqa: BLE001 - a failed notice must never break the rollup pass
+        log.exception("messaging_health_breach_email_failed", org_id=str(org_id))
+        return False
+    return True
+
+
+async def notify_breaches(
+    session: AsyncSession, now: datetime | None = None, *, settings=None
+) -> int:  # noqa: ANN001
     """One in-app notification per (org, level, UTC day) for owner/admin members.
 
     The dedupe key is what guarantees that: the tick may run every hour, and the people
-    who can actually act on it are told once.
+    who can actually act on it are told once. When ``settings`` is passed, the first bell
+    of a level also emails those people (see ``_email_breach``); without it nothing is
+    mailed, which is what every pre-existing caller wants.
     """
     moment = _as_utc(now)
     today = moment.date()
@@ -482,28 +557,29 @@ async def notify_breaches(session: AsyncSession, now: datetime | None = None) ->
                 continue
 
             set_org_context(session, org_id)
-            user_ids = (
-                (
-                    await session.execute(
-                        sa.select(sa.distinct(OrgMembership.user_id))
-                        .select_from(OrgMembership)
-                        .join(Role, OrgMembership.role_id == Role.id)
-                        .where(
-                            OrgMembership.org_id == org_id,
-                            Role.name.in_(NOTIFY_ROLES),
-                        )
+            rows = (
+                await session.execute(
+                    sa.select(User.id, User.email)
+                    .select_from(OrgMembership)
+                    .join(Role, OrgMembership.role_id == Role.id)
+                    .join(User, User.id == OrgMembership.user_id)
+                    .where(
+                        OrgMembership.org_id == org_id,
+                        Role.name.in_(NOTIFY_ROLES),
                     )
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
+            people: dict[uuid.UUID, str] = {}
+            for user_id, email in rows:
+                people[user_id] = (email or "").strip()
 
             reasons = summary["reasons"]
             first_reason = reasons[0] if reasons else "Messaging health needs attention."
             prefix = "Critical: " if summary["level"] == "critical" else "Warning: "
             dedupe_key = f"messaging_health:{org_id}:{summary['level']}:{today.isoformat()}"
 
-            for user_id in user_ids:
+            created_here = 0
+            for user_id in people:
                 created = await notifications_svc.create(
                     session,
                     org_id,
@@ -513,9 +589,21 @@ async def notify_breaches(session: AsyncSession, now: datetime | None = None) ->
                     dedupe_key=dedupe_key,
                 )
                 if created is not None:
-                    created_count += 1
+                    created_here += 1
+            created_count += created_here
 
             await session.commit()
+
+            # Only a NEW bell earns a mail: a repeated pass of the same level is silent,
+            # and the helper's own 7-day check keeps a long breach to one mail a week.
+            if created_here and settings is not None:
+                await _email_breach(
+                    session,
+                    settings,
+                    org_id,
+                    summary,
+                    [email for email in people.values() if email],
+                )
         except Exception:  # noqa: BLE001 - one org's failure must not stop the whole pass
             log.exception("messaging_health_notify_org_failed", org_id=str(org_id))
             await session.rollback()

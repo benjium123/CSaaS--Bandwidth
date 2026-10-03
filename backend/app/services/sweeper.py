@@ -792,7 +792,8 @@ async def _run_once_locked(app) -> dict[str, int]:
     # P41: derived per-workspace messaging health - today's and yesterday's rollup rows,
     # then the owner/admin warnings. Same hourly gate discipline as reputation above:
     # reserve the slot BEFORE running so a persistent failure cannot turn this into an
-    # every-tick retry storm.
+    # every-tick retry storm. Settings is passed on so the first breach of a level also
+    # emails the people who can act on it.
     last_messaging_health_run = getattr(app.state, "_messaging_health_last_run", None)
     now_monotonic = time.monotonic()
     if (
@@ -803,15 +804,18 @@ async def _run_once_locked(app) -> dict[str, int]:
         app.state._messaging_health_last_run = now_monotonic
         try:
             async with get_sessionmaker()() as session:
-                health_counts = await messaging_health_svc.rollup_tick(session)
+                health_counts = await messaging_health_svc.rollup_tick(
+                    session, settings=app.state.settings
+                )
             results["messaging_health_rows"] = health_counts.get("rows", 0)
         except Exception:
             log.exception("sweeper_messaging_health_failed")
 
-    # D2: the daily delivery digest - per-workspace emails plus the platform ops digest.
-    # Same hourly gate discipline as the messaging-health rollup above: reserve the slot
-    # BEFORE running (and before the second job) so a persistent failure cannot turn this
-    # into an every-tick retry storm. Each job gets its own session/try-except.
+    # D2: the daily delivery digest - per-workspace emails (opt-in, operator-controlled)
+    # plus the platform ops digest. Same hourly gate discipline as the messaging-health
+    # rollup above: reserve the slot BEFORE running (and before the second job) so a
+    # persistent failure cannot turn this into an every-tick retry storm. Each job gets
+    # its own session/try-except.
     last_delivery_digest_run = getattr(app.state, "_delivery_digest_last_run", None)
     now_monotonic = time.monotonic()
     if (
