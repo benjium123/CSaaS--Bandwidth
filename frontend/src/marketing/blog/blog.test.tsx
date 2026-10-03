@@ -51,7 +51,7 @@ describe("Blog", () => {
   it("renders one h1 on /blog and links every post", () => {
     open("/blog");
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    expect(POSTS).toHaveLength(8);
+    expect(POSTS).toHaveLength(9);
     for (const post of POSTS) {
       expect(screen.getByText(post.title).closest("a")).toHaveAttribute("href", `/blog/${post.slug}`);
     }
@@ -94,7 +94,7 @@ describe("Blog", () => {
   });
 
   it("adds published posts to the sitemap", () => {
-    expect(COMPARISON_POSTS).toHaveLength(4);
+    expect(COMPARISON_POSTS).toHaveLength(5);
     expect(PUBLISHED_POSTS).toHaveLength(POSTS.length);
     expect(COMPARISON_POSTS.every(post => !post.draft)).toBe(true);
     expect(PUBLIC_ROUTES.some(route => route.path.startsWith("/blog"))).toBe(true);

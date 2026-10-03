@@ -447,7 +447,7 @@ const QUO_VS_RINGLITE_COST: Post = {
 };
 
 /** The competitors that get their own side-by-side cost guide. */
-const COMPARE_SLUGS = ["ringcentral", "aircall", "krispcall", "callhippo"] as const;
+const COMPARE_SLUGS = ["ringcentral", "aircall", "krispcall", "callhippo", "justcall"] as const;
 
 /** "Quo (OpenPhone)" reads as "Quo" in running copy. */
 function shortName(name: string): string {

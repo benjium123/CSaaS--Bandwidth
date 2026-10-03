@@ -263,13 +263,26 @@ export const COMPETITORS: Competitor[] = [
   },
   {
     slug: "krispcall", name: "KrispCall",
-    summary: "KrispCall charges per user and meters usage separately. Ringlite includes users and numbers in each plan and publishes every rate.",
+    summary: "KrispCall charges per user and gives each user their own allowance of minutes and texts. Ringlite includes users and numbers in each plan, with one minute pool the whole team shares.",
     rows: [
-      { label: "How you pay", them: "Per user, usage extra", us: "Package price, usage at published rates" },
+      { label: "How you pay", them: "Per user, with minutes and texts per user (Starter: 200 out, 200 in, 100 texts)", us: "Package price, one shared minute pool, usage at published rates" },
       { label: "Team size", them: "Starter up to 5 users, Advance up to 50", us: "Starter up to 5, Team up to 15, Business unlimited" },
     ],
     theyWin: ["Numbers in 100+ countries"],
-    weWin: ["Users included in the package price", "Room to grow: 15 users on Team, unlimited on Business", "An exact shared minute pool instead of metering every call"],
+    weWin: ["Users included in the package price", "Room to grow: 15 users on Team, unlimited on Business", "One minute pool the whole team shares, so a quiet teammate's minutes are not wasted"],
+  },
+  {
+    slug: "justcall", name: "JustCall",
+    summary: "JustCall is a per-license phone system for sales teams with a two-license minimum. Ringlite starts at one user and bundles users and numbers in one monthly price.",
+    rows: [
+      { label: "Minimum", them: "2 licenses", us: "1 user and 1 number" },
+      { label: "How you pay", them: "Per license: Team $39 a month, $29 paid yearly", us: "One monthly package with users and numbers" },
+      { label: "Texting", them: "500 texts per license on Team", us: "Texts at a published rate, no monthly cap" },
+      { label: "Power dialer", them: "Pro plan, $69 per license a month ($49 yearly)", us: "Included on Business: $130 for 10 users" },
+      { label: "Call summaries and scoring", them: "AI Review Assist add-on, $9 per user", us: "Not offered today" },
+    ],
+    theyWin: ["100+ CRM and data integrations", "Local numbers in 70+ countries", "Unlimited US and Canada calling with AI transcription included", "AI call summaries and scorecards as an add-on"],
+    weWin: ["No two-license minimum: start with one user for $15", "Power dialer included on Business: $130 for 10 users, not $69 per license", "Texts at a published rate, with no per-license cap"],
   },
   {
     slug: "aircall", name: "Aircall",
@@ -293,4 +306,4 @@ export const PROOF_POINTS = [
 ];
 
 /** Slugs of the competitors that have their own /alternatives page. */
-export const ALTERNATIVE_SLUGS = ["quo", "ringcentral", "aircall", "krispcall", "callhippo"] as const;
+export const ALTERNATIVE_SLUGS = ["quo", "ringcentral", "aircall", "krispcall", "callhippo", "justcall"] as const;

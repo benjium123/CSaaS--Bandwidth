@@ -249,7 +249,7 @@ export function addOnLine(plan: Plan): string | null {
  * (then extra numbers are left out of their total and the footnote says so).
  * Re-check on each vendor's live pricing page before changing, and keep the date.
  */
-export const COMPETITORS_CHECKED = "September 2026";
+export const COMPETITORS_CHECKED = "September and October 2026";
 export interface CompetitorTier {
   name: string;
   monthly: number;
@@ -281,6 +281,7 @@ export const COMPETITOR_SEAT_PRICES: CompetitorPrice[] = [
     ],
   },
   { slug: "ringcentral", name: "RingCentral Core", monthly: 30, yearly: 20, minSeats: 1, numbersPerSeat: 1, extraNumber: null },
+  { slug: "justcall", name: "JustCall Team", monthly: 39, yearly: 29, minSeats: 2, numbersPerSeat: 1, extraNumber: null },
 ];
 
 /** A competitor's monthly cost for the same team: seats (with their minimum) plus the
