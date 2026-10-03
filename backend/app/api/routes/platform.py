@@ -13,8 +13,9 @@ transaction as its own commit (DR-6).
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, Request
@@ -37,9 +38,10 @@ from app.errors import (
 )
 from app.models import ApiKey, Org, UsageRecord, WebhookDelivery, WebhookEndpoint
 from app.models.billing import DEFAULT_AI_MARKUP_BPS
-from app.services import ai_usage, credits
+from app.services import ai_usage, credits, mailer
 from app.services import apikeys as apikeys_svc
 from app.services import audit as audit_svc
+from app.services import delivery_digest as delivery_digest_svc
 from app.services import messaging_health as messaging_health_svc
 from app.services import spend as spend_svc
 from app.services import telephony_billing as telephony_billing_svc
@@ -804,3 +806,161 @@ async def platform_messaging_receipts_check(
 ) -> list[ReceiptsCheckRowOut]:
     rows = await messaging_health_svc.receipts_check(session)
     return [ReceiptsCheckRowOut(**row) for row in rows]
+
+
+# ==================================================================================
+# D2 delivery digests, ops side.
+#
+# The daily CUSTOMER digest is opt-in and only a platform operator can switch it on -
+# a workspace telling itself "yes, mail my owners every day" is exactly the permission
+# that should not live in a customer route. The OPS digest is the main report and goes
+# out on its own; the test-send routes exist so a change can be checked before it runs.
+# ==================================================================================
+class PlatformDeliveryDigestRowOut(BaseModel):
+    org_id: uuid.UUID
+    org_name: str
+    enabled: bool
+    hour: int
+    tz: str
+    recipients: list[str]
+    default_recipients: list[str]
+    last_sent_at: str | None
+
+
+class PlatformDeliveryDigestListOut(BaseModel):
+    rows: list[PlatformDeliveryDigestRowOut]
+
+
+class PlatformDeliveryDigestIn(BaseModel):
+    enabled: bool
+    hour: int = 8
+    tz: str = "America/Chicago"
+    recipients: list[str] = []
+
+
+class PlatformDigestTestOut(BaseModel):
+    sent: bool
+    day: str | None = None
+
+
+class PlatformOpsDigestTestOut(BaseModel):
+    sent: bool
+
+
+async def _digest_row(
+    session: AsyncSession, org_id: uuid.UUID, org_name: str
+) -> PlatformDeliveryDigestRowOut:
+    schedule = await delivery_digest_svc.get_schedule(session, org_id)
+    view = delivery_digest_svc.schedule_view(schedule)
+    defaults = await delivery_digest_svc.default_recipients(session, org_id)
+    return PlatformDeliveryDigestRowOut(
+        org_id=org_id,
+        org_name=org_name,
+        **view,
+        default_recipients=defaults,
+    )
+
+
+@router.get("/platform/messaging/digests", response_model=PlatformDeliveryDigestListOut)
+async def platform_messaging_digests(
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))],
+    session: AsyncSession = Depends(get_session),
+) -> PlatformDeliveryDigestListOut:
+    # The same org set as the ops health table above, so the two screens agree.
+    rows = await messaging_health_svc.platform_rows(session)
+    return PlatformDeliveryDigestListOut(
+        rows=[await _digest_row(session, row["org_id"], row["org_name"]) for row in rows]
+    )
+
+
+@router.put(
+    "/platform/orgs/{org_id}/delivery-digest",
+    response_model=PlatformDeliveryDigestRowOut,
+)
+async def put_platform_delivery_digest(
+    org_id: uuid.UUID,
+    payload: PlatformDeliveryDigestIn,
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:admin"))],
+    session: AsyncSession = Depends(get_session),
+) -> PlatformDeliveryDigestRowOut:
+    org = await session.get(Org, org_id)
+    if org is None:
+        raise NotFoundError("Org not found")
+
+    set_org_context(session, org_id)
+    # save_schedule validates (hour 0-23, a loadable tz, real addresses) and commits.
+    await delivery_digest_svc.save_schedule(
+        session,
+        org_id,
+        enabled=payload.enabled,
+        hour=payload.hour,
+        tz=payload.tz,
+        recipients=payload.recipients,
+        user_id=_ops.user.id,
+    )
+    audit_svc.record(
+        session,
+        org_id,
+        action="platform.delivery_digest_updated",
+        target_type="org",
+        target_id=str(org_id),
+        actor_user_id=_ops.user.id,
+        detail={
+            "enabled": payload.enabled,
+            "hour": payload.hour,
+            "tz": payload.tz,
+            "recipients": payload.recipients,
+        },
+    )
+    await session.commit()
+
+    return await _digest_row(session, org_id, org.name)
+
+
+@router.post(
+    "/platform/orgs/{org_id}/delivery-digest/test",
+    response_model=PlatformDigestTestOut,
+)
+async def post_platform_delivery_digest_test(
+    org_id: uuid.UUID,
+    request: Request,
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))],
+    session: AsyncSession = Depends(get_session),
+) -> PlatformDigestTestOut:
+    org = await session.get(Org, org_id)
+    if org is None:
+        raise NotFoundError("Org not found")
+
+    settings = request.app.state.settings
+    today = datetime.now(timezone.utc).date()
+    for offset in range(7):
+        candidate = today - timedelta(days=offset)
+        digest = await delivery_digest_svc.build(session, org_id, candidate)
+        if digest is None:
+            continue
+        subject, body = delivery_digest_svc.render(
+            digest,
+            app_name=settings.app_name,
+            day=candidate,
+            base_url=(getattr(settings, "public_web_url", "") or ""),
+        )
+        # Only the operator who asked: a test send is proof, not a mailing.
+        sent = await mailer.send(settings, [_ops.user.email], subject, body)
+        return PlatformDigestTestOut(sent=bool(sent), day=candidate.isoformat())
+    return PlatformDigestTestOut(sent=False, day=None)
+
+
+@router.post("/platform/messaging/ops-digest/test", response_model=PlatformOpsDigestTestOut)
+async def post_platform_ops_digest_test(
+    request: Request,
+    _ops: Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))],
+    session: AsyncSession = Depends(get_session),
+) -> PlatformOpsDigestTestOut:
+    # Yesterday in the digest's own timezone, and WITHOUT touching the PlatformSetting
+    # marker: a test send must never consume the real day's report.
+    local = datetime.now(timezone.utc).astimezone(ZoneInfo(delivery_digest_svc.DEFAULT_TZ))
+    day = local.date() - timedelta(days=1)
+    settings = request.app.state.settings
+    subject, body = await delivery_digest_svc.build_ops_digest(session, day)
+    sent = await mailer.send(settings, [_ops.user.email], subject, body)
+    return PlatformOpsDigestTestOut(sent=bool(sent))
