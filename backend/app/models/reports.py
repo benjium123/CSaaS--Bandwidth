@@ -11,7 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base, TenantScoped, TimestampMixin
 from app.db.types import GUID, PortableJSON
 
-REPORT_KINDS: tuple[str, ...] = ("team", "inbox_sla", "campaigns", "assistant")
+REPORT_KINDS: tuple[str, ...] = ("team", "inbox_sla", "campaigns", "assistant", "delivery")
 REPORT_CADENCES: tuple[str, ...] = ("daily", "weekly", "monthly")
 EMAIL_PROVIDERS: tuple[str, ...] = ("smtp", "postmark")
 
