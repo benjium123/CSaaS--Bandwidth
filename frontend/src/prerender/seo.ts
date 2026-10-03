@@ -1,4 +1,5 @@
 import { FAQS } from "@/marketing/faq";
+import { postBySlug, type Post } from "@/marketing/blog/posts";
 import { HOME_META, type PageMeta } from "@/marketing/pageMeta";
 import { COVERAGE, PLANS, PRICED_PLANS, RATES, YEARLY, cents, money, type Plan } from "@/marketing/pricing.config";
 import { SITE_URL, canonicalUrl, type PublicRoute } from "./routes";
@@ -33,7 +34,8 @@ function softwareApplication(): object {
 }
 
 /** Structured data for a page: Organization + WebSite + SoftwareApplication on the home
- *  page, SoftwareApplication on pricing, FAQPage on the FAQ, nothing elsewhere. */
+ *  page, SoftwareApplication on pricing, FAQPage on the FAQ, Blog/BlogPosting on the guides,
+ *  nothing elsewhere. */
 export function jsonLdFor(path: string): object[] {
   if (path === "/") {
     return [
@@ -67,15 +69,50 @@ export function jsonLdFor(path: string): object[] {
       },
     ];
   }
+  if (path === "/blog") {
+    return [
+      {
+        "@context": "https://schema.org",
+        "@type": "Blog",
+        name: "Ringlite guides",
+        url: canonicalUrl(path),
+      },
+    ];
+  }
+  if (path.startsWith("/blog/")) {
+    const post = postBySlug(path.slice("/blog/".length));
+    if (!post) return [];
+    return [
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        headline: post.title,
+        description: post.description,
+        datePublished: post.published,
+        dateModified: post.updated ?? post.published,
+        author: { "@type": "Organization", name: "Ringlite" },
+        publisher: {
+          "@type": "Organization",
+          name: "Ringlite",
+          logo: { "@type": "ImageObject", url: `${SITE_URL}/ringlite-mark.svg` },
+        },
+        mainEntityOfPage: canonicalUrl(path),
+      },
+    ];
+  }
   return [];
 }
 
 /** Canonical link, Open Graph/Twitter tags and JSON-LD, ready to drop before </head>. */
 export function buildHead(path: string, meta: PageMeta): string {
   const url = canonicalUrl(path);
+  const ogType = path.startsWith("/blog/") ? "article" : "website";
   const tags = [
     `<link rel="canonical" href="${escapeHtml(url)}" />`,
-    `<meta property="og:type" content="website" />`,
+    ...(path.startsWith("/blog")
+      ? [`<link rel="alternate" type="application/rss+xml" title="Ringlite guides" href="${SITE_URL}/blog/rss.xml" />`]
+      : []),
+    `<meta property="og:type" content="${ogType}" />`,
     `<meta property="og:url" content="${escapeHtml(url)}" />`,
     `<meta property="og:title" content="${escapeHtml(meta.title)}" />`,
     `<meta property="og:description" content="${escapeHtml(meta.description)}" />`,
@@ -96,7 +133,7 @@ export function buildSitemap(routes: PublicRoute[], lastmod: string): string {
     [
       "  <url>",
       `    <loc>${escapeHtml(canonicalUrl(route.path))}</loc>`,
-      `    <lastmod>${escapeHtml(lastmod)}</lastmod>`,
+      `    <lastmod>${escapeHtml(route.lastmod ?? lastmod)}</lastmod>`,
       `    <changefreq>${route.changefreq}</changefreq>`,
       `    <priority>${route.priority.toFixed(1)}</priority>`,
       "  </url>",
@@ -107,6 +144,39 @@ export function buildSitemap(routes: PublicRoute[], lastmod: string): string {
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     ...entries,
     "</urlset>",
+    "",
+  ].join("\n");
+}
+
+/** "2026-10-03" -> "Sat, 03 Oct 2026 00:00:00 GMT" (RFC 822). */
+function rfc822(date: string): string {
+  return new Date(`${date}T00:00:00Z`).toUTCString();
+}
+
+/** The guides feed, RSS 2.0. One <item> per post, newest first in the order given. */
+export function buildRss(posts: Post[]): string {
+  const items = posts.map(post => {
+    const url = canonicalUrl(`/blog/${post.slug}`);
+    return [
+      "    <item>",
+      `      <title>${escapeHtml(post.title)}</title>`,
+      `      <link>${escapeHtml(url)}</link>`,
+      `      <guid isPermaLink="true">${escapeHtml(url)}</guid>`,
+      `      <pubDate>${rfc822(post.published)}</pubDate>`,
+      `      <description>${escapeHtml(post.description)}</description>`,
+      "    </item>",
+    ].join("\n");
+  });
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<rss version="2.0">',
+    "  <channel>",
+    "    <title>Ringlite guides</title>",
+    `    <link>${SITE_URL}/blog</link>`,
+    "    <description>Plain guides on business phone costs, 10DLC texting registration and switching providers, from the Ringlite team.</description>",
+    ...items,
+    "  </channel>",
+    "</rss>",
     "",
   ].join("\n");
 }

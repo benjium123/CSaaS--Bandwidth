@@ -107,6 +107,10 @@ for (const route of ssr.PUBLIC_ROUTES) {
 
 const lastmod = new Date().toISOString().slice(0, 10);
 writeFileSync("dist/sitemap.xml", ssr.buildSitemap(ssr.PUBLIC_ROUTES, lastmod));
+if (ssr.PUBLISHED_POSTS.length > 0) {
+  mkdirSync("dist/blog", { recursive: true });
+  writeFileSync("dist/blog/rss.xml", ssr.buildRss(ssr.PUBLISHED_POSTS));
+}
 writeFileSync("dist/llms.txt", ssr.buildLlmsTxt(pages));
 
 rmSync("dist-ssr", { recursive: true, force: true });

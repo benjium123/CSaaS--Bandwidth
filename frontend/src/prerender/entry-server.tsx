@@ -8,7 +8,7 @@ import { LandingPage } from "@/pages/LandingPage";
 
 /**
  * Render one public page to static HTML at build time. Pages report their own title and
- * description during render through PageMetaContext; effects never run here, so the provider
+description during render through PageMetaContext; effects never run here, so the provider
  * captures the reports. The LAST report wins, and a fresh QueryClient per call keeps renders
  * independent.
  */
@@ -31,4 +31,5 @@ export function render(path: string): { html: string; meta: PageMeta | null } {
 }
 
 export { PUBLIC_ROUTES, canonicalUrl } from "./routes";
-export { applyToTemplate, appShell, buildSitemap, buildLlmsTxt } from "./seo";
+export { applyToTemplate, appShell, buildSitemap, buildLlmsTxt, buildRss } from "./seo";
+export { PUBLISHED_POSTS } from "@/marketing/blog/posts";
