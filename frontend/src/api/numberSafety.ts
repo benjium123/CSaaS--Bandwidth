@@ -23,11 +23,24 @@ export interface PortCheckOut {
   results: PortCheckResult[];
 }
 
+/** One line in a port request's history. The API now sends a ready-made sentence in `text`;
+ * the older at/status/note triple stays optional so anything still reading those keys keeps
+ * working against a cached payload. */
 export interface PortEvent {
   at?: string;
   status?: string;
   note?: string;
+  text?: string;
   [k: string]: unknown;
+}
+
+/** The service address a transfer is filed against. */
+export interface PortServiceAddress {
+  street: string;
+  extended: string;
+  city: string;
+  state: string;
+  zip: string;
 }
 
 export interface PortRequest {
@@ -44,6 +57,14 @@ export interface PortRequest {
   manual: boolean;
   events: PortEvent[];
   created_at: string | null;
+  /** Why the request needs the customer again, in plain language - shown in an amber box. */
+  customer_reason: string | null;
+  /** The customer may resubmit the details (PATCH) / stop the transfer (cancel). */
+  can_edit: boolean;
+  can_cancel: boolean;
+  account_number: string | null;
+  billing_number: string | null;
+  service_address: PortServiceAddress | null;
 }
 
 export interface PortsOut {
@@ -68,6 +89,24 @@ export interface PortInForm {
   service_zip: string;
   loa: File;
   invoice: File;
+}
+
+/** The part of a filed request a customer may change. Same shape as the create form minus
+ * `numbers`/`carrier`, which are fixed once a transfer is filed. `pin` is optional because
+ * an empty PIN means "keep the current one" - the key is then left out of the body entirely
+ * (see `useUpdatePortIn`), which is unambiguous to the backend and to anyone reading the
+ * request in a network tab. */
+export interface PortInUpdate {
+  authorized_name: string;
+  business_name: string;
+  account_number: string;
+  pin?: string;
+  billing_number: string;
+  service_street: string;
+  service_extended: string;
+  service_city: string;
+  service_state: string;
+  service_zip: string;
 }
 
 /** Statuses ops can set by hand via POST /api/v1/ops/ports/{id}/status. */
@@ -136,6 +175,52 @@ export function useCreatePortIn(api: ApiClient) {
       form.append("invoice", vars.invoice);
       return api.request<PortRequest>("/api/v1/ports", { method: "POST", body: form });
     },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: PORTS_QUERY_KEY });
+    },
+  });
+}
+
+/** PATCH /api/v1/ports/{id} - the customer fixing and resubmitting a filed request. Built the
+ * same way as `useCreatePortIn`: FormData through `body`, and the two documents are only
+ * appended when a replacement was actually picked (a null File would serialise as the string
+ * "null"). */
+export function useUpdatePortIn(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: string;
+      form: PortInUpdate & { loa?: File | null; invoice?: File | null };
+    }) => {
+      const body = new FormData();
+      body.append("authorized_name", vars.form.authorized_name);
+      body.append("business_name", vars.form.business_name);
+      body.append("account_number", vars.form.account_number);
+      // Empty PIN = keep the current one, so the key is omitted rather than sent blank.
+      if (vars.form.pin) body.append("pin", vars.form.pin);
+      body.append("billing_number", vars.form.billing_number);
+      body.append("service_street", vars.form.service_street);
+      body.append("service_extended", vars.form.service_extended);
+      body.append("service_city", vars.form.service_city);
+      body.append("service_state", vars.form.service_state);
+      body.append("service_zip", vars.form.service_zip);
+      if (vars.form.loa) body.append("loa", vars.form.loa);
+      if (vars.form.invoice) body.append("invoice", vars.form.invoice);
+      return api.request<PortRequest>(`/api/v1/ports/${vars.id}`, { method: "PATCH", body });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: PORTS_QUERY_KEY });
+    },
+  });
+}
+
+/** POST /api/v1/ports/{id}/cancel - stops a transfer that has not been filed yet. A 409
+ * carries the API's own explanation and is surfaced verbatim by the caller. */
+export function useCancelPort(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.request<PortRequest>(`/api/v1/ports/${id}/cancel`, { method: "POST" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: PORTS_QUERY_KEY });
     },

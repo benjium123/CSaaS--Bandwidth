@@ -8,11 +8,18 @@ sees it:
     its verified people;
   - no number is already active here or in another open request;
   - every number is in the workspace's home region (destination policy);
+  - the number is actually portable (the carrier's own portability check);
   - an OPERATOR approves it (status awaiting_review -> submitted).
 Telnyx orders are then created, documented and confirmed through the porting API; the
 sweeper polls them (``poll_port_ins``) and imports the numbers once ported. SignalWire has
 no porting API: an approved request is filed by the operator in the SignalWire dashboard
 and its status is set by hand (``set_manual_status``).
+
+P1: the customer can fix a rejected/refused request in place (``update_port_in``) - a
+resubmit PATCHes the order the carrier already has instead of filing a new one - and can
+stop one that has not reached its date yet (``cancel_port_in``). Every status change tells
+the workspace through ``services/porting_notify.py``, which never names our carrier. A
+ported number is put straight onto the workspace's approved texting campaign.
 
 PORT-OUT cannot legally be blocked when the request is valid - the carrier port-out PIN is
 the control (set on the Telnyx account; see docs/runbooks/PORTING.md). What we do is make
@@ -50,6 +57,15 @@ ALLOWED_DOC_TYPES = {"application/pdf": "pdf", "image/png": "png", "image/jpeg":
 MAX_DOC_BYTES = 10 * 1024 * 1024
 MAX_NUMBERS = 50
 
+#: A customer can still fix the details of these (see update_port_in).
+EDITABLE = ("awaiting_review", "rejected", "exception")
+#: A customer can still stop these (foc_confirmed has a date and needs support).
+CANCELLABLE = ("awaiting_review", "rejected", "exception", "submitted", "in_process")
+#: Statuses that are worth telling the customer about (in_process is not).
+NOTIFY_STATUSES = ("foc_confirmed", "exception", "ported", "cancelled")
+#: Attached to the "ported" notice when a number still has no texting campaign.
+CAMPAIGN_HINT = "Pick a texting campaign for them on the Lines page so they can send texts."
+
 _TELNYX_PORT_STATUS = {
     "draft": "exception",  # never confirmed: the filing did not go through
     "submitted": "submitted",
@@ -68,6 +84,77 @@ def _now() -> datetime:
 
 def _event(port: PortRequest, text: str) -> None:
     port.events = [*(port.events or []), {"at": _now().isoformat(), "text": text[:255]}][-50:]
+
+
+# ------------------------------------------------------------------ customer-facing text
+
+_CARRIER_NAMES = re.compile(r"telnyx|signalwire", re.IGNORECASE)
+
+
+def _no_carrier(text: str) -> str:
+    """A workspace never learns which of OUR carriers we use."""
+    return _CARRIER_NAMES.sub("the carrier", text or "")
+
+
+_CUSTOMER_REASONS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("account number",),
+        "The account number doesn't match what your current provider has on file. Copy it "
+        "exactly from your latest bill.",
+    ),
+    (
+        ("pin", "passcode"),
+        "The transfer PIN is wrong or missing. Ask your current provider for the port-out PIN.",
+    ),
+    (("name",), "The name doesn't match the account holder at your current provider."),
+    (("address",), "The service address doesn't match your current provider's records."),
+    (
+        ("not found", "not on account", "does not belong"),
+        "Your current provider says these numbers aren't on that account.",
+    ),
+    (
+        ("invoice", "bill", "loa", "document"),
+        "A document was rejected. Upload a clear, recent bill and a signed authorization "
+        "letter.",
+    ),
+)
+
+
+def customer_reason(raw: str) -> str:
+    """Turn the carrier's raw exception text into a sentence a customer can act on."""
+    text = str(raw or "").strip()
+    lowered = text.lower()
+    for keywords, message in _CUSTOMER_REASONS:
+        if any(keyword in lowered for keyword in keywords):
+            return message
+    return f"Your current provider rejected the request: {_no_carrier(text)}"
+
+
+def _exception_detail(data: dict) -> str:
+    """Telnyx answers an exception with a list of {code, description} rows."""
+    status = data.get("status") if isinstance(data, dict) else None
+    if not isinstance(status, dict):
+        return ""
+    rows = status.get("details")
+    if not isinstance(rows, list):
+        return ""
+    parts = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        text = str(row.get("description") or row.get("code") or "").strip()
+        if text:
+            parts.append(text)
+    return "; ".join(parts)
+
+
+def _mark_exception(port: PortRequest, raw: str) -> None:
+    """Keep the carrier's words for the operator and a readable sentence for the customer."""
+    text = str(raw or "").strip()
+    if not text:
+        return
+    port.last_error = text[:255]
+    port.details = {**(port.details or {}), "customer_reason": customer_reason(text)}
 
 
 # ------------------------------------------------------------------ fraud gate helpers
@@ -131,6 +218,46 @@ async def _verified_names(session: AsyncSession, org_id: uuid.UUID) -> list[str]
     return [n for n in [*names, *people] if n]
 
 
+# ------------------------------------------------------------------ shared form validation
+
+
+def _names_from_form(form: dict) -> tuple[str, str]:
+    authorized = str(form.get("authorized_name") or "").strip()
+    business = str(form.get("business_name") or "").strip()
+    if not authorized:
+        raise ValidationFailedError("Name the person authorising the port (as on the LOA)")
+    return authorized, business
+
+
+def _require_service_fields(form: dict) -> None:
+    for key in ("account_number", "service_street", "service_city", "service_state", "service_zip"):
+        if not str(form.get(key) or "").strip():
+            raise ValidationFailedError(f"{key.replace('_', ' ')} is required")
+
+
+def _service_address(form: dict) -> dict:
+    return {
+        "street": str(form.get("service_street")).strip(),
+        "extended": str(form.get("service_extended") or "").strip(),
+        "city": str(form.get("service_city")).strip(),
+        "state": str(form.get("service_state")).strip().upper(),
+        "zip": str(form.get("service_zip")).strip(),
+    }
+
+
+def _validate_document(label: str, doc: tuple[bytes, str]) -> tuple[bytes, str]:
+    data, ctype = doc
+    if ctype not in ALLOWED_DOC_TYPES:
+        raise ValidationFailedError(f"The {label.upper()} must be a PDF, PNG or JPEG")
+    if not data or len(data) > MAX_DOC_BYTES:
+        raise ValidationFailedError(f"The {label.upper()} must be between 1 byte and 10 MB")
+    return data, ctype
+
+
+def _names_are_verified(authorized: str, business: str, verified: list[str]) -> bool:
+    return any(names_match(authorized, v) or names_match(business, v) for v in verified)
+
+
 # ------------------------------------------------------------------ Telnyx API
 
 
@@ -162,6 +289,18 @@ def _tx_error(resp: httpx.Response) -> str:
     except ValueError:
         pass
     return f"HTTP {resp.status_code}"
+
+
+def _order_status_value(resp: httpx.Response) -> str:
+    """The order's status value from a GET /porting_orders/{id} body."""
+    try:
+        data = (resp.json() or {}).get("data") or {}
+    except ValueError:
+        return ""
+    status = data.get("status") if isinstance(data, dict) else None
+    if isinstance(status, dict):
+        status = status.get("value")
+    return str(status or "")
 
 
 async def portability_check(registry, numbers: list[str]) -> list[dict]:  # noqa: ANN001
@@ -198,6 +337,7 @@ async def create_port_in(
     form: dict,
     loa: tuple[bytes, str],
     invoice: tuple[bytes, str],
+    registry=None,  # noqa: ANN001
 ) -> PortRequest:
     """Validate and store a port-in request for operator review. Commits."""
     from app.services import credentials, destination_policy, phone_region
@@ -211,19 +351,14 @@ async def create_port_in(
             raise ValidationFailedError(f"{e164} is outside the numbers this account may hold")
 
     verified = await _verified_names(session, org_id)
-    authorized = str(form.get("authorized_name") or "").strip()
-    business = str(form.get("business_name") or "").strip()
-    if not authorized:
-        raise ValidationFailedError("Name the person authorising the port (as on the LOA)")
-    if not any(names_match(authorized, v) or names_match(business, v) for v in verified):
+    authorized, business = _names_from_form(form)
+    if not _names_are_verified(authorized, business, verified):
         raise PermissionDeniedError(
             "The name on the port request must match your verified business or one of its "
             "verified owners.",
             code="port_name_mismatch",
         )
-    for key in ("account_number", "service_street", "service_city", "service_state", "service_zip"):
-        if not str(form.get(key) or "").strip():
-            raise ValidationFailedError(f"{key.replace('_', ' ')} is required")
+    _require_service_fields(form)
 
     known = (
         await session.execute(
@@ -252,13 +387,25 @@ async def create_port_in(
     if pending & set(numbers):
         raise ConflictError(f"{sorted(pending & set(numbers))[0]} already has a port request open")
 
+    # P1: ask the losing carrier BEFORE an operator spends time on it. A number Telnyx
+    # refuses (or does not answer for) never reaches review at all.
+    if carrier == "telnyx" and registry is not None and registry.get("telnyx") is not None:
+        results = await portability_check(registry, numbers)
+        by_number = {r.get("phone_number"): r for r in results if r.get("phone_number")}
+        refused = []
+        for e164 in numbers:
+            row = by_number.get(e164)
+            if row is None:
+                refused.append((e164, None))
+            elif not row.get("portable"):
+                refused.append((e164, row.get("reason")))
+        if refused:
+            listed = ", ".join(f"{n} ({reason or 'not portable'})" for n, reason in refused)
+            raise ValidationFailedError(f"These numbers can't be moved: {listed}")
+
     docs = {}
-    for label, (data, ctype) in (("loa", loa), ("invoice", invoice)):
-        if ctype not in ALLOWED_DOC_TYPES:
-            raise ValidationFailedError(f"The {label.upper()} must be a PDF, PNG or JPEG")
-        if not data or len(data) > MAX_DOC_BYTES:
-            raise ValidationFailedError(f"The {label.upper()} must be between 1 byte and 10 MB")
-        docs[label] = (data, ctype)
+    for label, doc in (("loa", loa), ("invoice", invoice)):
+        docs[label] = _validate_document(label, doc)
 
     set_org_context(session, org_id)
     port = PortRequest(
@@ -274,13 +421,7 @@ async def create_port_in(
             "business_name": business,
             "account_number": str(form.get("account_number")).strip(),
             "billing_number": str(form.get("billing_number") or numbers[0]).strip(),
-            "service_address": {
-                "street": str(form.get("service_street")).strip(),
-                "extended": str(form.get("service_extended") or "").strip(),
-                "city": str(form.get("service_city")).strip(),
-                "state": str(form.get("service_state")).strip().upper(),
-                "zip": str(form.get("service_zip")).strip(),
-            },
+            "service_address": _service_address(form),
         },
     )
     pin = str(form.get("pin") or "").strip()
@@ -301,6 +442,121 @@ async def create_port_in(
     return port
 
 
+async def update_port_in(
+    session: AsyncSession,
+    settings,  # noqa: ANN001
+    store,  # noqa: ANN001
+    registry,  # noqa: ANN001 - kept for symmetry with create/approve
+    port: PortRequest,
+    *,
+    form: dict,
+    loa: tuple[bytes, str] | None = None,
+    invoice: tuple[bytes, str] | None = None,
+    user_id: uuid.UUID | None,
+) -> PortRequest:
+    """P1: the customer fixes a request that was rejected or the carrier refused.
+
+    The numbers themselves are NOT editable (cancel and start a new request for those).
+    Documents are replaced only when new ones are given, under fresh keys, so what the
+    operator already reviewed is never overwritten in place. Commits.
+    """
+    from app.services import credentials
+
+    if port.direction != "in" or port.status not in EDITABLE:
+        raise ConflictError("This port request can no longer be changed")
+    verified = await _verified_names(session, port.org_id)
+    authorized, business = _names_from_form(form)
+    if not _names_are_verified(authorized, business, verified):
+        raise PermissionDeniedError(
+            "The name on the port request must match your verified business or one of its "
+            "verified owners.",
+            code="port_name_mismatch",
+        )
+    _require_service_fields(form)
+
+    details = dict(port.details or {})
+    details["authorized_name"] = authorized
+    details["business_name"] = business
+    details["account_number"] = str(form.get("account_number")).strip()
+    details["billing_number"] = str(
+        form.get("billing_number") or (port.numbers or [""])[0]
+    ).strip()
+    details["service_address"] = _service_address(form)
+
+    pin = str(form.get("pin") or "").strip()
+    if pin:
+        port.secret_enc = credentials.encrypt(settings, {"pin": pin})
+
+    seq = len(port.events or []) + 1
+    for label, doc in (("loa", loa), ("invoice", invoice)):
+        if doc is None:
+            continue
+        data, ctype = _validate_document(label, doc)
+        key = f"porting/{port.org_id}/{port.id}/{label}-{seq}.{ALLOWED_DOC_TYPES[ctype]}"
+        await store.put(key, data, ctype)
+        setattr(port, f"{label}_media_key", key)
+
+    if port.status == "awaiting_review":
+        _event(port, "Details updated")
+    else:
+        # A stale reason would make a successful refiling read as another exception, and a
+        # stale customer sentence has nothing to do with the fixed request.
+        port.last_error = None
+        details.pop("customer_reason", None)
+        if port.status == "exception":
+            # The order is already with the carrier: approve() PATCHes it instead of
+            # filing a second one.
+            details["resubmit"] = True
+        _event(port, "Resubmitted for review")
+        port.status = "awaiting_review"
+    if port.submitted_by is None:
+        port.submitted_by = user_id
+    port.details = details
+    await session.commit()
+    return port
+
+
+async def cancel_port_in(
+    session: AsyncSession,
+    registry,  # noqa: ANN001
+    port: PortRequest,
+    *,
+    user_id: uuid.UUID | None,
+    settings=None,  # noqa: ANN001
+) -> PortRequest:
+    """P1: the customer stops a transfer that has not reached its date. Commits."""
+    if port.direction != "in":
+        raise ConflictError("Only a port-in request can be cancelled")
+    if port.status == "foc_confirmed":
+        raise ConflictError("The transfer date is already set; contact support to stop it.")
+    if port.status not in CANCELLABLE:
+        raise ConflictError("This port request can no longer be cancelled")
+    orders = [str(o) for o in (port.details or {}).get("orders") or []]
+    if port.carrier == "telnyx" and orders:
+        carrier = registry.get("telnyx") if registry is not None else None
+        if carrier is None:
+            raise ConflictError(
+                "We could not reach the carrier to stop this transfer. Please contact support."
+            )
+        for order_id in orders:
+            resp = await _tx(carrier, "POST", f"/porting_orders/{order_id}/actions/cancel")
+            if resp.status_code >= 400:
+                raise ConflictError(
+                    "The carrier would not stop this transfer yet. Please contact support."
+                )
+    port.status = "cancelled"
+    if port.submitted_by is None:
+        port.submitted_by = user_id
+    _event(port, "Cancelled by the customer")
+    await session.commit()
+    if settings is not None:
+        from app.services import porting_notify
+
+        await porting_notify.notify(session, settings, port, "cancelled")
+        await session.commit()
+    return port
+
+
 async def _upload_document(carrier, store, key: str) -> str:  # noqa: ANN001
     data = await store.get(key)
     name = key.rsplit("/", 1)[-1]
@@ -315,33 +571,45 @@ async def approve(
     session: AsyncSession, settings, store, registry, port: PortRequest, operator_id: uuid.UUID  # noqa: ANN001
 ) -> PortRequest:
     """Operator approval: file the port with the carrier. Commits."""
-    from app.services import credentials
+    from app.services import credentials, porting_notify
 
     if port.direction != "in" or port.status != "awaiting_review":
         raise ConflictError("Only a port-in awaiting review can be approved")
     port.reviewed_by = operator_id
     port.reviewed_at = _now()
+    # A failed earlier attempt leaves its error behind; a clean refiling must not read it
+    # as a new exception (the status below is derived from last_error).
+    port.last_error = None
     if port.carrier == "signalwire":
         port.status = "submitted"
         port.details = {**(port.details or {}), "manual": True}
         _event(port, "Approved - file it in the SignalWire dashboard (Phone Numbers > Port Requests)")
         await session.commit()
+        if settings is not None:
+            await porting_notify.notify(session, settings, port, "submitted")
+            await session.commit()
         return port
 
     carrier = _carrier(registry, "telnyx")
-    details = port.details or {}
+    details = dict(port.details or {})
     pin = ""
     if port.secret_enc:
         pin = str(credentials.decrypt(settings, port.secret_enc).get("pin") or "")
     loa_id = await _upload_document(carrier, store, port.loa_media_key)
     invoice_id = await _upload_document(carrier, store, port.invoice_media_key)
-    resp = await _tx(carrier, "POST", "/porting_orders", json={"phone_numbers": port.numbers})
-    if resp.status_code >= 400:
-        port.last_error = _tx_error(resp)
-        _event(port, f"Telnyx refused the order: {port.last_error}")
-        await session.commit()
-        raise ValidationFailedError(f"Telnyx refused the port: {port.last_error}")
-    orders = [str(o.get("id")) for o in (resp.json() or {}).get("data") or [] if o.get("id")]
+    # P1: a fixed-up request PATCHes the order the carrier already holds - filing a new one
+    # would abandon the numbers already in flight.
+    resubmit = bool(details.get("resubmit")) and bool(details.get("orders"))
+    if resubmit:
+        orders = [str(o) for o in details.get("orders") or []]
+    else:
+        resp = await _tx(carrier, "POST", "/porting_orders", json={"phone_numbers": port.numbers})
+        if resp.status_code >= 400:
+            _mark_exception(port, _tx_error(resp))
+            _event(port, f"Telnyx refused the order: {port.last_error}")
+            await session.commit()
+            raise ValidationFailedError(f"Telnyx refused the port: {port.last_error}")
+        orders = [str(o.get("id")) for o in (resp.json() or {}).get("data") or [] if o.get("id")]
     address = details.get("service_address") or {}
     config = {"tags": ["csaas", f"csaas-org-{port.org_id}"]}
     if getattr(settings, "telnyx_voice_connection_id", ""):
@@ -373,22 +641,47 @@ async def approve(
     for order_id in orders:
         patched = await _tx(carrier, "PATCH", f"/porting_orders/{order_id}", json=body)
         if patched.status_code >= 400:
-            port.last_error = _tx_error(patched)
+            _mark_exception(port, _tx_error(patched))
             _event(port, f"Telnyx order {order_id} could not be completed: {port.last_error}")
             continue
+        if resubmit:
+            current = await _tx(carrier, "GET", f"/porting_orders/{order_id}")
+            if current.status_code != 200 or _order_status_value(current) != "draft":
+                continue  # already confirmed; confirming again would be refused
         confirmed = await _tx(carrier, "POST", f"/porting_orders/{order_id}/actions/confirm")
         if confirmed.status_code >= 400:
-            port.last_error = _tx_error(confirmed)
+            _mark_exception(port, _tx_error(confirmed))
             _event(port, f"Telnyx order {order_id} could not be submitted: {port.last_error}")
     port.carrier_ref = orders[0] if orders else None
-    port.details = {**details, "orders": orders}
+    updated = {k: v for k, v in (port.details or {}).items() if k != "resubmit"}
+    updated["orders"] = orders
+    port.details = updated
     port.status = "submitted" if orders and not port.last_error else "exception"
     _event(port, f"Filed with Telnyx ({len(orders)} order(s))")
     await session.commit()
+    if settings is not None:
+        if port.status == "exception":
+            await porting_notify.notify(
+                session,
+                settings,
+                port,
+                "exception",
+                reason=(port.details or {}).get("customer_reason"),
+            )
+        else:
+            await porting_notify.notify(session, settings, port, "submitted")
+        await session.commit()
     return port
 
 
-async def reject(session: AsyncSession, port: PortRequest, operator_id: uuid.UUID, reason: str) -> PortRequest:
+async def reject(
+    session: AsyncSession,
+    port: PortRequest,
+    operator_id: uuid.UUID,
+    reason: str,
+    *,
+    settings=None,  # noqa: ANN001
+) -> PortRequest:
     if port.status != "awaiting_review":
         raise ConflictError("Only a port-in awaiting review can be rejected")
     port.status = "rejected"
@@ -397,6 +690,11 @@ async def reject(session: AsyncSession, port: PortRequest, operator_id: uuid.UUI
     port.last_error = reason[:255]
     _event(port, f"Rejected: {reason}")
     await session.commit()
+    if settings is not None:
+        from app.services import porting_notify
+
+        await porting_notify.notify(session, settings, port, "rejected", reason=reason)
+        await session.commit()
     return port
 
 
@@ -469,8 +767,32 @@ async def _import(session: AsyncSession, registry, port: PortRequest) -> int:  #
     return added
 
 
+async def _campaign_hint(session: AsyncSession, settings, port: PortRequest) -> str | None:  # noqa: ANN001
+    """P1: put just-imported numbers on the workspace's approved texting campaign, and tell
+    the customer when one of them still needs a campaign picked."""
+    if settings is None or not port.numbers:
+        return None
+    from app.services import tendlc
+
+    set_org_context(session, port.org_id)
+    await tendlc.associate_new_numbers(session, settings, port.org_id)
+    set_org_context(session, port.org_id)
+    waiting = (
+        await session.execute(
+            sa.select(sa.func.count(OrgNumber.id)).where(
+                OrgNumber.e164.in_(port.numbers),
+                OrgNumber.number_type == "local",
+                OrgNumber.is_active.is_(True),
+                OrgNumber.campaign_id.is_(None),
+            )
+        )
+    ).scalar_one()
+    return CAMPAIGN_HINT if waiting else None
+
+
 async def set_manual_status(
-    session: AsyncSession, registry, port: PortRequest, status: str, *, foc_date: str | None, note: str  # noqa: ANN001
+    session: AsyncSession, registry, port: PortRequest, status: str, *, foc_date: str | None, note: str,  # noqa: ANN001
+    settings=None,  # noqa: ANN001
 ) -> PortRequest:
     """Operator-driven status for ports filed by hand (SignalWire)."""
     if status not in ("in_process", "exception", "foc_confirmed", "ported", "cancelled"):
@@ -490,6 +812,16 @@ async def set_manual_status(
     if status == "ported":
         await _import(session, registry, port)
     await session.commit()
+    if settings is not None and status in NOTIFY_STATUSES:
+        reason = None
+        if status == "ported":
+            reason = await _campaign_hint(session, settings, port)
+        elif status == "exception":
+            reason = (port.details or {}).get("customer_reason")
+        from app.services import porting_notify
+
+        await porting_notify.notify(session, settings, port, status, reason=reason)
+        await session.commit()
     return port
 
 
@@ -523,7 +855,14 @@ async def poll_port_ins(session: AsyncSession, settings, registry) -> int:  # no
                 continue
             data = (resp.json() or {}).get("data") or {}
             raw = (data.get("status") or {}).get("value") if isinstance(data.get("status"), dict) else data.get("status")
-            statuses.append(_TELNYX_PORT_STATUS.get(str(raw), port.status))
+            mapped = _TELNYX_PORT_STATUS.get(str(raw), port.status)
+            statuses.append(mapped)
+            if mapped == "exception":
+                # P1: the carrier says WHAT it wants fixed; keep its words for the operator
+                # and a sentence the customer can act on.
+                detail = _exception_detail(data)
+                if detail:
+                    _mark_exception(port, detail)
             foc = data.get("activation_settings", {}).get("foc_datetime_actual") if isinstance(data.get("activation_settings"), dict) else None
             if foc:
                 port.foc_date = str(foc)[:32]
@@ -534,6 +873,7 @@ async def poll_port_ins(session: AsyncSession, settings, registry) -> int:  # no
             (s for s in ("exception", "in_process", "foc_confirmed", "submitted") if s in statuses),
             statuses[0],
         )
+        previous = port.status
         if new != port.status:
             port.status = new
             _event(port, f"Carrier status: {new}")
@@ -541,6 +881,16 @@ async def poll_port_ins(session: AsyncSession, settings, registry) -> int:  # no
             if new == "ported":
                 await _import(session, registry, port)
         await session.commit()
+        if new != previous and settings is not None and new in NOTIFY_STATUSES:
+            reason = None
+            if new == "ported":
+                reason = await _campaign_hint(session, settings, port)
+            elif new == "exception":
+                reason = (port.details or {}).get("customer_reason")
+            from app.services import porting_notify
+
+            await porting_notify.notify(session, settings, port, new, reason=reason)
+            await session.commit()
     return changed
 
 

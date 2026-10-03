@@ -1,7 +1,13 @@
-"""P44f: port numbers in, watch port-outs, lock numbers. Customer routes + operator review."""
+"""P44f: port numbers in, watch port-outs, lock numbers. Customer routes + operator review.
+
+P1: the workspace can fix a request the carrier refused (PATCH) or stop one that has not
+reached its date (cancel). Customer responses never name our carrier, never carry the
+port-out PIN and never carry a storage key.
+"""
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Annotated
 
@@ -29,10 +35,40 @@ ops_router = APIRouter(prefix="/api/v1/ops/ports", tags=["ops-porting"])
 Reader = Annotated[OperatorContext, Depends(require_operator_permission("ops:read"))]
 Kyc = Annotated[OperatorContext, Depends(require_operator_permission("ops:kyc"))]
 
+#: The only fields a workspace may see on its own request. NEVER the PIN (secret_enc) and
+#: never a media key.
+EDITABLE_FIELDS = (
+    "authorized_name",
+    "business_name",
+    "account_number",
+    "billing_number",
+    "service_address",
+)
+
+_CARRIER_NAMES = re.compile(r"telnyx|signalwire", re.IGNORECASE)
+
+
+def _no_carrier(text: str) -> str:
+    """A workspace never learns which of OUR carriers we use."""
+    return _CARRIER_NAMES.sub("the carrier", text or "")
+
 
 def _for_customer(port: dict) -> dict:
-    """A workspace never learns which of OUR carriers receives the port; ops routes keep it."""
+    """Strip the carrier and every operator-only word before a workspace sees this."""
     port.pop("carrier", None)
+    events = []
+    for event in port.get("events") or []:
+        text = str(event.get("text") or "")
+        if text.startswith("Approved - file it in"):
+            # An operator instruction for the losing carrier's dashboard, not for the
+            # customer: say what happened instead of where to click.
+            text = "Approved - filing with the carrier"
+        else:
+            text = _no_carrier(text)
+        events.append({**event, "text": text})
+    port["events"] = events
+    if port.get("last_error"):
+        port["last_error"] = _no_carrier(str(port["last_error"]))
     return port
 
 
@@ -47,12 +83,29 @@ def _public(p: PortRequest) -> dict:
         "status": p.status,
         "foc_date": p.foc_date,
         "last_error": p.last_error,
+        "customer_reason": details.get("customer_reason"),
         "authorized_name": details.get("authorized_name"),
         "business_name": details.get("business_name"),
+        "account_number": details.get("account_number"),
+        "billing_number": details.get("billing_number"),
+        "service_address": details.get("service_address"),
+        "can_edit": p.status in porting_svc.EDITABLE,
+        "can_cancel": p.status in porting_svc.CANCELLABLE,
         "manual": bool(details.get("manual")),
         "events": p.events or [],
         "created_at": p.created_at.isoformat() if p.created_at else None,
     }
+
+
+async def _org_port(session, org_id: uuid.UUID, port_id: uuid.UUID) -> PortRequest:  # noqa: ANN001
+    """The workspace's own port request - another org's is a 404, not a leak."""
+    set_org_context(session, org_id)
+    port = (
+        await session.execute(sa.select(PortRequest).where(PortRequest.id == port_id))
+    ).scalar_one_or_none()
+    if port is None:
+        raise NotFoundError("Port request not found")
+    return port
 
 
 class CheckIn(BaseModel):
@@ -92,6 +145,34 @@ async def _doc(form, name: str) -> tuple[bytes, str]:  # noqa: ANN001
     return data, ctype
 
 
+async def _optional_doc(form, name: str) -> tuple[bytes, str] | None:  # noqa: ANN001
+    """A replacement document, or None when the customer did not send one."""
+    upload = form.get(name)
+    if not isinstance(upload, UploadFile):
+        return None
+    data = await upload.read(porting_svc.MAX_DOC_BYTES + 1)
+    ctype = (upload.content_type or "").split(";")[0].strip().lower()
+    return data, ctype
+
+
+_PORT_FIELDS = (
+    "authorized_name",
+    "business_name",
+    "account_number",
+    "pin",
+    "billing_number",
+    "service_street",
+    "service_extended",
+    "service_city",
+    "service_state",
+    "service_zip",
+)
+
+
+def _fields(form) -> dict:  # noqa: ANN001
+    return {k: str(form.get(k) or "") for k in _PORT_FIELDS}
+
+
 @router.post("", status_code=201, dependencies=[Depends(requires_feature("porting"))])
 async def create_port(
     request: Request,
@@ -99,13 +180,6 @@ async def create_port(
 ) -> dict:
     form = await request.form()
     raw_numbers = str(form.get("numbers") or "").replace("\n", ",").split(",")
-    fields = {
-        k: str(form.get(k) or "")
-        for k in (
-            "authorized_name", "business_name", "account_number", "pin", "billing_number",
-            "service_street", "service_extended", "service_city", "service_state", "service_zip",
-        )
-    }
     port = await porting_svc.create_port_in(
         ctx.session,
         request.app.state.settings,
@@ -114,14 +188,79 @@ async def create_port(
         user_id=ctx.actor_user_id,
         carrier=str(form.get("carrier") or "telnyx").strip().lower(),
         numbers=raw_numbers,
-        form=fields,
+        form=_fields(form),
         loa=await _doc(form, "loa"),
         invoice=await _doc(form, "invoice"),
+        registry=getattr(request.app.state, "carriers", None),
     )
     audit_svc.record(
         ctx.session,
         ctx.org.id,
         action="porting.requested",
+        target_type="port_request",
+        target_id=str(port.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={"numbers": port.numbers},
+    )
+    await ctx.session.commit()
+    return _for_customer(_public(port))
+
+
+@router.patch("/{port_id}", dependencies=[Depends(requires_feature("porting"))])
+async def update_port(
+    port_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> dict:
+    """P1: fix a request that was rejected or that the carrier asked about, and resubmit it.
+
+    The numbers are not editable here - cancel and start a new request for those.
+    """
+    port = await _org_port(ctx.session, ctx.org.id, port_id)
+    form = await request.form()
+    port = await porting_svc.update_port_in(
+        ctx.session,
+        request.app.state.settings,
+        request.app.state.media_store,
+        getattr(request.app.state, "carriers", None),
+        port,
+        form=_fields(form),
+        loa=await _optional_doc(form, "loa"),
+        invoice=await _optional_doc(form, "invoice"),
+        user_id=ctx.actor_user_id,
+    )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="porting.updated",
+        target_type="port_request",
+        target_id=str(port.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={"status": port.status},
+    )
+    await ctx.session.commit()
+    return _for_customer(_public(port))
+
+
+@router.post("/{port_id}/cancel", dependencies=[Depends(requires_feature("porting"))])
+async def cancel_port(
+    port_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> dict:
+    """P1: stop a transfer that has not reached its date yet."""
+    port = await _org_port(ctx.session, ctx.org.id, port_id)
+    port = await porting_svc.cancel_port_in(
+        ctx.session,
+        getattr(request.app.state, "carriers", None),
+        port,
+        user_id=ctx.actor_user_id,
+        settings=request.app.state.settings,
+    )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="porting.cancelled",
         target_type="port_request",
         target_id=str(port.id),
         actor_user_id=ctx.actor_user_id,
@@ -219,9 +358,17 @@ class RejectIn(BaseModel):
 
 
 @ops_router.post("/{port_id}/reject")
-async def ops_reject(port_id: uuid.UUID, payload: RejectIn, op: Kyc) -> dict:
+async def ops_reject(port_id: uuid.UUID, payload: RejectIn, request: Request, op: Kyc) -> dict:
     port = await _port(op, port_id)
-    return _public(await porting_svc.reject(op.session, port, op.user.id, payload.reason))
+    return _public(
+        await porting_svc.reject(
+            op.session,
+            port,
+            op.user.id,
+            payload.reason,
+            settings=request.app.state.settings,
+        )
+    )
 
 
 class StatusIn(BaseModel):
@@ -241,5 +388,6 @@ async def ops_status(port_id: uuid.UUID, payload: StatusIn, request: Request, op
         payload.status,
         foc_date=payload.foc_date,
         note=payload.note,
+        settings=request.app.state.settings,
     )
     return _public(port)
