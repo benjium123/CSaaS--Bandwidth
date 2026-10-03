@@ -1,4 +1,5 @@
 import { FAQS } from "@/marketing/faq";
+import { OG_DIR, ogFileFor } from "./og";
 import { postBySlug, type Post } from "@/marketing/blog/posts";
 import { HOME_META, type PageMeta } from "@/marketing/pageMeta";
 import { COVERAGE, PLANS, PRICED_PLANS, RATES, YEARLY, cents, money, type Plan } from "@/marketing/pricing.config";
@@ -104,8 +105,9 @@ export function jsonLdFor(path: string): object[] {
 }
 
 /** Canonical link, Open Graph/Twitter tags and JSON-LD, ready to drop before </head>. */
-export function buildHead(path: string, meta: PageMeta): string {
+export function buildHead(path: string, meta: PageMeta, ogFile: string = ogFileFor(path)): string {
   const url = canonicalUrl(path);
+  const image = `${SITE_URL}/${OG_DIR}/${ogFile}`;
   const ogType = path.startsWith("/blog/") ? "article" : "website";
   const tags = [
     `<link rel="canonical" href="${escapeHtml(url)}" />`,
@@ -116,7 +118,12 @@ export function buildHead(path: string, meta: PageMeta): string {
     `<meta property="og:url" content="${escapeHtml(url)}" />`,
     `<meta property="og:title" content="${escapeHtml(meta.title)}" />`,
     `<meta property="og:description" content="${escapeHtml(meta.description)}" />`,
-    `<meta name="twitter:card" content="summary" />`,
+    `<meta property="og:image" content="${escapeHtml(image)}" />`,
+    `<meta property="og:image:width" content="1200" />`,
+    `<meta property="og:image:height" content="630" />`,
+    `<meta property="og:image:alt" content="${escapeHtml(meta.title)}" />`,
+    `<meta name="twitter:card" content="summary_large_image" />`,
+    `<meta name="twitter:image" content="${escapeHtml(image)}" />`,
     `<meta name="twitter:title" content="${escapeHtml(meta.title)}" />`,
     `<meta name="twitter:description" content="${escapeHtml(meta.description)}" />`,
   ];
@@ -217,7 +224,7 @@ export function buildLlmsTxt(pages: { path: string; meta: PageMeta }[]): string 
 }
 
 /** Fill a built dist/index.html with one page's title, description, head and body. */
-export function applyToTemplate(template: string, path: string, meta: PageMeta, bodyHtml: string): string {
+export function applyToTemplate(template: string, path: string, meta: PageMeta, bodyHtml: string, ogFile?: string): string {
   const titlePattern = /<title>[\s\S]*?<\/title>/;
   const descriptionPattern = /<meta\s+name="description"\s+content="[^"]*"\s*\/?>/;
   const rootAnchor = '<div id="root"></div>';
@@ -229,7 +236,7 @@ export function applyToTemplate(template: string, path: string, meta: PageMeta, 
   return template
     .replace(titlePattern, () => `<title>${escapeHtml(meta.title)}</title>`)
     .replace(descriptionPattern, () => `<meta name="description" content="${escapeHtml(meta.description)}" />`)
-    .replace("</head>", () => `${buildHead(path, meta)}\n  </head>`)
+    .replace("</head>", () => `${buildHead(path, meta, ogFile)}\n  </head>`)
     .replace(rootAnchor, () => `<div id="root">${bodyHtml}</div>`);
 }
 

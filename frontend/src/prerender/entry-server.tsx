@@ -31,5 +31,6 @@ export function render(path: string): { html: string; meta: PageMeta | null } {
 }
 
 export { PUBLIC_ROUTES, canonicalUrl } from "./routes";
+export { OG_DEFAULT, OG_DIR, ogFileFor } from "./og";
 export { applyToTemplate, appShell, buildSitemap, buildLlmsTxt, buildRss } from "./seo";
 export { PUBLISHED_POSTS } from "@/marketing/blog/posts";
