@@ -247,6 +247,7 @@ async def _run_once_locked(app) -> dict[str, int]:
 
     from app.db.session import get_sessionmaker
     from app.services import contact_lifecycle as contact_lifecycle_svc
+    from app.services import delivery_digest as delivery_digest_svc
     from app.services import dialer as dialer_svc
     from app.services import inbox_sla as inbox_sla_svc
     from app.services import media as media_svc
@@ -806,6 +807,31 @@ async def _run_once_locked(app) -> dict[str, int]:
             results["messaging_health_rows"] = health_counts.get("rows", 0)
         except Exception:
             log.exception("sweeper_messaging_health_failed")
+
+    # D2: the daily delivery digest - per-workspace emails plus the platform ops digest.
+    # Same hourly gate discipline as the messaging-health rollup above: reserve the slot
+    # BEFORE running (and before the second job) so a persistent failure cannot turn this
+    # into an every-tick retry storm. Each job gets its own session/try-except.
+    last_delivery_digest_run = getattr(app.state, "_delivery_digest_last_run", None)
+    now_monotonic = time.monotonic()
+    if (
+        last_delivery_digest_run is None
+        or now_monotonic - last_delivery_digest_run >= delivery_digest_svc.TICK_INTERVAL_SECONDS
+    ):
+        app.state._delivery_digest_last_run = now_monotonic
+        try:
+            async with get_sessionmaker()() as session:
+                digest_counts = await delivery_digest_svc.digest_tick(
+                    session, app.state.settings
+                )
+            results["delivery_digests"] = digest_counts.get("sent", 0)
+        except Exception:
+            log.exception("sweeper_delivery_digest_failed")
+        try:
+            async with get_sessionmaker()() as session:
+                await delivery_digest_svc.ops_digest_tick(session, app.state.settings)
+        except Exception:
+            log.exception("sweeper_delivery_digest_failed")
 
     settings = app.state.settings
     if settings.anthropic_api_key.get_secret_value() or settings.openai_api_key.get_secret_value():

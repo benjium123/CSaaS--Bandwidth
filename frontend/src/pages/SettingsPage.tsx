@@ -51,6 +51,7 @@ import { INBOX_RAIL_PATHS, useRailNav } from "@/components/shell/Sidebar";
 import { surfaceThemeClass, useSurfaceTheme } from "@/auth/useSurfaceTheme";
 import { TenDlcRegistration } from "@/components/registration";
 import { TollFreeVerificationCard } from "@/components/registration/TollFreeVerificationCard";
+import { DeliveryDigestCard } from "@/components/settings/DeliveryDigestCard";
 
 export type { SettingsSectionId } from "./settingsSections";
 export { SETTINGS_SECTIONS } from "./settingsSections";
@@ -327,6 +328,7 @@ function MessagingSection() {
     <div className="space-y-[18px]">
       <TenDlcRegistration />
       <TollFreeVerificationCard />
+      <DeliveryDigestCard />
     </div>
   );
 }
