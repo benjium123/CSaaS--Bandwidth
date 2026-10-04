@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "./client";
 import type { ApiClient } from "./client";
 
 /** Workspace plans: Solo / Team / Business plus $15 add-on users and $5 add-on numbers.
@@ -29,6 +30,18 @@ export function monthsPerBill(interval: BillingInterval | undefined, data?: { mo
   return interval === "year" ? data?.months_billed_per_year ?? 10 : 1;
 }
 
+/** A block of numbers bought at a discount to the $5 add-on price. `available` is false for a
+ *  size this workspace cannot buy (e.g. any pack on a yearly plan). */
+export interface NumberPack {
+  code: "25" | "50" | "100";
+  size: number;
+  list_price_cents: number;
+  price_cents: number;
+  per_number_cents: number;
+  owned: number;
+  available: boolean;
+}
+
 export interface WorkspacePlan {
   plan: null | {
     code: PlanCode;
@@ -42,13 +55,14 @@ export interface WorkspacePlan {
     cancel_at_period_end: boolean;
   };
   users: { limit: number | null; in_use: number; included?: number; extra?: number };
-  numbers: { limit: number | null; in_use: number; included?: number; extra?: number };
+  numbers: { limit: number | null; in_use: number; included?: number; extra?: number; in_packs?: number };
   minutes?: { included: number; remaining: number };
   extra_user_cents: number;
   extra_number_cents: number;
   minutes_per_user?: number;
   yearly_available?: boolean;
   months_billed_per_year?: number;
+  number_packs?: NumberPack[];
   catalog: CatalogPlan[];
 }
 
@@ -95,3 +109,29 @@ export const useChangePlan = (api: ApiClient) =>
   usePlanMutation<{ plan_code: PlanCode; accept_cents: number }>(api, "/change");
 
 export const useTrimPlan = (api: ApiClient) => usePlanMutation<Record<string, never>>(api, "/trim");
+
+/** `accept_cents: null` asks for the quote; the API refuses with the exact change to accept. */
+export const useBuyPack = (api: ApiClient) =>
+  usePlanMutation<{ code: string; accept_cents: number | null }>(api, "/packs");
+
+export function useRemovePack(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) =>
+      api.request<WorkspacePlan>(`${WORKSPACE_PLAN_PATH}/packs/${code}`, { method: "DELETE" }),
+    onSuccess: (data) => {
+      qc.setQueryData(["billing", "plan"], data);
+      void qc.invalidateQueries({ queryKey: ["org-seats"] });
+      void qc.invalidateQueries({ queryKey: ["billing"] });
+    },
+  });
+}
+
+/** The change to this billing period's bill the API wants accepted, or null when the failure
+ *  was something else. Negative means the pack replaces add-on numbers and the bill drops. */
+export function packQuote(err: unknown): number | null {
+  if (!(err instanceof ApiError) || err.code !== "price_confirmation_required") return null;
+  const cents = (err.details as { quote?: { monthly_increase_cents?: unknown } } | null | undefined)?.quote
+    ?.monthly_increase_cents;
+  return typeof cents === "number" ? cents : null;
+}

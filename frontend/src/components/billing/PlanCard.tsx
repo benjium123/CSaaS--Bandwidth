@@ -3,6 +3,7 @@ import { isOwner, useAuth } from "@/auth/AuthContext";
 import { Button, Card, CardHeader, Spinner, mutationErrorMessage } from "@/components/ui/primitives";
 import { dollars, useChangePlan, useTrimPlan, useWorkspacePlan } from "@/api/plan";
 import type { CatalogPlan } from "@/api/plan";
+import { NumberPacks } from "./NumberPacks";
 
 /** Settings > Billing: the workspace plan, what it includes, and moving between plans. */
 export function PlanCard() {
@@ -47,7 +48,7 @@ export function PlanCard() {
         <div>
           <dt className="text-muted-foreground">Phone numbers</dt>
           <dd className="font-medium">{data.numbers.in_use} of {data.numbers.limit}</dd>
-          <dd className="text-xs text-muted-foreground">{data.numbers.included} included{data.numbers.extra ? ` + ${data.numbers.extra} × ${dollars(data.extra_number_cents)}` : ""}</dd>
+          <dd className="text-xs text-muted-foreground">{data.numbers.included} included{data.numbers.in_packs ? ` + ${data.numbers.in_packs} in packs` : ""}{data.numbers.extra ? ` + ${data.numbers.extra} × ${dollars(data.extra_number_cents)}` : ""}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Call minutes this month</dt>
@@ -55,6 +56,8 @@ export function PlanCard() {
           <dd className="text-xs text-muted-foreground">Shared by the whole team. Then credit.</dd>
         </div>
       </dl>
+
+      <NumberPacks data={data} interval={plan.interval} />
 
       <div className="mt-5 grid gap-2 sm:grid-cols-3">
         {data.catalog.map(p => {
