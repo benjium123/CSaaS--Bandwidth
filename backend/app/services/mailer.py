@@ -26,6 +26,42 @@ log = structlog.get_logger(__name__)
 #: Test capture. Cleared by tests that assert on it.
 outbox: list[EmailMessage] = []
 
+#: Resend free plan: 3,000 emails a month and 100 a day. Stop short of both and send through
+#: Telnyx instead; Resend also refuses over-quota sends itself (non-2xx -> Telnyx fallback).
+RESEND_MONTHLY_CAP = 2900
+RESEND_DAILY_CAP = 95
+_resend_local: dict[str, int] = {}
+
+
+async def _take_resend_quota(settings: Settings, count: int) -> bool:
+    """Count ``count`` emails against this month's and today's Resend allowance (UTC).
+    Shared through Redis; an in-process count when Redis is missing or failing."""
+    from datetime import datetime, timezone
+
+    from app.services.session_cache import _redis_client
+
+    now = datetime.now(timezone.utc)
+    keys = (
+        (f"resend:month:{now:%Y-%m}", RESEND_MONTHLY_CAP, 32 * 86400),
+        (f"resend:day:{now:%Y-%m-%d}", RESEND_DAILY_CAP, 2 * 86400),
+    )
+    totals: list[int] | None = None
+    client = _redis_client(settings)
+    if client is not None:
+        try:
+            totals = []
+            for key, _, ttl in keys:
+                totals.append(int(await client.incrby(key, count)))
+                await client.expire(key, ttl)
+        except Exception:  # noqa: BLE001 - a Redis outage must not stop a login code
+            totals = None
+    if totals is None:
+        totals = []
+        for key, _, _ in keys:
+            _resend_local[key] = _resend_local.get(key, 0) + count
+            totals.append(_resend_local[key])
+    return all(total <= cap for total, (_, cap, _) in zip(totals, keys))
+
 
 def _html(body: str, subject: str = "", app_name: str = "Ringlite") -> str:
     """Branded HTML (button for the action link, code box for one-time codes); falls back
@@ -132,6 +168,9 @@ async def _resend_post(settings: Settings, recipients: list[str], subject: str, 
 
     sender = settings.resend_from or settings.smtp_from
     if not sender:
+        return False
+    if not await _take_resend_quota(settings, len(recipients)):
+        log.info("email_resend_quota_reached", recipients=len(recipients))
         return False
     try:
         async with httpx.AsyncClient(timeout=20) as client:

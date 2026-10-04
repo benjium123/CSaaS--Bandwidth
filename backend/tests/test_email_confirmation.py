@@ -259,3 +259,37 @@ async def test_resend_is_primary_and_telnyx_the_fallback(monkeypatch, resend_cod
     )
     assert await mailer.send(settings, ["ada@example.com"], "Code", "Your code is 123456", follow_up=False)
     assert calls == urls
+
+
+async def test_resend_stops_at_the_daily_cap_and_telnyx_takes_over(monkeypatch):
+    import httpx
+
+    from tests.conftest import make_settings
+
+    original = httpx.AsyncClient
+    calls = []
+
+    def handler(request):
+        calls.append("resend" if "resend" in str(request.url) else "telnyx")
+        if "resend" in str(request.url):
+            return httpx.Response(200, json={"id": "email_test"})
+        return httpx.Response(202, json={"data": {"id": "tx_1"}})
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(mailer, "_resend_local", {})
+    monkeypatch.setattr(mailer, "RESEND_DAILY_CAP", 2)
+    settings = make_settings(
+        app_env="development",
+        redis_url="",
+        resend_api_key="test-key",
+        resend_from="Ringlite <no-reply@example.com>",
+        telnyx_api_key="test-key",
+        telnyx_email_from="ringlite@example.com",
+    )
+    for _ in range(3):
+        assert await mailer.send(settings, ["ada@example.com"], "Code", "Your code is 1", follow_up=False)
+    assert calls == ["resend", "resend", "telnyx"]
