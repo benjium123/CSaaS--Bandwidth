@@ -166,6 +166,8 @@ function emergencyPill(number: NumberOut): { label: string; tone: PillTone } {
       return { label: "Setting up", tone: "warning" };
     case "failed":
       return { label: "Needs attention", tone: "danger" };
+    case "off":
+      return { label: "Off", tone: "neutral" };
     case "missing":
     case undefined:
       return { label: "Not set", tone: "danger" };

@@ -87,8 +87,14 @@ async def telnyx():
         yield fake
 
 
-async def _org_with_number(session, carrier="telnyx"):
-    org = Org(id=uuid.uuid4(), name="E911 Co", slug=uuid.uuid4().hex)
+async def _org_with_number(session, carrier="telnyx", e911_on=True):
+    # 911 is off per workspace until ops switch it on; these tests exercise the "on" path.
+    org = Org(
+        id=uuid.uuid4(),
+        name="E911 Co",
+        slug=uuid.uuid4().hex,
+        calling_settings={"e911_on": True} if e911_on else None,
+    )
     session.add(org)
     await session.commit()
     set_org_context(session, org.id)
@@ -419,3 +425,69 @@ async def test_a_member_who_cannot_place_calls_can_still_dial_911(app_with_dial_
     assert r.status_code == 201, r.text
     await voice_service.wait_for_pending_dial_tasks()
     assert [d.get("sip_call_to") for d in dials] == ["911"]
+
+
+# ---------------------------------------------------------------- ops 911 switch (2026-10-04)
+
+
+async def test_a_switched_off_workspace_never_enables_911_at_the_carrier(session, telnyx):
+    org, number = await _org_with_number(session, e911_on=False)
+    address = await e911.create_address(session, _settings(), org.id, ADDRESS, client=telnyx.client)
+    telnyx.enable_status = 200
+    state = await e911.enable(session, _settings(), number, address, client=telnyx.client)
+    assert state["status"] == e911.OFF_STATUS
+    assert state["address_id"] == str(address.id)  # remembered for when ops switch it on
+    assert telnyx.paths("/actions/enable_emergency") == []
+
+    # The sweeper does not retry it either.
+    counts = await e911.tick(get_sessionmaker(), _settings(), client=telnyx.client)
+    assert counts["checked"] == 0
+    assert telnyx.paths("/actions/enable_emergency") == []
+
+
+async def test_switching_on_enables_the_saved_address_on_the_next_sweep(session, telnyx):
+    org, number = await _org_with_number(session, e911_on=False)
+    address = await e911.create_address(session, _settings(), org.id, ADDRESS, client=telnyx.client)
+    await e911.enable(session, _settings(), number, address, client=telnyx.client)
+
+    org.calling_settings = {"e911_on": True}
+    await session.commit()
+    telnyx.enable_status = 200
+    await e911.tick(get_sessionmaker(), _settings(), client=telnyx.client)
+    body = json.loads(telnyx.paths("/actions/enable_emergency")[0].content)
+    assert body == {"emergency_enabled": True, "emergency_address_id": "addr_123"}
+
+
+async def test_switching_off_turns_a_live_number_off_at_the_carrier(session, telnyx):
+    org, number = await _org_with_number(session)
+    address = await e911.create_address(session, _settings(), org.id, ADDRESS, client=telnyx.client)
+    telnyx.enable_status = 200
+    await e911.enable(session, _settings(), number, address, client=telnyx.client)
+    assert len(telnyx.paths("/actions/enable_emergency")) == 1
+
+    org.calling_settings = {}
+    await session.commit()
+    counts = await e911.tick(get_sessionmaker(), _settings(), client=telnyx.client)
+    assert counts["switched_off"] == 1
+    calls = telnyx.paths("/actions/enable_emergency")
+    assert len(calls) == 2
+    assert json.loads(calls[1].content)["emergency_enabled"] is False
+    async with get_sessionmaker()() as s:
+        set_org_context(s, org.id)
+        assert e911.status_of(await s.get(OrgNumber, number.id))["status"] == e911.OFF_STATUS
+    # Already off: the next sweep leaves it alone.
+    await e911.tick(get_sessionmaker(), _settings(), client=telnyx.client)
+    assert len(telnyx.paths("/actions/enable_emergency")) == 2
+
+
+async def test_a_failed_number_in_a_switched_off_workspace_is_just_marked_off(session, telnyx):
+    org, number = await _org_with_number(session)
+    address = await e911.create_address(session, _settings(), org.id, ADDRESS, client=telnyx.client)
+    await e911.enable(session, _settings(), number, address, client=telnyx.client)  # 500 -> failed
+    org.calling_settings = {}
+    await session.commit()
+    await e911.tick(get_sessionmaker(), _settings(), client=telnyx.client)
+    assert len(telnyx.paths("/actions/enable_emergency")) == 1  # no disable call needed
+    async with get_sessionmaker()() as s:
+        set_org_context(s, org.id)
+        assert e911.status_of(await s.get(OrgNumber, number.id))["status"] == e911.OFF_STATUS

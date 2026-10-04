@@ -183,4 +183,28 @@ describe("OrgFeaturesPanel", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent ?? "").toMatch(/forbidden/i);
   });
+
+  it("switches 911 calling on for the workspace with a PUT", async () => {
+    const user = userEvent.setup();
+    let putBody: unknown = null;
+
+    mocks.requestMock.mockImplementation(async (path: string, init?: RequestInitLike) => {
+      const method = methodOf(init);
+      if (path === BASE && method === "GET") {
+        return { org_id: ORG_ID, features: [callRecording()], e911: { enabled: false } };
+      }
+      if (path === `/api/v1/ops/console/orgs/${ORG_ID}/e911` && method === "PUT") {
+        putBody = init?.json ?? null;
+        return { org_id: ORG_ID, enabled: true, switched_off: 0 };
+      }
+      throw new Error(`unexpected request ${method} ${path}`);
+    });
+
+    renderPanel();
+
+    const toggle = await screen.findByRole("switch", { name: "911 calling" });
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    await user.click(toggle);
+    await waitFor(() => expect(putBody).toEqual({ enabled: true }));
+  });
 });

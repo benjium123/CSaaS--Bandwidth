@@ -28,9 +28,20 @@ from app.errors import (
     PermissionDeniedError,
     ValidationFailedError,
 )
-from app.models import EmergencyAddress, OrgNumber
+from app.models import EmergencyAddress, Org, OrgNumber
 
 log = structlog.get_logger("e911")
+
+#: Ops switch (2026-10-04): carrier 911 costs $1.50/number/month, so it is OFF for every
+#: workspace until a super admin switches it on (Ops > workspace > Features,
+#: ``Org.calling_settings["e911_on"]``). While off, no number is ever enabled at the carrier;
+#: addresses are still saved, so switching on later enables them within one sweep.
+OFF_STATUS = "off"
+OFF_DETAIL = "911 calling is not switched on for this workspace. Contact support to turn it on."
+
+
+def org_switched_on(org: Org | None) -> bool:
+    return bool(org is not None and (org.calling_settings or {}).get("e911_on"))
 
 TELNYX = "https://api.telnyx.com/v2"
 #: Short codes that must always connect. 933 is the carrier's test line: it reads back the
@@ -339,6 +350,11 @@ async def enable(session, settings, number: OrgNumber, address: EmergencyAddress
         )
     if address.org_id != number.org_id:
         raise NotFoundError("Address not found")
+    if not org_switched_on(await session.get(Org, number.org_id)):
+        # Remember the address, never call the carrier: no charge until ops switch it on.
+        _set(number, address_id=str(address.id), status=OFF_STATUS, detail=OFF_DETAIL)
+        await session.commit()
+        return status_of(number)
     _set(number, address_id=str(address.id), status="pending", detail=None)
     try:
         if number.carrier == "signalwire":
@@ -421,6 +437,40 @@ async def enable_for_purchase(session, settings, purchase, *, client=None) -> No
             await enable(session, settings, number, address, client=client)
 
 
+async def switch_off(session, settings, number: OrgNumber, *, client=None) -> None:
+    """Turn 911 off for one number. A number live at Telnyx is disabled there first (the
+    charge is per enabled number); one that never got that far is just marked off. Commits."""
+    e911 = (number.provisioning or {}).get("e911") or {}
+    phone_id = e911.get("telnyx_phone_id")
+    detail = OFF_DETAIL
+    if number.carrier == "telnyx" and phone_id and e911.get("status") != "failed":
+        address = (
+            await session.get(EmergencyAddress, uuid.UUID(e911["address_id"]))
+            if e911.get("address_id")
+            else None
+        )
+        try:
+            await _telnyx(
+                "POST",
+                f"/phone_numbers/{phone_id}/actions/enable_emergency",
+                await _api_key(session, settings),
+                client=client,
+                json={
+                    "emergency_enabled": False,
+                    "emergency_address_id": address.telnyx_address_id if address else None,
+                },
+            )
+        except (FeatureUnavailableError, ValidationFailedError) as exc:
+            log.error("e911_disable_failed", number_id=str(number.id), error=exc.message)
+            detail = f"Still on at the carrier - turn it off by hand: {exc.message}"[:255]
+    elif number.carrier == "signalwire" and e911.get("signalwire_bound"):
+        # No documented API to unbind; flag it so an operator turns it off by hand.
+        log.error("e911_disable_manual", number_id=str(number.id), carrier="signalwire")
+        detail = "Still on at the carrier - turn it off by hand in the SignalWire dashboard."
+    _set(number, status=OFF_STATUS, detail=detail)
+    await session.commit()
+
+
 async def tick(session_factory, settings, *, client=None) -> dict[str, int]:
     """Retry failed activations and follow provisioning ones until active."""
     async with session_factory() as session:
@@ -442,19 +492,50 @@ async def tick(session_factory, settings, *, client=None) -> dict[str, int]:
             )
         ).all():
             first_address.setdefault(org_id, address_id)
+        on_orgs = {
+            org.id
+            for org in (
+                await session.execute(
+                    sa.select(Org).where(Org.id.in_({r[1] for r in rows}))
+                    .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+                )
+            ).scalars()
+            if org_switched_on(org)
+        }
+    # Workspaces whose 911 is switched OFF: never retried, and anything still live at the
+    # carrier is turned off there so it stops costing money.
+    off_todo = [
+        (nid, org_id)
+        for nid, org_id, prov in rows
+        if org_id not in on_orgs
+        and ((prov or {}).get("e911") or {}).get("status") not in (None, OFF_STATUS)
+    ]
     todo = [
         (nid, org_id)
         for nid, org_id, prov in rows
-        if ((prov or {}).get("e911") or {}).get("status") in RETRY_STATES
+        if org_id in on_orgs
+        and ((prov or {}).get("e911") or {}).get("status") in (*RETRY_STATES, OFF_STATUS)
     ]
     # P44e: a number with no address yet (bought before E911, ported in, or bought through
     # the API) gets its workspace's first address, so every number ends up covered.
     unassigned = [
         (nid, org_id)
         for nid, org_id, prov in rows
-        if not ((prov or {}).get("e911") or {}).get("address_id") and org_id in first_address
+        if not ((prov or {}).get("e911") or {}).get("address_id")
+        and org_id in first_address
+        and org_id in on_orgs
     ]
-    counts = {"checked": len(todo), "active": 0, "assigned": 0}
+    counts = {"checked": len(todo), "active": 0, "assigned": 0, "switched_off": 0}
+    for number_id, org_id in off_todo:
+        async with session_factory() as session:
+            set_org_context(session, org_id)
+            number = await session.get(OrgNumber, number_id)
+            try:
+                if number is not None:
+                    await switch_off(session, settings, number, client=client)
+                    counts["switched_off"] += 1
+            except Exception:
+                log.exception("e911_switch_off_failed", number_id=str(number_id))
     for number_id, org_id in unassigned:
         async with session_factory() as session:
             set_org_context(session, org_id)
@@ -525,6 +606,9 @@ async def require_e911(session, settings, org_id: uuid.UUID, from_e164: str, to:
         return
     if status_of(number)["status"] in CALLABLE_STATES:
         return
+    if not org_switched_on(await session.get(Org, org_id)):
+        return  # 911 is switched off for this workspace by ops: nothing the customer can fix
+
     if datetime.now(timezone.utc) < grace_deadline(settings, number):
         return
     raise PermissionDeniedError(

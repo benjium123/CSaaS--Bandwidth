@@ -52,15 +52,35 @@ function featurePath(orgId: string, key: string): string {
  * plays only on calls the workspace records. */
 export type RecordingNotice = { enabled: boolean; record_calls: boolean };
 
-type OrgFeaturesPayload = { features: OrgFeature[]; recordingNotice: RecordingNotice | null };
+/** Carrier 911: off for every workspace until a super admin switches it on ($1.50 per
+ * number per month at the carrier while on). */
+export type E911Switch = { enabled: boolean };
+
+type OrgFeaturesPayload = {
+  features: OrgFeature[];
+  recordingNotice: RecordingNotice | null;
+  e911: E911Switch | null;
+};
 
 async function fetchOrgFeatures(api: ConsoleApi, orgId: string): Promise<OrgFeaturesPayload> {
   const data = await api.request<{
     org_id: string;
     features: OrgFeature[];
     recording_notice?: RecordingNotice;
+    e911?: E911Switch;
   }>(featuresPath(orgId));
-  return { features: data.features ?? [], recordingNotice: data.recording_notice ?? null };
+  return {
+    features: data.features ?? [],
+    recordingNotice: data.recording_notice ?? null,
+    e911: data.e911 ?? null,
+  };
+}
+
+async function setE911(api: ConsoleApi, orgId: string, enabled: boolean) {
+  return api.request(`/api/v1/ops/console/orgs/${orgId}/e911`, {
+    method: "PUT",
+    json: { enabled },
+  });
 }
 
 async function setRecordingNotice(api: ConsoleApi, orgId: string, enabled: boolean) {
@@ -132,8 +152,16 @@ export function OrgFeaturesPanel({
     },
   });
 
+  const e911Mutation = useMutation({
+    mutationFn: (enabled: boolean) => setE911(api, orgId, enabled),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orgFeaturesQueryKey(orgId) });
+    },
+  });
+
   const features = React.useMemo(() => featuresQuery.data?.features ?? [], [featuresQuery.data]);
   const notice = featuresQuery.data?.recordingNotice ?? null;
+  const e911 = featuresQuery.data?.e911 ?? null;
   const grouped = React.useMemo(() => groupFeatures(features), [features]);
   const pendingKey = toggleMutation.isPending
     ? toggleMutation.variables?.key ?? null
@@ -180,6 +208,42 @@ export function OrgFeaturesPanel({
                   checked={notice.enabled}
                   disabled={!canEdit || noticeMutation.isPending}
                   onChange={(event) => noticeMutation.mutate(event.target.checked)}
+                />
+                <span
+                  aria-hidden="true"
+                  className="h-5 w-9 rounded-full bg-muted transition-colors peer-checked:bg-muted-foreground peer-disabled:opacity-50"
+                />
+                <span
+                  aria-hidden="true"
+                  className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full border border-border bg-background transition-transform peer-checked:translate-x-4"
+                />
+              </label>
+            </div>
+          ) : null}
+          {e911 ? (
+            <div className="flex items-start justify-between gap-4 rounded-[var(--cx-r-md,14px)] border border-border px-3 py-2">
+              <div className="min-w-0 space-y-1">
+                <span className="text-[13px] font-medium">911 calling</span>
+                <p className="text-xs text-muted-foreground">
+                  Registers each number&apos;s 911 address with the carrier ($1.50 per number per
+                  month while on). Off by default; only super admins can change it. Switching off
+                  turns 911 off at the carrier for every number in this workspace.
+                </p>
+                {e911Mutation.isError ? (
+                  <p role="alert" className="text-xs text-destructive">
+                    {mutationErrorMessage(e911Mutation.error)}
+                  </p>
+                ) : null}
+              </div>
+              <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="911 calling"
+                  className="peer sr-only"
+                  checked={e911.enabled}
+                  disabled={!canEdit || e911Mutation.isPending}
+                  onChange={(event) => e911Mutation.mutate(event.target.checked)}
                 />
                 <span
                   aria-hidden="true"

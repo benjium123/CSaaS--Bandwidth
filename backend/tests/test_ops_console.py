@@ -472,3 +472,27 @@ async def test_only_admin_operators_switch_the_recording_notice(ops, session, op
 
     r = await ops.put(path, json={"enabled": True}, headers=_why(admin))
     assert r.json()["plays_now"] is True
+
+
+async def test_911_is_off_until_an_admin_operator_switches_it_on(ops, session, ops_settings):
+    org_id = await _new_org(session, "Nine One One Co")
+    admin = await _operator(ops, session)
+    reviewer = await _operator(ops, session, email="rev911@example.com", role="reviewer")
+    path = f"/api/v1/ops/console/orgs/{org_id}/e911"
+
+    r = await ops.get(f"/api/v1/ops/console/orgs/{org_id}/features", headers=auth_headers(admin))
+    assert r.json()["e911"] == {"enabled": False}
+
+    r = await ops.put(path, json={"enabled": True}, headers=auth_headers(reviewer))
+    assert r.status_code == 403, r.text
+
+    r = await ops.put(path, json={"enabled": True}, headers=_why(admin))
+    assert r.status_code == 200, r.text
+    session.expire_all()
+    set_org_context(session, org_id)
+    assert (await session.get(Org, org_id)).calling_settings["e911_on"] is True
+
+    r = await ops.put(path, json={"enabled": False}, headers=_why(admin))
+    assert r.json() == {"org_id": str(org_id), "enabled": False, "switched_off": 0}
+    r = await ops.get(f"/api/v1/ops/console/orgs/{org_id}/features", headers=auth_headers(admin))
+    assert r.json()["e911"] == {"enabled": False}

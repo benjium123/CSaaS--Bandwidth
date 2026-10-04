@@ -23,7 +23,9 @@ export type EmergencyStatus =
   | "pending"
   | "failed"
   | "missing"
-  | "unsupported";
+  | "unsupported"
+  /** 911 is switched off for the workspace by Ringlite ops (no carrier charge). */
+  | "off";
 
 export type NumberOut = Omit<GeneratedNumberOut, "status" | "carrier"> & {
   status: NumberStatus;

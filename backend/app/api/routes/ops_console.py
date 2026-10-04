@@ -167,9 +167,7 @@ async def _org_or_404(op: OperatorContext, org_id: uuid.UUID) -> Org:
 
 @router.get("/orgs/{org_id}/features")
 async def console_org_features(org_id: uuid.UUID, op: Reader) -> dict:
-    from app.services import entitlements
-
-    from app.services import calling_settings
+    from app.services import calling_settings, e911, entitlements
 
     org = await _org_or_404(op, org_id)
     values = await entitlements.for_org(op.session, org_id)
@@ -180,6 +178,8 @@ async def console_org_features(org_id: uuid.UUID, op: Reader) -> dict:
             "enabled": not calling_settings.announcement_ops_off(org),
             "record_calls": calling_settings.record_calls_for(org),
         },
+        # 911 at the carrier costs per number per month: off until a super admin switches it.
+        "e911": {"enabled": e911.org_switched_on(org)},
         "features": [
             {
                 "key": f.key,
@@ -238,6 +238,49 @@ async def console_set_org_feature(
 
 class RecordingNoticeIn(BaseModel):
     enabled: bool
+
+
+class E911SwitchIn(BaseModel):
+    enabled: bool
+
+
+@router.put("/orgs/{org_id}/e911")
+async def console_set_e911(
+    org_id: uuid.UUID, payload: E911SwitchIn, request: Request, op: Major
+) -> dict:
+    """Super admins only: switch carrier 911 on or off for one workspace ($1.50 per number
+    per month while on). On: its numbers are enabled at their saved address within one
+    sweep. Off: every number still live at the carrier is turned off there now."""
+    from app.models import OrgNumber
+    from app.services import e911
+
+    org = await _org_or_404(op, org_id)
+    before = e911.org_switched_on(org)
+    stored = dict(org.calling_settings or {})
+    if payload.enabled:
+        stored["e911_on"] = True
+    else:
+        stored.pop("e911_on", None)
+    org.calling_settings = stored
+    _audit(op, org_id, "org_e911.updated", {"from": before, "to": payload.enabled})
+    await op.session.commit()
+    switched_off = 0
+    if not payload.enabled:
+        set_org_context(op.session, org_id)
+        numbers = (
+            await op.session.execute(
+                sa.select(OrgNumber).where(
+                    OrgNumber.org_id == org_id,
+                    OrgNumber.carrier.in_(e911.SUPPORTED_CARRIERS),
+                    OrgNumber.status == "active",
+                )
+            )
+        ).scalars().all()
+        for number in numbers:
+            if e911.status_of(number)["status"] not in ("missing", e911.OFF_STATUS):
+                await e911.switch_off(op.session, request.app.state.settings, number)
+                switched_off += 1
+    return {"org_id": str(org_id), "enabled": payload.enabled, "switched_off": switched_off}
 
 
 @router.put("/orgs/{org_id}/recording-notice")

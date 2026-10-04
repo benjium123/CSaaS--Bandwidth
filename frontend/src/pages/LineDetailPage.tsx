@@ -49,6 +49,8 @@ function emergencyLabel(n: NumberOut): { label: string; tone: PillTone } {
     case "provisioning":
     case "pending":
       return { label: "Setting up", tone: "warning" };
+    case "off":
+      return { label: "911 not switched on", tone: "neutral" };
     default:
       return { label: "No 911 address", tone: "danger" };
   }
