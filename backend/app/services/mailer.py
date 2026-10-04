@@ -165,6 +165,11 @@ async def send(
     if settings.app_env == "test":
         outbox.append(msg)
         return True
+    resend_on = bool(settings.resend_api_key.get_secret_value())
+    # Resend first when configured: it reaches Gmail in seconds, Telnyx's MTA took 18-66 s
+    # (measured 2026-09-27). Telnyx stays the fallback when Resend refuses the message.
+    if resend_on and await _resend_post(settings, recipients, subject, body):
+        return True
     if settings.telnyx_email_from:
         accepted, message_id = await _telnyx_post(settings, recipients, subject, body)
         if accepted and follow_up and message_id:
@@ -172,8 +177,8 @@ async def send(
 
             email_delivery.track(settings, message_id, recipients, subject, body)
         return accepted
-    if settings.resend_api_key.get_secret_value():
-        return await _resend_post(settings, recipients, subject, body)
+    if resend_on:
+        return False
     if not settings.smtp_host.strip():
         log.info("email_skipped_no_smtp", subject=subject, recipients=len(recipients))
         return False
