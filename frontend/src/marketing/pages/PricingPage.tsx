@@ -76,7 +76,7 @@ export function PricingPage() {
   };
 
   return (
-    <SitePage title="Business phone pricing for small teams" description="Simple plans with your team and phone numbers included. Pay monthly, or yearly and get two months free.">
+    <SitePage title="Business phone pricing for teams of any size" description="Simple plans with your team and phone numbers included. Pay monthly, or yearly and get two months free.">
       <section className="ms-page-hero ms-pricing-hero rl-wrap">
         <p className="rl-eyebrow"><span /> PRICING</p>
         <h1 className="ms-h1">Your team and your numbers. <span>One simple price.</span></h1>

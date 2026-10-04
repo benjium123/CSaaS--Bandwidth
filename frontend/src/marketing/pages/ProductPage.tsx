@@ -81,7 +81,7 @@ export function ProductPage() {
     .slice(0, 3);
 
   return (
-    <SitePage title={`${product.menu} for small business`} description={product.lede}>
+    <SitePage title={`${product.menu} for business teams`} description={product.lede}>
       <section className="ms-page-hero ms-split rl-wrap">
         <div>
           <p className="rl-eyebrow">

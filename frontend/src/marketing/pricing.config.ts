@@ -101,7 +101,7 @@ export const PLANS: Plan[] = [
   {
     code: "team",
     name: "Team",
-    tagline: "A small team, a line each.",
+    tagline: "Your team, a line each.",
     price: 45,
     included: { users: 3, numbers: 3 },
     extraUser: 15,

@@ -31,10 +31,10 @@ export function AlternativePage() {
   const short = shortName(c.name);
 
   return (
-    <SitePage title={`${c.name} alternative for small teams`} description={`Looking for a ${short} alternative? ${c.summary}`}>
+    <SitePage title={`${c.name} alternative with one price per team`} description={`Looking for a ${short} alternative? ${c.summary}`}>
       <section className="ms-page-hero rl-wrap">
         <p className="rl-eyebrow"><span />ALTERNATIVE</p>
-        <h1 className="ms-h1">The {short} alternative priced for small teams</h1>
+        <h1 className="ms-h1">The {short} alternative priced per team, not per seat</h1>
         <p className="ms-lede">{c.summary}</p>
         <div className="ms-cta-row">
           <Link className="rl-button" to="/signbox">

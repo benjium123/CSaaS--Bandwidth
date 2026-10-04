@@ -526,7 +526,7 @@ function comparisonPost(slug: (typeof COMPARE_SLUGS)[number]): Post {
 
   return {
     slug: `${slug}-vs-ringlite-cost`,
-    title: `${c.name} vs Ringlite: what a small team pays`,
+    title: `${c.name} vs Ringlite: what your team pays`,
     description: `${short} vs Ringlite for teams of 3 to 15: monthly and yearly list prices side by side, where each one is cheaper, and how switching works.`,
     published: "2026-10-03",
     topic: "Switching",

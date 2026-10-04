@@ -17,7 +17,7 @@ export function BlogIndexPage() {
     >
       <section className="ms-page-hero rl-wrap">
         <p className="rl-eyebrow"><span />GUIDES</p>
-        <h1 className="ms-h1">Guides for small teams on the phone</h1>
+        <h1 className="ms-h1">Guides for teams on the phone</h1>
         <p className="ms-lede">
           Plain write-ups on what business phone service costs, how 10DLC texting registration
           works, and what switching providers takes. Written for teams that do not have someone

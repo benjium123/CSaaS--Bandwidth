@@ -19,7 +19,7 @@ export function useReportPageMeta(meta: PageMeta): void {
 
 /** The homepage's title and description; index.html carries the same pair for the bare shell. */
 export const HOME_META: PageMeta = {
-  title: "Business Phone System for Small Teams | Ringlite",
+  title: "AI-Ready Business Phone System for Every Team | Ringlite",
   description:
     "Calls, texts and voicemail in one shared inbox, with one price for your team and numbers. Team is $45/month for 3 users, 3 numbers and 200 call minutes. No fee per seat.",
 };

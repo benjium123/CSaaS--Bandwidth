@@ -105,11 +105,11 @@ h1 em{font-style:normal;color:#5B8FF0}
 }
 
 const cards: Card[] = [
-  { file: ogFileFor("/"), eyebrow: "Business phone for small teams", title: "Your team. Your numbers. <em>One price.</em>", sub: "Calls, texts and voicemail in one shared inbox. No fee per seat.", panel: { kind: "bars" } },
+  { file: ogFileFor("/"), eyebrow: "AI-ready business phone for every team", title: "Your team. Your numbers. <em>One price.</em>", sub: "Calls, texts and voicemail in one shared inbox. No fee per seat.", panel: { kind: "bars" } },
   { file: ogFileFor("/pricing"), eyebrow: "Pricing", title: "One price for your team <em>and your numbers.</em>", sub: "Starter $15, Team $45, Business $130 a month. Every rate published.", panel: { kind: "bars" } },
   { file: ogFileFor("/calculator"), eyebrow: "Cost calculator", title: "What does a phone system cost <em>for your team?</em>", sub: "Price your team on Ringlite and on per-seat tools, side by side.", panel: { kind: "bars" } },
-  { file: ogFileFor("/blog"), eyebrow: "Guides", title: "Guides for small teams <em>on the phone.</em>", sub: "Phone costs, 10DLC texting registration and switching providers." },
-  { file: ogFileFor("/__default"), eyebrow: "Business phone for small teams", title: "Calls, texts and voicemail. <em>One shared inbox.</em>", sub: "Local numbers, registered texting and your whole team on one price." },
+  { file: ogFileFor("/blog"), eyebrow: "Guides", title: "Guides for teams <em>on the phone.</em>", sub: "Phone costs, 10DLC texting registration and switching providers." },
+  { file: ogFileFor("/__default"), eyebrow: "AI-ready business phone for every team", title: "Calls, texts and voicemail. <em>One shared inbox.</em>", sub: "Local numbers, registered texting and your whole team on one price." },
   ...COMPETITORS.filter(c => COMPETITOR_SEAT_PRICES.some(p => p.slug === c.slug)).map(c => ({
     file: ogFileFor(`/compare/${c.slug}`), eyebrow: `${shortName(c.name)} alternative`,
     title: `Ringlite vs <em>${esc(shortName(c.name))}</em>`, sub: c.summary.split(". ")[1] ?? c.summary,

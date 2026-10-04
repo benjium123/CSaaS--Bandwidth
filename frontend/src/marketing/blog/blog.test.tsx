@@ -71,7 +71,7 @@ describe("Blog", () => {
 
   it("sends an unknown slug back to the index", () => {
     open("/blog/nope");
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Guides for small teams on the phone");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Guides for teams on the phone");
   });
 
   it("keeps post metadata sane", () => {

@@ -212,7 +212,7 @@ export const SOLUTIONS: Solution[] = [
 
 export const TEAM_SOLUTIONS: { slug: string; icon: IconName; menu: string; menuHint: string }[] = [
   { slug: "solo", icon: "phone", menu: "Solo operators", menuHint: "A real business line" },
-  { slug: "small-teams", icon: "users", menu: "Small teams", menuHint: "3 users and 3 numbers included" },
+  { slug: "small-teams", icon: "users", menu: "Growing teams", menuHint: "3 users and 3 numbers included" },
   { slug: "sales", icon: "list", menu: "Sales teams", menuHint: "Dialer, texting, follow-ups" },
 ];
 
@@ -241,7 +241,7 @@ export const COMPETITORS: Competitor[] = [
   },
   {
     slug: "ringcentral", name: "RingCentral",
-    summary: "RingCentral is built for large companies. Ringlite is self-serve and priced for small teams.",
+    summary: "RingCentral is built for large companies. Ringlite is self-serve, with published prices for teams of any size.",
     rows: [
       { label: "How you pay", them: "Per user, bigger discounts through sales", us: "Packages, every price on the page" },
       { label: "Texting", them: "25 to 200 texts per user", us: "Texts at a published rate, no monthly cap" },
