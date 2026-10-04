@@ -94,7 +94,12 @@ async def test_a_stale_quote_is_refused_and_nothing_changes(session, stripe):
 async def test_packs_are_not_sold_until_their_stripe_price_exists(session, stripe):
     org = await twp._org(session)
     await _on_plan(session, stripe, org, "team")
-    bare = make_settings(stripe_webhook_secret="whsec_test")
+    bare = make_settings(
+        stripe_webhook_secret="whsec_test",
+        stripe_number_pack_25_price_id="",
+        stripe_number_pack_50_price_id="",
+        stripe_number_pack_100_price_id="",
+    )
     with pytest.raises(FeatureUnavailableError):
         await plan_billing.buy_pack(session, bare, org.id, "25", 10500)
     with pytest.raises(ValidationFailedError):
