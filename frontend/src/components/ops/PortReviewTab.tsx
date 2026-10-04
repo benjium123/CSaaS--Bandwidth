@@ -4,10 +4,13 @@ import type { ApiClient } from "@/api/client";
 import {
   fetchPortDocument,
   useApprovePort,
+  useAuthorizePortOut,
   useDecideGrant,
   useOpsPorts,
   usePendingGrants,
+  usePortOutCodes,
   useRejectPort,
+  useRejectPortOut,
   useSetPortStatus,
   type PendingGrant,
   type PortManualStatus,
@@ -23,6 +26,7 @@ import {
   Section,
   Select,
   Spinner,
+  Textarea,
   mutationErrorMessage,
 } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
@@ -47,6 +51,10 @@ function grantAmount(grant: PendingGrant): string {
   }
   return `${grant.units ?? 0} ${grant.kind ?? ""}`.trim();
 }
+
+/** How long ops have to answer a port-out before it lapses. Six hours or less is treated as
+ * urgent; so is anything already past. */
+const PORT_OUT_URGENT_MS = 6 * 60 * 60 * 1000;
 
 /* ------------------------------------------------------------------------- */
 /* Grants waiting for a second operator                                       */
@@ -125,6 +133,7 @@ function PendingGrantsSection({ api }: { api: ApiClient }) {
 
 const PORT_STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "awaiting_review", label: "Waiting for review" },
+  { value: "pending", label: "Port-out: waiting for decision" },
   { value: "", label: "All" },
   { value: "submitted", label: "Submitted" },
   { value: "in_process", label: "In process" },
@@ -146,6 +155,151 @@ const MANUAL_STATUS_OPTIONS: { value: PortManualStatus; label: string }[] = [
  * awaiting-review card has its own approve/reject actions instead. */
 const MANUAL_STATUS_HIDDEN = ["ported", "rejected", "cancelled", "awaiting_review"];
 
+/** The ops decisions for one pending port-out. Split out so its queries and mutations only run
+ * for the cards that actually have a decision to make. */
+function PortOutDecision({ api, port }: { api: ApiClient; port: PortRequest }) {
+  const authorize = useAuthorizePortOut(api);
+  const reject = useRejectPortOut(api);
+
+  const [mode, setMode] = useState<"idle" | "approve" | "reject">("idle");
+  const [approveNote, setApproveNote] = useState("");
+  const [code, setCode] = useState("");
+  const [reason, setReason] = useState("");
+
+  // The reason codes are only worth fetching once someone has started to reject.
+  const codes = usePortOutCodes(api, port.id, mode === "reject");
+
+  const codeList = codes.data?.codes ?? [];
+  const selectedCode = codeList.find((entry) => String(entry.code) === code) ?? null;
+  const reasonRequired = selectedCode?.reason_required ?? false;
+  const reasonValue = reason.trim();
+  const canReject = selectedCode !== null && (!reasonRequired || reasonValue.length >= 5);
+
+  const respondBy = port.respond_by ? new Date(port.respond_by) : null;
+  const respondByValid = respondBy !== null && !Number.isNaN(respondBy.getTime());
+  const respondByUrgent = respondByValid
+    ? respondBy.getTime() - Date.now() < PORT_OUT_URGENT_MS
+    : false;
+
+  return (
+    <div className="space-y-2">
+      {port.gaining_carrier ? (
+        <p className="text-sm text-slate-600">Requested by {port.gaining_carrier}</p>
+      ) : null}
+
+      {port.respond_by ? (
+        <p className={`text-sm ${respondByUrgent ? "text-red-600" : "text-slate-600"}`}>
+          Respond by {respondByValid ? respondBy.toLocaleString() : port.respond_by}
+        </p>
+      ) : null}
+
+      {port.disputed ? <Pill tone="danger">DISPUTED BY OWNER</Pill> : null}
+
+      {mode === "idle" ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" disabled={authorize.isPending} onClick={() => setMode("approve")}>
+            Approve transfer
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => setMode("reject")}>
+            Reject
+          </Button>
+        </div>
+      ) : null}
+
+      {mode === "approve" ? (
+        <div className="space-y-2 rounded-md border border-slate-200 p-3">
+          <p className="text-sm text-slate-600">
+            Release these numbers to the new provider? This cannot be undone.
+          </p>
+          <label className="block text-sm">
+            <span className="mb-1 block text-slate-500">Note (optional)</span>
+            <Input value={approveNote} onChange={(e) => setApproveNote(e.target.value)} />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              disabled={authorize.isPending}
+              onClick={() =>
+                authorize.mutate(
+                  { id: port.id, note: approveNote.trim() || undefined },
+                  { onSuccess: () => setMode("idle") },
+                )
+              }
+            >
+              Confirm
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setMode("idle")}>
+              Cancel
+            </Button>
+          </div>
+          <MutationStatus pending={authorize.isPending} error={authorize.error} />
+        </div>
+      ) : null}
+
+      {mode === "reject" ? (
+        <div className="space-y-2 rounded-md border border-slate-200 p-3">
+          <p className="text-sm text-slate-500">
+            Only reject for a real reason (PIN or details don't match, or the owner says it isn't
+            them). A valid transfer can't be blocked for business reasons.
+          </p>
+
+          {codes.isLoading ? (
+            <Spinner />
+          ) : codes.isError ? (
+            <p className="text-sm text-red-600">{mutationErrorMessage(codes.error)}</p>
+          ) : (
+            <label className="block text-sm">
+              <span className="mb-1 block text-slate-500">Reason code</span>
+              <Select
+                aria-label="Reason code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              >
+                <option value="">Choose a reason</option>
+                {codeList.map((entry) => (
+                  <option key={entry.code} value={entry.code}>
+                    {entry.label} ({entry.code})
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
+
+          <label className="block text-sm">
+            <span className="mb-1 block text-slate-500">Reason for rejection</span>
+            <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </label>
+          {reasonRequired ? (
+            <p className="text-xs text-slate-500">
+              This reason code needs a short explanation (at least 5 characters).
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!canReject || reject.isPending}
+              onClick={() =>
+                reject.mutate(
+                  { id: port.id, code: Number(code), reason: reasonValue || undefined },
+                  { onSuccess: () => setMode("idle") },
+                )
+              }
+            >
+              Reject
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setMode("idle")}>
+              Cancel
+            </Button>
+          </div>
+          <MutationStatus pending={reject.isPending} error={reject.error} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PortCard({ api, port }: { api: ApiClient; port: PortRequest }) {
   const approve = useApprovePort(api);
   const reject = useRejectPort(api);
@@ -158,6 +312,7 @@ function PortCard({ api, port }: { api: ApiClient; port: PortRequest }) {
   const [docError, setDocError] = useState<string | null>(null);
 
   const showManualStatus = port.manual && !MANUAL_STATUS_HIDDEN.includes(port.status);
+  const showPortOutDecision = port.direction === "out" && port.status === "pending";
 
   async function openDocument(kind: "loa" | "invoice") {
     setDocError(null);
@@ -225,6 +380,12 @@ function PortCard({ api, port }: { api: ApiClient; port: PortRequest }) {
         </Button>
       </div>
       {docError ? <p className="mt-1 text-sm text-red-600">{docError}</p> : null}
+
+      {showPortOutDecision ? (
+        <div className="mt-3 border-t border-slate-200 pt-3">
+          <PortOutDecision api={api} port={port} />
+        </div>
+      ) : null}
 
       {port.status === "awaiting_review" ? (
         <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">

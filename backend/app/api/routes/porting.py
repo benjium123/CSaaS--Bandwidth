@@ -19,14 +19,16 @@ from starlette.datastructures import UploadFile
 from app.auth.deps import (
     OperatorContext,
     OrgContext,
+    check_step_up,
     require_operator_permission,
     require_permission,
     requires_feature,
 )
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
-from app.errors import NotFoundError, ValidationFailedError
-from app.models import OrgNumber, PortRequest
+from app.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
+from app.models import OrgNumber, PortRequest, User
 from app.services import audit as audit_svc
+from app.services import port_pin
 from app.services import porting as porting_svc
 
 router = APIRouter(prefix="/api/v1/ports", tags=["porting"])
@@ -92,6 +94,12 @@ def _public(p: PortRequest) -> dict:
         "can_edit": p.status in porting_svc.EDITABLE,
         "can_cancel": p.status in porting_svc.CANCELLABLE,
         "manual": bool(details.get("manual")),
+        # Port-out only: who asked (the OTHER carrier, never ours), our deadline, and whether
+        # the workspace said it was not them.
+        "gaining_carrier": details.get("gaining_carrier"),
+        "respond_by": details.get("respond_by"),
+        "disputed": bool(details.get("disputed_by")),
+        "can_dispute": p.direction == "out" and p.status == "pending",
         "events": p.events or [],
         "created_at": p.created_at.isoformat() if p.created_at else None,
     }
@@ -133,7 +141,97 @@ async def list_ports(
     rows = (
         await ctx.session.execute(sa.select(PortRequest).order_by(PortRequest.created_at.desc()))
     ).scalars().all()
-    return {"ports": [_for_customer(_public(p)) for p in rows]}
+    return {
+        "ports": [_for_customer(_public(p)) for p in rows],
+        "account_id": port_pin.account_id(ctx.org),
+        "pin_holder": _is_pin_holder(ctx),
+    }
+
+
+# ---------------------------------------------------------------- workspace port-out PIN
+
+
+def _is_pin_holder(ctx: OrgContext) -> bool:
+    """Owners and admins signed in as themselves - never an API key."""
+    return ctx.membership is not None and (ctx.role.name or "") in port_pin.PIN_ROLES
+
+
+def _refuse_non_holder(ctx: OrgContext) -> None:
+    if not _is_pin_holder(ctx):
+        raise PermissionDeniedError(
+            "Only the workspace owner or an admin can see the transfer PIN.",
+            code="pin_owner_only",
+        )
+
+
+async def _require_pin_holder(request: Request, ctx: OrgContext, action: str) -> None:
+    _refuse_non_holder(ctx)
+    user = await ctx.session.get(User, ctx.actor_user_id)
+    await check_step_up(request, ctx.session, user, kind="recent_2fa", action=action)
+
+
+async def _pin_view(ctx: OrgContext) -> dict:
+    return {
+        "account_id": port_pin.account_id(ctx.org),
+        **await port_pin.status(ctx.session, ctx.org.id),
+    }
+
+
+@router.get("/pin")
+async def pin_status(
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> dict:
+    """Whether the PIN exists and how many numbers carry it - never the PIN itself."""
+    _refuse_non_holder(ctx)
+    return await _pin_view(ctx)
+
+
+@router.post("/pin/reveal")
+async def pin_reveal(
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> dict:
+    await _require_pin_holder(request, ctx, "port_pin_view")
+    settings = request.app.state.settings
+    pin = await port_pin.get_or_create(ctx.session, settings, ctx.org.id, ctx.actor_user_id)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="porting.pin_viewed",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={},
+    )
+    await ctx.session.commit()
+    await port_pin.apply_org(
+        ctx.session, settings, getattr(request.app.state, "carriers", None), ctx.org.id
+    )
+    return {"pin": pin, **await _pin_view(ctx)}
+
+
+@router.post("/pin/rotate")
+async def pin_rotate(
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> dict:
+    await _require_pin_holder(request, ctx, "port_pin_rotate")
+    settings = request.app.state.settings
+    pin = await port_pin.rotate(ctx.session, settings, ctx.org.id, ctx.actor_user_id)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="porting.pin_rotated",
+        target_type="org",
+        target_id=str(ctx.org.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={},
+    )
+    await ctx.session.commit()
+    await port_pin.apply_org(
+        ctx.session, settings, getattr(request.app.state, "carriers", None), ctx.org.id
+    )
+    return {"pin": pin, **await _pin_view(ctx)}
 
 
 async def _doc(form, name: str) -> tuple[bytes, str]:  # noqa: ANN001
@@ -270,6 +368,29 @@ async def cancel_port(
     return _for_customer(_public(port))
 
 
+@router.post("/{port_id}/dispute")
+async def dispute_port_out(
+    port_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("numbers:manage"))],
+) -> dict:
+    """Port-out: "I didn't request this" - flags it to Ringlite operators at once."""
+    port = await _org_port(ctx.session, ctx.org.id, port_id)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="porting.port_out_disputed",
+        target_type="port_request",
+        target_id=str(port.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={"numbers": port.numbers},
+    )
+    port = await porting_svc.dispute_port_out(
+        ctx.session, request.app.state.settings, port, ctx.actor_user_id
+    )
+    return _for_customer(_public(port))
+
+
 class LockIn(BaseModel):
     locked: bool
 
@@ -389,5 +510,57 @@ async def ops_status(port_id: uuid.UUID, payload: StatusIn, request: Request, op
         foc_date=payload.foc_date,
         note=payload.note,
         settings=request.app.state.settings,
+    )
+    return _public(port)
+
+
+# ---------------------------------------------------------------- operator port-out decisions
+
+
+class PortOutApproveIn(BaseModel):
+    note: str = Field(default="", max_length=255)
+
+
+class PortOutRejectIn(BaseModel):
+    code: int
+    reason: str = Field(default="", max_length=255)
+
+
+@ops_router.post("/{port_id}/port-out/authorize")
+async def ops_port_out_authorize(
+    port_id: uuid.UUID, payload: PortOutApproveIn, request: Request, op: Kyc
+) -> dict:
+    port = await _port(op, port_id)
+    port = await porting_svc.authorize_port_out(
+        op.session,
+        getattr(request.app.state, "carriers", None),
+        port,
+        op.user.id,
+        note=payload.note,
+    )
+    return _public(port)
+
+
+@ops_router.get("/{port_id}/port-out/rejection-codes")
+async def ops_port_out_codes(port_id: uuid.UUID, request: Request, op: Reader) -> dict:
+    port = await _port(op, port_id)
+    codes = await porting_svc.port_out_rejection_codes(
+        getattr(request.app.state, "carriers", None), port
+    )
+    return {"codes": codes}
+
+
+@ops_router.post("/{port_id}/port-out/reject")
+async def ops_port_out_reject(
+    port_id: uuid.UUID, payload: PortOutRejectIn, request: Request, op: Kyc
+) -> dict:
+    port = await _port(op, port_id)
+    port = await porting_svc.reject_port_out(
+        op.session,
+        getattr(request.app.state, "carriers", None),
+        port,
+        op.user.id,
+        code=payload.code,
+        reason=payload.reason,
     )
     return _public(port)

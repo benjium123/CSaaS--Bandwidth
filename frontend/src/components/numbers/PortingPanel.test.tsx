@@ -42,14 +42,23 @@ const ORG_ID = "abcd1234-5678-90ab-cdef-1234567890ab";
 const ACCOUNT = "RL-ABCD1234";
 const FOC_DATE = "2026-03-17T15:00:00Z";
 
-/** The auth context only ever supplies the workspace id here; it is the same org as the
- * ports below so the account number is the same whichever source answers. */
+/** The auth context only ever supplies the signed-in user here; the account id now comes from
+ * the ports response. */
 const AUTH_ME = {
   id: "user-1",
   email: "ada@acme.test",
   full_name: "Ada Whitlock",
   memberships: [{ org_id: ORG_ID, org_name: "Acme", org_slug: "acme", role_name: "owner" }],
   permissions: [],
+};
+
+/** The summary GET /api/v1/ports/pin answers with; the reveal/rotate responses add `pin`. */
+const PIN_STATUS = {
+  account_id: ACCOUNT,
+  has_pin: true,
+  numbers_total: 3,
+  numbers_protected: 2,
+  rotated_at: null,
 };
 
 const CHECK_RESULTS = {
@@ -259,7 +268,11 @@ describe("PortingPanel", () => {
   it("tells the customer the account number their new provider will ask for", async () => {
     const client = makeStubClient({});
     stubRequests(client, {
-      "GET /api/v1/ports": { ports: [portFixture({ id: "port-1" })] },
+      "GET /api/v1/ports": {
+        ports: [portFixture({ id: "port-1" })],
+        account_id: ACCOUNT,
+        pin_holder: false,
+      },
       "GET /api/v1/auth/me": AUTH_ME,
     });
     renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
@@ -267,6 +280,212 @@ describe("PortingPanel", () => {
     await screen.findByText("Moving a number away");
     await screen.findByText(ACCOUNT);
     expect(screen.getByText(/Ask your new provider to start a transfer/)).toBeInTheDocument();
-    expect(screen.getByText(/Turn off Port lock for/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/We review every transfer request before your number is released/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the Ringlite account id the API minted", async () => {
+    const client = makeStubClient({});
+    stubRequests(client, {
+      "GET /api/v1/ports": {
+        ports: [portFixture({ id: "port-1" })],
+        account_id: ACCOUNT,
+        pin_holder: false,
+      },
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    await screen.findByText(/Ringlite account ID/);
+    expect(await screen.findByText(ACCOUNT)).toBeInTheDocument();
+  });
+
+  it("points people who cannot see the PIN at an owner", async () => {
+    const client = makeStubClient({});
+    const request = stubRequests(client, {
+      "GET /api/v1/ports": {
+        ports: [portFixture({ id: "port-1" })],
+        account_id: ACCOUNT,
+        pin_holder: false,
+      },
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    await screen.findByText("Only the workspace owner or an admin can see the transfer PIN.");
+    expect(screen.queryByRole("button", { name: "Show PIN" })).not.toBeInTheDocument();
+    // No PIN summary is fetched for someone who cannot hold it.
+    expect(requestCalls(request, "GET", "/api/v1/ports/pin")).toHaveLength(0);
+  });
+
+  it("reveals the transfer PIN through the reveal endpoint", async () => {
+    const client = makeStubClient({});
+    const request = stubRequests(client, {
+      "GET /api/v1/ports": { ports: [], account_id: ACCOUNT, pin_holder: true },
+      "GET /api/v1/ports/pin": PIN_STATUS,
+      "POST /api/v1/ports/pin/reveal": { ...PIN_STATUS, pin: "482913" },
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    await screen.findByText("Protects 2 of 3 numbers");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Show PIN" }));
+
+    expect(await screen.findByText("482913")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(requestCalls(request, "POST", "/api/v1/ports/pin/reveal")).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByText("482913")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show PIN" })).toBeInTheDocument();
+  });
+
+  it("rotates the PIN only after the inline confirmation", async () => {
+    const client = makeStubClient({});
+    const request = stubRequests(client, {
+      "GET /api/v1/ports": { ports: [], account_id: ACCOUNT, pin_holder: true },
+      "GET /api/v1/ports/pin": PIN_STATUS,
+      "POST /api/v1/ports/pin/rotate": {
+        ...PIN_STATUS,
+        pin: "111222",
+        rotated_at: "2026-01-01T00:00:00Z",
+      },
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Change PIN" }));
+    await screen.findByText("Change the PIN? The old one stops working on all your numbers.");
+
+    expect(requestCalls(request, "POST", "/api/v1/ports/pin/rotate")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(requestCalls(request, "POST", "/api/v1/ports/pin/rotate")).toHaveLength(1);
+    });
+    expect(await screen.findByText("111222")).toBeInTheDocument();
+  });
+
+  it("keeps Change PIN from firing until it is confirmed", async () => {
+    const client = makeStubClient({});
+    const request = stubRequests(client, {
+      "GET /api/v1/ports": { ports: [], account_id: ACCOUNT, pin_holder: true },
+      "GET /api/v1/ports/pin": PIN_STATUS,
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Change PIN" }));
+    await screen.findByText("Change the PIN? The old one stops working on all your numbers.");
+    fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+
+    expect(
+      screen.queryByText("Change the PIN? The old one stops working on all your numbers."),
+    ).not.toBeInTheDocument();
+    expect(requestCalls(request, "POST", "/api/v1/ports/pin/rotate")).toHaveLength(0);
+  });
+
+  it("disputes a pending port-out after an inline confirmation", async () => {
+    const client = makeStubClient({});
+    const request = stubRequests(client, {
+      "GET /api/v1/ports": {
+        ports: [
+          portFixture({
+            id: "port-out-1",
+            direction: "out",
+            status: "pending",
+            can_dispute: true,
+            disputed: false,
+            gaining_carrier: "Northwind Telecom",
+          }),
+        ],
+        account_id: ACCOUNT,
+        pin_holder: false,
+      },
+      "POST /api/v1/ports/port-out-1/dispute": portFixture({
+        id: "port-out-1",
+        direction: "out",
+        status: "pending",
+        disputed: true,
+      }),
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    await screen.findByText("Another provider asked for these numbers");
+    expect(screen.getByText("Requested by Northwind Telecom")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "I didn't request this" }));
+    await screen.findByText(
+      "Tell Ringlite this transfer is not yours? We'll stop it if we can.",
+    );
+
+    expect(requestCalls(request, "POST", "/api/v1/ports/port-out-1/dispute")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(requestCalls(request, "POST", "/api/v1/ports/port-out-1/dispute")).toHaveLength(1);
+    });
+  });
+
+  it("confirms a disputed port-out instead of offering the button again", async () => {
+    const client = makeStubClient({});
+    stubRequests(client, {
+      "GET /api/v1/ports": {
+        ports: [
+          portFixture({
+            id: "port-out-2",
+            direction: "out",
+            status: "pending",
+            can_dispute: true,
+            disputed: true,
+          }),
+        ],
+        account_id: ACCOUNT,
+        pin_holder: false,
+      },
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    await screen.findByText("You told us this wasn't you. Our team is on it.");
+    expect(screen.queryByRole("button", { name: "I didn't request this" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the port lock copy honest about transfers away", async () => {
+    const client = makeStubClient({});
+    stubRequests(client, {
+      "GET /api/v1/ports": { ports: [], account_id: ACCOUNT, pin_holder: false },
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    expect(
+      await screen.findByText(/Port lock stops a number being released or deleted inside Ringlite/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/It does not affect transfers to another provider/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Turn off Port lock/)).not.toBeInTheDocument();
+  });
+
+  it("explains the separate Number Transfer PIN in the port-in form", async () => {
+    const client = makeStubClient({});
+    stubRequests(client, {
+      "GET /api/v1/ports": { ports: [], account_id: ACCOUNT, pin_holder: false },
+      "GET /api/v1/auth/me": AUTH_ME,
+    });
+    renderWithProviders(<PortingPanel api={client} numbers={[]} />, client);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start a port request" }));
+
+    expect(
+      screen.getByText(/give you a separate Number Transfer PIN/),
+    ).toBeInTheDocument();
   });
 });

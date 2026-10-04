@@ -788,6 +788,16 @@ async def _run_once_locked(app) -> dict[str, int]:
             results["e911_active"] = e911_counts.get("active", 0)
         except Exception:
             log.exception("sweeper_e911_tick_failed")
+        # Port-out PIN: every workspace's Telnyx numbers carry its own PIN (new numbers too).
+        try:
+            from app.services import port_pin
+
+            pin_counts = await port_pin.tick(
+                get_sessionmaker(), app.state.settings, getattr(app.state, "carriers", None)
+            )
+            results["port_pins_applied"] = pin_counts.get("applied", 0)
+        except Exception:
+            log.exception("sweeper_port_pin_tick_failed")
 
     # P41: derived per-workspace messaging health - today's and yesterday's rollup rows,
     # then the owner/admin warnings. Same hourly gate discipline as reputation above:

@@ -33,7 +33,7 @@ from __future__ import annotations
 import difflib
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import phonenumbers
@@ -937,8 +937,7 @@ async def poll_port_outs(session: AsyncSession, settings, registry) -> int:  # n
                 )
             )
         ).scalar_one_or_none()
-        mapped = {"ported": "ported", "completed": "ported", "rejected": "rejected",
-                  "canceled": "cancelled", "cancelled": "cancelled"}.get(status, "pending")
+        mapped = PORT_OUT_STATUS_MAP.get(status, "pending")
         if existing is None:
             existing = PortRequest(
                 id=uuid.uuid4(),
@@ -949,6 +948,11 @@ async def poll_port_outs(session: AsyncSession, settings, registry) -> int:  # n
                 status=mapped,
                 carrier_ref=portout_id,
                 foc_date=str(row.get("foc_date") or "")[:32] or None,
+                details={
+                    "gaining_carrier": str(row.get("carrier_name") or "")[:80] or None,
+                    "requested_foc_date": str(row.get("requested_foc_date") or "")[:32] or None,
+                    "respond_by": (_now() + PORT_OUT_RESPOND_WITHIN).isoformat(),
+                },
             )
             _event(existing, f"Carrier reported a port-out request ({status})")
             session.add(existing)
@@ -963,15 +967,26 @@ async def poll_port_outs(session: AsyncSession, settings, registry) -> int:  # n
                     settings,
                     org,
                     f"Port-out requested for {nums}",
-                    f"Another carrier has asked to take {nums} away from your account. If you "
-                    "did not request this, contact support IMMEDIATELY - someone may be trying "
-                    "to hijack your number.",
+                    f"Another carrier has asked to take {nums} away from your account. "
+                    f"{settings.app_name} reviews every such request before the numbers are "
+                    "released. If you did not request this, open Numbers > Porting and press "
+                    "\"I didn't request this\", or contact support IMMEDIATELY - someone may be "
+                    "trying to hijack your number.",
                     dedupe_key=f"portout:{portout_id}",
                 )
+            to_operators = (
+                f"Port-out to decide: {nums}",
+                f"{org.name if org is not None else org_id}: another carrier "
+                f"({row.get('carrier_name') or 'unknown'}) asked for {nums}.\n"
+                "Approve or reject it in Ops > Ports within 24 hours. Telnyx authorizes it "
+                "on its own if nobody answers.",
+            )
             handled += 1
-        elif existing.status != mapped:
-            existing.status = mapped
-            _event(existing, f"Carrier status: {status}")
+        else:
+            if existing.status != mapped:
+                existing.status = mapped
+                _event(existing, f"Carrier status: {status}")
+            to_operators = _port_out_reminder(existing) if existing.status == "pending" else None
         if mapped == "ported":
             for number in ours:
                 if number.is_active:
@@ -979,4 +994,187 @@ async def poll_port_outs(session: AsyncSession, settings, registry) -> int:  # n
                     number.status = "released"
                     number.released_at = _now()
         await session.commit()
+        # Only after the commit: never email about a request that was not recorded.
+        if to_operators is not None:
+            await _email_operators(settings, *to_operators)
     return handled
+
+
+# ------------------------------------------------------------------ port-out decisions
+#: Telnyx authorizes a port-out it gets no answer to within 24-48 hours; we answer inside 24.
+PORT_OUT_RESPOND_WITHIN = timedelta(hours=24)
+#: Operators get one reminder when a request is still undecided this long after it arrived.
+PORT_OUT_REMIND_AFTER = timedelta(hours=12)
+PORT_OUT_STATUS_MAP = {
+    "pending": "pending",
+    "authorized": "authorized",
+    "rejected-pending": "rejected",
+    "rejected": "rejected",
+    "ported": "ported",
+    "completed": "ported",
+    "canceled": "cancelled",
+    "cancelled": "cancelled",
+}
+#: Telnyx's catch-all rejection code; it needs a written reason.
+REJECT_OTHER = 1001
+
+
+async def _email_operators(settings, subject: str, body: str) -> None:  # noqa: ANN001
+    """Best effort: an operator email must never break the poll."""
+    try:
+        from app.services import email_delivery, mailer
+
+        to = await email_delivery._operator_emails()
+        if to:
+            await mailer.send(settings, to, subject, body)
+    except Exception:  # noqa: BLE001
+        log.exception("port_out_operator_email_failed")
+
+
+def _port_out_reminder(port: PortRequest) -> tuple[str, str] | None:
+    """One reminder to operators when a port-out is still undecided after 12 hours: marks
+    the request and returns the (subject, body) to send once the change is committed."""
+    details = dict(port.details or {})
+    if details.get("reminded") or port.created_at is None:
+        return None
+    created = port.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    if _now() - created < PORT_OUT_REMIND_AFTER:
+        return None
+    details["reminded"] = True
+    port.details = details
+    _event(port, "Reminder sent to operators: still waiting for a decision")
+    return (
+        f"REMINDER port-out still undecided: {', '.join(port.numbers or [])}",
+        "Telnyx will authorize it on its own soon. Decide in Ops > Ports.",
+    )
+
+
+def _port_out_open(port: PortRequest) -> None:
+    if port.direction != "out":
+        raise ConflictError("This is not a request to move numbers away")
+    if port.status != "pending":
+        raise ConflictError("This request has already been decided")
+    if not port.carrier_ref:
+        raise ConflictError("This request has no carrier order")
+
+
+async def authorize_port_out(
+    session: AsyncSession,
+    registry,  # noqa: ANN001
+    port: PortRequest,
+    user_id,  # noqa: ANN001
+    *,
+    note: str = "",
+) -> PortRequest:
+    """Operator approval: tell Telnyx to release the numbers."""
+    _port_out_open(port)
+    carrier = _carrier(registry, "telnyx")
+    note = (note or "").strip()[:255]
+    body = {"reason": note} if note else {}
+    resp = await _tx(carrier, "PATCH", f"/portouts/{port.carrier_ref}/authorized", json=body)
+    if resp.status_code >= 300:
+        raise ConflictError(f"The carrier refused the approval: {_tx_error(resp)}")
+    port.status = "authorized"
+    port.reviewed_by = user_id
+    port.reviewed_at = _now()
+    _event(port, "Approved by Ringlite" + (f": {note}" if note else ""))
+    await session.commit()
+    return port
+
+
+async def port_out_rejection_codes(registry, port: PortRequest) -> list[dict]:  # noqa: ANN001
+    """The reasons Telnyx accepts for rejecting THIS order. Always offers "Other" (which
+    needs a written reason) so an operator is never stuck if the list cannot be read."""
+    _port_out_open(port)
+    carrier = _carrier(registry, "telnyx")
+    try:
+        resp = await _tx(carrier, "GET", f"/portouts/rejections/{port.carrier_ref}")
+        rows = (resp.json() or {}).get("data") if resp.status_code == 200 else None
+    except (FeatureUnavailableError, ValueError):
+        rows = None
+    codes: list[dict] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or row.get("code") is None:
+            continue
+        try:
+            code = int(row["code"])
+        except (TypeError, ValueError):
+            continue
+        codes.append(
+            {
+                "code": code,
+                "label": str(row.get("reason") or row.get("description") or code)[:120],
+                "reason_required": bool(row.get("reason_required")) or code == REJECT_OTHER,
+            }
+        )
+    if not any(c["code"] == REJECT_OTHER for c in codes):
+        codes.append({"code": REJECT_OTHER, "label": "Other", "reason_required": True})
+    return codes
+
+
+async def reject_port_out(
+    session: AsyncSession,
+    registry,  # noqa: ANN001
+    port: PortRequest,
+    user_id,  # noqa: ANN001
+    *,
+    code: int,
+    reason: str = "",
+) -> PortRequest:
+    """Operator rejection with one of Telnyx's codes. A valid, authorized port cannot be
+    blocked for business reasons; Telnyx's porting team reviews every rejection."""
+    _port_out_open(port)
+    reason = (reason or "").strip()
+    if code == REJECT_OTHER and len(reason) < 5:
+        raise ValidationFailedError("Write the reason for rejecting this request")
+    carrier = _carrier(registry, "telnyx")
+    body: dict = {"rejection_code": code}
+    if reason:
+        body["reason"] = reason[:255]
+    resp = await _tx(
+        carrier, "PATCH", f"/portouts/{port.carrier_ref}/rejected-pending", json=body
+    )
+    if resp.status_code >= 300:
+        raise ConflictError(f"The carrier refused the rejection: {_tx_error(resp)}")
+    port.status = "rejected"
+    port.reviewed_by = user_id
+    port.reviewed_at = _now()
+    port.last_error = (reason or f"code {code}")[:255]
+    _event(port, f"Rejected by Ringlite (code {code})" + (f": {reason}" if reason else ""))
+    await session.commit()
+    return port
+
+
+async def dispute_port_out(
+    session: AsyncSession, settings, port: PortRequest, user_id  # noqa: ANN001
+) -> PortRequest:
+    """The workspace says it did not ask for this transfer: flag it to operators at once."""
+    if port.direction != "out":
+        raise ConflictError("This is not a request to move numbers away")
+    if port.status != "pending":
+        raise ConflictError("This request has already been decided; contact support")
+    details = dict(port.details or {})
+    if details.get("disputed_by"):
+        return port
+    from app.services import card_risk
+
+    details["disputed_by"] = str(user_id) if user_id else "api"
+    details["disputed_at"] = _now().isoformat()
+    port.details = details
+    _event(port, "The workspace says it did not request this transfer")
+    await card_risk.open_alert(
+        session,
+        port.org_id,
+        "port_out_disputed",
+        {"port": str(port.id), "numbers": ", ".join(port.numbers or [])},
+    )
+    await session.commit()
+    await _email_operators(
+        settings,
+        f"URGENT port-out DISPUTED by the owner: {', '.join(port.numbers or [])}",
+        "The workspace says it did not request this transfer. Reject it in Ops > Ports "
+        "(PIN/authorisation mismatch) and treat it as an account-takeover attempt.",
+    )
+    return port

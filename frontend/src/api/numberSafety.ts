@@ -65,10 +65,23 @@ export interface PortRequest {
   account_number: string | null;
   billing_number: string | null;
   service_address: PortServiceAddress | null;
+  /** Port-out only: the provider the numbers are moving to. This is the *other* carrier, so
+   * it may be shown to the customer. */
+  gaining_carrier?: string | null;
+  /** Port-out only: when ops must answer the request (ISO). */
+  respond_by?: string | null;
+  /** Port-out only: the owner has told us this transfer is not theirs. */
+  disputed?: boolean;
+  /** Port-out only: the signed-in customer may dispute a pending transfer. */
+  can_dispute?: boolean;
 }
 
 export interface PortsOut {
   ports: PortRequest[];
+  /** The workspace account id a new provider is asked for. */
+  account_id?: string;
+  /** True when the signed-in user owns/admins the workspace and may see the transfer PIN. */
+  pin_holder?: boolean;
 }
 
 /** Text fields are comma-separated/free-form as submitted; `loa` and `invoice` are the
@@ -242,6 +255,63 @@ export function useSetPortLock(api: ApiClient) {
 }
 
 /* ------------------------------------------------------------------------- */
+/* Workspace transfer PIN (customer, owner/admin only)                        */
+/* ------------------------------------------------------------------------- */
+
+/** GET /api/v1/ports/pin. `pin` is only ever present on the reveal/rotate responses - the
+ * plain GET carries no digits. */
+export interface PortPinStatus {
+  account_id: string;
+  has_pin: boolean;
+  numbers_total: number;
+  numbers_protected: number;
+  rotated_at: string | null;
+  /** Only on the reveal/rotate responses. */
+  pin?: string;
+}
+
+export const PORT_PIN_QUERY_KEY = ["port-pin"] as const;
+
+export function usePortPin(api: ApiClient, enabled: boolean) {
+  return useQuery({
+    queryKey: PORT_PIN_QUERY_KEY,
+    queryFn: () => api.request<PortPinStatus>("/api/v1/ports/pin"),
+    enabled,
+  });
+}
+
+/** POST /api/v1/ports/pin/reveal. May fail with code "step_up_required": the global
+ * StepUpDialog opens for that, and the caller just shows the message inline so the button
+ * can be pressed again afterwards. */
+export function useRevealPortPin(api: ApiClient) {
+  return useMutation({
+    mutationFn: () => api.request<PortPinStatus>("/api/v1/ports/pin/reveal", { method: "POST" }),
+  });
+}
+
+export function useRotatePortPin(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.request<PortPinStatus>("/api/v1/ports/pin/rotate", { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: PORT_PIN_QUERY_KEY });
+    },
+  });
+}
+
+/** POST /api/v1/ports/{id}/dispute - the owner telling us a pending port-out is not theirs. */
+export function useDisputePortOut(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.request<PortRequest>(`/api/v1/ports/${id}/dispute`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: PORTS_QUERY_KEY });
+    },
+  });
+}
+
+/* ------------------------------------------------------------------------- */
 /* Porting (ops)                                                              */
 /* ------------------------------------------------------------------------- */
 
@@ -304,6 +374,65 @@ export function useSetPortStatus(api: ApiClient) {
       api.request<PortRequest>(`/api/v1/ops/ports/${vars.id}/status`, {
         method: "POST",
         json: { status: vars.status, foc_date: vars.foc_date, note: vars.note },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: OPS_PORTS_QUERY_KEY });
+    },
+  });
+}
+
+/* ------------------------------------------------------------------------- */
+/* Port-out decisions (ops)                                                   */
+/* ------------------------------------------------------------------------- */
+
+/** One reason code ops can reject a port-out with. `reason_required` codes also need a
+ * free-text explanation. */
+export interface PortOutRejectionCode {
+  code: number;
+  label: string;
+  reason_required: boolean;
+}
+
+export interface PortOutRejectionCodesOut {
+  codes: PortOutRejectionCode[];
+}
+
+export const PORT_OUT_CODES_QUERY_KEY = ["ops-port-out-codes"] as const;
+
+export function usePortOutCodes(api: ApiClient, id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...PORT_OUT_CODES_QUERY_KEY, id],
+    queryFn: () =>
+      api.request<PortOutRejectionCodesOut>(
+        `/api/v1/ops/ports/${id}/port-out/rejection-codes`,
+      ),
+    enabled,
+  });
+}
+
+/** POST /api/v1/ops/ports/{id}/port-out/authorize - releases the numbers to the new provider. */
+export function useAuthorizePortOut(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; note?: string }) =>
+      api.request<PortRequest>(`/api/v1/ops/ports/${vars.id}/port-out/authorize`, {
+        method: "POST",
+        json: { note: vars.note },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: OPS_PORTS_QUERY_KEY });
+    },
+  });
+}
+
+/** POST /api/v1/ops/ports/{id}/port-out/reject - refuses a transfer that is not legitimate. */
+export function useRejectPortOut(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; code: number; reason?: string }) =>
+      api.request<PortRequest>(`/api/v1/ops/ports/${vars.id}/port-out/reject`, {
+        method: "POST",
+        json: { code: vars.code, reason: vars.reason },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: OPS_PORTS_QUERY_KEY });

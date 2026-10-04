@@ -11,13 +11,16 @@ import {
   Textarea,
 } from "@/components/ui/primitives";
 import { formatPhone } from "@/lib/format";
-import { useAuth } from "@/auth/AuthContext";
 import type { ApiClient } from "@/api/client";
 import {
   useCancelPort,
   useCreatePortIn,
+  useDisputePortOut,
   usePortabilityCheck,
+  usePortPin,
   usePorts,
+  useRevealPortPin,
+  useRotatePortPin,
   useSetPortLock,
   useUpdatePortIn,
   type PortEvent,
@@ -113,8 +116,26 @@ export function formatPortFocDate(value: string): string {
   return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
-/** The one line a customer reads to know where their transfer is, in their own words. */
+/** The one line a customer reads to know where their transfer is, in their own words. Port-out
+ * requests come in with a different, much shorter set of statuses. */
 function portStepText(port: PortRequest): string {
+  if (port.direction === "out") {
+    switch (port.status) {
+      case "pending":
+        return "Another provider asked for these numbers";
+      case "authorized":
+        return "Approved — moving away";
+      case "rejected":
+        return "Not released";
+      case "ported":
+        return "Moved away";
+      case "cancelled":
+        return "Cancelled";
+      default:
+        return port.status;
+    }
+  }
+
   switch (port.status) {
     case "awaiting_review":
       return "Waiting for our review";
@@ -154,28 +175,106 @@ function editDraftFromPort(port: PortRequest): PortInUpdate {
   };
 }
 
-/** The account number the customer's new provider will ask for: "RL-" plus the first eight
- * characters of the workspace id, uppercased with the dashes taken out. */
-function portOutAccountId(workspaceId: string | null | undefined): string | null {
-  if (!workspaceId) return null;
-  const compact = workspaceId.replace(/-/g, "").toUpperCase();
-  return compact.length > 0 ? `RL-${compact.slice(0, 8)}` : null;
+/** The amber "we are on it" note, same treatment as `customer_reason`. */
+function amberNote(text: string) {
+  return (
+    <p className="rounded-[var(--cx-r-sm,12px)] bg-[hsl(var(--cx-flag)/0.15)] px-3 py-2 text-sm text-[hsl(var(--cx-flag))]">
+      {text}
+    </p>
+  );
 }
 
-/** The current workspace id, or null when there is no auth provider above us (the panel is
- * mounted bare by its component tests). `useAuth` throws outside <AuthProvider>, hence the
- * guard; the caller falls back to the port's own org_id. */
-function useWorkspaceId(): string | null {
-  try {
-    return useAuth().orgId;
-  } catch {
-    return null;
+/** The workspace transfer PIN, for owners/admins: masked until asked for, rotatable behind an
+ * inline confirmation. The revealed digits live only in this component's state, so unmounting
+ * the card (or the panel) hides them again. */
+function TransferPinCard({ api }: { api: ApiClient }) {
+  const pinStatus = usePortPin(api, true);
+  const revealPin = useRevealPortPin(api);
+  const rotatePin = useRotatePortPin(api);
+
+  const [revealedPin, setRevealedPin] = useState<string | null>(null);
+  const [confirmingChange, setConfirmingChange] = useState(false);
+
+  function handleReveal() {
+    revealPin.mutate(undefined, {
+      onSuccess: (data) => setRevealedPin(data.pin ?? null),
+    });
   }
+
+  function handleRotate() {
+    rotatePin.mutate(undefined, {
+      onSuccess: (data) => {
+        setRevealedPin(data.pin ?? null);
+        setConfirmingChange(false);
+      },
+    });
+  }
+
+  return (
+    <div className="space-y-2 rounded-[var(--cx-r-sm,12px)] border border-border p-3">
+      <h4 className="text-sm font-medium text-slate-900">Transfer PIN</h4>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {revealedPin ? (
+          <>
+            <span className="font-mono text-lg tracking-widest">{revealedPin}</span>
+            <Button variant="outline" size="sm" onClick={() => setRevealedPin(null)}>
+              Hide
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="font-mono text-lg tracking-widest">●●●●●●</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={revealPin.isPending}
+              onClick={handleReveal}
+            >
+              Show PIN
+            </Button>
+          </>
+        )}
+
+        {!confirmingChange && (
+          <Button variant="outline" size="sm" onClick={() => setConfirmingChange(true)}>
+            Change PIN
+          </Button>
+        )}
+      </div>
+
+      {confirmingChange && (
+        <div className="space-y-2 rounded-[var(--cx-r-sm,12px)] border border-border p-3">
+          <p className="text-sm text-slate-600">
+            Change the PIN? The old one stops working on all your numbers.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" disabled={rotatePin.isPending} onClick={handleRotate}>
+              Confirm
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setConfirmingChange(false)}>
+              Keep it
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <MutationStatus pending={revealPin.isPending} error={revealPin.error} />
+      <MutationStatus pending={rotatePin.isPending} error={rotatePin.error} />
+
+      {pinStatus.data && pinStatus.data.numbers_total > 0 ? (
+        <p className="text-sm text-slate-500">
+          Protects {pinStatus.data.numbers_protected} of {pinStatus.data.numbers_total} numbers
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function PortRequestCard({ api, port }: { api: ApiClient; port: PortRequest }) {
   const updatePortIn = useUpdatePortIn(api);
   const cancelPort = useCancelPort(api);
+  const disputePort = useDisputePortOut(api);
 
   const [showAllEvents, setShowAllEvents] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -183,6 +282,9 @@ function PortRequestCard({ api, port }: { api: ApiClient; port: PortRequest }) {
   const [editLoa, setEditLoa] = useState<File | null>(null);
   const [editInvoice, setEditInvoice] = useState<File | null>(null);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [confirmingDispute, setConfirmingDispute] = useState(false);
+
+  const isPortOut = port.direction === "out";
 
   // The API lists history oldest-first; a customer wants the newest line at the top.
   const newestFirst = [...port.events].reverse();
@@ -214,11 +316,13 @@ function PortRequestCard({ api, port }: { api: ApiClient; port: PortRequest }) {
 
       <p className="text-sm text-slate-600">{portStepText(port)}</p>
 
-      {port.customer_reason && (
-        <p className="rounded-[var(--cx-r-sm,12px)] bg-[hsl(var(--cx-flag)/0.15)] px-3 py-2 text-sm text-[hsl(var(--cx-flag))]">
-          {port.customer_reason}
-        </p>
+      {isPortOut && port.gaining_carrier && (
+        <p className="text-sm text-slate-600">Requested by {port.gaining_carrier}</p>
       )}
+
+      {isPortOut && port.disputed && amberNote("You told us this wasn't you. Our team is on it.")}
+
+      {!isPortOut && port.customer_reason && amberNote(port.customer_reason)}
 
       {port.last_error && <p className="text-sm text-red-600">{port.last_error}</p>}
 
@@ -253,7 +357,41 @@ function PortRequestCard({ api, port }: { api: ApiClient; port: PortRequest }) {
             Cancel transfer
           </Button>
         )}
+        {isPortOut && port.can_dispute && !port.disputed && !confirmingDispute && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-red-500 text-red-600"
+            onClick={() => setConfirmingDispute(true)}
+          >
+            I didn't request this
+          </Button>
+        )}
       </div>
+
+      {confirmingDispute && (
+        <div className="space-y-2 rounded-[var(--cx-r-sm,12px)] border border-border p-3">
+          <p className="text-sm text-slate-600">
+            Tell Ringlite this transfer is not yours? We'll stop it if we can.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={disputePort.isPending}
+              onClick={() =>
+                disputePort.mutate(port.id, { onSuccess: () => setConfirmingDispute(false) })
+              }
+            >
+              Confirm
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setConfirmingDispute(false)}>
+              Cancel
+            </Button>
+          </div>
+          <MutationStatus pending={disputePort.isPending} error={disputePort.error} />
+        </div>
+      )}
 
       {confirmingCancel && (
         <div className="space-y-2 rounded-[var(--cx-r-sm,12px)] border border-border p-3">
@@ -452,8 +590,10 @@ export function PortingPanel({
 
   const setPortLock = useSetPortLock(api);
 
-  const authOrgId = useWorkspaceId();
-  const accountId = portOutAccountId(authOrgId ?? ports[0]?.org_id ?? null);
+  // The account number is the API's to mint; the panel just shows it. Omitting the line when
+  // it is not there yet beats inventing one from the org id.
+  const accountId = portsQuery.data?.account_id ?? null;
+  const pinHolder = Boolean(portsQuery.data?.pin_holder);
 
   const checkResults = portabilityCheck.data?.results ?? [];
   const portableNumbers = checkResults
@@ -657,6 +797,11 @@ export function PortingPanel({
                   value={draft.pin}
                   onChange={(event) => setDraft({ ...draft, pin: event.target.value })}
                 />
+                <span className="mt-1 block text-xs text-slate-400">
+                  Mobile carriers (AT&T, T-Mobile, Verizon) give you a separate Number Transfer
+                  PIN — request it in their app or by phone. For other providers it is usually your
+                  account PIN.
+                </span>
               </label>
 
               <label className="block">
@@ -763,25 +908,37 @@ export function PortingPanel({
         <div className="space-y-2">
           <h3 className="text-sm font-medium text-slate-900">Moving a number away</h3>
           <p className="text-sm text-slate-500">
-            Ask your new provider to start a transfer. They'll need{" "}
-            {accountId && (
-              <>
-                your account number{" "}
-                <span className="font-medium text-slate-900">{accountId}</span>,{" "}
-              </>
-            )}
-            the business name on this workspace and your service address. Turn off Port lock for
-            that number first. If they ask for a transfer PIN, contact support and we'll give you
-            one.
+            Ask your new provider to start a transfer and give them:{" "}
+            <span className="font-medium text-slate-900">Account number:</span> the phone number
+            you are moving. <span className="font-medium text-slate-900">Transfer PIN:</span> your
+            workspace PIN (owners and admins can see it below).{" "}
+            <span className="font-medium text-slate-900">Name and address:</span> the business name
+            and service address on this workspace.
           </p>
+          <p className="text-sm text-slate-500">
+            We review every transfer request before your number is released. You'll get an email.
+          </p>
+          {accountId && (
+            <p className="text-xs text-slate-400">
+              Ringlite account ID: <span className="font-medium">{accountId}</span>
+            </p>
+          )}
+          {pinHolder ? (
+            <TransferPinCard api={api} />
+          ) : (
+            <p className="text-sm text-slate-500">
+              Only the workspace owner or an admin can see the transfer PIN.
+            </p>
+          )}
         </div>
 
         {/* 5. Port lock */}
         <div className="space-y-2">
           <h3 className="text-sm font-medium text-slate-900">Port lock</h3>
           <p className="text-sm text-slate-500">
-            A locked number can't be released or moved inside your account. To stop another carrier
-            taking a number, keep your port-out PIN private.
+            Port lock stops a number being released or deleted inside Ringlite, even by someone
+            signed in to your account. It does not affect transfers to another provider — those are
+            protected by your transfer PIN and our review.
           </p>
           {numbers.length === 0 ? (
             <p className="text-sm text-slate-500">You don't have any numbers yet.</p>
