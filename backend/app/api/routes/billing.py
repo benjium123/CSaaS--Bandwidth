@@ -101,6 +101,37 @@ async def change_workspace_plan(
     return await plan_billing.summary(ctx.session, settings, ctx.org.id)
 
 
+class PlanPackIn(BaseModel):
+    code: str
+    accept_cents: int | None = None
+
+
+@router.post("/plan/packs")
+async def buy_number_pack(
+    payload: PlanPackIn, request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    """Add one number pack (25, 50 or 100 numbers); charged now, prorated."""
+    from app.services import plan_billing
+
+    settings = request.app.state.settings
+    await plan_billing.buy_pack(
+        ctx.session, settings, ctx.org.id, payload.code, payload.accept_cents
+    )
+    return await plan_billing.summary(ctx.session, settings, ctx.org.id)
+
+
+@router.delete("/plan/packs/{code}")
+async def remove_number_pack(
+    code: str, request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]
+) -> dict:
+    """Drop one number pack from the next bill."""
+    from app.services import plan_billing
+
+    settings = request.app.state.settings
+    await plan_billing.remove_pack(ctx.session, settings, ctx.org.id, code)
+    return await plan_billing.summary(ctx.session, settings, ctx.org.id)
+
+
 @router.post("/plan/trim")
 async def trim_workspace_plan(
     request: Request, ctx: Annotated[OrgContext, Depends(require_owner)]

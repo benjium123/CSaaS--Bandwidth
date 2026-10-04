@@ -19,6 +19,12 @@ Stripe is the source of truth; ``subscriptions`` mirrors it on every event
     numbers = plan numbers + extra_numbers    (number_purchases.py enforces it)
     minutes = 200 x users                      (plans.py seeds the monthly allowance)
 
+Number packs (NUMBER_PACKS) are a cheaper way to hold many numbers: 25 for $105, 50 for $195,
+100 for $350 a month. Each pack is its own subscription item (quantity = packs of that size),
+bought from Billing once the workspace is on a plan. Pack numbers count before $5 extras:
+
+    numbers = plan numbers + pack numbers + extra_numbers
+
 Anything that costs more money needs the caller to echo the exact monthly increase it was
 shown (``accept_cents``). A stale screen or a double click therefore cannot charge a card an
 amount the person never saw; they get the fresh quote back instead.
@@ -27,7 +33,7 @@ amount the person never saw; they get the fresh quote back instead.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
@@ -93,6 +99,60 @@ PLANS: dict[str, PlanSpec] = {
 }
 
 
+@dataclass(frozen=True)
+class NumberPack:
+    code: str
+    size: int
+    price_cents: int
+    setting: str
+
+    @property
+    def per_number_cents(self) -> float:
+        return self.price_cents / self.size
+
+
+#: Discounted off the $5 add-on number: $4.20, $3.90 and $3.50 a number.
+NUMBER_PACKS: dict[str, NumberPack] = {
+    "25": NumberPack("25", 25, 10500, "stripe_number_pack_25_price_id"),
+    "50": NumberPack("50", 50, 19500, "stripe_number_pack_50_price_id"),
+    "100": NumberPack("100", 100, 35000, "stripe_number_pack_100_price_id"),
+}
+#: Most packs of one size a workspace can hold.
+MAX_PACKS_PER_SIZE = 20
+
+
+def clean_packs(raw) -> dict[str, int]:
+    """Pack quantities from the mirror column: known sizes with a positive count only."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for code, qty in raw.items():
+        try:
+            n = int(qty)
+        except (TypeError, ValueError):
+            continue
+        if code in NUMBER_PACKS and n > 0:
+            out[code] = n
+    return out
+
+
+def pack_numbers(packs: dict[str, int] | None) -> int:
+    return sum(NUMBER_PACKS[c].size * n for c, n in clean_packs(packs).items())
+
+
+def packs_cents(packs: dict[str, int] | None, num_bps: int = 0) -> int:
+    """Monthly cost of these packs, each less the workspace's ``numbers`` discount."""
+    from app.services.discounts import apply
+
+    return sum(
+        n * apply(NUMBER_PACKS[c].price_cents, num_bps) for c, n in clean_packs(packs).items()
+    )
+
+
+def pack_price_id(settings: Settings, code: str, interval: str = MONTH) -> str:
+    return getattr(settings, _setting(NUMBER_PACKS[code].setting, interval), "") or ""
+
+
 def _setting(name: str, interval: str) -> str:
     """The settings field for a price: yearly twins are named ``*_year_price_id``."""
     if interval not in INTERVALS:
@@ -135,22 +195,36 @@ def user_limit_error(spec: PlanSpec, users: int) -> ValidationFailedError | None
     )
 
 
-def monthly_cents(spec: PlanSpec, extra_users: int, extra_numbers: int) -> int:
-    return spec.price_cents + extra_users * spec.extra_user_cents + extra_numbers * EXTRA_NUMBER_CENTS
+def monthly_cents(
+    spec: PlanSpec, extra_users: int, extra_numbers: int, packs: dict[str, int] | None = None
+) -> int:
+    return (
+        spec.price_cents
+        + extra_users * spec.extra_user_cents
+        + extra_numbers * EXTRA_NUMBER_CENTS
+        + packs_cents(packs)
+    )
 
 
 def discounted_monthly_cents(
-    spec: PlanSpec, extra_users: int, extra_numbers: int, sub_bps: int, num_bps: int
+    spec: PlanSpec,
+    extra_users: int,
+    extra_numbers: int,
+    sub_bps: int,
+    num_bps: int,
+    packs: dict[str, int] | None = None,
 ) -> int:
     """``monthly_cents`` after the workspace's Stripe coupons: the plan and each extra user
-    less the ``subscription`` discount, each extra number less the ``numbers`` discount.
-    Per unit, floored, so a screen that multiplies the unit price gets the same total."""
+    less the ``subscription`` discount, each extra number and each pack less the ``numbers``
+    discount. Per unit, floored, so a screen that multiplies the unit price gets the same
+    total."""
     from app.services.discounts import apply
 
     return (
         apply(spec.price_cents, sub_bps)
         + extra_users * apply(spec.extra_user_cents, sub_bps)
         + extra_numbers * apply(EXTRA_NUMBER_CENTS, num_bps)
+        + packs_cents(packs, num_bps)
     )
 
 
@@ -213,14 +287,24 @@ class Entitlement:
     extra_users: int
     extra_numbers: int
     interval: str = MONTH
+    #: Number packs held, as ((code, quantity), ...) so the dataclass stays hashable.
+    packs: tuple[tuple[str, int], ...] = ()
 
     @property
     def users(self) -> int:
         return self.spec.users + self.extra_users
 
     @property
+    def pack_dict(self) -> dict[str, int]:
+        return dict(self.packs)
+
+    @property
+    def pack_numbers(self) -> int:
+        return pack_numbers(self.pack_dict)
+
+    @property
     def numbers(self) -> int:
-        return self.spec.numbers + self.extra_numbers
+        return self.spec.numbers + self.pack_numbers + self.extra_numbers
 
     @property
     def minutes(self) -> int:
@@ -228,7 +312,7 @@ class Entitlement:
 
     @property
     def monthly_cents(self) -> int:
-        return monthly_cents(self.spec, self.extra_users, self.extra_numbers)
+        return monthly_cents(self.spec, self.extra_users, self.extra_numbers, self.pack_dict)
 
     @property
     def period_cents(self) -> int:
@@ -259,6 +343,7 @@ async def entitlement(session: AsyncSession, org_id: uuid.UUID) -> Entitlement |
         int(row.extra_users),
         int(row.extra_numbers),
         row.billing_interval or MONTH,
+        tuple(sorted(clean_packs(row.number_packs).items())),
     )
 
 
@@ -334,6 +419,9 @@ class ParsedItems:
     extra_numbers_item_id: str | None
     extra_users_price_id: str | None = None
     interval: str = MONTH
+    #: Pack code -> quantity, and pack code -> its subscription item id.
+    packs: dict[str, int] = field(default_factory=dict)
+    pack_item_ids: dict[str, str] = field(default_factory=dict)
 
 
 def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
@@ -342,6 +430,7 @@ def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
     by_price: dict[str, tuple[str, str]] = {}
     user_prices: dict[str, str] = {}
     number_prices: dict[str, str] = {}
+    pack_prices: dict[str, tuple[str, str]] = {}
     for interval in INTERVALS:
         for code in PLANS:
             if pid := plan_price_id(settings, code, interval):
@@ -350,6 +439,11 @@ def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
                 user_prices[pid] = interval
         if pid := number_price_id(settings, interval):
             number_prices[pid] = interval
+        for code in NUMBER_PACKS:
+            if pid := pack_price_id(settings, code, interval):
+                pack_prices[pid] = (code, interval)
+    packs: dict[str, int] = {}
+    pack_item_ids: dict[str, str] = {}
     plan_code = plan_item = users_item = numbers_item = users_price = plan_interval = None
     extra_users = extra_numbers = 0
     intervals: set[str] = set()
@@ -368,6 +462,12 @@ def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
         elif price_id in number_prices:
             extra_numbers, numbers_item = quantity, item.get("id")
             intervals.add(number_prices[price_id])
+        elif price_id in pack_prices:
+            pack_code, pack_interval = pack_prices[price_id]
+            if pack_code in packs:
+                raise ValidationFailedError("Subscription has the same number pack twice")
+            packs[pack_code], pack_item_ids[pack_code] = quantity, item.get("id")
+            intervals.add(pack_interval)
         else:
             raise ValidationFailedError("Subscription has an item that is not a Ringlite plan")
     if plan_code is None:
@@ -383,6 +483,8 @@ def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
         numbers_item,
         users_price,
         plan_interval,
+        {code: n for code, n in packs.items() if n > 0},
+        pack_item_ids,
     )
 
 
@@ -419,6 +521,7 @@ def verify_checkout_subscription(
         or parsed.interval != interval
         or parsed.extra_users != 0
         or parsed.extra_numbers != max(numbers - PLANS[code].numbers, 0)
+        or parsed.packs  # packs are bought from Billing, never at the first checkout
     ):
         raise ValidationFailedError("Subscription does not match the selected plan and numbers")
     return parsed
@@ -462,6 +565,7 @@ async def upsert_from_stripe(
     row.stripe_customer_id = subscription.get("customer") or row.stripe_customer_id
     row.extra_users = parsed.extra_users
     row.extra_numbers = parsed.extra_numbers
+    row.number_packs = dict(parsed.packs) or None
     row.billing_interval = parsed.interval
     row.current_period_end = _period_end(subscription)
     row.cancel_at_period_end = bool(subscription.get("cancel_at_period_end"))
@@ -570,6 +674,7 @@ async def _apply(
     plan_code: str | None = None,
     extra_users: int | None = None,
     extra_numbers: int | None = None,
+    packs: dict[str, int] | None = None,
     charge: bool,
     key: str,
 ) -> Entitlement:
@@ -627,6 +732,19 @@ async def _apply(
             items.append({"id": item_id, "deleted": True})
         else:
             await validate_price(stripe, price_id, cents, interval)
+            items.append({"price": price_id, "quantity": wanted})
+    for code, wanted in (packs or {}).items():
+        current = parsed.packs.get(code, 0)
+        item_id = parsed.pack_item_ids.get(code)
+        if wanted == current:
+            continue
+        if item_id and wanted > 0:
+            items.append({"id": item_id, "quantity": wanted})
+        elif item_id:
+            items.append({"id": item_id, "deleted": True})
+        else:
+            price_id = pack_price_id(settings, code, interval)
+            await validate_price(stripe, price_id, NUMBER_PACKS[code].price_cents, interval)
             items.append({"price": price_id, "quantity": wanted})
     if not items:
         return ent
@@ -734,6 +852,93 @@ async def reserve_numbers(
     )
 
 
+def _pack_or_refuse(settings: Settings, code: str, interval: str) -> NumberPack:
+    pack = NUMBER_PACKS.get(code)
+    if pack is None:
+        raise ValidationFailedError("Unknown number pack")
+    if not pack_price_id(settings, code, interval):
+        raise FeatureUnavailableError(
+            "Number packs are not available on yearly billing yet."
+            if interval == YEAR
+            else "Number packs are not available yet."
+        )
+    return pack
+
+
+async def buy_pack(
+    session: AsyncSession,
+    settings: Settings,
+    org_id: uuid.UUID,
+    code: str,
+    accept_cents: int | None,
+) -> Entitlement:
+    """Add one number pack, charged now (prorated). $5 extra numbers the pack now covers are
+    dropped in the same change, so ``accept_cents`` is the pack less those extras (it can be
+    negative: a saving, credited by Stripe's proration)."""
+    ent = await require_entitlement(session, org_id)
+    pack = _pack_or_refuse(settings, code, ent.interval)
+    have = ent.pack_dict.get(code, 0)
+    if have >= MAX_PACKS_PER_SIZE:
+        raise ValidationFailedError(f"Up to {MAX_PACKS_PER_SIZE} packs of {pack.size} numbers.")
+    new_packs = {**ent.pack_dict, code: have + 1}
+    held = await numbers_held(session, org_id)
+    new_extra = min(
+        ent.extra_numbers, max(held - ent.spec.numbers - pack_numbers(new_packs), 0)
+    )
+    from app.services.discounts import apply
+
+    _, num_bps = await discount_bps(session, org_id)
+    increase = period_cents(
+        apply(pack.price_cents, num_bps)
+        - (ent.extra_numbers - new_extra) * apply(EXTRA_NUMBER_CENTS, num_bps),
+        ent.interval,
+    )
+    _require_accepted(
+        accept_cents,
+        increase,
+        {"pack": code, "numbers": ent.numbers - ent.extra_numbers + pack.size + new_extra},
+        ent.interval,
+    )
+    return await _apply(
+        session,
+        settings,
+        ent,
+        extra_numbers=new_extra,
+        packs={code: have + 1},
+        charge=True,
+        key=f"buy-pack-{ent.subscription.id}-{code}-{have}-{ent.extra_numbers}",
+    )
+
+
+async def remove_pack(
+    session: AsyncSession, settings: Settings, org_id: uuid.UUID, code: str
+) -> Entitlement:
+    """Drop one number pack from the next bill (no refund for this period). Refused while
+    the numbers in use would no longer fit: release numbers first."""
+    ent = await require_entitlement(session, org_id)
+    if code not in NUMBER_PACKS:
+        raise ValidationFailedError("Unknown number pack")
+    have = ent.pack_dict.get(code, 0)
+    if have <= 0:
+        raise ValidationFailedError("You have no pack of that size")
+    held = await numbers_held(session, org_id)
+    room = ent.numbers - NUMBER_PACKS[code].size
+    if held > room:
+        raise ValidationFailedError(
+            f"You use {held} numbers; without this pack you have room for {room}. "
+            f"Release {held - room} numbers first.",
+            code="pack_in_use",
+        )
+    return await _apply(
+        session,
+        settings,
+        ent,
+        packs={code: have - 1},
+        charge=False,
+        key=f"remove-pack-{ent.subscription.id}-{code}-{have}-{uuid.uuid4().hex[:8]}",
+    )
+
+
 async def change_plan(
     session: AsyncSession,
     settings: Settings,
@@ -754,10 +959,17 @@ async def change_plan(
     if refusal := user_limit_error(spec, taken):
         raise refusal
     extra_users = max(taken - spec.users, 0)
-    extra_numbers = max(await numbers_held(session, org_id) - spec.numbers, 0)
+    # Number packs stay as they are; only the $5 extras shrink or grow around them.
+    extra_numbers = max(
+        await numbers_held(session, org_id) - spec.numbers - ent.pack_numbers, 0
+    )
     new_total = period_cents(
         discounted_monthly_cents(
-            spec, extra_users, extra_numbers, *await discount_bps(session, org_id)
+            spec,
+            extra_users,
+            extra_numbers,
+            *await discount_bps(session, org_id),
+            packs=ent.pack_dict,
         ),
         ent.interval,
     )
@@ -825,11 +1037,14 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
     # says, what it echoes back as accept_cents and what Stripe charges agree. Before the
     # first plan, Stripe Checkout shows the discounted total itself.
     sub_bps, num_bps = await discount_bps(session, org_id) if ent is not None else (0, 0)
+    held_packs = ent.pack_dict if ent is not None else {}
     catalog = []
     for spec in PLANS.values():
         extra_u = max(taken - spec.users, 0)
-        extra_n = max(held - spec.numbers, 0)
-        switched = discounted_monthly_cents(spec, extra_u, extra_n, sub_bps, num_bps)
+        extra_n = max(held - spec.numbers - pack_numbers(held_packs), 0)
+        switched = discounted_monthly_cents(
+            spec, extra_u, extra_n, sub_bps, num_bps, packs=held_packs
+        )
         catalog.append(
             {
                 "code": spec.code,
@@ -856,13 +1071,27 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
         "months_billed_per_year": MONTHS_BILLED_PER_YEAR,
         "catalog": catalog,
     }
+    from app.services.discounts import apply
+
+    pack_interval = ent.interval if ent is not None else MONTH
+    out["number_packs"] = [
+        {
+            "code": pack.code,
+            "size": pack.size,
+            "list_price_cents": pack.price_cents,
+            "price_cents": apply(pack.price_cents, num_bps),
+            "per_number_cents": round(apply(pack.price_cents, num_bps) / pack.size),
+            "owned": held_packs.get(pack.code, 0),
+            "available": bool(pack_price_id(settings, pack.code, pack_interval)),
+        }
+        for pack in NUMBER_PACKS.values()
+    ]
     if ent is None:
         return out
     voice = await plans.remaining(session, org_id, "voice_minutes")
-    from app.services.discounts import apply
 
     monthly = discounted_monthly_cents(
-        ent.spec, ent.extra_users, ent.extra_numbers, sub_bps, num_bps
+        ent.spec, ent.extra_users, ent.extra_numbers, sub_bps, num_bps, packs=held_packs
     )
     out.update(
         extra_user_cents=apply(ent.spec.extra_user_cents, sub_bps),
@@ -893,6 +1122,7 @@ async def summary(session: AsyncSession, settings: Settings, org_id: uuid.UUID) 
             "in_use": held,
             "included": ent.spec.numbers,
             "extra": ent.extra_numbers,
+            "in_packs": ent.pack_numbers,
         },
         minutes={"included": ent.minutes, "remaining": voice},
     )

@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TenantScoped, TimestampMixin
-from app.db.types import GUID
+from app.db.types import GUID, PortableJSON
 
 #: Stripe's own subscription statuses, mirrored exactly. Widening this tuple is not the
 #: same as widening access - is_entitled() below is the only thing that grants it.
@@ -93,6 +93,8 @@ class Subscription(Base, TenantScoped, TimestampMixin):
     extra_numbers: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default="0"
     )
+    #: Number packs on the plan subscription: {"25": n, "50": n, "100": n} (migration 0097).
+    number_packs: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
     #: "month" or "year" (a yearly plan bills ten months up front; plan_billing.py).
     billing_interval: Mapped[str] = mapped_column(
         sa.String(8), nullable=False, default="month", server_default="month"

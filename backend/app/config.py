@@ -107,6 +107,13 @@ class Settings(BaseSettings):
     stripe_extra_user_year_price_id: str = "price_1UJjFq744iNFjjqnwJVvGEPJ"  # $150/year
     stripe_business_extra_user_year_price_id: str = "price_1UJjFq744iNFjjqntzNfAoSx"  # $120/year
     stripe_extra_number_year_price_id: str = "price_1UJjFr744iNFjjqns14JPZCQ"  # $50/year
+    #: Number packs (plan_billing.NUMBER_PACKS). Empty = not on sale yet.
+    stripe_number_pack_25_price_id: str = ""  # $105/month, 25 numbers
+    stripe_number_pack_50_price_id: str = ""  # $195/month, 50 numbers
+    stripe_number_pack_100_price_id: str = ""  # $350/month, 100 numbers
+    stripe_number_pack_25_year_price_id: str = ""  # $1,050/year
+    stripe_number_pack_50_year_price_id: str = ""  # $1,950/year
+    stripe_number_pack_100_year_price_id: str = ""  # $3,500/year
     #: Live 10DLC campaign pass-through fees (prod_VJxPdkTbXGhw6k): $10/month standard,
     #: $2/month sole proprietor. See services/tendlc.py for the one-time fees.
     stripe_tendlc_standard_price_id: str = "price_1UJJUY744iNFjjqnhOjPZHaj"

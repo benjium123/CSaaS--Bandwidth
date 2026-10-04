@@ -239,6 +239,11 @@ async def sync_subscription(session: AsyncSession, settings, org_id: uuid.UUID) 
         pid
         for interval in plan_billing.INTERVALS
         if (pid := plan_billing.number_price_id(settings, interval))
+    } | {
+        pid
+        for interval in plan_billing.INTERVALS
+        for code in plan_billing.NUMBER_PACKS
+        if (pid := plan_billing.pack_price_id(settings, code, interval))
     }
     stripe = stripe_client._stripe(settings)
     remote = await stripe_client._run_sync(stripe.Subscription.retrieve, sub_id)
