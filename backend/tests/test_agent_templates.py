@@ -160,3 +160,21 @@ async def test_from_template_refused_when_ai_agent_off(client, session):
     )
     assert r.status_code == 403, r.text
     assert r.json()["error"]["code"] == "feature_disabled"
+
+
+def test_booking_wording_follows_the_calendar_switch():
+    base = {
+        "business": {"name": "Acme"},
+        "agent": {"name": "Ava"},
+        "goal": "Book a visit.",
+        "handoff": {"transfer_number": "+12145550100"},
+    }
+    requested = tpl.render(None, {**base, "booking": {"enabled": True}})["prompt"]
+    assert "requested, pending confirmation" in requested
+    assert "create_appointment" not in requested
+
+    calendar = tpl.render(
+        None, {**base, "booking": {"enabled": True, "calendar": True}}
+    )["prompt"]
+    assert "check_availability" in calendar
+    assert "only after create_appointment succeeds" in calendar

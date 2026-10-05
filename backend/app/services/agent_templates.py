@@ -50,6 +50,15 @@ BOOKING_PENDING_LINE = (
     'pending confirmation". Never say it is booked or confirmed.'
 )
 
+#: With Ringlite booking hours set (profile extra.booking), the agent books real slots.
+BOOKING_CALENDAR_LINES = (
+    "To book, call check_availability, offer at most three of the times it returns, then "
+    "call create_appointment with the exact time the person chose.",
+    "Say the appointment is booked only after create_appointment succeeds. If online "
+    "booking is not set up, no time fits, or booking fails, take a request with "
+    'book_appointment instead and say it is "requested, pending confirmation".',
+)
+
 REQUIRED_PATHS = ("business.name", "agent.name", "goal", "handoff.transfer_number")
 
 _PRICE_RULE = "Never state a price unless it is in your instructions or the knowledge base."
@@ -455,7 +464,11 @@ def render(template_id: str | None, interview: dict | None) -> dict[str, Any]:
         blocks.append("Handoff\n" + "\n".join(handoff_lines))
 
     if booking.get("enabled") is True:
-        b_lines = [BOOKING_PENDING_LINE]
+        b_lines = (
+            list(BOOKING_CALENDAR_LINES)
+            if booking.get("calendar") is True
+            else [BOOKING_PENDING_LINE]
+        )
         if _clean(booking.get("rules")):
             b_lines.append(_end(f"Booking rules: {_clean(booking.get('rules'))}"))
         blocks.append("Booking\n" + "\n".join(b_lines))
