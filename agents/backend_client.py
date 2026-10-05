@@ -220,6 +220,52 @@ class BackendClient:
             self._logger.exception("book_appointment call_id=%s failed", call_id)
         return None
 
+    async def get_availability(self, call_id: str, after: str | None = None) -> dict | None:
+        """GET /agent/availability?call_id=...&after=... - the open slots check.
+        Returns the availability dict, or None when the endpoint could not be reached or
+        answered something unusable."""
+        url = f"{self._base_url}/api/v1/agent/availability"
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        params = {"call_id": call_id}
+        if after:
+            params["after"] = after
+        try:
+            response = await self._client.get(url, headers=headers, params=params)
+            if response.status_code == 200:
+                return response.json()
+            self._logger.warning(
+                "get_availability call_id=%s status=%s", call_id, response.status_code
+            )
+        except Exception:
+            self._logger.exception("get_availability call_id=%s failed", call_id)
+        return None
+
+    async def book_appointment_slot(
+        self, call_id: str, start_iso: str, notes: str = ""
+    ) -> dict | None:
+        """POST /agent/appointments/book. Returns the booking dict on success and
+        ``{"_conflict": True}`` on 409 - the slot was taken between the availability
+        check and this call, the same marker convention as fetch_config's
+        ``{"_refused": True}``. None when the endpoint could not be reached or answered
+        something unusable."""
+        url = f"{self._base_url}/api/v1/agent/appointments/book"
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        payload = {"call_id": call_id, "start": start_iso, "notes": notes}
+        try:
+            response = await self._client.post(url, headers=headers, json=payload)
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 409:
+                return {"_conflict": True}
+            self._logger.warning(
+                "book_appointment_slot call_id=%s status=%s",
+                call_id,
+                response.status_code,
+            )
+        except Exception:
+            self._logger.exception("book_appointment_slot call_id=%s failed", call_id)
+        return None
+
     async def kb_search(self, call_id: str, query: str) -> list:
         url = f"{self._base_url}/api/v1/agent/kb/search"
         headers = {"Authorization": f"Bearer {self._token()}"}

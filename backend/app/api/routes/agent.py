@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -42,6 +42,7 @@ from app.services import agent_templates as templates_svc
 from app.services import (
     ai_usage,
     assistant_dispatch,
+    booking,
     contact_visibility,
     kb_ingest,
     phone_region,
@@ -368,6 +369,134 @@ async def _book_appointment_for_call(
     return AppointmentBookOut(
         id=appt.id, raw_when=appt.raw_when, scheduled_for=appt.scheduled_for, status=appt.status
     )
+
+
+class AvailabilitySlotOut(BaseModel):
+    start: str
+    label: str
+
+
+class AvailabilityOut(BaseModel):
+    enabled: bool
+    timezone: str = ""
+    slots: list[AvailabilitySlotOut] = Field(default_factory=list)
+
+
+def _parse_optional_iso(value: str | None) -> datetime | None:
+    """Parse an aware ISO-8601 instant; None for anything else. A naive wall-clock is
+    exactly the guess services/booking.py refuses to make, so it does not count here."""
+    if not value:
+        return None
+    candidate = value.strip()
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+async def _availability_for_call(session: AsyncSession, call, after_raw) -> dict:
+    """Shared by GET /availability and POST /tools/check_availability (one code path)."""
+    profile = await agent_svc.resolve_call_profile(session, call)
+    cfg = booking.parse_booking(profile) if profile is not None else None
+    if cfg is None:
+        return {"enabled": False, "timezone": "", "slots": []}
+
+    after = _parse_optional_iso(after_raw if isinstance(after_raw, str) else None)
+    slots = await booking.free_slots(
+        session, call.org_id, cfg, now=datetime.now(timezone.utc), after=after
+    )
+    return {
+        "enabled": True,
+        "timezone": cfg.timezone,
+        "slots": [
+            {"start": slot.isoformat(), "label": booking.human(slot, cfg.tz)}
+            for slot in slots
+        ],
+    }
+
+
+@router.get("/availability", response_model=AvailabilityOut)
+async def get_agent_availability(
+    call_id: uuid.UUID,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    after: str | None = None,
+) -> AvailabilityOut:
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    set_org_context(session, call.org_id)
+    return AvailabilityOut(**await _availability_for_call(session, call, after))
+
+
+class AppointmentSlotIn(BaseModel):
+    call_id: uuid.UUID
+    start: str = Field(min_length=1, max_length=64)
+    notes: str = Field(default="", max_length=2000)
+
+
+class AppointmentSlotOut(BaseModel):
+    booked: bool
+    appointment_id: uuid.UUID
+    label: str
+
+
+async def _book_slot_for_call(
+    request: Request, session: AsyncSession, call, payload: AppointmentSlotIn
+) -> AppointmentSlotOut:
+    """Shared by POST /appointments/book and POST /tools/create_appointment."""
+    profile = await agent_svc.resolve_call_profile(session, call)
+    cfg = booking.parse_booking(profile) if profile is not None else None
+    if cfg is None:
+        raise ValidationFailedError("Online booking is not set up for this assistant.")
+
+    start = _parse_optional_iso(payload.start)
+    if start is None:
+        raise ValidationFailedError("That time was not a valid booking time.")
+
+    appt = await booking.book_slot(
+        session,
+        call.org_id,
+        cfg,
+        start=start,
+        contact_e164=call.contact_e164,
+        call_id=call.id,
+        notes=payload.notes,
+        now=datetime.now(timezone.utc),
+    )
+    await session.commit()
+
+    bus = request.app.state.event_bus
+    bus.publish(
+        call.org_id,
+        {
+            "type": "appointment.booked",
+            "appointment_id": str(appt.id),
+            "contact_e164": appt.contact_e164,
+            "raw_when": appt.raw_when,
+        },
+    )
+    return AppointmentSlotOut(booked=True, appointment_id=appt.id, label=appt.raw_when)
+
+
+@router.post("/appointments/book", response_model=AppointmentSlotOut)
+async def post_agent_appointment_book(
+    payload: AppointmentSlotIn,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AppointmentSlotOut:
+    _require_worker(request)
+    call = await agent_svc.get_call_unscoped(session, payload.call_id)
+    if call is None:
+        raise NotFoundError("Call not found")
+    set_org_context(session, call.org_id)
+    return await _book_slot_for_call(request, session, call, payload)
 
 
 class KbSearchChunkOut(BaseModel):
@@ -1163,10 +1292,33 @@ async def _tool_transfer(request, session, call, call_id, arguments: dict) -> di
     return {"ok": True, "result": out.model_dump(mode="json")}
 
 
+async def _tool_check_availability(request, session, call, call_id, arguments: dict) -> dict:
+    after_raw = arguments.get("after")
+    result = await _availability_for_call(
+        session, call, str(after_raw) if after_raw else None
+    )
+    return {"ok": True, "result": result}
+
+
+async def _tool_create_appointment(request, session, call, call_id, arguments: dict) -> dict:
+    try:
+        body = AppointmentSlotIn(
+            call_id=call_id,
+            start=str(arguments.get("start") or ""),
+            notes=str(arguments.get("notes") or ""),
+        )
+    except PydanticValidationError as exc:
+        raise ValidationFailedError("We need a time for that appointment.") from exc
+    out = await _book_slot_for_call(request, session, call, body)
+    return {"ok": True, "result": out.model_dump(mode="json")}
+
+
 #: ONE registry of the tools /tools/{tool} routes to the same services the dedicated
 #: routes use. lookup_contact and webhook stay inline below; send_followup_sms is 501.
 _CALL_TOOL_HANDLERS = {
     "book_appointment": _tool_book_appointment,
+    "check_availability": _tool_check_availability,
+    "create_appointment": _tool_create_appointment,
     "transfer": _tool_transfer,
 }
 

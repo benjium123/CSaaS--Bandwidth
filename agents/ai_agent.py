@@ -257,6 +257,45 @@ class CsaasAgent(Agent):
         return f'Appointment requested for "{raw_when}" and is pending confirmation.'
 
     @function_tool
+    async def check_availability(self, after: str = "") -> str:
+        """Find the next open appointment times. Call before offering times."""
+        result = await self._backend.get_availability(self._call_id, after or None)
+        if not result:
+            return (
+                "I could not check the calendar due to a system issue - ask the "
+                "caller what time suits them instead."
+            )
+        if not result.get("enabled"):
+            return (
+                "Online booking is not set up - take a request instead with "
+                "book_appointment."
+            )
+        slots = result.get("slots") or []
+        labels = [str(slot.get("label")) for slot in slots[:3] if slot.get("label")]
+        if not labels:
+            return (
+                "There are no open appointment times right now - take a request "
+                "instead with book_appointment."
+            )
+        return "The next open times are: " + ", ".join(labels) + "."
+
+    @function_tool
+    async def create_appointment(self, start: str, notes: str = "") -> str:
+        """Book one of the exact times check_availability returned (pass its ISO start).
+        Only after this succeeds may you say the appointment is booked.
+        """
+        result = await self._backend.book_appointment_slot(self._call_id, start, notes)
+        if not result:
+            return (
+                "I could not book that time due to a system issue - tell the caller "
+                "a team member will confirm the appointment."
+            )
+        if result.get("_conflict"):
+            return "That time was just taken - offer the next one."
+        label = result.get("label") or start
+        return f"Booked for {label}."
+
+    @function_tool
     async def search_knowledge(self, query: str) -> str:
         """Search the organization's knowledge base before answering a question you
         are not certain about from your instructions alone. `query` should be the
@@ -411,7 +450,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # closes out voice-to-voice latency for that turn.
     pending_latency_by_speech: dict[str, float] = {}
     # F3: tiny state machine over the user/agent turn stream that flags the first time a
-    # user->agent->user sequence completes (0 = nothing seen; 1 = saw a user turn; 2 =
+    # user->agent->user sequence completes (0 = nothing seen; 1 = saw a user turn; 2 = 
     # saw an agent turn after that; 3 = saw a second user turn - sequence confirmed).
     # Used by _amd_human_confirm so a lone user utterance (e.g. one word bleeding
     # through a real voicemail greeting) can never look like a live back-and-forth.
