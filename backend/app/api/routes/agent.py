@@ -37,6 +37,7 @@ from app.errors import (
 from app.models import AgentProfile, Contact, ContactPhone, KbDocument, Org, OrgNumber
 from app.models.agent import DEFAULT_SMS_HANDOFF_KEYWORDS
 from app.services import agent as agent_svc
+from app.services import agent_templates as templates_svc
 from app.services import (
     ai_usage,
     assistant_dispatch,
@@ -617,6 +618,141 @@ async def create_agent_profile(
 
     try:
         profile = await agent_svc.create_profile(ctx.session, ctx.org.id, **data)
+        await ctx.session.commit()
+    except IntegrityError as exc:
+        await ctx.session.rollback()
+        raise ConflictError(f"An agent profile named {payload.name!r} already exists") from exc
+    return _profile_out(profile)
+
+
+# ----------------------------------------------------------------------------------
+# AI agents v2: templates, interview render, curated voices
+# ----------------------------------------------------------------------------------
+DEFAULT_CURATED_VOICES: list[dict] = [
+    {
+        "id": "21m00Tcm4TlvDq8ikWAM",
+        "name": "Rachel",
+        "gender": "female",
+        "accent": "American",
+        "description": "Calm and clear",
+        "provider": "elevenlabs",
+    },
+    {
+        "id": "pNInz6obpgDQGcFmaJgB",
+        "name": "Adam",
+        "gender": "male",
+        "accent": "American",
+        "description": "Deep and steady",
+        "provider": "elevenlabs",
+    },
+    {
+        "id": "EXAVITQu4vr4xnSDxMaL",
+        "name": "Sarah",
+        "gender": "female",
+        "accent": "American",
+        "description": "Soft and friendly",
+        "provider": "elevenlabs",
+    },
+    {
+        "id": "ErXwobaYiN019PkySvjV",
+        "name": "Antoni",
+        "gender": "male",
+        "accent": "American",
+        "description": "Warm and relaxed",
+        "provider": "elevenlabs",
+    },
+]
+
+
+class TemplateRenderIn(BaseModel):
+    template_id: str | None = None
+    interview: dict = Field(default_factory=dict)
+
+
+class ProfileFromTemplateIn(TemplateRenderIn):
+    name: str = Field(min_length=1, max_length=127)
+
+
+@router.get("/templates")
+async def list_agent_templates(
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+) -> list[dict]:
+    return templates_svc.catalog()
+
+
+@router.post("/templates/render")
+async def render_agent_template(
+    payload: TemplateRenderIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+) -> dict:
+    return templates_svc.render(payload.template_id, payload.interview)
+
+
+@router.get("/voices")
+async def list_agent_voices(
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:read"))],
+) -> list[dict]:
+    raw = getattr(request.app.state.settings, "ai_curated_voices", "") or ""
+    if raw.strip():
+        try:
+            voices = json.loads(raw)
+            if isinstance(voices, list) and voices:
+                return [
+                    {
+                        "id": str(v.get("id", "")),
+                        "name": str(v.get("name", "")),
+                        "gender": str(v.get("gender", "")),
+                        "accent": str(v.get("accent", "")),
+                        "description": str(v.get("description", "")),
+                        "provider": "elevenlabs",
+                    }
+                    for v in voices
+                    if isinstance(v, dict) and v.get("id")
+                ][:4]
+        except (ValueError, TypeError):
+            pass
+    return [dict(v) for v in DEFAULT_CURATED_VOICES]
+
+
+@router.post(
+    "/profiles/from-template",
+    response_model=ProfileOut,
+    status_code=201,
+    dependencies=[Depends(requires_feature("ai_agent"))],
+)
+async def create_agent_profile_from_template(
+    payload: ProfileFromTemplateIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("settings:write"))],
+) -> ProfileOut:
+    template = templates_svc.get_template(payload.template_id)
+    if payload.template_id and template is None:
+        raise ValidationFailedError("That template does not exist.")
+    if template is not None and not template["available"]:
+        raise ValidationFailedError("That template is not available yet.")
+    rendered = templates_svc.render(payload.template_id, payload.interview)
+    agent_cfg = payload.interview.get("agent")
+    agent_cfg = agent_cfg if isinstance(agent_cfg, dict) else {}
+    voice_id = str(agent_cfg.get("voice_id") or "")[:64]
+    language = str(agent_cfg.get("language") or "en")[:8]
+    if len(language) < 2:
+        language = "en"
+    try:
+        profile = await agent_svc.create_profile(
+            ctx.session,
+            ctx.org.id,
+            name=payload.name,
+            system_prompt=rendered["prompt"],
+            greeting=rendered["greeting"][:500],
+            voice_id=voice_id,
+            language=language,
+            extra={
+                "interview": payload.interview,
+                "template_id": payload.template_id,
+                "template_version": template["version"] if template else None,
+                "prompt_mode": "interview",
+            },
+        )
         await ctx.session.commit()
     except IntegrityError as exc:
         await ctx.session.rollback()

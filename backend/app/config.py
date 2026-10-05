@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # P24: when true, AI usage events debit prepaid credits. While false (default),
     # metering still runs and rows are written as shadow events without a charge.
     ai_billing_enforce: bool = False
+    # AI agents v2: optional JSON list of curated voices ({id,name,gender,accent,description}).
+    # Empty = the defaults in api/routes/agent.py.
+    ai_curated_voices: str = ""
     # P24: Stripe secret key for prepaid credit top-ups. Empty means Stripe is not
     # configured, and billing endpoints answer 503 until it is set.
     stripe_secret_key: SecretStr = SecretStr("")
