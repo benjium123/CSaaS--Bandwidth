@@ -238,7 +238,9 @@ async def continue_carrier_flow(
     return await _drive(session, bus, call, flow, result, now=now)
 
 
-async def _transfer_commands(session: AsyncSession, call: Call, to: str) -> list[voice.VoiceCommand]:
+async def _transfer_commands(
+    session: AsyncSession, call: Call, to: str
+) -> list[voice.VoiceCommand]:
     """P44a: a flow's transfer target passes the destination firewall when the call is
     transferred, not only when the flow was saved (flows saved before P44, or a policy
     change since). Forwarding inbound calls to an IRSF number is the classic pump."""
@@ -334,7 +336,9 @@ async def _drive(
                 commands.append(voice.Pause(seconds=wait_seconds))
                 try:
                     result = fe.step(
-                        flow.definition, result.state, {"kind": "ring_result", "result": "no_answer"}
+                        flow.definition, result.state, {
+                            "kind": "ring_result", "result": "no_answer"
+                        }
                     )
                 except fe.FlowError:
                     log.exception(

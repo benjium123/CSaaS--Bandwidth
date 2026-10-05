@@ -1321,7 +1321,9 @@ async def transcribe_call(
         recording.provider_recording_id.startswith("lkrec:")
         or recording.channel_layout == "dual"
     ):
-        raise ConflictError("This recording has both sides in one track, so it can't be transcribed yet")
+        raise ConflictError(
+            "This recording has both sides in one track, so it can't be transcribed yet"
+        )
     await transcription_svc.enqueue(ctx.session, call, recording, tier="on_request")
     await ctx.session.commit()
     sweeper_svc.kick_transcription(request.app)

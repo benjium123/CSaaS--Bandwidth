@@ -160,7 +160,9 @@ async def _org(session) -> Org:
 
 
 async def _on_plan(session, stripe, org, plan="team", extras=(), interval="month") -> str:
-    remote = stripe.add_subscription(org.id, plan_billing.plan_price_id(SETTINGS, plan, interval), extras)
+    remote = stripe.add_subscription(
+        org.id, plan_billing.plan_price_id(SETTINGS, plan, interval), extras
+    )
     await plan_billing.upsert_from_stripe(session, SETTINGS, remote, org.id)
     await session.commit()
     return remote["id"]
@@ -248,7 +250,9 @@ async def test_yearly_checkout_bills_ten_months_and_stays_yearly(session, stripe
 
 async def test_a_subscription_mixing_monthly_and_yearly_is_refused(session, stripe):
     org = await _org(session)
-    remote = stripe.add_subscription(org.id, "price_y_team", [(SETTINGS.stripe_extra_number_price_id, 1)])
+    remote = stripe.add_subscription(
+        org.id, "price_y_team", [(SETTINGS.stripe_extra_number_price_id, 1)]
+    )
     with pytest.raises(ValidationFailedError):
         plan_billing.parse_items(SETTINGS, remote)
 
@@ -256,7 +260,9 @@ async def test_a_subscription_mixing_monthly_and_yearly_is_refused(session, stri
 async def test_yearly_is_refused_cleanly_while_its_prices_are_missing(session, stripe):
     org = await _org(session)
     bare = make_settings(
-        stripe_webhook_secret="whsec_test", stripe_plan_team_year_price_id="", stripe_extra_number_year_price_id=""
+        stripe_webhook_secret="whsec_test",
+        stripe_plan_team_year_price_id="",
+        stripe_extra_number_year_price_id="",
     )
     assert plan_billing.yearly_available(bare) is False
     with pytest.raises(FeatureUnavailableError):
@@ -271,7 +277,12 @@ async def _members(session, org, count):
     role = Role(id=uuid.uuid4(), org_id=org.id, name="agent", permissions=[])
     session.add(role)
     for _ in range(count):
-        user = User(id=uuid.uuid4(), email=f"{uuid.uuid4().hex[:8]}@plan.test", hashed_password="x", full_name="M")
+        user = User(
+            id=uuid.uuid4(),
+            email=f"{uuid.uuid4().hex[:8]}@plan.test",
+            hashed_password="x",
+            full_name="M"
+        )
         session.add(user)
         await session.flush()
         session.add(OrgMembership(id=uuid.uuid4(), org_id=org.id, user_id=user.id, role_id=role.id))

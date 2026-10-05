@@ -60,7 +60,7 @@ async def _take_resend_quota(settings: Settings, count: int) -> bool:
         for key, _, _ in keys:
             _resend_local[key] = _resend_local.get(key, 0) + count
             totals.append(_resend_local[key])
-    return all(total <= cap for total, (_, cap, _) in zip(totals, keys))
+    return all(total <= cap for total, (_, cap, _) in zip(totals, keys, strict=False))
 
 
 def _html(body: str, subject: str = "", app_name: str = "Ringlite") -> str:

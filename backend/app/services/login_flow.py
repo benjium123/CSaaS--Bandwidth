@@ -19,8 +19,8 @@ from app.auth.security import create_access_token
 from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY
 from app.models import OrgMembership, Role, User
-from app.services import identity as identity_svc
 from app.services import device_sessions, login_risk, mailer, session_tokens
+from app.services import identity as identity_svc
 
 #: Strong refs for fire-and-forget alert emails (a bare create_task can be GC'd mid-flight).
 _pending_emails: set[asyncio.Task] = set()
@@ -77,7 +77,7 @@ async def complete_login(
     auth_method: str = "password",
     org_id: uuid.UUID | None = None,
     event_outcome: str = "ok",
-    device: "device_sessions.DeviceInfo | None" = None,
+    device: device_sessions.DeviceInfo | None = None,
 ) -> str | dict | None:
     """Create the Session, record the event, handle risk. Commits.
 

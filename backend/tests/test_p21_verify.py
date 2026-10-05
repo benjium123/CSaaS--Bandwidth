@@ -44,9 +44,13 @@ from tests.conftest import (
     FakeCarrier,
     auth_headers,
     create_org,
-    make_org_with_number as _make_org_with_number,
-    register_and_login as _register_and_login,
     make_platform_operator,
+)
+from tests.conftest import (
+    make_org_with_number as _make_org_with_number,
+)
+from tests.conftest import (
+    register_and_login as _register_and_login,
 )
 
 
@@ -65,8 +69,8 @@ async def make_org_with_number(client, email: str, *args, **kwargs):
     result = await _make_org_with_number(client, email, *args, **kwargs)
     await make_platform_operator(email)
     return result
-from tests.test_carrier_routing import _register_telnyx_campaign
-from tests.test_voice_webhooks import FakeVoiceCarrier
+from tests.test_carrier_routing import _register_telnyx_campaign  # noqa: E402
+from tests.test_voice_webhooks import FakeVoiceCarrier  # noqa: E402
 
 CONTACT = "+19725559999"
 
@@ -186,10 +190,14 @@ async def test_rank_never_returns_another_orgs_numbers_or_uses_its_rate_card(sms
     not change the answer."""
     client, registry, _carriers = sms_app
     _ta, org_a = await _org(
-        client, session, "ten-a@example.com", [("+12145550401", "bandwidth"), ("+19725550401", "telnyx")]
+        client, session, "ten-a@example.com", [
+            ("+12145550401", "bandwidth"), ("+19725550401", "telnyx")
+        ]
     )
     _tb, org_b = await _org(
-        client, session, "ten-b@example.com", [("+14155550402", "twilio"), ("+13035550402", "bandwidth")]
+        client, session, "ten-b@example.com", [
+            ("+14155550402", "twilio"), ("+13035550402", "bandwidth")
+        ]
     )
     a_id, b_id = uuid.UUID(org_a["id"]), uuid.UUID(org_b["id"])
 
@@ -232,10 +240,14 @@ async def test_provider_account_suspension_is_scoped_to_the_org_that_suspended_i
 ):
     client, registry, _carriers = sms_app
     _ta, org_a = await _org(
-        client, session, "ten-c@example.com", [("+12145550403", "bandwidth"), ("+19725550403", "telnyx")]
+        client, session, "ten-c@example.com", [
+            ("+12145550403", "bandwidth"), ("+19725550403", "telnyx")
+        ]
     )
     _tb, org_b = await _org(
-        client, session, "ten-d@example.com", [("+12145550404", "bandwidth"), ("+19725550404", "telnyx")]
+        client, session, "ten-d@example.com", [
+            ("+12145550404", "bandwidth"), ("+19725550404", "telnyx")
+        ]
     )
     a_id, b_id = uuid.UUID(org_a["id"]), uuid.UUID(org_b["id"])
 
@@ -265,7 +277,9 @@ async def test_ranking_reads_no_unmapped_count_shape(sms_app, session, query_cou
     `count(*) FROM <model>` without an org predicate."""
     client, registry, _carriers = sms_app
     _t, org = await _org(
-        client, session, "ten-e@example.com", [("+12145550405", "bandwidth"), ("+19725550405", "telnyx")]
+        client, session, "ten-e@example.com", [
+            ("+12145550405", "bandwidth"), ("+19725550405", "telnyx")
+        ]
     )
     org_id = uuid.UUID(org["id"])
     set_org_context(session, org_id)
@@ -364,7 +378,9 @@ async def test_reply_send_penalises_but_keeps_a_breached_number(sms_app, session
     below the clean one."""
     client, registry, _carriers = sms_app
     bad, clean = "+12145550601", "+19725550601"
-    token, org = await _org(client, session, "rep-a@example.com", [(bad, "bandwidth"), (clean, "telnyx")])
+    token, org = await _org(
+        client, session, "rep-a@example.com", [(bad, "bandwidth"), (clean, "telnyx")]
+    )
     org_id = uuid.UUID(org["id"])
     await _register_telnyx_campaign(session, org_id, clean)
     await _breach_number(client, session, token, org_id, bad)
@@ -564,7 +580,9 @@ async def test_voice_pin_walk_stops_after_the_pin_unless_cross_is_on(voice_app, 
     pinned_num = "+12145550710" if cross else "+12145550711"
     other_num = "+19725550710" if cross else "+19725550711"
     email = f"pin-voice-{int(cross)}@example.com"
-    token, org = await _org(client, session, email, [(pinned_num, "bandwidth"), (other_num, "telnyx")])
+    token, org = await _org(
+        client, session, email, [(pinned_num, "bandwidth"), (other_num, "telnyx")]
+    )
     org_id = uuid.UUID(org["id"])
     await _pin(session, org_id, carrier="bandwidth", cross=cross)
 
@@ -953,7 +971,9 @@ async def test_invalid_request_on_a_real_voice_dial_stops_the_walk_and_leaves_br
     """The adapter taxonomy wired all the way through the real dial path."""
     client, registry, bandwidth, telnyx = voice_app
     token, org = await _org(
-        client, session, "walkstop@example.com", [("+12145551200", "bandwidth"), ("+19725551200", "telnyx")]
+        client, session, "walkstop@example.com", [
+            ("+12145551200", "bandwidth"), ("+19725551200", "telnyx")
+        ]
     )
     bandwidth.scripted_results = [
         CreateCallResult("rejected", None, "Invalid request",
@@ -985,7 +1005,9 @@ async def test_rank_routes_binds_the_org_itself_before_reading_the_policy(
 
     client, registry, _carriers = sms_app
     _t, org = await _org(
-        client, session, "ctx@example.com", [("+12145551300", "bandwidth"), ("+19725551300", "telnyx")]
+        client, session, "ctx@example.com", [
+            ("+12145551300", "bandwidth"), ("+19725551300", "telnyx")
+        ]
     )
     org_id = uuid.UUID(org["id"])
 

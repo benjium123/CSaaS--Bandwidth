@@ -83,7 +83,9 @@ async def _rows(session, call):
 async def test_record_calls_starts_recorder_without_announcement_and_queues_row(
     session, mon_settings, tmp_path, monkeypatch
 ):
-    settings, org_id, started, announced = await _setup(session, mon_settings, tmp_path, monkeypatch)
+    settings, org_id, started, announced = await _setup(
+        session, mon_settings, tmp_path, monkeypatch
+    )
     dispatched = _patch_dispatch(monkeypatch)
     call = await _room_call(session, org_id)
 
@@ -155,12 +157,12 @@ async def test_no_recording_when_off_or_emergency(
 
 
 def test_record_calls_setting_round_trip():
-    class O:
+    class _Org:
         calling_settings = None
         recording_announcement = False
         recording_announcement_text = None
 
-    org = O()
+    org = _Org()
     assert calling_settings.as_dict(org)["record_calls"] is False
     calling_settings.apply(org, record_calls=True)
     assert calling_settings.record_calls_for(org) is True

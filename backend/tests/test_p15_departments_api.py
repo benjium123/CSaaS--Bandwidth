@@ -38,7 +38,9 @@ MESSAGING_HOOK = "/api/v1/webhooks/bandwidth/messaging"
 
 async def _inbound(client) -> None:
     r = await client.post(
-        MESSAGING_HOOK, content=fixture_bytes("message-received.json"), headers=webhook_auth_headers()
+        MESSAGING_HOOK, content=fixture_bytes(
+            "message-received.json"
+        ), headers=webhook_auth_headers()
     )
     assert r.status_code == 200
 
@@ -271,7 +273,9 @@ async def test_thread_filter_detail_404_and_send_guard(app_with_carrier, session
     inbox_a_id = await _inbox_id_for(client, h_owner, A)
     grant_a = await client.put(
         f"/api/v1/inboxes/{inbox_a_id}/grants",
-        json={"grants": [{"grantee_type": "user", "grantee_id": str(agent_user.id), "role": "member"}]},
+        json={
+            "grants": [{"grantee_type": "user", "grantee_id": str(agent_user.id), "role": "member"}]
+        },
         headers=h_owner,
     )
     assert grant_a.status_code == 200, grant_a.text
@@ -305,7 +309,9 @@ async def test_thread_filter_detail_404_and_send_guard(app_with_carrier, session
     inbox_b_id = await _inbox_id_for(client, h_owner, B)
     grant_b = await client.put(
         f"/api/v1/inboxes/{inbox_b_id}/grants",
-        json={"grants": [{"grantee_type": "user", "grantee_id": str(agent_user.id), "role": "viewer"}]},
+        json={
+            "grants": [{"grantee_type": "user", "grantee_id": str(agent_user.id), "role": "viewer"}]
+        },
         headers=h_owner,
     )
     assert grant_b.status_code == 200, grant_b.text
@@ -381,7 +387,11 @@ async def test_call_list_filter_and_place_guard(app_with_voice_carrier, session)
     inbox_a_id = await _inbox_id_for(client, h_owner, A)
     grant = await client.put(
         f"/api/v1/inboxes/{inbox_a_id}/grants",
-        json={"grants": [{"grantee_type": "user", "grantee_id": str(caller_user.id), "role": "member"}]},
+        json={
+            "grants": [
+                {"grantee_type": "user", "grantee_id": str(caller_user.id), "role": "member"}
+            ]
+        },
         headers=h_owner,
     )
     assert grant.status_code == 200, grant.text

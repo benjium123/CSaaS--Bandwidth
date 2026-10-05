@@ -30,8 +30,10 @@ from app.providers.registry import CarrierRegistry
 from tests.conftest import (
     FakeCarrier,
     auth_headers,
-    make_org_with_number as _make_org_with_number,
     make_platform_operator,
+)
+from tests.conftest import (
+    make_org_with_number as _make_org_with_number,
 )
 
 

@@ -59,7 +59,9 @@ async def teammates_for(session, call, *, exclude_user_id: uuid.UUID | None) -> 
         access = await inbox_access_svc.resolve_access(session, user.id, permissions)
         if not access.can_use(call.our_e164):
             continue
-        out.append({"user_id": str(user.id), "name": user.full_name or user.email, "email": user.email})
+        out.append(
+            {"user_id": str(user.id), "name": user.full_name or user.email, "email": user.email}
+        )
     out.sort(key=lambda t: t["name"].casefold())
     return out
 

@@ -40,10 +40,9 @@ from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ComplianceBlockedError, ValidationFailedError
 from app.models import AgentSmsTurn, Appointment, Message, MessageThread
-from app.services import ai_usage
 from app.services import agent as agent_svc
+from app.services import ai_usage, llm_client
 from app.services import kb as kb_svc
-from app.services import llm_client
 from app.services import sender as sender_svc
 from app.services.messaging import AI_SEND_KEY, send_message
 from app.services.outbox import record_platform_event

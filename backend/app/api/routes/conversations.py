@@ -365,7 +365,7 @@ def _extract_failure_detail(
     if call.status != "failed":
         return None
 
-    for leg in sorted(legs, key=lambda l: (l.created_at, l.id), reverse=True):
+    for leg in sorted(legs, key=lambda lg: (lg.created_at, lg.id), reverse=True):
         raw = (leg.extra or {}).get("error_detail")
         if isinstance(raw, str) and raw.strip():
             parsed = _parse_failure_text(raw)
@@ -399,7 +399,7 @@ def _extract_failure_detail(
                     if isinstance(nested_value, str) and nested_value.strip():
                         return nested_value.strip()
 
-    for leg in sorted(legs, key=lambda l: (l.created_at, l.id), reverse=True):
+    for leg in sorted(legs, key=lambda lg: (lg.created_at, lg.id), reverse=True):
         if leg.hangup_cause:
             return leg.hangup_cause
 
@@ -1036,7 +1036,7 @@ async def list_conversations(
                  .where(contacts_svc.active_contacts_filter())
             )
         ).all()
-        contact_by_e164 = {e164: contact for e164, contact in contact_rows}
+        contact_by_e164 = dict(contact_rows)
 
     items: list[ConversationItem] = []
     for pair in pairs.values():

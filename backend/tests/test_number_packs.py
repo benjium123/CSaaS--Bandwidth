@@ -8,6 +8,8 @@ subscription ends up carrying and what the workspace may use.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.errors import (
@@ -16,9 +18,8 @@ from app.errors import (
     ValidationFailedError,
 )
 from app.services import number_purchases, plan_billing, stripe_client
-from tests.conftest import make_settings
 from tests import test_workspace_plans as twp
-from unittest.mock import AsyncMock
+from tests.conftest import make_settings
 
 SETTINGS = make_settings(
     stripe_webhook_secret="whsec_test",
@@ -66,7 +67,9 @@ async def _on_plan(session, stripe, org, plan="team", extras=()):
 
 async def test_a_pack_replaces_the_5_dollar_extras_it_covers(session, stripe):
     org = await twp._org(session)
-    sid = await _on_plan(session, stripe, org, "team", [(SETTINGS.stripe_extra_number_price_id, 27)])
+    sid = await _on_plan(
+        session, stripe, org, "team", [(SETTINGS.stripe_extra_number_price_id, 27)]
+    )
     await twp._hold_numbers(session, org, 30)
 
     # 27 extras ($135) become one 25-pack ($105) + 2 extras ($10): $20 a month less.

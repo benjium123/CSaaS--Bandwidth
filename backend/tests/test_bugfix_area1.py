@@ -50,25 +50,25 @@ async def _attach_member(
 
 
 def _valid_prod_settings(**overrides) -> Settings:
-    values = dict(
-        app_env="production",
+    values = {
+        "app_env": "production",
         # P42: production requires Redis (shared rate limits / session revocation).
-        redis_url="redis://localhost:6379/0",
-        jwt_secret=TEST_JWT_SECRET,
-        session_secret="test-session-secret",
-        credential_encryption_key=Fernet.generate_key().decode(),
-        credentials_master_key="b" * 32,
-        allow_open_registration=False,
-        public_base_url="https://api.csaas.test",
-        public_web_url="https://console.csaas.test",
-        cors_origins="https://console.csaas.test",
-        database_url="sqlite+aiosqlite:///:memory:",
-        sweeper_enabled=False,
-        media_store_backend="memory",
+        "redis_url": "redis://localhost:6379/0",
+        "jwt_secret": TEST_JWT_SECRET,
+        "session_secret": "test-session-secret",
+        "credential_encryption_key": Fernet.generate_key().decode(),
+        "credentials_master_key": "b" * 32,
+        "allow_open_registration": False,
+        "public_base_url": "https://api.csaas.test",
+        "public_web_url": "https://console.csaas.test",
+        "cors_origins": "https://console.csaas.test",
+        "database_url": "sqlite+aiosqlite:///:memory:",
+        "sweeper_enabled": False,
+        "media_store_backend": "memory",
         # Isolate from whatever carrier credentials the real .env happens to define -
         # this helper is about the auth/config guards, not carrier live-ness.
-        bandwidth_enabled=False,
-    )
+        "bandwidth_enabled": False,
+    }
     values.update(overrides)
     return Settings(**values)
 
@@ -114,7 +114,7 @@ async def test_1_4_member_remove_update_and_last_owner_guard(client, session):
             sa.select(Role).where(Role.org_id == org_id, Role.name == "agent")
         )
     ).scalar_one()
-    admin_role = (
+    (
         await session.execute(
             sa.select(Role).where(Role.org_id == org_id, Role.name == "admin")
         )

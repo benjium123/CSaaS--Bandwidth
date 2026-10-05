@@ -110,7 +110,9 @@ async def test_department_lines_of_reports_are_not_passed_up(client, session):
     dept = Department(id=uuid.uuid4(), org_id=org_id, name="Sales")
     session.add(dept)
     await session.flush()
-    session.add(DepartmentMember(id=uuid.uuid4(), org_id=org_id, department_id=dept.id, user_id=u["rep"].id))
+    session.add(
+        DepartmentMember(id=uuid.uuid4(), org_id=org_id, department_id=dept.id, user_id=u["rep"].id)
+    )
     inbox = await _inbox_for(session, E_DEPT)
     session.add(InboxGrant(id=uuid.uuid4(), org_id=org_id, inbox_id=inbox.id,
                            grantee_type="department", grantee_id=dept.id, role="member"))
@@ -189,7 +191,9 @@ async def test_only_a_caller_who_sees_every_line_may_draw_the_edge(client, sessi
     session.add(Role(id=uuid.uuid4(), org_id=org_id, name="hr",
                      permissions=["members:read", "members:update"]))
     await session.flush()
-    hr_role = (await session.execute(sa.select(Role).where(Role.org_id == org_id, Role.name == "hr"))).scalar_one()
+    hr_role = (
+        await session.execute(sa.select(Role).where(Role.org_id == org_id, Role.name == "hr"))
+    ).scalar_one()
     peer_m = (await session.execute(
         sa.select(OrgMembership).where(OrgMembership.user_id == u["peer"].id)
     )).scalar_one()
@@ -259,7 +263,9 @@ async def test_an_edge_in_another_workspace_grants_nothing_here(client, session)
     tb = await register_and_login(client, "own-t11b@example.com")
     org_b = uuid.UUID((await create_org(client, tb, "Hier t11b"))["id"])
     set_org_context(session, org_b)
-    role = (await session.execute(sa.select(Role).where(Role.org_id == org_b, Role.name == "agent"))).scalar_one()
+    role = (
+        await session.execute(sa.select(Role).where(Role.org_id == org_b, Role.name == "agent"))
+    ).scalar_one()
     session.add(OrgMembership(id=uuid.uuid4(), org_id=org_b, user_id=ua["peer"].id,
                               role_id=role.id, reports_to_user_id=None))
     session.add(OrgMembership(id=uuid.uuid4(), org_id=org_b, user_id=ua["rep"].id,

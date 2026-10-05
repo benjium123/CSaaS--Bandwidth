@@ -69,7 +69,9 @@ DEFAULT_RATES_MICROS: dict[str, dict[str, int]] = {
 class ProviderRate(Base, TenantScoped, TimestampMixin):
     __tablename__ = "provider_rates"
     __table_args__ = (
-        sa.UniqueConstraint("org_id", "provider", "metric", name="uq_provider_rates_org_provider_metric"),
+        sa.UniqueConstraint(
+            "org_id", "provider", "metric", name="uq_provider_rates_org_provider_metric"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)

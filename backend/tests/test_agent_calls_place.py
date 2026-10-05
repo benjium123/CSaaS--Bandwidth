@@ -124,7 +124,9 @@ async def test_agent_dials_only_from_a_line_it_holds(app_with_voice_carrier, ses
     added_b = await client.post("/api/v1/numbers", json={"e164": B}, headers=h_owner)
     assert added_b.status_code == 201, added_b.text
 
-    agent_token, agent_user_id = await _agent_in_org(client, session, org_id, "ap-agent@example.com")
+    agent_token, agent_user_id = await _agent_in_org(
+        client, session, org_id, "ap-agent@example.com"
+    )
     h_agent = auth_headers(agent_token, str(org_id))
 
     # 1. Holding calls:place but NO grant is still nothing: the permission alone must not
@@ -137,7 +139,9 @@ async def test_agent_dials_only_from_a_line_it_holds(app_with_voice_carrier, ses
     inbox_a = await _inbox_id_for(client, h_owner, A)
     granted = await client.put(
         f"/api/v1/inboxes/{inbox_a}/grants",
-        json={"grants": [{"grantee_type": "user", "grantee_id": str(agent_user_id), "role": "member"}]},
+        json={
+            "grants": [{"grantee_type": "user", "grantee_id": str(agent_user_id), "role": "member"}]
+        },
         headers=h_owner,
     )
     assert granted.status_code == 200, granted.text
@@ -163,13 +167,17 @@ async def test_viewer_grant_stays_read_only_for_calls(app_with_voice_carrier, se
     added_a = await client.post("/api/v1/numbers", json={"e164": A}, headers=h_owner)
     assert added_a.status_code == 201, added_a.text
 
-    agent_token, agent_user_id = await _agent_in_org(client, session, org_id, "ap2-agent@example.com")
+    agent_token, agent_user_id = await _agent_in_org(
+        client, session, org_id, "ap2-agent@example.com"
+    )
     h_agent = auth_headers(agent_token, str(org_id))
 
     inbox_a = await _inbox_id_for(client, h_owner, A)
     granted = await client.put(
         f"/api/v1/inboxes/{inbox_a}/grants",
-        json={"grants": [{"grantee_type": "user", "grantee_id": str(agent_user_id), "role": "viewer"}]},
+        json={
+            "grants": [{"grantee_type": "user", "grantee_id": str(agent_user_id), "role": "viewer"}]
+        },
         headers=h_owner,
     )
     assert granted.status_code == 200, granted.text

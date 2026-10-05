@@ -20,9 +20,9 @@ import uuid
 
 import pytest
 
+from app.db.base import set_org_context
 from app.errors import ConfigurationError, PermissionDeniedError
 from app.models import KycPerson, KycProfile, Org, User
-from app.db.base import set_org_context
 from app.services import didit_client, identity_provider, stripe_client
 from app.services.kyc import start_person_verification
 from tests.conftest import make_settings

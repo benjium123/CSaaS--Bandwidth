@@ -122,7 +122,9 @@ def test_clean_dnd_until_expiry():
     # An end time in the past switches DND off by itself.
     assert call_prefs._clean({"dnd": True, "dnd_until": past}, now=now)["dnd"] is False
     # No end time = until turned off.
-    assert call_prefs._clean({"dnd": True}, now=now) == {"dnd": True, "dnd_until": None, "forward_to": None}
+    assert call_prefs._clean(
+        {"dnd": True}, now=now
+    ) == {"dnd": True, "dnd_until": None, "forward_to": None}
     # Garbage end time is ignored rather than silencing rings forever by accident.
     assert call_prefs._clean({"dnd": True, "dnd_until": "nope"}, now=now)["dnd"] is True
     # Old rows with no dnd_until key keep working.

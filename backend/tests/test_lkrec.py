@@ -17,7 +17,6 @@ from tests.test_p43_call_monitoring import (  # noqa: F401
     mon_settings,
 )
 
-
 # asyncio_mode=auto is active in this repo; every async test that talks to the DB or
 # to lkrec works with the existing conftest fixtures without an explicit marker. No
 # blanket pytestmark here - test_role_for below is a plain sync test.

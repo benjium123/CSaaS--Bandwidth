@@ -159,7 +159,9 @@ async def test_bill_finished_calls_skips_refused_call(session):
     assert await _usage(session, org.id) == []
 
 
-async def test_enforce_active_calls_cuts_running_inbound_call_when_balance_cannot_cover_next_minute(session):
+async def test_enforce_active_calls_cuts_running_inbound_call_when_balance_cannot_cover_next_minute(
+    session
+):
     org = await _new_org(session)
     await _enable(session, org.id, balance=5_000)
     now = _now()
@@ -479,7 +481,9 @@ def test_recharge_amount():
     assert ai_usage.recharge_amount(40_000_000, 0) == 40_000_000
 
 
-async def test_auto_recharge_declines_and_disables_after_max_failures(session, settings, monkeypatch):
+async def test_auto_recharge_declines_and_disables_after_max_failures(
+    session, settings, monkeypatch
+):
     org = await _new_org(session)
     await _enable(session, org.id, balance=1_000_000)
     pm = await _make_payment_method(session, org.id)
@@ -611,7 +615,9 @@ async def test_alert_is_not_resent_when_the_level_improves_in_the_same_cycle(ses
     assert org.low_balance_alert_key.endswith(":exhausted")
 
     # Money comes back without a top-up (e.g. a hold released): low again, no re-alert.
-    await credits.adjust(session, org.id, 500_000, reference="back", note="release", created_by=None)
+    await credits.adjust(
+        session, org.id, 500_000, reference="back", note="release", created_by=None
+    )
     await session.commit()
     org = await session.get(Org, org.id)
     assert await billing_alerts.evaluate(session, settings, org) == "low"

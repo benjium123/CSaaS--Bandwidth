@@ -135,7 +135,9 @@ async def upsert_rates(
         metric = item.get("metric")
         cost = item.get("unit_cost_micros")
 
-        if not isinstance(provider, str) or not isinstance(metric, str) or not isinstance(cost, int):
+        if not isinstance(
+            provider, str
+        ) or not isinstance(metric, str) or not isinstance(cost, int):
             raise ValidationFailedError("provider, metric, and unit_cost_micros are required")
         if provider not in DEFAULT_RATES_MICROS:
             raise ValidationFailedError(f"Unknown provider: {provider}")

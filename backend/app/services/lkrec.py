@@ -13,9 +13,7 @@ from pathlib import Path
 import httpx
 import sqlalchemy as sa
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.models import Call, CallReview
 from app.models.voice import TERMINAL_CALL_STATUSES
@@ -41,7 +39,7 @@ def enabled(settings) -> bool:
 
 def api_token(settings) -> str:
     secret = settings.livekit_api_secret.get_secret_value()
-    return hashlib.sha256(f"lkrec:{secret}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"lkrec:{secret}".encode()).hexdigest()
 
 
 def room_call_id(room: str) -> uuid.UUID | None:
@@ -117,7 +115,7 @@ async def ensure_announcement(
         raise AnnouncementUnavailable("ElevenLabs API key is not configured.")
 
     digest = hashlib.sha256(
-        f"{voice}|{ANNOUNCE_MODEL}|{text}".encode("utf-8")
+        f"{voice}|{ANNOUNCE_MODEL}|{text}".encode()
     ).hexdigest()
     name = digest[:32] + ".ogg"
     directory = Path(settings.monitor_recorder_dir) / "announce"
@@ -292,7 +290,8 @@ async def ingest_tick(session, settings, store, *, limit: int = 50) -> dict:
             counts["discarded"] += 1
             continue
 
-        # JUSTIFIED allow_unscoped: the sweeper inspects recordings for any call in the shared directory.
+        # JUSTIFIED allow_unscoped: the sweeper inspects recordings for any call in the shared
+        # directory.
         call = (
             await session.execute(
                 sa.select(Call)

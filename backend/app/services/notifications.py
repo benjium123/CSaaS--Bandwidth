@@ -31,7 +31,6 @@ from app.models import (
     OrgNumber,
     Role,
 )
-
 from app.services import org_tree
 
 log = structlog.get_logger("notifications")

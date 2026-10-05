@@ -15,9 +15,7 @@ from app.db.base import set_org_context
 from app.errors import ValidationFailedError
 from app.models import Call, CreditLedgerEntry, Message, Org
 from app.models.billing_v2 import BillingPayment, BillingRefusal, PlatformPrice
-from app.services import bundles, credits, payments
-from app.services import stripe_client
-from app.services import telephony_billing
+from app.services import bundles, credits, payments, stripe_client, telephony_billing
 from app.services.telephony_billing import TelephonyCreditsError
 from tests.conftest import auth_headers, make_org_with_number
 
@@ -115,10 +113,18 @@ async def test_unit_price_defaults(session):
     assert await telephony_billing.unit_price(session, org.id, "bandwidth", "sms_in") == 15_000
     assert await telephony_billing.unit_price(session, org.id, "bandwidth", "mms_out") == 35_000
     assert await telephony_billing.unit_price(session, org.id, "bandwidth", "mms_in") == 35_000
-    assert await telephony_billing.unit_price(session, org.id, "bandwidth", "voice_min_out") == 12_000
-    assert await telephony_billing.unit_price(session, org.id, "bandwidth", "voice_min_in") == 12_000
-    assert await telephony_billing.unit_price(session, org.id, "bandwidth", "fax_page_out") == 100_000
-    assert await telephony_billing.unit_price(session, org.id, "bandwidth", "number_mrc") == 15_000_000
+    assert await telephony_billing.unit_price(
+        session, org.id, "bandwidth", "voice_min_out"
+    ) == 12_000
+    assert await telephony_billing.unit_price(
+        session, org.id, "bandwidth", "voice_min_in"
+    ) == 12_000
+    assert await telephony_billing.unit_price(
+        session, org.id, "bandwidth", "fax_page_out"
+    ) == 100_000
+    assert await telephony_billing.unit_price(
+        session, org.id, "bandwidth", "number_mrc"
+    ) == 15_000_000
 
 
 async def test_platform_price_overrides_constant(session):

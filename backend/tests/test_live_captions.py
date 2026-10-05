@@ -21,7 +21,9 @@ class DispatchSpy(FakeLiveKit):
         self.dispatches: list[dict] = []
 
     async def create_agent_dispatch(self, *, room, agent_name, metadata):  # noqa: ANN001
-        self.dispatches.append({"room": room, "agent_name": agent_name, "metadata": json.loads(metadata)})
+        self.dispatches.append(
+            {"room": room, "agent_name": agent_name, "metadata": json.loads(metadata)}
+        )
 
 
 async def _entitle(session, org_id, key="call_transcription"):
@@ -98,7 +100,9 @@ async def test_no_captions_unless_live_and_recording(
 
 
 @pytest.mark.asyncio
-async def test_overflow_off_without_deepgram_key_or_over_cap(session, mon_settings, tmp_path, monkeypatch):
+async def test_overflow_off_without_deepgram_key_or_over_cap(
+    session, mon_settings, tmp_path, monkeypatch
+):
     org_id = await _live_org(session)
     no_key = _live_settings(mon_settings, tmp_path, deepgram_api_key=SecretStr(""))
     assert await live_captions.overflow_allowed(session, no_key, org_id) is False

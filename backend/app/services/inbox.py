@@ -111,7 +111,9 @@ async def list_inbox(
             # 5.12: an API-key caller has no human user_id - `assigned_user_id == None`
             # silently compiles to IS NULL in SQLAlchemy, which returned UNASSIGNED
             # threads instead of erroring on a filter that makes no sense for this caller.
-            raise ValidationFailedError("assigned=me requires an authenticated user, not an API key")
+            raise ValidationFailedError(
+                "assigned=me requires an authenticated user, not an API key"
+            )
         stmt = stmt.where(MessageThread.assigned_user_id == user_id)
     elif filters.assigned == "unassigned":
         stmt = stmt.where(MessageThread.assigned_user_id.is_(None))

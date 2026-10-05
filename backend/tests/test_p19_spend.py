@@ -26,8 +26,10 @@ from app.services import sweeper as sweeper_svc
 from tests.conftest import (
     auth_headers,
     create_org,
-    make_settings,
     make_platform_operator,
+    make_settings,
+)
+from tests.conftest import (
     register_and_login as _register_and_login,
 )
 
@@ -753,7 +755,9 @@ async def test_spend_rollup_route_rbac_valid_day_and_future_rejected(client, ses
 # not status=="active"; scope_key; unrated_providers; explicit org threading.
 # ======================================================================================
 async def test_rollup_plain_inbound_sms(client, session):
-    org_id, thread_id = await _org_with_thread(client, session, "p19-in-sms@example.com", "Inbound SMS Org")
+    org_id, thread_id = await _org_with_thread(
+        client, session, "p19-in-sms@example.com", "Inbound SMS Org"
+    )
     day = date(2026, 6, 15)
     start = datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)
 
@@ -784,7 +788,9 @@ async def test_rollup_plain_inbound_sms(client, session):
 
 
 async def test_rollup_inbound_call_voice_minutes(client, session):
-    org_id, _thread_id = await _org_with_thread(client, session, "p19-in-call@example.com", "Inbound Call Org")
+    org_id, _thread_id = await _org_with_thread(
+        client, session, "p19-in-call@example.com", "Inbound Call Org"
+    )
     day = date(2026, 6, 15)
     start = datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)
 
@@ -815,7 +821,9 @@ async def test_rollup_inbound_call_voice_minutes(client, session):
 
 
 async def test_rollup_outbound_mms(client, session):
-    org_id, thread_id = await _org_with_thread(client, session, "p19-mms-out@example.com", "Outbound MMS Org")
+    org_id, thread_id = await _org_with_thread(
+        client, session, "p19-mms-out@example.com", "Outbound MMS Org"
+    )
     day = date(2026, 6, 15)
     start = datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)
 
@@ -847,7 +855,9 @@ async def test_rollup_outbound_mms(client, session):
 async def test_rollup_message_quantity_sums_segment_counts_not_rows(client, session):
     """THE money-math fix: quantity is the sum of billed segments per message
     (carrier-reported when known, else our own estimate, else 1) - never a row count."""
-    org_id, thread_id = await _org_with_thread(client, session, "p19-segments@example.com", "Segments Org")
+    org_id, thread_id = await _org_with_thread(
+        client, session, "p19-segments@example.com", "Segments Org"
+    )
     day = date(2026, 6, 15)
     start = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
 
@@ -895,7 +905,9 @@ async def test_rollup_message_quantity_sums_segment_counts_not_rows(client, sess
 
 
 async def test_rollup_excludes_queued_and_rejected_outbound(client, session):
-    org_id, thread_id = await _org_with_thread(client, session, "p19-excl@example.com", "Exclusion Org")
+    org_id, thread_id = await _org_with_thread(
+        client, session, "p19-excl@example.com", "Exclusion Org"
+    )
     day = date(2026, 6, 15)
     start = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
 
@@ -970,7 +982,9 @@ async def test_rollup_excludes_queued_and_rejected_outbound(client, session):
 
 
 async def test_rollup_honors_org_rate_override(client, session):
-    org_id, thread_id = await _org_with_thread(client, session, "p19-override@example.com", "Override Org")
+    org_id, thread_id = await _org_with_thread(
+        client, session, "p19-override@example.com", "Override Org"
+    )
     day = date(2026, 6, 15)
     start = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
 
@@ -1156,7 +1170,6 @@ async def test_http_spend_summary_org_isolation(client, session):
 
     token_b = await register_and_login(client, "p19-httpisob@example.com")
     org_b = await create_org(client, token_b, "HTTP Iso B")
-    org_b_id = uuid.UUID(org_b["id"])
 
     day = date(2026, 6, 15)
     start = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)

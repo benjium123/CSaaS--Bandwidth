@@ -12,7 +12,7 @@ REPLAY_TTL_SECONDS = 300
 #: reinsert below) when the expired sweep alone isn't enough to get back under the cap.
 _MAX_ENTRIES = 10_000
 
-_SEEN: "OrderedDict[str, float]" = OrderedDict()
+_SEEN: OrderedDict[str, float] = OrderedDict()
 _LOCK = Lock()
 
 

@@ -171,7 +171,8 @@ async def evaluate(session: AsyncSession, settings, org: Org) -> str:  # noqa: A
         subject = "Your balance is running low"
         body = (
             f"Your {settings.app_name} balance is {_money(balance)}, below your warning "
-            f"level of {_money(max(int(org.warn_threshold_micros or 0), MIN_WARN_THRESHOLD_MICROS))} "
+            f"level of "
+            f"{_money(max(int(org.warn_threshold_micros or 0), MIN_WARN_THRESHOLD_MICROS))} "
             "(about a day of your usage). Add credit or turn on auto-recharge so your "
             "numbers keep working."
         )

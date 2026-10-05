@@ -249,7 +249,9 @@ async def test_tfv_verified_confirmed_approval_succeeds(telnyx_app, session):
 async def test_tfv_status_field_alone_refuses_approval(telnyx_app, session):
     client, application, install = telnyx_app
     token, org = await _register_and_org(client, "tfv-status-only@example.com")
-    tfv = await _create_tollfree(client, application, session, token, org, "tfv-status-only@example.com")
+    tfv = await _create_tollfree(
+        client, application, session, token, org, "tfv-status-only@example.com"
+    )
     await _seed_ref(session, TollFreeVerification, tfv["id"], TELNYX_REF, org["id"])
     # ``status`` is NOT the documented toll-free field; only ``verificationStatus``
     # counts, so an unrelated ``status: approved`` must confirm nothing.
@@ -262,7 +264,9 @@ async def test_tfv_status_field_alone_refuses_approval(telnyx_app, session):
 async def test_tfv_mismatched_id_refuses_approval(telnyx_app, session):
     client, application, install = telnyx_app
     token, org = await _register_and_org(client, "tfv-mismatch@example.com")
-    tfv = await _create_tollfree(client, application, session, token, org, "tfv-mismatch@example.com")
+    tfv = await _create_tollfree(
+        client, application, session, token, org, "tfv-mismatch@example.com"
+    )
     await _seed_ref(session, TollFreeVerification, tfv["id"], TELNYX_REF, org["id"])
     install({"id": OTHER_REF, "verificationStatus": "Verified"})
     r = await _approve_tfv(client, application, token, org, tfv["id"])

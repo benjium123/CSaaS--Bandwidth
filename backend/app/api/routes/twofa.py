@@ -36,9 +36,9 @@ from app.errors import (
 from app.models import User
 from app.rate_limit import enforce_rate_limit
 from app.repositories import users as users_repo
-from app.services import device_sessions  # noqa: F401 - type hints (Ringlite apps P1)
 from app.services import (
     account_security,
+    device_sessions,  # noqa: F401 - type hints (Ringlite apps P1)
     email_code,
     lockout,
     login_flow,
@@ -173,7 +173,7 @@ async def verify_totp_login(
     response: Response,
     session: AsyncSession,
     *,
-    device: "device_sessions.DeviceInfo | None" = None,
+    device: device_sessions.DeviceInfo | None = None,
 ) -> dict:
     """Exchange a pending-2FA token + code for a real access token.
 
@@ -400,7 +400,7 @@ async def verify_email_login(
     response: Response,
     session: AsyncSession,
     *,
-    device: "device_sessions.DeviceInfo | None" = None,
+    device: device_sessions.DeviceInfo | None = None,
 ) -> dict:
     """Exchange a pending-2FA token + emailed code for a session (see ``verify``)."""
     settings: Settings = request.app.state.settings

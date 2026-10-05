@@ -401,7 +401,9 @@ async def fee_tick(session: AsyncSession, settings) -> int:  # noqa: ANN001
     """Fill in Stripe's fee for recent paid payments that do not have it yet."""
     rows = (
         await session.execute(
-            sa.select(BillingPayment.id, BillingPayment.org_id, BillingPayment.stripe_payment_intent_id)
+            sa.select(
+                BillingPayment.id, BillingPayment.org_id, BillingPayment.stripe_payment_intent_id
+            )
             .where(
                 BillingPayment.state == "paid",
                 BillingPayment.stripe_fee_micros.is_(None),

@@ -213,8 +213,8 @@ async def _add_agent(browser: httpx.AsyncClient, org_id: uuid.UUID, email: str) 
 
 async def _grant_member_access(session, org_id: uuid.UUID, e164: str, user_id: uuid.UUID) -> None:
     """Give a member access to a number by placing them on the number's inbox."""
-    from app.models import Inbox, InboxGrant, OrgNumber
     from app.db.base import set_org_context
+    from app.models import Inbox, InboxGrant, OrgNumber
 
     set_org_context(session, org_id)
 

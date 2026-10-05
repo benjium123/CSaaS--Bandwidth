@@ -22,10 +22,10 @@ from tests.test_agent_seams import (
     OUR,
     THEIRS,
     _place_call,
+    app_with_agent,  # noqa: F401 - pytest fixture by name
     worker_headers,
     worker_token,
 )
-from tests.test_agent_seams import app_with_agent  # noqa: F401 - pytest fixture by name
 
 THEIRS_OWNED = "+19725550200"
 

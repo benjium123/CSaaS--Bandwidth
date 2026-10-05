@@ -77,7 +77,10 @@ async def _monitoring_jobs(app, results: dict) -> None:  # noqa: ANN001
         ]
         if lkrec.enabled(settings):
             jobs += [
-                ("recordings_ingest", lambda s: lkrec.ingest_tick(s, settings, app.state.media_store)),
+                (
+                    "recordings_ingest",
+                    lambda s: lkrec.ingest_tick(s, settings, app.state.media_store)
+                ),
                 ("recorder_resume", lambda s: lkrec.resume_tick(s, settings)),
             ]
     if hourly_due:

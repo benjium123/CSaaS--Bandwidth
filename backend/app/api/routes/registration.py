@@ -507,9 +507,7 @@ class TextingOtpIn(BaseModel):
 
 
 async def _texting_out(ctx: OrgContext, reg) -> dict:
-    from app.services import tendlc
-
-    from app.services import discounts
+    from app.services import discounts, tendlc
 
     brand = await ctx.session.get(Brand, reg.brand_id)
     campaign = await ctx.session.get(Campaign, reg.campaign_id)

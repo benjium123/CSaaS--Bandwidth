@@ -71,7 +71,9 @@ async def test_org_login_events_do_not_leak_another_orgs_sign_ins(client, sessio
     await session.commit()
 
     r = await client.get(
-        "/api/v1/orgs/current/login-events", headers=auth_headers(token, org_a["id"]), params={"limit": 200}
+        "/api/v1/orgs/current/login-events", headers=auth_headers(
+            token, org_a["id"]
+        ), params={"limit": 200}
     )
     assert r.status_code == 200, r.text
     agents = [row["user_agent"] for row in r.json()]

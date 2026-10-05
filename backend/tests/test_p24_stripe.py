@@ -199,7 +199,9 @@ async def test_auto_recharge_charges_once_per_crossing(session, monkeypatch):
 
     calls = 0
 
-    async def fake_charge(settings, *, org, amount_micros, payment_method_id, customer_id, idempotency_key):
+    async def fake_charge(
+        settings, *, org, amount_micros, payment_method_id, customer_id, idempotency_key
+    ):
         nonlocal calls
         calls += 1
         return {"id": "pi_auto_1", "status": "succeeded"}
@@ -229,11 +231,15 @@ async def test_auto_recharge_charges_once_per_crossing(session, monkeypatch):
 
 
 async def test_auto_recharge_does_nothing_when_it_is_switched_off(session, monkeypatch):
-    org = await _make_org(session, auto={"threshold_micros": 10_000_000, "amount_micros": 5_000_000})
+    org = await _make_org(
+        session, auto={"threshold_micros": 10_000_000, "amount_micros": 5_000_000}
+    )
 
     calls = 0
 
-    async def fake_charge(settings, *, org, amount_micros, payment_method_id, customer_id, idempotency_key):
+    async def fake_charge(
+        settings, *, org, amount_micros, payment_method_id, customer_id, idempotency_key
+    ):
         nonlocal calls
         calls += 1
         return {"id": "", "status": "failed", "reason": "should not be called"}
@@ -259,7 +265,9 @@ async def test_a_declined_card_does_not_add_credits(session, monkeypatch):
     await session.commit()
     await session.refresh(org)
 
-    async def fake_charge(settings, *, org, amount_micros, payment_method_id, customer_id, idempotency_key):
+    async def fake_charge(
+        settings, *, org, amount_micros, payment_method_id, customer_id, idempotency_key
+    ):
         return {"id": "", "status": "failed", "reason": "Your card was declined."}
 
     monkeypatch.setattr(stripe_client, "charge_off_session", fake_charge)

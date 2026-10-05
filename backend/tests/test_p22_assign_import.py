@@ -263,7 +263,9 @@ async def test_contacts_filter_chips_mine_team_unowned(client, session):
     await _join_dept(session, org_id, sales_id, alice.id)
     await _join_dept(session, org_id, support_id, bob.id)
 
-    contact_alice = await create_contact(client, alice_token, org["id"], "Alice C", ["+12135550120"])
+    contact_alice = await create_contact(
+        client, alice_token, org["id"], "Alice C", ["+12135550120"]
+    )
     contact_bob = await create_contact(client, bob_token, org["id"], "Bob C", ["+12135550121"])
 
     set_org_context(session, org_id)
@@ -338,8 +340,12 @@ async def test_custom_team_lead_role_can_reassign_inside_team(client, session):
     await _join_dept(session, org_id, sales_id, alice.id)
     await _join_dept(session, org_id, support_id, bob.id)
 
-    contact_sales = await create_contact(client, alice_token, org["id"], "Sales Lead C", ["+12135550122"])
-    contact_support = await create_contact(client, bob_token, org["id"], "Support Lead C", ["+12135550123"])
+    contact_sales = await create_contact(
+        client, alice_token, org["id"], "Sales Lead C", ["+12135550122"]
+    )
+    contact_support = await create_contact(
+        client, bob_token, org["id"], "Support Lead C", ["+12135550123"]
+    )
 
     h_lead = auth_headers(lead_token, org["id"])
 

@@ -16,7 +16,6 @@ from typing import Protocol, runtime_checkable
 
 from app.errors import FeatureUnavailableError
 
-
 #: A per-number price above this is not a real carrier quote - either a parsing
 #: accident (e.g. "1e999") or a corrupt/hostile value. $10,000,000.00.
 _MAX_COST_CENTS = 1_000_000_000

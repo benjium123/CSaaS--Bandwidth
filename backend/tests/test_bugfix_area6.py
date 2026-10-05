@@ -18,9 +18,7 @@ from app.models import (
     Contact,
     ContactList,
     ContactListRow,
-    ContactPhone,
     DialAttempt,
-    MediaAsset,
     Message,
     MessageThread,
     Org,
@@ -28,12 +26,11 @@ from app.models import (
     OutboundCampaign,
     OutboundSend,
 )
-from app.providers.domain import SendResult
 from app.services import dialer as dialer_svc
 from app.services import kb as kb_svc
 from app.services import outbound as outbound_svc
 from app.services import scoring as scoring_svc
-from tests.conftest import FakeCarrier, auth_headers, make_org_with_number
+from tests.conftest import auth_headers, make_org_with_number
 
 OUR = "+12145550100"
 OUR_B = "+12145550101"
@@ -112,7 +109,9 @@ async def test_6_1_stale_send_adoption_ignores_unrelated_message(app_with_loopba
 
     set_org_context(session, org_id)
     row = (
-        await session.execute(sa.select(OutboundSend).where(OutboundSend.campaign_id == campaign.id))
+        await session.execute(
+            sa.select(OutboundSend).where(OutboundSend.campaign_id == campaign.id)
+        )
     ).scalar_one()
     old = datetime.now(timezone.utc) - timedelta(minutes=10)
     await session.execute(
@@ -155,7 +154,9 @@ async def test_6_1_stale_send_adopts_matching_message(app_with_loopback, session
 
     set_org_context(session, org_id)
     row = (
-        await session.execute(sa.select(OutboundSend).where(OutboundSend.campaign_id == campaign.id))
+        await session.execute(
+            sa.select(OutboundSend).where(OutboundSend.campaign_id == campaign.id)
+        )
     ).scalar_one()
     old = datetime.now(timezone.utc) - timedelta(minutes=10)
     await session.execute(
@@ -480,13 +481,17 @@ async def test_6_10_final_round_without_tools_synthesizes_reply(session, monkeyp
             return llm_client.ChatResult(
                 text="",
                 tool_calls=[
-                    llm_client.ToolCall(id=f"c{call_count['n']}", name="kb_search", arguments={"query": "x"})
+                    llm_client.ToolCall(
+                        id=f"c{call_count['n']}", name="kb_search", arguments={"query": "x"}
+                    )
                 ],
                 tokens_in=10,
                 tokens_out=5,
             )
         # The forced final round (tools disabled) actually answers.
-        return llm_client.ChatResult(text="Here is your answer.", tool_calls=[], tokens_in=8, tokens_out=4)
+        return llm_client.ChatResult(
+            text="Here is your answer.", tool_calls=[], tokens_in=8, tokens_out=4
+        )
 
     async def fake_run_tool_call(session_, org_id_, thread_, call):
         return "some kb result"
@@ -522,7 +527,14 @@ async def test_6_11_missing_llm_key_skips_turn_thread_stays_active(session):
     await session.flush()
     set_org_context(session, org_id)
     session.add(
-        OrgNumber(id=uuid.uuid4(), org_id=org_id, e164=OUR, carrier="bandwidth", is_active=True, status="active")
+        OrgNumber(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            e164=OUR,
+            carrier="bandwidth",
+            is_active=True,
+            status="active"
+        )
     )
     thread = MessageThread(
         id=uuid.uuid4(), org_id=org_id, our_e164=OUR, contact_e164=A, ai_state="off",
@@ -608,7 +620,9 @@ async def test_6_14_call_scoring_persists_tokens(session, monkeypatch):
     session.add(call)
     await session.flush()
     session.add(
-        CallTranscriptSegment(id=uuid.uuid4(), org_id=org_id, call_id=call.id, role="user", text="hi", at_ms=0)
+        CallTranscriptSegment(
+            id=uuid.uuid4(), org_id=org_id, call_id=call.id, role="user", text="hi", at_ms=0
+        )
     )
     await session.commit()
 
@@ -624,7 +638,9 @@ async def test_6_14_call_scoring_persists_tokens(session, monkeypatch):
     counts = await scoring_svc.score_pending_calls(session, settings, client=object())
     assert counts["done"] == 1
 
-    score = (await session.execute(sa.select(CallScore).where(CallScore.call_id == call.id))).scalar_one()
+    score = (
+        await session.execute(sa.select(CallScore).where(CallScore.call_id == call.id))
+    ).scalar_one()
     assert score.tokens_in == 123
     assert score.tokens_out == 45
 
@@ -651,7 +667,9 @@ async def test_6_15_voice_campaign_emits_completed_event(app_with_loopback, sess
     campaign = await _dial_campaign(session, org_id, lst.id)
     campaign = await dialer_svc.start_dial_campaign(session, campaign)
 
-    async def fake_start_call(session_, settings, bus, api, *, org_id, to_e164, from_e164, identity):
+    async def fake_start_call(
+        session_, settings, bus, api, *, org_id, to_e164, from_e164, identity
+    ):
         return dialer_svc.DialOutcome(status="connected", call_id=None)
 
     monkeypatch.setattr(dialer_svc, "_start_call", fake_start_call)

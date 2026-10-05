@@ -103,7 +103,9 @@ def to_messages(history: list[tuple[str, str]]) -> list[dict]:
     return out
 
 
-async def reply(settings: Settings, history: list[tuple[str, str]], account: dict | None = None) -> Reply:
+async def reply(
+    settings: Settings, history: list[tuple[str, str]], account: dict | None = None
+) -> Reply:
     """Answer the conversation's latest visitor message. Any failure (no key, provider
     error, empty answer) is a handoff, never an exception."""
     api_key = settings.deepseek_api_key.get_secret_value().strip()
@@ -195,6 +197,8 @@ async def _kyc_status(session, org_id: uuid.UUID) -> str:
     from app.models import KycProfile
 
     status = (
-        await session.execute(sa.select(KycProfile.status).where(KycProfile.org_id == org_id).limit(1))
+        await session.execute(
+            sa.select(KycProfile.status).where(KycProfile.org_id == org_id).limit(1)
+        )
     ).scalar_one_or_none()
     return status or "not started"

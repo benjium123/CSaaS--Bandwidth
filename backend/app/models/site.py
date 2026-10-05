@@ -74,8 +74,12 @@ class SiteChat(Base, TimestampMixin):
     #: The operator who owns the chat; NULL = every operator is alerted.
     assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True, index=True)
     #: Last time an operator opened the chat; unread = last_visitor_at is newer.
-    agent_read_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    last_visitor_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    agent_read_at: Mapped[
+        datetime | None
+    ] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    last_visitor_at: Mapped[
+        datetime | None
+    ] = mapped_column(sa.DateTime(timezone=True), nullable=True)
     #: 0096: NULL = no assistant, "active" = the assistant answers alone, "assist" = it answers
     #: while the team is alerted (a person asked for out of hours), "handoff" = it passed the
     #: chat to the team, "off" = an operator took over (routes/site.py, services/support_agent.py).

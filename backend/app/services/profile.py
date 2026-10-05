@@ -22,13 +22,17 @@ from app.models import EmergencyAddress, OrgMembership, OrgNumber, User
 log = structlog.get_logger("profile")
 
 
-async def assigned_numbers(session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID) -> list[OrgNumber]:
+async def assigned_numbers(
+    session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID
+) -> list[OrgNumber]:
     """Active numbers this person is assigned to (org context must be set)."""
     from app.services import inbox_access
 
     members = (
         await session.execute(
-            sa.select(sa.func.count()).select_from(OrgMembership).where(OrgMembership.org_id == org_id)
+            sa.select(
+                sa.func.count()
+            ).select_from(OrgMembership).where(OrgMembership.org_id == org_id)
         )
     ).scalar_one()
     stmt = sa.select(OrgNumber).where(
@@ -47,7 +51,9 @@ async def assigned_numbers(session: AsyncSession, org_id: uuid.UUID, user_id: uu
     return list((await session.execute(stmt.order_by(OrgNumber.e164))).scalars())
 
 
-async def my_address(session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID) -> EmergencyAddress | None:
+async def my_address(
+    session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID
+) -> EmergencyAddress | None:
     return (
         await session.execute(
             sa.select(EmergencyAddress)

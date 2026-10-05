@@ -232,7 +232,11 @@ async def _stt(settings: Settings, audio: bytes, content_type: str, *, client, e
         raise _SttFailed(resp.status_code in (408, 429, 503) or resp.status_code >= 500)
     data = resp.json()
     segs = [
-        (int(seg.get("channel", 0)), str(seg.get("text") or "").strip(), int(seg.get("start_ms", 0)))
+        (
+            int(seg.get("channel", 0)),
+            str(seg.get("text") or "").strip(),
+            int(seg.get("start_ms", 0))
+        )
         for seg in data.get("segments", [])
         if isinstance(seg, dict) and str(seg.get("text") or "").strip()
     ]
@@ -364,7 +368,9 @@ async def _transcribe_sides(
             # A recorder restart splits a side into parts: each part is its own request.
             segs, seconds = await _stt(settings, data, "audio/ogg", client=client, engine=engine)
             if engine == "groq":
-                await _meter_groq(session, call, seconds, side=side if part < 2 else f"{side}:{part}")
+                await _meter_groq(
+                    session, call, seconds, side=side if part < 2 else f"{side}:{part}"
+                )
             role = "user" if side == "customer" else "agent"
             for _channel, text, at_ms in segs:
                 rows.append(_Seg(role, text, offset_ms + at_ms))
@@ -556,7 +562,9 @@ async def _verify_with_groq(
     await session.execute(
         sa.delete(CallTranscriptSegment).where(CallTranscriptSegment.call_id == call.id)
     )
-    outcome = await transcribe_recording(session, settings, store, call, client=client, engine="groq")
+    outcome = await transcribe_recording(
+        session, settings, store, call, client=client, engine="groq"
+    )
     segments = await _segments(session, call.id)
     if outcome != "done" or not segments:
         # Put the local transcript back so the review keeps its evidence.

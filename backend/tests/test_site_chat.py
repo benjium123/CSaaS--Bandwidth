@@ -13,11 +13,11 @@ from app.api.routes import site as site_routes
 from app.services import support_agent
 
 _REAL_STAFFED_NOW = site_routes.staffed_now
-from app.main import create_app
-from app.models import SecurityAlert
-from app.models.site import SiteChat, SiteLead
-from tests.conftest import _install, FakeCarrier, auth_headers, make_settings
-from tests.test_p41_kyc import _make_operator
+from app.main import create_app  # noqa: E402
+from app.models import SecurityAlert  # noqa: E402
+from app.models.site import SiteChat, SiteLead  # noqa: E402
+from tests.conftest import FakeCarrier, _install, auth_headers, make_settings  # noqa: E402
+from tests.test_p41_kyc import _make_operator  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -58,10 +58,16 @@ def _fake_llm(reply: str):
 
 
 async def test_ask_answers_from_facts(client, monkeypatch):
-    monkeypatch.setattr(support_agent, "client_factory", _fake_llm("Team is $29 per number a month."))
+    monkeypatch.setattr(
+        support_agent, "client_factory", _fake_llm("Team is $29 per number a month.")
+    )
     r = await client.post(
         "/api/v1/public/site-chat/ask",
-        json={"question": "how much is team", "history": [], "context": [{"q": "Plans?", "a": "Team $29"}]},
+        json={
+            "question": "how much is team",
+            "history": [],
+            "context": [{"q": "Plans?", "a": "Team $29"}]
+        },
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"answer": "Team is $29 per number a month.", "handoff": False}
@@ -69,7 +75,9 @@ async def test_ask_answers_from_facts(client, monkeypatch):
 
 async def test_ask_offers_a_person_when_the_model_cannot_answer(client, monkeypatch):
     monkeypatch.setattr(support_agent, "client_factory", _fake_llm("HANDOFF"))
-    r = await client.post("/api/v1/public/site-chat/ask", json={"question": "can you fix my invoice"})
+    r = await client.post(
+        "/api/v1/public/site-chat/ask", json={"question": "can you fix my invoice"}
+    )
     assert r.json()["handoff"] is True
 
 
@@ -101,7 +109,9 @@ async def test_handoff_round_trip(client, session):
     assert chat.email == "dana@example.com" and chat.sms_consent is False  # no phone, no texts
     assert chat.token_hash != token
     alert = (
-        await session.execute(sa.select(SecurityAlert).where(SecurityAlert.kind == "site_chat_handoff"))
+        await session.execute(
+            sa.select(SecurityAlert).where(SecurityAlert.kind == "site_chat_handoff")
+        )
     ).scalar_one()
     assert alert.detail["chat_id"] == chat_id
 
@@ -110,23 +120,34 @@ async def test_handoff_round_trip(client, session):
     assert bad.status_code == 404
 
     # The visitor writes, an operator replies, the visitor sees the reply, the operator closes.
-    sent = await client.post(f"/api/v1/public/site-chat/{chat_id}/messages", json={"token": token, "text": "Hello?"})
+    sent = await client.post(
+        f"/api/v1/public/site-chat/{chat_id}/messages", json={"token": token, "text": "Hello?"}
+    )
     assert sent.status_code == 201
-    op_token = await _make_operator(client, session, f"op-{uuid.uuid4().hex[:6]}@example.com", role="reviewer")
+    op_token = await _make_operator(
+        client, session, f"op-{uuid.uuid4().hex[:6]}@example.com", role="reviewer"
+    )
     h = auth_headers(op_token)
     listing = await client.get("/api/v1/ops/site/chats", headers=h)
     assert listing.status_code == 200, listing.text
     assert any(c["id"] == chat_id for c in listing.json()["chats"])
-    reply = await client.post(f"/api/v1/ops/site/chats/{chat_id}/reply", json={"text": "Hi Dana!"}, headers=h)
+    reply = await client.post(
+        f"/api/v1/ops/site/chats/{chat_id}/reply", json={"text": "Hi Dana!"}, headers=h
+    )
     assert reply.status_code == 201, reply.text
     polled = (
-        await client.get(f"/api/v1/public/site-chat/{chat_id}/messages", params={"token": token, "after": ""})
+        await client.get(
+            f"/api/v1/public/site-chat/{chat_id}/messages", params={"token": token, "after": ""}
+        )
     ).json()
     assert polled["status"] == "active"
     assert [m["text"] for m in polled["messages"]] == ["Hi Dana!"]
     closed = await client.post(f"/api/v1/ops/site/chats/{chat_id}/close", json={}, headers=h)
     assert closed.status_code == 200
-    after_close = await client.post(f"/api/v1/public/site-chat/{chat_id}/messages", json={"token": token, "text": "Still there?"})
+    after_close = await client.post(
+        f"/api/v1/public/site-chat/{chat_id}/messages",
+        json={"token": token, "text": "Still there?"}
+    )
     assert after_close.status_code == 409
 
 

@@ -465,7 +465,6 @@ async def test_p15_agent_no_grants_viewer_grant_and_ungranted_404(client, sessio
     owner_token = await register_and_login(client, "p16d@example.com")
     org = await create_org(client, owner_token, "P16 Org D")
     org_id = uuid.UUID(org["id"])
-    h_owner = auth_headers(owner_token, org["id"])
 
     A = "+12145550100"
     B = "+12145550101"
@@ -1610,7 +1609,9 @@ async def test_needs_you_filters_missed_voicemail_assigned(client, session):
                      status="completed", created_at=t, ended_at=t)
     vm_call = await _make_call(session, org_id, our_e164=A, contact_e164=c_vm, direction="inbound",
                                status="no_answer", created_at=t, ended_at=t)
-    await _make_voicemail(session, org_id, call_id=vm_call.id, transcript="call me back", created_at=t)
+    await _make_voicemail(
+        session, org_id, call_id=vm_call.id, transcript="call me back", created_at=t
+    )
 
     th_mine = await _make_thread(session, org_id, A, c_mine, last_message_at=t)
     await _make_message(session, org_id, th_mine, direction="inbound", body="hi", created_at=t)

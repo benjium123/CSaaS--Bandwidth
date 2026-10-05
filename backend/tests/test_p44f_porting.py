@@ -122,7 +122,9 @@ async def test_valid_request_waits_for_an_operator(session):
     assert port.secret_enc and "4321" not in port.secret_enc
     assert await store.exists(port.loa_media_key)
     alerts = (
-        await session.execute(sa.select(SecurityAlert).where(SecurityAlert.kind == "port_in_review"))
+        await session.execute(
+            sa.select(SecurityAlert).where(SecurityAlert.kind == "port_in_review")
+        )
     ).scalars().all()
     assert len(alerts) == 1
     with pytest.raises(ConflictError):  # a second open request for the same number
@@ -206,7 +208,9 @@ async def test_port_out_request_alerts_and_releases_when_gone(session):
     assert await porting.poll_port_outs(session, settings, registry) == 0  # alerted once
     set_org_context(session, org.id)
     alerts = (
-        await session.execute(sa.select(SecurityAlert).where(SecurityAlert.kind == "port_out_request"))
+        await session.execute(
+            sa.select(SecurityAlert).where(SecurityAlert.kind == "port_out_request")
+        )
     ).scalars().all()
     assert len(alerts) == 1
     status["value"] = "ported"

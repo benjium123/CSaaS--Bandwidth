@@ -113,7 +113,9 @@ async def test_new_account_daily_spend_ceiling(session, settings):
     await credits.charge_usage(session, org.id, 25_000_000, reference=f"u-{uuid.uuid4()}")
     await session.commit()
     assert await exposure.spent_today_micros(session, org.id) == 25_000_000
-    assert await telephony_access.refusal(session, settings, org.id, "call") == "daily_spend_reached"
+    assert await telephony_access.refusal(
+        session, settings, org.id, "call"
+    ) == "daily_spend_reached"
     assert await telephony_access.refusal(session, settings, org.id, "sms") == "daily_spend_reached"
 
 
@@ -132,7 +134,9 @@ async def test_auto_recharge_refused_for_new_account(session, settings):
 
 async def test_auto_recharge_daily_count_and_amount_caps(session, settings):
     org = await _org(session, age_days=90)
-    recent = [{"at": (_now() - timedelta(hours=h)).isoformat(), "micros": 10_000_000} for h in (1, 2, 3)]
+    recent = [
+        {"at": (_now() - timedelta(hours=h)).isoformat(), "micros": 10_000_000} for h in (1, 2, 3)
+    ]
     org.credit_auto_recharge = {"enabled": True, "history": recent}
     assert await exposure.auto_recharge_refusal(session, settings, org, 10_000_000) == "daily_count"
     org.credit_auto_recharge = {"enabled": True, "history": recent[:1]}

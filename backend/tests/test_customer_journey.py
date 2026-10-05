@@ -70,7 +70,11 @@ def outside_world(monkeypatch):
         "items": {
             "data": [
                 {"id": "si_plan", "price": {"id": prices.stripe_plan_solo_price_id}, "quantity": 1},
-                {"id": "si_num", "price": {"id": prices.stripe_extra_number_price_id}, "quantity": 1},
+                {
+                    "id": "si_num",
+                    "price": {"id": prices.stripe_extra_number_price_id},
+                    "quantity": 1
+                },
             ]
         },
     }
@@ -82,7 +86,11 @@ def outside_world(monkeypatch):
                 item["quantity"] = change.get("quantity", item["quantity"])
             else:
                 sub["items"]["data"].append(
-                    {"id": "si_new", "price": {"id": change["price"]}, "quantity": change["quantity"]}
+                    {
+                        "id": "si_new",
+                        "price": {"id": change["price"]},
+                        "quantity": change["quantity"]
+                    }
                 )
         return copy.deepcopy(sub)
 

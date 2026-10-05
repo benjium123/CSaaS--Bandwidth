@@ -4,7 +4,6 @@ import re
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any
 
 import httpx
 import sqlalchemy as sa

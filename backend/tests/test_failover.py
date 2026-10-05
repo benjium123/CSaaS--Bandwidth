@@ -33,8 +33,10 @@ from app.providers.voice import CreateCallResult
 from tests.conftest import (
     FakeCarrier,
     auth_headers,
-    make_org_with_number as _make_org_with_number,
     make_platform_operator,
+)
+from tests.conftest import (
+    make_org_with_number as _make_org_with_number,
 )
 
 
@@ -44,7 +46,7 @@ async def make_org_with_number(client, email: str, *args, **kwargs):
     result = await _make_org_with_number(client, email, *args, **kwargs)
     await make_platform_operator(email)
     return result
-from tests.test_voice_webhooks import FakeVoiceCarrier
+from tests.test_voice_webhooks import FakeVoiceCarrier  # noqa: E402
 
 PRIMARY_NUM = "+12145550100"
 FALLBACK_NUM = "+19725550300"

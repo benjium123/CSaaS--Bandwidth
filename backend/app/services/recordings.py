@@ -45,8 +45,8 @@ from app.errors import FeatureUnavailableError, ValidationFailedError
 from app.models.voice import Call, CallLeg, CallRecording
 from app.models.voice import VoiceEvent as VoiceEventRow
 from app.providers import registry_org
-from app.services import credentials as credential_svc
 from app.providers.voice import VoiceEvent, as_voice_carrier
+from app.services import credentials as credential_svc
 
 log = structlog.get_logger("recordings")
 

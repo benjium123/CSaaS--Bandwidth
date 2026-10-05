@@ -18,7 +18,6 @@ from app.models import (
     Call,
     Contact,
     ContactPhone,
-    Department,
     DepartmentMember,
     Inbox,
     InboxGrant,
@@ -251,7 +250,9 @@ async def test_owner_policy_by_id_routes_all_404_never_403_or_200(client, sessio
     assert not leaks, "by-id routes that do not fail closed with 404: " + "; ".join(leaks)
 
     # The contact still exists and still belongs to Alice.
-    still = await client.get(f"/api/v1/contacts/{cid}", headers=auth_headers(alice_token, org["id"]))
+    still = await client.get(
+        f"/api/v1/contacts/{cid}", headers=auth_headers(alice_token, org["id"])
+    )
     assert still.status_code == 200
     assert still.json()["owner_user_id"] == str(alice.id)
 
@@ -298,7 +299,9 @@ async def _agent_lookup_fixture(client, session, monkeypatch, *, policy, contact
 
     set_org_context(session, org_id)
     number = (await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == A))).scalar_one()
-    inbox = (await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))).scalar_one()
+    inbox = (
+        await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))
+    ).scalar_one()
     session.add(
         InboxGrant(
             id=uuid.uuid4(),
@@ -415,7 +418,9 @@ async def test_agent_lookup_never_honours_read_all(client, session, monkeypatch)
 
     set_org_context(session, org_id)
     number = (await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == A))).scalar_one()
-    inbox = (await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))).scalar_one()
+    inbox = (
+        await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))
+    ).scalar_one()
     session.add(
         InboxGrant(
             id=uuid.uuid4(),
@@ -498,7 +503,9 @@ async def test_department_for_inbox_number_ignores_non_department_grants(client,
 
     set_org_context(session, org_id)
     number = (await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == C))).scalar_one()
-    inbox = (await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))).scalar_one()
+    inbox = (
+        await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))
+    ).scalar_one()
     session.add(
         InboxGrant(
             id=uuid.uuid4(),
@@ -697,7 +704,9 @@ async def test_unowned_fallback_is_gated_on_contacts_write_department_policy(cli
     assert w.status_code == 200, w.text
     r = await client.get(f"/api/v1/contacts/{cid}", headers=auth_headers(reader_token, org["id"]))
     assert r.status_code == 404, r.text
-    assert (await client.get("/api/v1/contacts", headers=auth_headers(reader_token, org["id"]))).json() == []
+    assert (
+        await client.get("/api/v1/contacts", headers=auth_headers(reader_token, org["id"]))
+    ).json() == []
 
 
 async def test_unowned_fallback_is_gated_on_contacts_write_owner_policy(client, session):
@@ -756,7 +765,9 @@ async def test_api_key_sees_all_contacts_under_owner_policy(client, session):
     cid = contact["id"]
 
     key = await client.post(
-        "/api/v1/api-keys", json={"name": "integration", "scopes": ["contacts:read"]}, headers=h_owner
+        "/api/v1/api-keys", json={
+            "name": "integration", "scopes": ["contacts:read"]
+        }, headers=h_owner
     )
     assert key.status_code == 201, key.text
     kh = {"Authorization": f"Bearer {key.json()['key']}"}
@@ -782,7 +793,9 @@ async def test_delete_system_role_409(client, session):
     assert agent_role["is_system"] is True
     r = await client.delete(f"/api/v1/roles/{agent_role['id']}", headers=h)
     assert r.status_code == 409, r.text
-    assert agent_role["id"] in {x["id"] for x in (await client.get("/api/v1/roles", headers=h)).json()}
+    assert agent_role[
+        "id"
+    ] in {x["id"] for x in (await client.get("/api/v1/roles", headers=h)).json()}
 
 
 async def test_patch_role_enforces_escalation_and_validation(client, session):
@@ -836,7 +849,9 @@ async def test_unknown_role_id_404(client, session):
     org = await create_org(client, token, "Role 404")
     h = auth_headers(token, org["id"])
     ghost = uuid.uuid4()
-    assert (await client.patch(f"/api/v1/roles/{ghost}", json={"name": "x"}, headers=h)).status_code == 404
+    assert (
+        await client.patch(f"/api/v1/roles/{ghost}", json={"name": "x"}, headers=h)
+    ).status_code == 404
     assert (await client.delete(f"/api/v1/roles/{ghost}", headers=h)).status_code == 404
     cloned = await client.post(
         "/api/v1/roles", json={"name": "y", "clone_from": str(ghost)}, headers=h

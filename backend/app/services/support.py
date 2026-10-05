@@ -45,7 +45,9 @@ def _clean_contacts(payload: dict) -> dict:
     for key in DEFAULT_CONTACTS:
         value = payload.get(key)
         value = (value or "").strip() or None
-        if value and key in _URL_KEYS and not (value.startswith("https://") or value.startswith("/")):
+        if value and key in _URL_KEYS and not (
+            value.startswith("https://") or value.startswith("/")
+        ):
             raise ValidationFailedError(f"{key} must start with https:// or /")
         if value and len(value) > 500:
             raise ValidationFailedError(f"{key} is too long")
@@ -75,7 +77,9 @@ async def create_request(
     if not subject or not body:
         raise ValidationFailedError("Add a subject and describe what you need")
     if len(subject) > 200 or len(body) > 5000:
-        raise ValidationFailedError("Keep the subject under 200 and the message under 5,000 characters")
+        raise ValidationFailedError(
+            "Keep the subject under 200 and the message under 5,000 characters"
+        )
     set_org_context(session, org_id)
     row = SupportRequest(
         id=uuid.uuid4(), org_id=org_id, user_id=user.id, email=user.email,
@@ -97,7 +101,9 @@ async def _notify_ops(session: AsyncSession, settings, row: SupportRequest) -> N
             return
         org = (
             await session.execute(
-                sa.select(Org.name).where(Org.id == row.org_id).execution_options(**{ALLOW_UNSCOPED_KEY: True})
+                sa.select(
+                    Org.name
+                ).where(Org.id == row.org_id).execution_options(**{ALLOW_UNSCOPED_KEY: True})
             )
         ).scalar_one_or_none()
         await mailer.send(

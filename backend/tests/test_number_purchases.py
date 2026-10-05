@@ -12,7 +12,6 @@ from app.providers.numbers import OrderResult
 from app.services import number_purchases, stripe_client
 from tests.conftest import make_settings
 
-
 #: What each live price charges, per services/plan_billing.py.
 _CENTS = {
     make_settings().stripe_plan_solo_price_id: 1500,
@@ -115,7 +114,11 @@ async def test_payment_required_then_fulfillment_is_idempotent(session, stripe_m
         "status": "active",
         "items": {
             "data": [
-                {"id": "si_plan", "price": {"id": settings.stripe_plan_solo_price_id}, "quantity": 1}
+                {
+                    "id": "si_plan",
+                    "price": {"id": settings.stripe_plan_solo_price_id},
+                    "quantity": 1
+                }
             ]
         },
         "metadata": {"kind": "workspace_plan", "org_id": str(org.id)},
@@ -193,8 +196,8 @@ async def test_release_reduces_quantity_and_last_number_cancels(session, stripe_
 async def test_checkout_is_refused_when_telnyx_cannot_fund_the_numbers(
     session, stripe_mock, monkeypatch, available, refused
 ):
-    """Two numbers need 2 x $3.50 (number + first E911 month) plus the $5 floor = $12. Below that the customer is
-    never sent to pay; None (Telnyx not configured) does not block."""
+    """Two numbers need 2 x $3.50 (number + first E911 month) plus the $5 floor = $12.
+    Below that the customer is never sent to pay; None (Telnyx not configured) does not block."""
     org = await approved_org(session)
     settings = make_settings(stripe_webhook_secret="whsec_test")
 

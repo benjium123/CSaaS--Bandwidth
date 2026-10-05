@@ -18,11 +18,6 @@ import sqlalchemy as sa
 
 from app.db.base import set_org_context
 from app.models import (
-    Company,
-    Contact,
-    ContactPhone,
-    CustomFieldDef,
-    Department,
     Inbox,
     InboxGrant,
     KycProfile,
@@ -32,7 +27,6 @@ from app.models import (
     OrgMembership,
     OrgNumber,
     Role,
-    Tag,
 )
 from app.repositories import users as users_repo
 from app.services import messaging as messaging_svc
@@ -197,8 +191,8 @@ async def test_5_2_softphone_token_denied_without_inbox_access(engine):
     import httpx
 
     from app.main import create_app
-    from app.voice_plane.livekit_api import LiveKitApi
     from app.models.voice import Call
+    from app.voice_plane.livekit_api import LiveKitApi
     from tests.conftest import make_settings
     from tests.test_voice_webhooks import FakeVoiceCarrier, install_voice_carrier
 

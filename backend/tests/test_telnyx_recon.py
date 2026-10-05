@@ -279,14 +279,22 @@ async def test_reconcile_day(session, settings):
             (None, 'sms', 'outbound', 1, 10000),
         }
 
-        result = await session.execute(select(TelnyxCostDaily).where(TelnyxCostDaily.period_date == day))
+        result = await session.execute(
+            select(TelnyxCostDaily).where(TelnyxCostDaily.period_date == day)
+        )
         rows = result.scalars().all()
-        assert {(r.org_id, r.record_type, r.direction, r.quantity, r.cost_micros) for r in rows} == expected
+        assert {
+            (r.org_id, r.record_type, r.direction, r.quantity, r.cost_micros) for r in rows
+        } == expected
 
         second = await reconcile_day(session, settings, day, client=client)
         assert second == first
 
-        result = await session.execute(select(TelnyxCostDaily).where(TelnyxCostDaily.period_date == day))
+        result = await session.execute(
+            select(TelnyxCostDaily).where(TelnyxCostDaily.period_date == day)
+        )
         rows = result.scalars().all()
         assert len(rows) == 5
-        assert {(r.org_id, r.record_type, r.direction, r.quantity, r.cost_micros) for r in rows} == expected
+        assert {
+            (r.org_id, r.record_type, r.direction, r.quantity, r.cost_micros) for r in rows
+        } == expected

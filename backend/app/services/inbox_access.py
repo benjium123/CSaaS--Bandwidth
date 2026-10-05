@@ -112,7 +112,9 @@ async def resolve_access(
 
     rows = (
         await session.execute(
-            sa.select(InboxGrant.role, OrgNumber.e164, InboxGrant.grantee_type, InboxGrant.grantee_id)
+            sa.select(
+                InboxGrant.role, OrgNumber.e164, InboxGrant.grantee_type, InboxGrant.grantee_id
+            )
             .join(Inbox, Inbox.id == InboxGrant.inbox_id)
             .join(OrgNumber, OrgNumber.id == Inbox.number_id)
             .where(sa.or_(*conditions))

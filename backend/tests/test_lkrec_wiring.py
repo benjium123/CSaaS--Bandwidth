@@ -18,7 +18,7 @@ from tests.test_p43_call_monitoring import (
     FakeLiveKit,
     _finished_call,
     _org,
-    mon_settings,
+    mon_settings,  # noqa: F401
     voice,  # noqa: F401
 )
 

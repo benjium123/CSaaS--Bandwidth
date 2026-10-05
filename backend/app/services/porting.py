@@ -160,7 +160,9 @@ def _mark_exception(port: PortRequest, raw: str) -> None:
 # ------------------------------------------------------------------ fraud gate helpers
 
 
-_SUFFIXES = re.compile(r"\b(llc|l\.l\.c|inc|incorporated|corp|corporation|co|ltd|limited|lp|llp|pllc)\b")
+_SUFFIXES = re.compile(
+    r"\b(llc|l\.l\.c|inc|incorporated|corp|corporation|co|ltd|limited|lp|llp|pllc)\b"
+)
 
 
 def _norm(name: str) -> str:
@@ -560,7 +562,9 @@ async def cancel_port_in(
 async def _upload_document(carrier, store, key: str) -> str:  # noqa: ANN001
     data = await store.get(key)
     name = key.rsplit("/", 1)[-1]
-    ctype = next((c for c, ext in ALLOWED_DOC_TYPES.items() if name.endswith(ext)), "application/pdf")
+    ctype = next(
+        (c for c, ext in ALLOWED_DOC_TYPES.items() if name.endswith(ext)), "application/pdf"
+    )
     resp = await _tx(carrier, "POST", "/documents", files={"file": (name, data, ctype)})
     if resp.status_code >= 400:
         raise ValidationFailedError(f"Telnyx refused the document: {_tx_error(resp)}")
@@ -583,7 +587,9 @@ async def approve(
     if port.carrier == "signalwire":
         port.status = "submitted"
         port.details = {**(port.details or {}), "manual": True}
-        _event(port, "Approved - file it in the SignalWire dashboard (Phone Numbers > Port Requests)")
+        _event(
+            port, "Approved - file it in the SignalWire dashboard (Phone Numbers > Port Requests)"
+        )
         await session.commit()
         if settings is not None:
             await porting_notify.notify(session, settings, port, "submitted")
@@ -727,7 +733,9 @@ async def _import(session: AsyncSession, registry, port: PortRequest) -> int:  #
             continue
         ref = None
         if carrier is not None and port.carrier == "telnyx":
-            resp = await _tx(carrier, "GET", "/phone_numbers", params={"filter[phone_number]": e164})
+            resp = await _tx(
+                carrier, "GET", "/phone_numbers", params={"filter[phone_number]": e164}
+            )
             if resp.status_code == 200:
                 rows = (resp.json() or {}).get("data") or []
                 ref = str(rows[0].get("id")) if rows else None
@@ -791,7 +799,13 @@ async def _campaign_hint(session: AsyncSession, settings, port: PortRequest) -> 
 
 
 async def set_manual_status(
-    session: AsyncSession, registry, port: PortRequest, status: str, *, foc_date: str | None, note: str,  # noqa: ANN001
+    session: AsyncSession,
+    registry,  # noqa: ANN001
+    port: PortRequest,
+    status: str,
+    *,
+    foc_date: str | None,
+    note: str,
     settings=None,  # noqa: ANN001
 ) -> PortRequest:
     """Operator-driven status for ports filed by hand (SignalWire)."""
@@ -854,7 +868,9 @@ async def poll_port_ins(session: AsyncSession, settings, registry) -> int:  # no
             if resp.status_code != 200:
                 continue
             data = (resp.json() or {}).get("data") or {}
-            raw = (data.get("status") or {}).get("value") if isinstance(data.get("status"), dict) else data.get("status")
+            raw = (
+                data.get("status") or {}
+            ).get("value") if isinstance(data.get("status"), dict) else data.get("status")
             mapped = _TELNYX_PORT_STATUS.get(str(raw), port.status)
             statuses.append(mapped)
             if mapped == "exception":
@@ -863,7 +879,9 @@ async def poll_port_ins(session: AsyncSession, settings, registry) -> int:  # no
                 detail = _exception_detail(data)
                 if detail:
                     _mark_exception(port, detail)
-            foc = data.get("activation_settings", {}).get("foc_datetime_actual") if isinstance(data.get("activation_settings"), dict) else None
+            foc = data.get("activation_settings", {}).get(
+                "foc_datetime_actual"
+            ) if isinstance(data.get("activation_settings"), dict) else None
             if foc:
                 port.foc_date = str(foc)[:32]
         if not statuses:

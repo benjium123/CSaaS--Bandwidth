@@ -43,9 +43,9 @@ from app.services import agent as agent_svc
 from app.services import assistant_dispatch
 from app.services import dialer as dialer_svc
 from tests.conftest import FROZEN_NOW, auth_headers, make_org_with_number
-from tests.test_p23b_assistant import app_with_assistant  # noqa: F401 - fixture by name
-from tests.test_p23b_wiring import A, B, C, OUR, _dial_campaign, _readiness, _ready_list
 from tests.test_agent_seams import worker_headers, worker_token
+from tests.test_p23b_assistant import app_with_assistant  # noqa: F401 - fixture by name
+from tests.test_p23b_wiring import OUR, A, B, C, _dial_campaign, _readiness, _ready_list
 
 THEIRS = "+19725550199"
 

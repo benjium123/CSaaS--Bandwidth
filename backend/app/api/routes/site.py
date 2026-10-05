@@ -1,11 +1,13 @@
 """Public website: the chat assistant, its handoff to a person, and "Talk to sales".
 
   POST /api/v1/public/site-chat/ask                 answer a question the site's FAQ could not
-  POST /api/v1/public/site-chat/handoff             hand the chat to the team (returns a bearer token)
+  POST /api/v1/public/site-chat/handoff             hand the chat to the team
+                                                    (returns a bearer token)
   GET  /api/v1/public/site-chat/{id}/messages       the visitor polls for replies (token required)
   POST /api/v1/public/site-chat/{id}/messages       the visitor writes after the handoff
   POST /api/v1/public/sales-leads                   the "Talk to sales" form
-  POST /api/v1/support/ask                          the assistant, for a signed-in customer (sees their account)
+  POST /api/v1/support/ask                          the assistant, for a signed-in customer
+                                                    (sees their account)
   POST /api/v1/support/chat                         a signed-in customer starts a stored chat
   /api/v1/ops/site/...                              operators read leads and answer chats
 
@@ -121,7 +123,9 @@ async def _global_ask_budget_spent(settings: Settings) -> bool:
     key = "POST:site-chat-ask:global"
     window = 86400
     shared = await rate_limit._redis_allow(settings, key, ASK_GLOBAL_DAILY_MAX, window)
-    retry = shared if shared is not None else rate_limit._limiter.allow(key, ASK_GLOBAL_DAILY_MAX, window)
+    retry = shared if shared is not None else rate_limit._limiter.allow(
+        key, ASK_GLOBAL_DAILY_MAX, window
+    )
     return bool(retry)
 
 
@@ -200,7 +204,9 @@ async def _ai_turn(settings: Settings, chat_id: uuid.UUID, trigger_id: uuid.UUID
             now = _now()
             text = answer.text or TEAM_TAKES_OVER
             session.add(
-                SiteChatMessage(id=uuid.uuid4(), chat_id=chat.id, role="ai", text=text, created_at=now)
+                SiteChatMessage(
+                    id=uuid.uuid4(), chat_id=chat.id, role="ai", text=text, created_at=now
+                )
             )
             chat.last_message_at = now
             # In "assist" the team was already alerted when the person was asked for.
@@ -212,7 +218,9 @@ async def _ai_turn(settings: Settings, chat_id: uuid.UUID, trigger_id: uuid.UUID
             await session.commit()
             log.info("site_chat.ai_reply", chat_id=str(chat_id), handoff=answer.handoff)
             if alert:
-                _alert(settings, chat, title=f"Chat needs a person: {chat.name}", body=_last_text(rows))
+                _alert(
+                    settings, chat, title=f"Chat needs a person: {chat.name}", body=_last_text(rows)
+                )
     except Exception:
         log.warning("site_chat.ai_turn_failed", chat_id=str(chat_id), exc_info=True)
 
@@ -310,7 +318,9 @@ async def _create_chat(
         want_person=want_person, ai=chat.ai_state,
     )
     if want_person:
-        _alert_operators(request, chat, title=f"New chat: {chat.name}", body=_last_visitor_text(transcript))
+        _alert_operators(
+            request, chat, title=f"New chat: {chat.name}", body=_last_visitor_text(transcript)
+        )
     elif last_visitor is not None and background is not None:
         background.add_task(_ai_turn, request.app.state.settings, chat.id, last_visitor.id)
     return {
@@ -325,7 +335,9 @@ def _handoff_alert(chat: SiteChat, action: str) -> SecurityAlert:
     return SecurityAlert(
         id=uuid.uuid4(),
         kind="site_chat_handoff",
-        detail={"chat_id": str(chat.id), "reason": chat.reason, "page": chat.page, "action": action},
+        detail={
+            "chat_id": str(chat.id), "reason": chat.reason, "page": chat.page, "action": action
+        },
     )
 
 
@@ -372,7 +384,9 @@ async def _push_operators(
                 await session.execute(
                     sa.select(PlatformOperator.user_id, PlatformOperator.role).where(
                         PlatformOperator.is_active.is_(True),
-                        sa.or_(PlatformOperator.expires_at.is_(None), PlatformOperator.expires_at > now),
+                        sa.or_(
+                            PlatformOperator.expires_at.is_(None), PlatformOperator.expires_at > now
+                        ),
                     )
                 )
             ).all()
@@ -422,8 +436,9 @@ async def support_chat_handoff(
     ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
-    """A signed-in customer starts a chat (the assistant first, or a person when asked). Identity and workspace come from the session,
-    never from the client, so operators can trust who they are talking to."""
+    """A signed-in customer starts a chat (the assistant first, or a person when asked).
+    Identity and workspace come from the session, never from the client, so operators can trust who
+    they are talking to."""
     await enforce_rate_limit(request, f"support-chat-handoff:{user.id}")
     return await _create_chat(
         ctx.session,
@@ -486,7 +501,9 @@ async def site_chat_messages(
         except ValueError as exc:
             raise ValidationFailedError("after must be an ISO timestamp") from exc
         stmt = stmt.where(SiteChatMessage.created_at > since)
-    rows = (await session.execute(stmt.order_by(SiteChatMessage.created_at).limit(100))).scalars().all()
+    rows = (
+        await session.execute(stmt.order_by(SiteChatMessage.created_at).limit(100))
+    ).scalars().all()
     return {
         "status": chat.status,
         "agent_name": chat.agent_name,
@@ -513,7 +530,9 @@ async def site_chat_visitor_message(
     if chat.status == "closed":
         raise ConflictError("This chat has ended")
     now = _now()
-    msg = SiteChatMessage(id=uuid.uuid4(), chat_id=chat.id, role="visitor", text=payload.text, created_at=now)
+    msg = SiteChatMessage(
+        id=uuid.uuid4(), chat_id=chat.id, role="visitor", text=payload.text, created_at=now
+    )
     session.add(msg)
     chat.last_message_at = now
     chat.last_visitor_at = now
@@ -642,10 +661,14 @@ async def ops_list_chats(
         ).scalar_one_or_none()
         out.append(_chat_summary(chat, last))
     names = await _org_names(session, {c.org_id for c in chats if c.org_id})
-    assignees = await _user_names(session, {c.assigned_user_id for c in chats if c.assigned_user_id})
+    assignees = await _user_names(
+        session, {c.assigned_user_id for c in chats if c.assigned_user_id}
+    )
     for item in out:
         item["org_name"] = names.get(item["org_id"]) if item["org_id"] else None
-        item["assigned_name"] = assignees.get(item["assigned_user_id"]) if item["assigned_user_id"] else None
+        item[
+            "assigned_name"
+        ] = assignees.get(item["assigned_user_id"]) if item["assigned_user_id"] else None
     return {"chats": out, "staffed": staffed_now()}
 
 
@@ -656,7 +679,9 @@ async def _org_names(session: AsyncSession, ids: set) -> dict[str, str]:
         return {}
     rows = (
         await session.execute(
-            sa.select(Org.id, Org.name).where(Org.id.in_(ids)).execution_options(allow_unscoped=True)
+            sa.select(
+                Org.id, Org.name
+            ).where(Org.id.in_(ids)).execution_options(allow_unscoped=True)
         )
     ).all()
     return {str(i): n for i, n in rows}
@@ -685,8 +710,13 @@ async def ops_unread_chats(op: Reader) -> dict:
             .where(
                 SiteChat.status != "closed",
                 SiteChat.last_visitor_at.is_not(None),
-                sa.or_(SiteChat.agent_read_at.is_(None), SiteChat.last_visitor_at > SiteChat.agent_read_at),
-                sa.or_(SiteChat.assigned_user_id.is_(None), SiteChat.assigned_user_id == op.user.id),
+                sa.or_(
+                    SiteChat.agent_read_at.is_(None),
+                    SiteChat.last_visitor_at > SiteChat.agent_read_at
+                ),
+                sa.or_(
+                    SiteChat.assigned_user_id.is_(None), SiteChat.assigned_user_id == op.user.id
+                ),
                 sa.or_(SiteChat.ai_state.is_(None), SiteChat.ai_state != "active"),
             )
             .order_by(SiteChat.last_visitor_at.desc())
@@ -739,7 +769,9 @@ async def _customer_context(chat: SiteChat) -> dict | None:
         async with get_sessionmaker()() as session:
             org = (
                 await session.execute(
-                    sa.select(Org).where(Org.id == chat.org_id).execution_options(allow_unscoped=True)
+                    sa.select(
+                        Org
+                    ).where(Org.id == chat.org_id).execution_options(allow_unscoped=True)
                 )
             ).scalar_one_or_none()
             if org is None:
@@ -809,7 +841,9 @@ async def ops_reply(chat_id: uuid.UUID, payload: ReplyIn, op: Site) -> dict:
     if chat.status == "closed":
         raise ConflictError("This chat has ended")
     now = _now()
-    msg = SiteChatMessage(id=uuid.uuid4(), chat_id=chat.id, role="agent", text=payload.text, created_at=now)
+    msg = SiteChatMessage(
+        id=uuid.uuid4(), chat_id=chat.id, role="agent", text=payload.text, created_at=now
+    )
     op.session.add(msg)
     chat.status = "active"
     chat.agent_name = chat.agent_name or _operator_name(op)
@@ -829,7 +863,13 @@ async def ops_close(chat_id: uuid.UUID, op: Site) -> dict:
     if chat.status != "closed":
         now = _now()
         op.session.add(
-            SiteChatMessage(id=uuid.uuid4(), chat_id=chat.id, role="system", text="The chat was closed.", created_at=now)
+            SiteChatMessage(
+                id=uuid.uuid4(),
+                chat_id=chat.id,
+                role="system",
+                text="The chat was closed.",
+                created_at=now
+            )
         )
         chat.status = "closed"
         chat.last_message_at = now
@@ -840,7 +880,9 @@ async def ops_close(chat_id: uuid.UUID, op: Site) -> dict:
 @ops_router.get("/leads")
 async def ops_list_leads(op: Reader) -> dict:
     rows = (
-        await op.session.execute(sa.select(SiteLead).order_by(SiteLead.created_at.desc()).limit(200))
+        await op.session.execute(
+            sa.select(SiteLead).order_by(SiteLead.created_at.desc()).limit(200)
+        )
     ).scalars().all()
     return {
         "leads": [

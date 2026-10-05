@@ -14,7 +14,7 @@ from app.models.billing import AiUsageEvent
 from app.models.billing_v2 import TelnyxCostDaily
 from app.services.console import _fixed_cost_micros
 from tests.conftest import auth_headers
-from tests.test_ops_console import ops, ops_settings, _operator, _new_org  # noqa: F401
+from tests.test_ops_console import _new_org, _operator, ops, ops_settings  # noqa: F401
 
 
 def _fixed_costs_list(payload):

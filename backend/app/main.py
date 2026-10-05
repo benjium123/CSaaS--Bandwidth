@@ -23,6 +23,8 @@ from app.api.routes import compliance as compliance_routes
 from app.api.routes import contacts as contact_routes
 from app.api.routes import conversations as conversation_routes
 from app.api.routes import departments as department_routes
+from app.api.routes import device_auth as device_auth_routes
+from app.api.routes import device_push as device_push_routes
 from app.api.routes import enterprise_sso as enterprise_sso_routes
 from app.api.routes import flows as flow_routes
 from app.api.routes import health as health_routes
@@ -32,7 +34,6 @@ from app.api.routes import inboxes as inboxes_routes
 from app.api.routes import kyc as kyc_routes
 from app.api.routes import links as links_routes
 from app.api.routes import me as me_routes
-from app.api.routes import profile_support as profile_support_routes
 from app.api.routes import media as media_routes
 from app.api.routes import messages as message_routes
 from app.api.routes import monitoring as monitoring_routes
@@ -42,6 +43,7 @@ from app.api.routes import orgs as org_routes
 from app.api.routes import outbound as outbound_routes
 from app.api.routes import passkeys as passkey_routes
 from app.api.routes import platform as platform_routes
+from app.api.routes import profile_support as profile_support_routes
 from app.api.routes import provider_accounts as provider_accounts_routes
 from app.api.routes import registration as registration_routes
 from app.api.routes import roles as roles_routes
@@ -57,8 +59,6 @@ from app.api.routes import status as status_routes
 from app.api.routes import telephony as telephony_routes
 from app.api.routes import templates as template_routes
 from app.api.routes import twofa as twofa_routes
-from app.api.routes import device_auth as device_auth_routes
-from app.api.routes import device_push as device_push_routes
 from app.api.routes import webhooks as webhook_routes
 from app.config import Settings, load_settings, set_active_settings
 from app.db.session import dispose_engine, init_engine

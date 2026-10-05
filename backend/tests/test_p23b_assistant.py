@@ -26,9 +26,9 @@ from app.services import ai_providers as ai_providers_svc
 from app.services import voice_preview
 from app.storage.base import InMemoryObjectStore
 from tests.conftest import auth_headers, make_org_with_number
-from tests.test_agent_seams import app_with_agent  # noqa: F401 - pytest fixture by name
 from tests.test_agent_seams import (
     _place_call,
+    app_with_agent,  # noqa: F401 - pytest fixture by name
     make_agent_settings,
     worker_headers,
     worker_token,

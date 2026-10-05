@@ -260,13 +260,17 @@ async def redeem_link_code(
         await session.rollback()
         raise invalid
     link = (
-        await session.execute(sa.select(DeviceLinkCode).where(DeviceLinkCode.code_hash == code_hash))
+        await session.execute(
+            sa.select(DeviceLinkCode).where(DeviceLinkCode.code_hash == code_hash)
+        )
     ).scalar_one()
     await session.commit()  # the code is spent even if the rest fails
     if _aware(link.expires_at) <= now:
         raise invalid
 
-    creator = await identity_svc.get_live_session(session, link.created_by_sid) if link.created_by_sid else None
+    creator = await identity_svc.get_live_session(
+        session, link.created_by_sid
+    ) if link.created_by_sid else None
     user = await session.get(User, link.user_id)
     if creator is None or user is None or not user.is_active:
         raise invalid

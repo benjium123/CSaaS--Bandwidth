@@ -220,16 +220,16 @@ async def record_refusal(
     """
     from app.models import BillingRefusal
 
-    row = dict(
-        id=uuid.uuid4(),
-        org_id=org_id,
-        kind=kind,
-        reason=reason,
-        price_micros=int(price_micros),
-        balance_micros=int(balance_micros),
-        detail=str(detail)[:255] if detail else None,
-        created_at=_now(),
-    )
+    row = {
+        "id": uuid.uuid4(),
+        "org_id": org_id,
+        "kind": kind,
+        "reason": reason,
+        "price_micros": int(price_micros),
+        "balance_micros": int(balance_micros),
+        "detail": str(detail)[:255] if detail else None,
+        "created_at": _now(),
+    }
     try:
         bind = session.get_bind()
         if bind is not None and bind.dialect.name == "postgresql":
@@ -931,7 +931,9 @@ async def enforce_active_calls(
                     await hangup(session, call)
                 except Exception:
                     await session.rollback()
-                    log.warning("telephony_billing.refused_hangup_retry_failed", call_id=str(call_id))
+                    log.warning(
+                        "telephony_billing.refused_hangup_retry_failed", call_id=str(call_id)
+                    )
                 continue
             if (call.extra or {}).get("emergency"):
                 # A 911/933 call is never cut, whatever the balance.
@@ -939,7 +941,11 @@ async def enforce_active_calls(
             elapsed_seconds = max(int((moment - _as_utc(start)).total_seconds()), 0)
             if elapsed_seconds >= MAX_CALL_SECONDS:
                 await _close_call(
-                    session, call, hangup=hangup, reason="max_length", elapsed_seconds=elapsed_seconds
+                    session,
+                    call,
+                    hangup=hangup,
+                    reason="max_length",
+                    elapsed_seconds=elapsed_seconds,
                 )
                 continue
             if (
@@ -956,7 +962,9 @@ async def enforce_active_calls(
                     tear_down=False,
                 )
                 continue
-            per_minute = await unit_price(session, org_id, call.carrier, _call_metric(call.direction))
+            per_minute = await unit_price(
+                session, org_id, call.carrier, _call_metric(call.direction)
+            )
             if per_minute <= 0:
                 continue
             used_micros = voice_price_micros(elapsed_seconds, per_minute)
@@ -977,7 +985,9 @@ async def enforce_active_calls(
                 # Hold up to CALL_RESERVE_MINUTES more, or whatever whole minutes the
                 # balance still covers; less than one minute left = the call ends.
                 available = await credits.balance(session, org_id)
-                extend = min(per_minute * CALL_RESERVE_MINUTES, (available // per_minute) * per_minute)
+                extend = min(
+                    per_minute * CALL_RESERVE_MINUTES, (available // per_minute) * per_minute
+                )
                 if extend < per_minute:
                     raise InsufficientCreditsError()
                 await credits.reserve(

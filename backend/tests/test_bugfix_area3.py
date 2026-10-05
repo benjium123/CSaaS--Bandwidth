@@ -21,8 +21,8 @@ from app.providers.bandwidth.voice import BandwidthVoiceMixin, _bandwidth_event_
 from app.providers.telnyx.voice import TelnyxVoiceCommandError, TelnyxVoiceMixin
 from app.providers.voice import Speak
 from app.services.flows import create_business_hours, evaluate_hours
-from app.voice_plane.livekit_api import LiveKitApi, LiveKitApiError
 from app.voice_plane import service as voice_service
+from app.voice_plane.livekit_api import LiveKitApi, LiveKitApiError
 from tests.conftest import (
     WEBHOOK_PASS,
     WEBHOOK_USER,
@@ -268,7 +268,6 @@ async def test_3_23_business_hours_reject_unknown_weekday_key(session):
 async def test_3_13_dial_now_claim_is_atomic(app_with_voice_carrier, session):
     import sqlalchemy as sa
 
-    from app.errors import ConflictError
     from app.models.callflow import CallQueue, QueueEntry, RingGroupDef
 
     client, _fake, _app = app_with_voice_carrier
@@ -383,9 +382,9 @@ async def test_3_13_dial_now_claim_ignores_stale_offered_at_from_a_prior_offer_c
 # 3.18: an fe.step failure inside _drive falls back instead of propagating (dead air)
 # --------------------------------------------------------------------------------------
 async def test_3_18_drive_falls_back_when_fe_step_raises_mid_loop(client, session, monkeypatch):
+    from app.models.callflow import CallFlow
     from app.services import flow_engine as fe
     from app.services import routing_exec as routing_exec_svc
-    from app.models.callflow import CallFlow
 
     token, org, _ = await make_org_with_number(
         client, "drive-fallback@example.com", "Org Drive", "+12145550199"

@@ -347,7 +347,9 @@ async def test_feature_minute_price_is_what_the_settings_page_shows(session):
     """None while unset; then the discounted per-minute price charge_feature_minutes uses."""
     org_id = await _new_org(session, "Shown Price Org")
     set_org_context(session, org_id)
-    assert await telephony_billing.feature_minute_price(session, org_id, METRIC, "call_recording") is None
+    assert await telephony_billing.feature_minute_price(
+        session, org_id, METRIC, "call_recording"
+    ) is None
 
     session.add(PlatformPrice(metric=METRIC, price_micros=LIST_PRICE))
     await discounts.set_discount(

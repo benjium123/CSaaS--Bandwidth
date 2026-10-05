@@ -88,7 +88,9 @@ async def _customer_chat(
     org = await create_org(client, token, org_name)
     r = await client.post(
         "/api/v1/support/chat",
-        json={"page": "/app", "transcript": [{"role": "visitor", "text": text}], "want_person": True},
+        json={
+            "page": "/app", "transcript": [{"role": "visitor", "text": text}], "want_person": True
+        },
         headers=auth_headers(token, org["id"]),
     )
     assert r.status_code == 201, r.text
@@ -156,7 +158,9 @@ async def test_signed_in_customer_handoff_records_identity_from_the_session(clie
     assert [(m.role, m.text) for m in msgs] == [("visitor", "My card was declined")]
 
     alert = (
-        await session.execute(sa.select(SecurityAlert).where(SecurityAlert.kind == "site_chat_handoff"))
+        await session.execute(
+            sa.select(SecurityAlert).where(SecurityAlert.kind == "site_chat_handoff")
+        )
     ).scalar_one()
     assert alert.detail["chat_id"] == body["chat_id"]
 
@@ -190,7 +194,9 @@ async def test_visitor_message_sets_last_visitor_at(client, session):
     chat_id, token = vis["chat_id"], vis["token"]
 
     sent = await client.post(
-        f"/api/v1/public/site-chat/{chat_id}/messages", json={"token": token, "text": "Still there?"}
+        f"/api/v1/public/site-chat/{chat_id}/messages", json={
+            "token": token, "text": "Still there?"
+        }
     )
     assert sent.status_code == 201, sent.text
 
@@ -290,7 +296,9 @@ async def test_read_unread_and_reply_mark_the_flag(client, session):
     assert await _is_unread(client, chat_id, h) is True
 
     # An operator reply marks it read.
-    reply = await client.post(f"/api/v1/ops/site/chats/{chat_id}/reply", json={"text": "Hi!"}, headers=h)
+    reply = await client.post(
+        f"/api/v1/ops/site/chats/{chat_id}/reply", json={"text": "Hi!"}, headers=h
+    )
     assert reply.status_code == 201, reply.text
     assert await _is_unread(client, chat_id, h) is False
 
@@ -318,17 +326,23 @@ async def test_unread_endpoint_counts_open_and_unassigned_or_mine(client, sessio
     )
     assert assigned.status_code == 200, assigned.text
     assert chat_id not in [
-        c["id"] for c in (await client.get("/api/v1/ops/site/chats/unread", headers=h1)).json()["chats"]
+        c[
+            "id"
+        ] for c in (await client.get("/api/v1/ops/site/chats/unread", headers=h1)).json()["chats"]
     ]
     assert chat_id in [
-        c["id"] for c in (await client.get("/api/v1/ops/site/chats/unread", headers=h2)).json()["chats"]
+        c[
+            "id"
+        ] for c in (await client.get("/api/v1/ops/site/chats/unread", headers=h2)).json()["chats"]
     ]
 
     # A closed chat never counts, even for its assignee.
     closed = await client.post(f"/api/v1/ops/site/chats/{chat_id}/close", json={}, headers=h2)
     assert closed.status_code == 200, closed.text
     assert chat_id not in [
-        c["id"] for c in (await client.get("/api/v1/ops/site/chats/unread", headers=h2)).json()["chats"]
+        c[
+            "id"
+        ] for c in (await client.get("/api/v1/ops/site/chats/unread", headers=h2)).json()["chats"]
     ]
 
 
@@ -444,16 +458,24 @@ async def test_push_is_scheduled_for_a_new_customer_chat(client, monkeypatch):
 async def test_history_poll_includes_the_customers_own_messages(client, session):
     handoff = await client.post(
         "/api/v1/public/site-chat/handoff",
-        json={"name": "Vi", "email": "vi@example.com", "transcript": [{"role": "visitor", "text": "hello"}]},
+        json={
+            "name": "Vi",
+            "email": "vi@example.com",
+            "transcript": [{"role": "visitor", "text": "hello"}]
+        },
     )
     assert handoff.status_code == 201
     chat_id, token = handoff.json()["chat_id"], handoff.json()["token"]
     sent = await client.post(
-        f"/api/v1/public/site-chat/{chat_id}/messages", json={"token": token, "text": "anyone there?"}
+        f"/api/v1/public/site-chat/{chat_id}/messages", json={
+            "token": token, "text": "anyone there?"
+        }
     )
     assert sent.status_code == 201
 
-    plain = await client.get(f"/api/v1/public/site-chat/{chat_id}/messages", params={"token": token})
+    plain = await client.get(
+        f"/api/v1/public/site-chat/{chat_id}/messages", params={"token": token}
+    )
     assert all(m["role"] in ("agent", "system") for m in plain.json()["messages"])
 
     full = await client.get(

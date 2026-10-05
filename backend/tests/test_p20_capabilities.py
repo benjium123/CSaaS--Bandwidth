@@ -17,8 +17,10 @@ from tests.conftest import (
     auth_headers,
     create_org,
     make_org_with_number,
-    make_settings,
     make_platform_operator,
+    make_settings,
+)
+from tests.conftest import (
     register_and_login as _register_and_login,
 )
 

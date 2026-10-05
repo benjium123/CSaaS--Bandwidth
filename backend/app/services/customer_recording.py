@@ -16,7 +16,6 @@ from pathlib import Path
 
 import sqlalchemy as sa
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.models import Org

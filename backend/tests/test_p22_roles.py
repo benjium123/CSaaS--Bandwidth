@@ -114,7 +114,9 @@ async def test_roles_escalation_blocked(client, session):
     org_id = uuid.UUID(org["id"])
     h_owner = auth_headers(owner_token, org["id"])
 
-    admin_token, _admin = await _register_member(client, session, org_id, "admin.esc@example.com", "admin")
+    admin_token, _admin = await _register_member(
+        client, session, org_id, "admin.esc@example.com", "admin"
+    )
     h_admin = auth_headers(admin_token, org["id"])
 
     billing = await client.post(
@@ -172,7 +174,9 @@ async def test_members_cannot_change_own_role(client, session):
     org = await create_org(client, owner_token, "Roles Self")
     org_id = uuid.UUID(org["id"])
 
-    admin_token, admin = await _register_member(client, session, org_id, "admin.self@example.com", "admin")
+    admin_token, admin = await _register_member(
+        client, session, org_id, "admin.self@example.com", "admin"
+    )
 
     r = await client.patch(
         f"/api/v1/orgs/current/members/{admin.id}",

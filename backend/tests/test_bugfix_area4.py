@@ -7,7 +7,6 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
-import pytest
 import sqlalchemy as sa
 
 from app.db.base import set_org_context
@@ -408,8 +407,7 @@ async def test_4_8_order_pre_check_never_reaches_the_carrier(engine, settings):
 # 4.9: probe uses the org's DB-backed provider account, not env credentials
 # ----------------------------------------------------------------------------------
 async def test_4_9_probe_uses_org_db_account_when_present(client, session, monkeypatch):
-    from app.providers import probes
-    from app.providers import registry_org
+    from app.providers import probes, registry_org
 
     token = await register_and_login(client, "area49@example.com")
     await make_platform_operator("area49@example.com")  # /routing/* is operator-only
@@ -421,7 +419,9 @@ async def test_4_9_probe_uses_org_db_account_when_present(client, session, monke
     async def fake_env_probe(name, settings, **kwargs):
         nonlocal called_env_probe
         called_env_probe = True
-        return probes.ProbeResult(name=name, ok=False, detail="env probe should not run", checked="")
+        return probes.ProbeResult(
+            name=name, ok=False, detail="env probe should not run", checked=""
+        )
 
     monkeypatch.setattr(probes, "probe", fake_env_probe)
     monkeypatch.setattr(registry_org, "db_backed_providers", lambda oid: frozenset({"telnyx"}))
@@ -598,8 +598,8 @@ async def test_4_16_voice_spend_buckets_by_ended_at_not_created_at(session):
     session.add(call)
     await session.commit()
 
-    n_prev = await spend.rollup_day(session, org_id, date(2026, 6, 14))
-    n_day = await spend.rollup_day(session, org_id, day)
+    await spend.rollup_day(session, org_id, date(2026, 6, 14))
+    await spend.rollup_day(session, org_id, day)
 
     rows_prev = (
         await session.execute(

@@ -87,7 +87,7 @@ ignore = ["B008"]  # FastAPI Depends() in defaults is the framework idiom
 [tool.ruff.lint.per-file-ignores]
 "app/db/types.py" = ["TID251"]
 "migrations/*" = ["TID251"]
-"tests/*" = ["TID251"]
+"tests/*" = ["TID251", "F811"]  # fixtures imported by name, then taken as parameters
 
 # ---------------------------------------------------------------------------
 # Pytest

@@ -768,7 +768,9 @@ async def console_telnyx(op: Reader, request: Request) -> dict:
                 TelnyxCostDaily.period_date,
                 sa.func.sum(TelnyxCostDaily.cost_micros),
                 sa.func.sum(
-                    sa.case((TelnyxCostDaily.org_id.is_(None), TelnyxCostDaily.cost_micros), else_=0)
+                    sa.case(
+                        (TelnyxCostDaily.org_id.is_(None), TelnyxCostDaily.cost_micros), else_=0
+                    )
                 ),
             )
             .group_by(TelnyxCostDaily.period_date)

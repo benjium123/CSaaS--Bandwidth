@@ -110,7 +110,8 @@ class Settings(BaseSettings):
     #: Number packs (plan_billing.NUMBER_PACKS). Empty = not on sale yet.
     stripe_number_pack_25_price_id: str = "price_1UMfnX744iNFjjqneEDMy3aK"  # $105/month, 25 numbers
     stripe_number_pack_50_price_id: str = "price_1UMfnX744iNFjjqnlXUKskyy"  # $195/month, 50 numbers
-    stripe_number_pack_100_price_id: str = "price_1UMfnY744iNFjjqnKsQNVYQl"  # $350/month, 100 numbers
+    # $350/month, 100 numbers
+    stripe_number_pack_100_price_id: str = "price_1UMfnY744iNFjjqnKsQNVYQl"
     stripe_number_pack_25_year_price_id: str = ""  # $1,050/year
     stripe_number_pack_50_year_price_id: str = ""  # $1,950/year
     stripe_number_pack_100_year_price_id: str = ""  # $3,500/year
@@ -328,7 +329,8 @@ class Settings(BaseSettings):
     telnyx_public_key: SecretStr = SecretStr("")
     telnyx_messaging_profile_id: str = ""
     #: What one number costs Ringlite at Telnyx before the first renewal ($1 upfront +
-    #: $1 first month + $1.50 first month of E911). Number checkout is refused unless the Telnyx balance covers it.
+    #: $1 first month + $1.50 first month of E911). Number checkout is refused unless the Telnyx
+    #: balance covers it.
     telnyx_number_reserve_cents: int = 350
     #: Balance kept back for everyone else's texts and calls; a purchase may not spend it.
     telnyx_balance_floor_cents: int = 500
@@ -566,7 +568,8 @@ class Settings(BaseSettings):
     #: recorded (announcement first) and reviewed from the recording instead of getting the
     #: live listener above. Empty = off (listener). Shared dir: recorder writes, sweeper ingests.
     monitor_recorder_url: str = ""
-    #: Private sherpa-onnx transcription worker (stt/), e.g. http://stt:9100. "" = transcription off.
+    #: Private sherpa-onnx transcription worker (stt/), e.g. http://stt:9100. "" = transcription
+    #: off.
     stt_url: str = ""
     #: agents/live_captions.py worker name ("" = live captions off).
     live_captions_agent_name: str = ""

@@ -11,6 +11,7 @@ from app.db.base import set_org_context
 from app.errors import CarrierNotConfiguredError
 from app.main import create_app
 from app.models import OrgMembership, ProviderAccount, Role
+from app.providers.probes import ProbeResult
 from app.providers.registry import build_registry
 from app.providers.registry_org import (
     CURRENT_ORG_ID,
@@ -21,16 +22,17 @@ from app.providers.registry_org import (
 from app.repositories import users as users_repo
 from app.services import credentials as credentials_svc
 from app.services import provider_accounts as provider_accounts_svc
-from app.providers.probes import ProbeResult
 from tests.conftest import (
     FakeCarrier,
     auth_headers,
     create_org,
     make_org_with_number,
-    make_settings,
     make_platform_operator,
-    register_and_login as _register_and_login,
+    make_settings,
     webhook_auth_headers,
+)
+from tests.conftest import (
+    register_and_login as _register_and_login,
 )
 
 
@@ -383,8 +385,8 @@ async def test_registry_for_org_db_credentials_and_proxy(client_with_key, sessio
     db_registry, db_owned = build_registry_for_org(app_settings, [row])
     db_carrier = db_registry.get("telnyx")
     assert db_carrier is not None
-    assert getattr(db_carrier, "api_key") == "db-api-key"
-    assert getattr(db_carrier, "messaging_profile_id") == "db-profile"
+    assert db_carrier.api_key == "db-api-key"
+    assert db_carrier.messaging_profile_id == "db-profile"
     assert db_owned.get("telnyx") is db_carrier
 
     env_settings = make_settings(
@@ -395,26 +397,26 @@ async def test_registry_for_org_db_credentials_and_proxy(client_with_key, sessio
     env_registry, no_db_owned = build_registry_for_org(env_settings, [])
     env_carrier = env_registry.get("telnyx")
     assert env_carrier is not None
-    assert getattr(env_carrier, "api_key") == "env-api-key"
+    assert env_carrier.api_key == "env-api-key"
     assert no_db_owned == {}
 
     proxy = CarrierRegistryProxy(build_registry(env_settings))
     global_carrier = proxy.get("telnyx")
     assert global_carrier is not None
-    assert getattr(global_carrier, "api_key") == "env-api-key"
+    assert global_carrier.api_key == "env-api-key"
 
     token_ctx = CURRENT_ORG_ID.set(org_id)
     try:
         await prime_org_registry(session, app_settings, org_id)
         db_carrier = proxy.get("telnyx")
         assert db_carrier is not None
-        assert getattr(db_carrier, "api_key") == "db-api-key"
+        assert db_carrier.api_key == "db-api-key"
     finally:
         CURRENT_ORG_ID.reset(token_ctx)
 
     after_reset = proxy.get("telnyx")
     assert after_reset is not None
-    assert getattr(after_reset, "api_key") == "env-api-key"
+    assert after_reset.api_key == "env-api-key"
 
 
 async def test_registry_proxy_wired_through_real_requests(client_with_key, monkeypatch):

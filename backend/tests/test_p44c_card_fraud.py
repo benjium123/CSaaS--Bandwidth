@@ -11,7 +11,6 @@ import sqlalchemy as sa
 from app.db.base import set_org_context
 from app.errors import PermissionDeniedError
 from app.models import (
-    CreditLedgerEntry,
     KycProfile,
     Org,
     OrgMonitoring,
@@ -120,7 +119,9 @@ async def _setup_paid_org(session):
     return org
 
 
-async def test_early_fraud_warning_holds_bans_pauses_and_asks_for_a_refund(session, settings, fake_stripe):
+async def test_early_fraud_warning_holds_bans_pauses_and_asks_for_a_refund(
+    session, settings, fake_stripe
+):
     calls, state = fake_stripe
     org = await _setup_paid_org(session)
     state["intent"] = _intent(org.id)
@@ -209,7 +210,10 @@ async def test_fraud_on_a_bundle_payment_pauses_without_touching_the_balance(
     await card_risk.handle_stripe_event(
         session,
         settings,
-        {"type": "charge.dispute.created", "data": {"object": {"id": "dp_2", "payment_intent": "pi_1"}}},
+        {
+            "type": "charge.dispute.created",
+            "data": {"object": {"id": "dp_2", "payment_intent": "pi_1"}}
+        },
     )
     await session.commit()
     assert await credits.balance(session, org.id) == 50_000_000

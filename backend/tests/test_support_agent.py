@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 from app.api.routes import site as site_routes
 from app.models import SecurityAlert
-from app.models.site import SiteChat, SiteChatMessage
+from app.models.site import SiteChat
 from app.services import support_agent
 from tests.conftest import auth_headers, create_org, make_settings, register_and_login
 from tests.test_support_chat_inbox import _chat_item, _operator
@@ -91,13 +91,19 @@ async def _poll(client, body, history=True):
 
 async def _alerts(session) -> int:
     return len(
-        (await session.execute(sa.select(SecurityAlert).where(SecurityAlert.kind == "site_chat_handoff")))
+        (
+            await session.execute(
+                sa.select(SecurityAlert).where(SecurityAlert.kind == "site_chat_handoff")
+            )
+        )
         .scalars()
         .all()
     )
 
 
-async def test_app_chat_is_answered_by_the_assistant_with_docs_and_account(client, session, monkeypatch):
+async def test_app_chat_is_answered_by_the_assistant_with_docs_and_account(
+    client, session, monkeypatch
+):
     llm = FakeLLM(monkeypatch, "Turn it on in Settings -> Calling -> Recording & results.")
     body = await _start(client, await _customer(client))
     assert body["ai"] is True
@@ -159,7 +165,11 @@ async def test_operator_reply_stops_the_assistant(client, session, monkeypatch):
     item = await _chat_item(client, body["chat_id"], op)
     assert item["ai_state"] == "active" and item["unread"] is False
 
-    r = await client.post(f"/api/v1/ops/site/chats/{body['chat_id']}/reply", json={"text": "Hi, Sam here."}, headers=op)
+    r = await client.post(
+        f"/api/v1/ops/site/chats/{body['chat_id']}/reply",
+        json={"text": "Hi, Sam here."},
+        headers=op
+    )
     assert r.status_code == 201, r.text
     await client.post(
         f"/api/v1/public/site-chat/{body['chat_id']}/messages",
@@ -179,12 +189,18 @@ async def test_asking_for_a_person_in_hours_keeps_the_assistant_out(client, sess
     assert llm.bodies == []
 
 
-async def test_out_of_hours_the_assistant_helps_and_the_team_still_sees_it(client, session, monkeypatch):
+async def test_out_of_hours_the_assistant_helps_and_the_team_still_sees_it(
+    client, session, monkeypatch
+):
     monkeypatch.setattr(site_routes, "staffed_now", lambda now=None: False)
     llm = FakeLLM(monkeypatch, "Here is how.")
     r = await client.post(
         "/api/v1/public/site-chat/handoff",
-        json={"name": "Dana", "email": "dana@example.com", "transcript": [{"role": "visitor", "text": "Hi"}]},
+        json={
+            "name": "Dana",
+            "email": "dana@example.com",
+            "transcript": [{"role": "visitor", "text": "Hi"}]
+        },
     )
     body = r.json()
     assert body["ai"] is True and body["staffed"] is False
@@ -202,7 +218,9 @@ async def test_out_of_hours_the_assistant_helps_and_the_team_still_sees_it(clien
 async def test_support_ask_sees_the_account_and_public_ask_does_not(client, monkeypatch):
     llm = FakeLLM(monkeypatch, "Your texting is pending.", "Generic answer.")
     headers = await _customer(client, org_name="Zed Roofing")
-    r = await client.post("/api/v1/support/ask", json={"question": "why can't I text?"}, headers=headers)
+    r = await client.post(
+        "/api/v1/support/ask", json={"question": "why can't I text?"}, headers=headers
+    )
     assert r.status_code == 200, r.text
     assert r.json() == {"answer": "Your texting is pending.", "handoff": False}
     assert "Zed Roofing" in llm.system()

@@ -34,11 +34,15 @@ async def test_directory_delete_and_email_ban(kyc_app, session):
     )
     assert bad.status_code == 422
     denied = await client.post(
-        f"/api/v1/ops/customer-accounts/{uid}/delete", headers={**auth_headers(token), "X-Ops-Reason": "test: operator decision"}, json=payload
+        f"/api/v1/ops/customer-accounts/{uid}/delete", headers={
+            **auth_headers(token), "X-Ops-Reason": "test: operator decision"
+        }, json=payload
     )
     assert denied.status_code == 403
     deleted = await client.post(
-        f"/api/v1/ops/customer-accounts/{uid}/delete", headers={**h, "X-Ops-Reason": "test: operator decision"}, json=payload
+        f"/api/v1/ops/customer-accounts/{uid}/delete", headers={
+            **h, "X-Ops-Reason": "test: operator decision"
+        }, json=payload
     )
     assert deleted.status_code == 204, deleted.text
     session.expire_all()

@@ -46,12 +46,11 @@ from app.models import (
     Tag,
 )
 from app.models.voice import TERMINAL_CALL_STATUSES
-from app.services import ai_usage
 from app.services import ai_providers as ai_providers_svc
+from app.services import ai_usage, llm_client
 from app.services import calls as calls_svc
 from app.services import contacts as contacts_svc
 from app.services import kb as kb_svc
-from app.services import llm_client
 from app.services import usage as usage_svc
 from app.services.outbox import record_platform_event
 

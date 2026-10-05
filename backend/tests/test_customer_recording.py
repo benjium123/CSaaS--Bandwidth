@@ -33,7 +33,7 @@ async def _row_for_call(session, org_id, call):
 
 async def fake_runner(argv: list[str], timeout: float) -> None:
     fake_runner.calls.append(argv)
-    for i, arg in enumerate(argv):
+    for _, arg in enumerate(argv):
         if arg.endswith(".mp3"):
             name = Path(arg).stem
             Path(arg).write_bytes(b"ID3fake-" + name.encode())
@@ -214,7 +214,9 @@ async def test_finalize_tick_leaves_freshly_ended_call_pending(session, mon_sett
     await session.commit()
     key_agent, key_customer = await _seed_sides(session, store, org_id, call)
 
-    counts = await customer_recording.finalize_tick(session, mon_settings, store, now=now, runner=fake_runner)
+    counts = await customer_recording.finalize_tick(
+        session, mon_settings, store, now=now, runner=fake_runner
+    )
 
     assert counts["stored"] == 0
     row = await _row_for_call(session, org_id, call)
@@ -230,7 +232,9 @@ async def test_finalize_tick_stores_unmonitored_call_and_purges_ogg_sides(sessio
     key_agent, key_customer = await _seed_sides(session, store, org_id, call)
     now = datetime.now(timezone.utc)
 
-    counts = await customer_recording.finalize_tick(session, mon_settings, store, now=now, runner=fake_runner)
+    counts = await customer_recording.finalize_tick(
+        session, mon_settings, store, now=now, runner=fake_runner
+    )
 
     assert counts["stored"] == 1
     row = await _row_for_call(session, org_id, call)
@@ -254,7 +258,9 @@ async def test_finalize_tick_keeps_ogg_sides_for_a_monitored_call(session, mon_s
     key_agent, key_customer = await _seed_sides(session, store, org_id, call)
     now = datetime.now(timezone.utc)
 
-    counts = await customer_recording.finalize_tick(session, mon_settings, store, now=now, runner=fake_runner)
+    counts = await customer_recording.finalize_tick(
+        session, mon_settings, store, now=now, runner=fake_runner
+    )
 
     assert counts["stored"] == 1
     row = await _row_for_call(session, org_id, call)
@@ -264,7 +270,9 @@ async def test_finalize_tick_keeps_ogg_sides_for_a_monitored_call(session, mon_s
     assert await store.get(key_customer) == b"OggS-customer"
 
 
-async def test_finalize_tick_dual_layout_writes_agent_and_customer_side_files(session, mon_settings):
+async def test_finalize_tick_dual_layout_writes_agent_and_customer_side_files(
+    session, mon_settings
+):
     store = InMemoryObjectStore()
     org_id = await _org(session)
     set_org_context(session, org_id)
@@ -278,7 +286,9 @@ async def test_finalize_tick_dual_layout_writes_agent_and_customer_side_files(se
     await _seed_sides(session, store, org_id, call)
     now = datetime.now(timezone.utc)
 
-    counts = await customer_recording.finalize_tick(session, mon_settings, store, now=now, runner=fake_runner)
+    counts = await customer_recording.finalize_tick(
+        session, mon_settings, store, now=now, runner=fake_runner
+    )
 
     assert counts["stored"] == 1
     row = await _row_for_call(session, org_id, call)
@@ -288,7 +298,9 @@ async def test_finalize_tick_dual_layout_writes_agent_and_customer_side_files(se
     assert await store.get(recordings.layout_storage_key(row, "customer")) == b"ID3fake-customer"
 
 
-async def test_finalize_tick_fails_call_with_no_monitor_recordings_after_giving_up(session, mon_settings):
+async def test_finalize_tick_fails_call_with_no_monitor_recordings_after_giving_up(
+    session, mon_settings
+):
     store = InMemoryObjectStore()
     org_id = await _org(session)
     call = await _finished_call(session, org_id)
@@ -298,7 +310,9 @@ async def test_finalize_tick_fails_call_with_no_monitor_recordings_after_giving_
     customer_recording.queue(session, call)
     await session.commit()
 
-    counts = await customer_recording.finalize_tick(session, mon_settings, store, now=now, runner=fake_runner)
+    counts = await customer_recording.finalize_tick(
+        session, mon_settings, store, now=now, runner=fake_runner
+    )
 
     assert counts["failed"] == 1
     row = await _row_for_call(session, org_id, call)
@@ -314,7 +328,9 @@ async def test_finalize_tick_fails_when_runner_raises(session, mon_settings):
     await _seed_sides(session, store, org_id, call)
     now = datetime.now(timezone.utc)
 
-    counts = await customer_recording.finalize_tick(session, mon_settings, store, now=now, runner=raising_runner)
+    counts = await customer_recording.finalize_tick(
+        session, mon_settings, store, now=now, runner=raising_runner
+    )
 
     assert counts["failed"] == 1
     row = await _row_for_call(session, org_id, call)
@@ -339,7 +355,9 @@ async def test_finalize_tick_leaves_carrier_recordings_untouched(session, mon_se
     await session.commit()
     now = datetime.now(timezone.utc)
 
-    await customer_recording.finalize_tick(session, mon_settings, store, now=now, runner=fake_runner)
+    await customer_recording.finalize_tick(
+        session, mon_settings, store, now=now, runner=fake_runner
+    )
 
     set_org_context(session, org_id)
     await session.refresh(carrier_row)

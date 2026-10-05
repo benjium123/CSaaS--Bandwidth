@@ -623,7 +623,9 @@ async def test_refused_auto_recharge_switches_auto_recharge_off(session, monkeyp
     from app.services import payments
 
     org = await _new_org(session)
-    org.credit_auto_recharge = {"enabled": True, "pending_intent": "pi_x", "amount_micros": 10_000_000}
+    org.credit_auto_recharge = {
+        "enabled": True, "pending_intent": "pi_x", "amount_micros": 10_000_000
+    }
     await session.commit()
     org_id = org.id
     _stub_stripe(monkeypatch, {"cvc_check": "pass", "risk_score": 90})

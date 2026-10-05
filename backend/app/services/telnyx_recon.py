@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import uuid4
 
 import httpx

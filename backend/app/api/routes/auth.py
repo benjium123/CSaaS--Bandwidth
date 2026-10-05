@@ -30,9 +30,9 @@ from app.rate_limit import enforce_rate_limit
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
 from app.services import audit as audit_svc
-from app.services import device_sessions  # noqa: F401 - type hints (Ringlite apps P1)
 from app.services import (
     ban_list,
+    device_sessions,  # noqa: F401 - type hints (Ringlite apps P1)
     lockout,
     login_flow,
     passkey_policy,
@@ -432,7 +432,7 @@ async def _login(
     session: AsyncSession,
     *,
     require_admin: bool = False,
-    device: "device_sessions.DeviceInfo | None" = None,
+    device: device_sessions.DeviceInfo | None = None,
 ) -> TokenOut | dict:
     """Shared password sign-in body.
 

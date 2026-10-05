@@ -10,8 +10,6 @@ import inspect
 import re
 import uuid
 
-import pytest
-
 from app.main import create_app
 from app.services import entitlements
 from app.voice_plane import service as voice_service

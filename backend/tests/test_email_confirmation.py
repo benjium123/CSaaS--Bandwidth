@@ -257,7 +257,9 @@ async def test_resend_is_primary_and_telnyx_the_fallback(monkeypatch, resend_cod
         telnyx_api_key="test-key",
         telnyx_email_from="ringlite@example.com",
     )
-    assert await mailer.send(settings, ["ada@example.com"], "Code", "Your code is 123456", follow_up=False)
+    assert await mailer.send(
+        settings, ["ada@example.com"], "Code", "Your code is 123456", follow_up=False
+    )
     assert calls == urls
 
 
@@ -291,5 +293,7 @@ async def test_resend_stops_at_the_daily_cap_and_telnyx_takes_over(monkeypatch):
         telnyx_email_from="ringlite@example.com",
     )
     for _ in range(3):
-        assert await mailer.send(settings, ["ada@example.com"], "Code", "Your code is 1", follow_up=False)
+        assert await mailer.send(
+            settings, ["ada@example.com"], "Code", "Your code is 1", follow_up=False
+        )
     assert calls == ["resend", "resend", "telnyx"]

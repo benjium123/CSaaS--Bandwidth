@@ -26,9 +26,8 @@ from app.models import WILDCARD, InboxGrant, Invite, OrgMembership, Role, User
 from app.models.rbac import is_privileged_permissions
 from app.repositories import orgs as orgs_repo
 from app.repositories import users as users_repo
-from app.services import account_security, contact_visibility, password_policy
+from app.services import account_security, contact_visibility, org_tree, password_policy
 from app.services import audit as audit_svc
-from app.services import org_tree
 from app.services import calling_settings as calling_settings_svc
 from app.services import defaults as defaults_svc
 from app.services import invites as invites_svc
@@ -187,8 +186,12 @@ async def _calling_out(ctx: OrgContext) -> dict:
     from app.services import telephony_billing
 
     prices = {
-        metric: await telephony_billing.feature_minute_price(ctx.session, ctx.org.id, metric, feature)
-        for metric, feature in (("recording_min", "call_recording"), ("transcription_min", "call_transcription"))
+        metric: await telephony_billing.feature_minute_price(
+            ctx.session, ctx.org.id, metric, feature
+        )
+        for metric, feature in (
+            ("recording_min", "call_recording"), ("transcription_min", "call_transcription")
+        )
     }
     return {**calling_settings_svc.as_dict(ctx.org), "feature_prices": prices}
 
@@ -400,7 +403,9 @@ async def set_member_manager(
     """
     perms = ctx.role.permissions or []
     if WILDCARD not in perms and "inboxes:admin" not in perms:
-        raise PermissionDeniedError("Only someone who manages every line can change who reports to whom")
+        raise PermissionDeniedError(
+            "Only someone who manages every line can change who reports to whom"
+        )
 
     row = (
         await ctx.session.execute(
@@ -414,7 +419,9 @@ async def set_member_manager(
         raise NotFoundError("Member not found")
     membership, user, role = row
     if not _role_assignable_by(ctx.role, role):
-        raise PermissionDeniedError("You cannot change the manager of someone with a higher role than your own")
+        raise PermissionDeniedError(
+            "You cannot change the manager of someone with a higher role than your own"
+        )
 
     manager_id = payload.manager_user_id
     if manager_id is not None:

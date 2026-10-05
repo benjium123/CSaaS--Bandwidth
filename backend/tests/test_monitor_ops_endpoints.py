@@ -235,7 +235,9 @@ async def test_the_endpoints_require_an_operator(ops, session, ops_settings):
         ),
     ):
         r = await getattr(ops, method)(
-            path, headers={**auth_headers(token), "X-Ops-Reason": "test: operator decision"}, **({"json": body} if body else {})
+            path, headers={
+                **auth_headers(token), "X-Ops-Reason": "test: operator decision"
+            }, **({"json": body} if body else {})
         )
         assert r.status_code == 403, f"{path} allowed a non-operator: {r.status_code}"
 

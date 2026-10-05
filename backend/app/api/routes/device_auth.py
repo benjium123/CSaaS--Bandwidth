@@ -23,7 +23,8 @@ from app.errors import PermissionDeniedError, UnauthenticatedError
 from app.models import Session as IdentitySession
 from app.models import User
 from app.rate_limit import enforce_rate_limit
-from app.services import device_sessions, identity as identity_svc, login_flow
+from app.services import device_sessions, login_flow
+from app.services import identity as identity_svc
 
 router = APIRouter(prefix="/api/v1/auth/device", tags=["device-auth"])
 app_router = APIRouter(prefix="/api/v1/app", tags=["device-auth"])

@@ -136,7 +136,7 @@ async def push_to_users(
             )
         )
         now = datetime.now(timezone.utc)
-        for token, result in zip(tokens, results):
+        for token, result in zip(tokens, results, strict=False):
             if result is fcm.FcmResult.OK:
                 token.last_used_at = now
             elif result is fcm.FcmResult.UNREGISTERED:

@@ -35,7 +35,7 @@ CURRENT_ORG_ID: ContextVar[uuid.UUID | None] = ContextVar("org_id", default=None
 #: this entry was primed). Only the second element may ever be closed on
 #: eviction/invalidation - see build_registry_for_org.
 _OrgCacheEntry = tuple[CarrierRegistry, dict[str, MessagingCarrier], float]
-_ORG_REGISTRY_CACHE: "OrderedDict[tuple[uuid.UUID, int], _OrgCacheEntry]" = OrderedDict()
+_ORG_REGISTRY_CACHE: OrderedDict[tuple[uuid.UUID, int], _OrgCacheEntry] = OrderedDict()
 _CACHE_MAX = 256
 
 #: Multi-worker staleness backstop. bump_version() (app/services/provider_accounts.py)
@@ -99,11 +99,11 @@ def _construct_provider(name: str, src: Any, base: Settings) -> MessagingCarrier
             carrier = BandwidthMessagingCarrier(
                 account_id=getattr(src, "bandwidth_account_id", ""),
                 api_username=getattr(src, "bandwidth_api_username", ""),
-                api_password=getattr(src, "bandwidth_api_password").get_secret_value(),
+                api_password=src.bandwidth_api_password.get_secret_value(),
                 application_id=getattr(src, "bandwidth_messaging_application_id", ""),
                 auth_mode=getattr(base, "bandwidth_auth_mode", "oauth2"),
                 webhook_username=getattr(src, "bandwidth_webhook_username", ""),
-                webhook_password=getattr(src, "bandwidth_webhook_password").get_secret_value(),
+                webhook_password=src.bandwidth_webhook_password.get_secret_value(),
                 # P18: DB-backed accounts supply their own Dashboard/IRIS Site id via the
                 # optional `site_id` credential (settings_like_for maps it to
                 # bandwidth_site_id); missing -> "".
@@ -118,18 +118,16 @@ def _construct_provider(name: str, src: Any, base: Settings) -> MessagingCarrier
             carrier.voice_webhook_username = getattr(
                 src, "bandwidth_webhook_username", ""
             )
-            carrier.voice_webhook_password = getattr(
-                src, "bandwidth_webhook_password"
-            ).get_secret_value()
+            carrier.voice_webhook_password = src.bandwidth_webhook_password.get_secret_value()
             return carrier
 
     if name == "telnyx" and src.carrier_live("telnyx"):
         from app.providers.telnyx.adapter import TelnyxMessagingCarrier
 
         carrier = TelnyxMessagingCarrier(
-            api_key=getattr(src, "telnyx_api_key").get_secret_value(),
+            api_key=src.telnyx_api_key.get_secret_value(),
             messaging_profile_id=getattr(src, "telnyx_messaging_profile_id", ""),
-            public_key=getattr(src, "telnyx_public_key").get_secret_value(),
+            public_key=src.telnyx_public_key.get_secret_value(),
         )
         carrier.voice_connection_id = getattr(src, "telnyx_voice_connection_id", "")
         return carrier
@@ -139,7 +137,7 @@ def _construct_provider(name: str, src: Any, base: Settings) -> MessagingCarrier
 
         return TwilioMessagingCarrier(
             account_sid=getattr(src, "twilio_account_sid", ""),
-            auth_token=getattr(src, "twilio_auth_token").get_secret_value(),
+            auth_token=src.twilio_auth_token.get_secret_value(),
             messaging_service_sid=getattr(src, "twilio_messaging_service_sid", ""),
             webhook_url=base.twilio_webhook_url,
         )
@@ -149,7 +147,7 @@ def _construct_provider(name: str, src: Any, base: Settings) -> MessagingCarrier
 
         return PlivoMessagingCarrier(
             auth_id=getattr(src, "plivo_auth_id", ""),
-            auth_token=getattr(src, "plivo_auth_token").get_secret_value(),
+            auth_token=src.plivo_auth_token.get_secret_value(),
             powerpack_uuid=getattr(src, "plivo_powerpack_uuid", ""),
             webhook_url=base.plivo_webhook_url,
         )
@@ -159,7 +157,7 @@ def _construct_provider(name: str, src: Any, base: Settings) -> MessagingCarrier
 
         carrier = SignalWireMessagingCarrier(
             project_id=getattr(src, "signalwire_project_id", ""),
-            api_token=getattr(src, "signalwire_api_token").get_secret_value(),
+            api_token=src.signalwire_api_token.get_secret_value(),
             space_url=getattr(src, "signalwire_space_url", ""),
             webhook_url=base.signalwire_webhook_url,
             # Per-org accounts store no signing key yet; the space-level one from the env
@@ -274,7 +272,9 @@ def db_backed_providers(org_id: uuid.UUID) -> frozenset[str]:
     return frozenset(db_owned)
 
 
-async def carrier_for_account(settings: Settings, account: ProviderAccount) -> MessagingCarrier | None:
+async def carrier_for_account(
+    settings: Settings, account: ProviderAccount
+) -> MessagingCarrier | None:
     """One adapter for ONE account's decrypted credentials, cached per (account id, its
     org's current version) and closed the moment that version moves on.
 

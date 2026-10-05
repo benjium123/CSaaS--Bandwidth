@@ -628,7 +628,10 @@ async def create_bundle_checkout(
         and payload.qty >= bundles_svc.VOLUME_MIN_QTY
     )
     if volume:
-        name += f" ({bundles_svc.VOLUME_DISCOUNT_BPS_BY_KIND[payload.kind] // 100}% volume discount)"
+        name += (
+            f" ({bundles_svc.VOLUME_DISCOUNT_BPS_BY_KIND[payload.kind] // 100}"
+            "% volume discount)"
+        )
     if q["workspace_discount_bps"] > 0:
         name += f" ({q['workspace_discount_bps'] / 100:g}% workspace discount)"
     checkout = await stripe_client.create_bundle_checkout_session(

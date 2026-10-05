@@ -50,7 +50,9 @@ def _to_utc(dt):
 
 def in_night_window(now) -> bool:
     zone = ZoneInfo(NIGHT_TZ)
-    local = now.astimezone(zone) if now.tzinfo is not None else now.replace(tzinfo=timezone.utc).astimezone(zone)
+    local = now.astimezone(
+        zone
+    ) if now.tzinfo is not None else now.replace(tzinfo=timezone.utc).astimezone(zone)
     return NIGHT_START_HOUR <= local.hour < NIGHT_END_HOUR
 
 
@@ -501,7 +503,9 @@ async def tick(session, settings, store, *, now=None, client=None, loadavg=None,
                 transcribe_url = settings.stt_url.rstrip('/') + f'/transcribe?engine={engine}'
 
                 try:
-                    resp = await http.post(transcribe_url, content=audio, headers=headers, timeout=900.0)
+                    resp = await http.post(
+                        transcribe_url, content=audio, headers=headers, timeout=900.0
+                    )
                 except httpx.HTTPError as exc:
                     await _handle_transcribe_failure(session, job, str(exc) or 'httpx error', now)
                     if job.status == 'failed':
@@ -516,7 +520,9 @@ async def tick(session, settings, store, *, now=None, client=None, loadavg=None,
                     break
 
                 if resp.status_code != 200:
-                    await _handle_transcribe_failure(session, job, resp.text or f'HTTP {resp.status_code}', now)
+                    await _handle_transcribe_failure(
+                        session, job, resp.text or f'HTTP {resp.status_code}', now
+                    )
                     if job.status == 'failed':
                         counts['failed'] = counts.get('failed', 0) + 1
                     continue

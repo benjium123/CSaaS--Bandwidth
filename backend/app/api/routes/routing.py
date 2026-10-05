@@ -137,8 +137,7 @@ async def probe_carrier(
 ) -> ProbeOut:
     """Ask the carrier whether these credentials work. Operator-triggered ONLY - see
     providers/probes.py for why this never runs on boot."""
-    from app.providers import probes
-    from app.providers import registry_org
+    from app.providers import probes, registry_org
     from app.services import provider_accounts as provider_accounts_svc
 
     settings = request.app.state.settings

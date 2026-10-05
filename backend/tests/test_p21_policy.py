@@ -5,8 +5,10 @@ from __future__ import annotations
 from tests.conftest import (
     auth_headers,
     create_org,
-    register_and_login as _register_and_login,
     make_platform_operator,
+)
+from tests.conftest import (
+    register_and_login as _register_and_login,
 )
 
 

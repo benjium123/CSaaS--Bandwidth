@@ -96,7 +96,9 @@ async def test_visibility_everyone_returns_no_predicate(client, session):
 
     h_owner = auth_headers(token, org["id"])
     d1 = await client.post("/api/v1/departments", json={"name": "Everyone Sales"}, headers=h_owner)
-    d2 = await client.post("/api/v1/departments", json={"name": "Everyone Support"}, headers=h_owner)
+    d2 = await client.post(
+        "/api/v1/departments", json={"name": "Everyone Support"}, headers=h_owner
+    )
     d1_id = uuid.UUID(d1.json()["id"])
     d2_id = uuid.UUID(d2.json()["id"])
 
@@ -207,8 +209,12 @@ async def test_read_all_bypasses_policy(client, session):
     dept = await client.post("/api/v1/departments", json={"name": "Sales"}, headers=h_owner)
     dept_id = uuid.UUID(dept.json()["id"])
 
-    admin_token, admin = await _register_member(client, session, org_id, "admin.readall@example.com", "admin")
-    agent_token, agent = await _register_member(client, session, org_id, "agent.readall@example.com")
+    admin_token, admin = await _register_member(
+        client, session, org_id, "admin.readall@example.com", "admin"
+    )
+    agent_token, agent = await _register_member(
+        client, session, org_id, "agent.readall@example.com"
+    )
     await _join_dept(session, org_id, dept_id, agent.id)
 
     contact = await create_contact(client, agent_token, org["id"], "Agent Contact", [AGENT_PHONE])
@@ -230,7 +236,9 @@ async def test_unowned_unteamed_visible_to_writers(client, session):
         headers=h_owner,
     )
 
-    agent_token, agent = await _register_member(client, session, org_id, "agent.unowned@example.com")
+    agent_token, agent = await _register_member(
+        client, session, org_id, "agent.unowned@example.com"
+    )
 
     set_org_context(session, org_id)
     contact = Contact(
@@ -263,7 +271,9 @@ async def test_inbound_autocreate_sets_department_from_inbox(client, session):
 
     set_org_context(session, org_id)
     number = (await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == A))).scalar_one()
-    inbox = (await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))).scalar_one()
+    inbox = (
+        await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))
+    ).scalar_one()
     session.add(
         InboxGrant(
             id=uuid.uuid4(),
@@ -348,7 +358,9 @@ async def test_agent_contact_lookup_scoped_to_inbox_department(client, session, 
 
     set_org_context(session, org_id)
     number = (await session.execute(sa.select(OrgNumber).where(OrgNumber.e164 == A))).scalar_one()
-    inbox = (await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))).scalar_one()
+    inbox = (
+        await session.execute(sa.select(Inbox).where(Inbox.number_id == number.id))
+    ).scalar_one()
     session.add(
         InboxGrant(
             id=uuid.uuid4(),
@@ -431,7 +443,9 @@ async def test_full_flow_owner_policy_reassign(client, session):
     alice_token, alice = await _register_member(client, session, org_id, "alice.flow@example.com")
     lead_token, lead = await _register_member(client, session, org_id, "lead.flow@example.com")
     peer_token, peer = await _register_member(client, session, org_id, "peer.flow@example.com")
-    admin_token, _admin = await _register_member(client, session, org_id, "admin.flow@example.com", "admin")
+    admin_token, _admin = await _register_member(
+        client, session, org_id, "admin.flow@example.com", "admin"
+    )
 
     await _join_dept(session, org_id, sales_id, alice.id, is_lead=False)
     await _join_dept(session, org_id, sales_id, lead.id, is_lead=True)

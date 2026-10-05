@@ -68,7 +68,14 @@ def world(monkeypatch):
 async def test_transfer_invite_holds_caller_rings_only_the_teammate_and_join_resumes(world):
     bus, call = Bus(), _call()
     await call_invites.invite(
-        Session(), bus, object(), SETTINGS, call, inviter=INVITER, target_user_id=MATE.id, mode="transfer"
+        Session(),
+        bus,
+        object(),
+        SETTINGS,
+        call,
+        inviter=INVITER,
+        target_user_id=MATE.id,
+        mode="transfer",
     )
     assert world == [True]  # caller hears hold music while it rings
     ring = bus.events[-1]
@@ -81,7 +88,9 @@ async def test_transfer_invite_holds_caller_rings_only_the_teammate_and_join_res
     update = bus.events[-1]
     assert update == {
         "type": "call.invite.update", "user_id": str(INVITER.id), "call_id": str(call.id),
-        "invitee": str(MATE.id), "invitee_name": "Sam Mate", "mode": "transfer", "state": "accepted",
+        "invitee": str(
+            MATE.id
+        ), "invitee_name": "Sam Mate", "mode": "transfer", "state": "accepted",
     }
     # The invite is single-use.
     with pytest.raises(ConflictError):
@@ -92,7 +101,14 @@ async def test_transfer_invite_holds_caller_rings_only_the_teammate_and_join_res
 async def test_add_invite_does_not_hold_and_strangers_cannot_join(world):
     bus, call = Bus(), _call()
     await call_invites.invite(
-        Session(), bus, object(), SETTINGS, call, inviter=INVITER, target_user_id=MATE.id, mode="add"
+        Session(),
+        bus,
+        object(),
+        SETTINGS,
+        call,
+        inviter=INVITER,
+        target_user_id=MATE.id,
+        mode="add",
     )
     assert world == []
     with pytest.raises(ConflictError):
@@ -104,17 +120,38 @@ async def test_only_teammates_on_this_number_can_be_invited(world):
     call = _call()
     with pytest.raises(ValidationFailedError):
         await call_invites.invite(
-            Session(), Bus(), object(), SETTINGS, call, inviter=INVITER, target_user_id=OTHER.id, mode="add"
+            Session(),
+            Bus(),
+            object(),
+            SETTINGS,
+            call,
+            inviter=INVITER,
+            target_user_id=OTHER.id,
+            mode="add",
         )
     with pytest.raises(ValidationFailedError):
         await call_invites.invite(
-            Session(), Bus(), object(), SETTINGS, call, inviter=INVITER, target_user_id=INVITER.id, mode="add"
+            Session(),
+            Bus(),
+            object(),
+            SETTINGS,
+            call,
+            inviter=INVITER,
+            target_user_id=INVITER.id,
+            mode="add",
         )
     ended = _call()
     ended.status = "completed"
     with pytest.raises(ConflictError):
         await call_invites.invite(
-            Session(), Bus(), object(), SETTINGS, ended, inviter=INVITER, target_user_id=MATE.id, mode="add"
+            Session(),
+            Bus(),
+            object(),
+            SETTINGS,
+            ended,
+            inviter=INVITER,
+            target_user_id=MATE.id,
+            mode="add",
         )
 
 
@@ -122,7 +159,14 @@ async def test_only_teammates_on_this_number_can_be_invited(world):
 async def test_decline_resumes_the_caller_and_tells_the_inviter(world):
     bus, call = Bus(), _call()
     await call_invites.invite(
-        Session(), bus, object(), SETTINGS, call, inviter=INVITER, target_user_id=MATE.id, mode="transfer"
+        Session(),
+        bus,
+        object(),
+        SETTINGS,
+        call,
+        inviter=INVITER,
+        target_user_id=MATE.id,
+        mode="transfer",
     )
     await call_invites.cancel(Session(), bus, object(), SETTINGS, call, actor=MATE, user_id=MATE.id)
     assert world == [True, False]
@@ -137,7 +181,14 @@ async def test_expired_invites_cannot_be_used(world, monkeypatch):
 
     bus, call = Bus(), _call()
     await call_invites.invite(
-        Session(), bus, object(), SETTINGS, call, inviter=INVITER, target_user_id=MATE.id, mode="add"
+        Session(),
+        bus,
+        object(),
+        SETTINGS,
+        call,
+        inviter=INVITER,
+        target_user_id=MATE.id,
+        mode="add",
     )
     later = datetime.now(timezone.utc) + call_invites.INVITE_TTL + timedelta(seconds=1)
     monkeypatch.setattr(call_invites, "_now", lambda: later)

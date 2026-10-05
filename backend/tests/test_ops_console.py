@@ -416,7 +416,9 @@ async def test_large_credit_needs_a_second_operator(ops, session, ops_settings):
     assert r.status_code == 403, r.text  # the requester cannot approve their own grant
 
     second = await _operator(ops, session, email="ops2@example.com")
-    listed = (await ops.get("/api/v1/ops/console/grants/pending", headers=auth_headers(second))).json()
+    listed = (
+        await ops.get("/api/v1/ops/console/grants/pending", headers=auth_headers(second))
+    ).json()
     assert [g["id"] for g in listed] == [pending_id]
     r = await ops.post(
         f"/api/v1/ops/console/grants/{pending_id}/decide",

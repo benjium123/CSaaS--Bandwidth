@@ -52,7 +52,9 @@ def _pdf2() -> bytes:
 PDF2 = _pdf2()
 
 
-async def _fax_number(session, org_id, *, fax_mode: bool = True, e164: str = "+12145550150") -> OrgNumber:
+async def _fax_number(
+    session, org_id, *, fax_mode: bool = True, e164: str = "+12145550150"
+) -> OrgNumber:
     set_org_context(session, org_id)
     number = OrgNumber(
         id=uuid.uuid4(),

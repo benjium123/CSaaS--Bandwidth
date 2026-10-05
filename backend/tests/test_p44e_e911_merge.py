@@ -135,7 +135,6 @@ async def test_a_new_number_gets_its_own_grace_period(session):
 
 
 async def test_an_api_key_cannot_dial_911(app_with_dial_log, session):  # noqa: F811
-    from tests.conftest import auth_headers
     from tests.test_bugfix_area5 import _api_key
     from tests.test_e911 import _room_org
 
