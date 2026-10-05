@@ -351,9 +351,13 @@ async def estimate_call_price(
         max_call_seconds = 900
 
     if (getattr(org, "ai_key_mode", "platform") or "platform") != "byok":
-        # All-in pricing: the worst case is every started minute at the flat AI rate. The
-        # plan allowance is ignored here on purpose - a reserve may over-hold, never under.
-        return ((max_call_seconds + 59) // 60) * _ai_minute_price(settings)
+        # All-in pricing: the worst case is every started minute at the flat AI rate, less
+        # the minutes the plan still includes (a Team org with allowance left and a low
+        # balance must not be refused). The allowance can be spent by a concurrent call
+        # before this one ends; the final charge is still exact, only the hold is smaller.
+        minutes = (max_call_seconds + 59) // 60
+        minutes -= min(minutes, await plans.remaining(session, org.id, "ai_minutes"))
+        return minutes * _ai_minute_price(settings)
 
     llm_provider = getattr(profile, "llm_provider", None) or DEFAULT_LLM_PROVIDER
     stt_provider = getattr(profile, "stt_provider", None) or DEFAULT_STT_PROVIDER

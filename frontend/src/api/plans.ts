@@ -24,6 +24,7 @@ export const INCLUDED_LABELS: Record<string, string> = {
   // spelled properly here.
   voice_minutes: "Voice minutes",
   numbers: "Phone numbers",
+  ai_minutes: "AI agent minutes",
   // Kept for operator-defined plans that may use these spellings.
   mms_messages: "MMS messages",
   call_minutes: "Call minutes",

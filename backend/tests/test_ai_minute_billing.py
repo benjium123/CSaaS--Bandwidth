@@ -269,6 +269,37 @@ async def test_estimate_call_price_is_the_flat_ai_minute_rate_for_a_platform_wor
     )
 
 
+async def test_estimate_call_price_subtracts_the_team_plans_remaining_ai_minutes(session):
+    enforce = make_settings(ai_billing_enforce=True)
+    await _seed_catalog(session, enforce)
+    org = await _make_org(session, plan_code="team")
+    org_id = org.id
+    settings = make_settings()
+    profile = SimpleNamespace(max_call_seconds=900)
+
+    # 900 s is 15 started minutes; the whole 50-minute allowance is unused, so all 15 are
+    # covered and the reserve holds nothing. This is a peek - it must not spend anything.
+    assert (
+        await ai_usage.estimate_call_price(session, org, profile, settings=settings) == 0
+    )
+    assert await plans_svc.remaining(session, org_id, "ai_minutes") == 50
+
+    # An enforce-mode call of 2700 s (45 started minutes) spends 45 of the 50 minutes,
+    # all of them inside the allowance, so nothing is charged for it.
+    event = await _record_ai_minutes(
+        session, org_id, 2700, "ai-team-estimate", settings=enforce
+    )
+    await session.commit()
+    assert event.price_micros == 0
+
+    await session.refresh(org)
+    # 5 minutes of allowance left: 10 of the 15-minute worst case are no longer covered.
+    assert (
+        await ai_usage.estimate_call_price(session, org, profile, settings=settings)
+        == 10 * AI_MINUTE_MICROS
+    )
+
+
 # ==================================================================================
 # 8. Catalogue
 # ==================================================================================
@@ -285,6 +316,40 @@ async def test_the_catalogue_sells_ai_minutes_as_a_plan_allowance(session):
         plan = await session.get(Plan, code)
         assert plan is not None
         assert plan.included["ai_minutes"] == minutes
+
+
+async def test_refresh_voice_allowance_raises_ai_minutes_after_a_mid_period_upgrade(
+    session, monkeypatch
+):
+    await _seed_catalog(session, make_settings())
+    org = await _make_org(session, plan_code="solo")
+    org_id = org.id
+
+    # The solo plan grants no AI minutes: the period rows are seeded with 0.
+    rows = await plans_svc.ensure_period(session, org_id)
+    await session.commit()
+    assert rows["ai_minutes"].included_units == 0
+    assert await plans_svc.remaining(session, org_id, "ai_minutes") == 0
+
+    # Mid-period upgrade to team. ensure_period leaves the existing rows alone, so the
+    # allowance has to be raised in place by refresh_voice_allowance.
+    org = await session.get(Org, org_id)
+    org.plan_code = "team"
+    await session.commit()
+
+    # A live plan lookup would need a real Subscription row; the refresh only reads the
+    # plan's numbers, so it gets the team numbers directly.
+    async def _team_entitlement(_session, _org_id):
+        return SimpleNamespace(minutes=200, spec=plan_billing.PLANS["team"])
+
+    monkeypatch.setattr(plan_billing, "entitlement", _team_entitlement)
+
+    await plan_billing.refresh_voice_allowance(session, org_id)
+    await session.commit()
+    # The bounded UPDATE does not touch rows already loaded in this session: read fresh.
+    session.expire_all()
+
+    assert await plans_svc.remaining(session, org_id, "ai_minutes") == 50
 
 
 # ==================================================================================

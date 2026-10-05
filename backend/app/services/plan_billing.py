@@ -638,15 +638,18 @@ async def refresh_voice_allowance(session: AsyncSession, org_id: uuid.UUID) -> N
     if ent is None:
         return
     rows = await plans.ensure_period(session, org_id)
-    row = rows.get("voice_minutes")
-    if row is not None and row.included_units < ent.minutes:
-        await session.execute(
-            sa.update(PlanAllowance)
-            .where(PlanAllowance.id == row.id, PlanAllowance.included_units < ent.minutes)
-            .values(included_units=ent.minutes)
-            .execution_options(synchronize_session=False)
-        )
-        await session.flush()
+    # AI agent minutes are raised the same way (2026-10-06): a Starter -> Team upgrade
+    # mid-period must not leave this period at 0 included AI minutes.
+    for metric, target in (("voice_minutes", ent.minutes), ("ai_minutes", ent.spec.ai_minutes)):
+        row = rows.get(metric)
+        if row is not None and row.included_units < target:
+            await session.execute(
+                sa.update(PlanAllowance)
+                .where(PlanAllowance.id == row.id, PlanAllowance.included_units < target)
+                .values(included_units=target)
+                .execution_options(synchronize_session=False)
+            )
+    await session.flush()
 
 
 # ------------------------------------------------------------------------------------
