@@ -24,7 +24,7 @@ from app.models.plans import Plan, PlanAllowance
 log = structlog.get_logger("plans")
 
 #: Metrics a plan can grant an allowance for. Anything else is overage from the first unit.
-ALLOWANCE_METRICS: tuple[str, ...] = ("sms_segments", "voice_minutes", "numbers")
+ALLOWANCE_METRICS: tuple[str, ...] = ("sms_segments", "voice_minutes", "numbers", "ai_minutes")
 
 
 # ------------------------------------------------------------------------------------

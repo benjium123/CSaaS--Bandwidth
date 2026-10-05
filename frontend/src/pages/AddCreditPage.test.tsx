@@ -30,14 +30,14 @@ describe("AddCreditPage (signup funding step)", () => {
     expect(screen.getByRole("link", { name: "Refund policy" })).toHaveAttribute("href", "/legal/refunds");
   });
 
-  it("refuses less than $5", async () => {
+  it("refuses less than $10", async () => {
     const client = makeStubClient({ "/api/v1/auth/me": me });
     renderWithProviders(<AddCreditPage />, client);
 
     const other = screen.getByLabelText("Other amount in dollars");
     await userEvent.clear(other);
-    await userEvent.type(other, "4");
-    expect(screen.getByRole("alert")).toHaveTextContent("between $5 and $5,000");
+    await userEvent.type(other, "5");
+    expect(screen.getByRole("alert")).toHaveTextContent("$10 to $5,000, in steps of $5");
     expect(screen.getByRole("button", { name: "Pay with Stripe" })).toBeDisabled();
   });
 });

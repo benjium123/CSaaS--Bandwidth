@@ -496,9 +496,13 @@ async def create_topup(
 ) -> dict:
     amount = payload.amount_micros
     exact_amounts = {25_000_000, 50_000_000, 100_000_000}
-    if amount not in exact_amounts and not (5_000_000 <= amount <= 5_000_000_000):
+    # 2026-10-06: top-ups start at $10 and go up in $5 steps.
+    if amount not in exact_amounts and not (
+        10_000_000 <= amount <= 5_000_000_000 and amount % 5_000_000 == 0
+    ):
         raise ValidationFailedError(
-            "Amount must be $25, $50, $100, or a custom amount between $5 and $5,000."
+            "Amount must be $25, $50, $100, or a custom amount from $10 to $5,000 "
+            "in $5 steps."
         )
 
     settings = request.app.state.settings

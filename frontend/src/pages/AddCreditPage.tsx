@@ -5,9 +5,9 @@ import { CAPABILITIES_QUERY_KEY } from "@/api/capabilities";
 import { mutationErrorMessage } from "@/components/ui/primitives";
 import { JourneyShell } from "@/components/journey/JourneyShell";
 
-/** Signup: the first credit top-up (at least $5), between approval and choosing numbers. */
+/** Signup: the first credit top-up (at least $10, in $5 steps), between approval and choosing numbers. */
 export const FUNDING_PRESETS_DOLLARS = [5, 10, 25, 50] as const;
-const MIN_DOLLARS = 5;
+const MIN_DOLLARS = 10; // 2026-10-06: top-ups start at $10, in $5 steps
 const MAX_DOLLARS = 5_000;
 
 export function AddCreditPage() {
@@ -19,7 +19,7 @@ export function AddCreditPage() {
   const [error, setError] = useState("");
 
   const dollars = Number(amount);
-  const valid = amount.trim() !== "" && Number.isFinite(dollars) && dollars >= MIN_DOLLARS && dollars <= MAX_DOLLARS;
+  const valid = amount.trim() !== "" && Number.isFinite(dollars) && dollars >= MIN_DOLLARS && dollars <= MAX_DOLLARS && dollars % 5 === 0;
 
   async function pay() {
     if (!valid) return;
@@ -61,7 +61,7 @@ export function AddCreditPage() {
         <span className="rj-note">Other amount ($)</span>
         <input aria-label="Other amount in dollars" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value.replace(/[^\d.]/g, ""))} />
       </label>
-      {!valid && amount.trim() !== "" && <p role="alert" className="rj-error">Enter an amount between ${MIN_DOLLARS} and ${MAX_DOLLARS.toLocaleString()}.</p>}
+      {!valid && amount.trim() !== "" && <p role="alert" className="rj-error">Enter ${MIN_DOLLARS} to ${MAX_DOLLARS.toLocaleString()}, in steps of $5.</p>}
       <button type="button" className="rj-btn" data-block="true" style={{ marginTop: 16 }} disabled={!valid || pending} onClick={() => void pay()}>
         {pending ? "Opening checkout…" : valid ? `Pay $${dollars.toFixed(2)} with Stripe` : "Pay with Stripe"}
       </button>

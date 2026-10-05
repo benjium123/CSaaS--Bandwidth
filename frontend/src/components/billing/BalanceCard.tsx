@@ -92,7 +92,12 @@ export function BalanceCard({
   const summary = summaryQ.data;
   if (summary == null) return null;
 
-  const customMicros = parseDollarsToMicros(customAmount);
+  // Top-ups start at $10 and go up in $5 steps (same rule as the server).
+  const parsedCustom = parseDollarsToMicros(customAmount);
+  const customMicros =
+    parsedCustom !== null && parsedCustom >= 10_000_000 && parsedCustom % 5_000_000 === 0
+      ? parsedCustom
+      : null;
   const customInvalid = customAmount.trim() !== "" && customMicros === null;
   const thresholdMicros = parseDollarsToMicros(thresholdText);
   const rawAmountMicros = parseDollarsToMicros(amountText);
@@ -201,7 +206,7 @@ export function BalanceCard({
 
       {customInvalid ? (
         <p role="alert" className="mt-2 text-sm text-destructive">
-          Enter an amount in dollars, like 25.
+          Enter $10 or more, in steps of $5 (10, 15, 20...).
         </p>
       ) : null}
 

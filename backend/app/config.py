@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # P24: when true, AI usage events debit prepaid credits. While false (default),
     # metering still runs and rows are written as shadow events without a charge.
     ai_billing_enforce: bool = False
+    # AI agent minutes are sold all-in (voice, speech, model) at one flat rate per started
+    # minute, after the plan's ai_minutes allowance. $0.35 decided 2026-10-06.
+    ai_minute_price_micros: int = 350_000
     # P24: Stripe secret key for prepaid credit top-ups. Empty means Stripe is not
     # configured, and billing endpoints answer 503 until it is set.
     stripe_secret_key: SecretStr = SecretStr("")

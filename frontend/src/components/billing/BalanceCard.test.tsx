@@ -162,7 +162,7 @@ describe("BalanceCard", () => {
     renderWithProviders(<BalanceCard onCheckout={vi.fn()} />, client);
 
     await screen.findByText("$12.35");
-    await userEvent.type(screen.getByLabelText("Other amount in dollars"), "37.50");
+    await userEvent.type(screen.getByLabelText("Other amount in dollars"), "35");
     await userEvent.click(screen.getByRole("button", { name: "Add credits" }));
 
     await waitFor(() => {
@@ -171,7 +171,7 @@ describe("BalanceCard", () => {
           call.path === "/api/v1/billing/topups" && (call.init.method ?? "GET") === "POST",
       );
       expect(post).toBeDefined();
-      expect(post?.init.json).toEqual({ amount_micros: 37_500_000 });
+      expect(post?.init.json).toEqual({ amount_micros: 35_000_000 });
     });
   });
 
@@ -183,11 +183,19 @@ describe("BalanceCard", () => {
     const input = screen.getByLabelText("Other amount in dollars");
 
     await userEvent.type(input, "abc");
-    expect(screen.getByText("Enter an amount in dollars, like 25.")).toBeInTheDocument();
+    expect(screen.getByText("Enter $10 or more, in steps of $5 (10, 15, 20...).")).toBeInTheDocument();
 
     await userEvent.clear(input);
     await userEvent.type(input, "-5");
-    expect(screen.getByText("Enter an amount in dollars, like 25.")).toBeInTheDocument();
+    expect(screen.getByText("Enter $10 or more, in steps of $5 (10, 15, 20...).")).toBeInTheDocument();
+
+    // Below the $10 minimum, and off the $5 step, are refused too.
+    await userEvent.clear(input);
+    await userEvent.type(input, "5");
+    expect(screen.getByText("Enter $10 or more, in steps of $5 (10, 15, 20...).")).toBeInTheDocument();
+    await userEvent.clear(input);
+    await userEvent.type(input, "12");
+    expect(screen.getByText("Enter $10 or more, in steps of $5 (10, 15, 20...).")).toBeInTheDocument();
 
     expect(
       client.calls.some(

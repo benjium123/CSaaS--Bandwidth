@@ -82,6 +82,8 @@ class PlanSpec:
     extra_user_setting: str = "stripe_extra_user_price_id"
     #: Call minutes a month for the whole workspace (a fixed pool; add-on users add none).
     minutes: int = 0
+    #: AI agent minutes a month for the whole workspace (no rollover).
+    ai_minutes: int = 0
     #: Most users the plan can have, add-ons included. None = no limit.
     max_users: int | None = None
 
@@ -89,12 +91,13 @@ class PlanSpec:
 PLANS: dict[str, PlanSpec] = {
     "solo": PlanSpec("solo", "Starter", 1, 1, 1500, "stripe_plan_solo_price_id", max_users=5),
     "team": PlanSpec(
-        "team", "Team", 3, 3, 4500, "stripe_plan_team_price_id", minutes=200, max_users=15
+        "team", "Team", 3, 3, 4500, "stripe_plan_team_price_id", minutes=200, ai_minutes=50,
+        max_users=15,
     ),
     "business": PlanSpec(
         "business", "Business", 10, 10, 13000, "stripe_plan_business_price_id",
         extra_user_cents=1200, extra_user_setting="stripe_business_extra_user_price_id",
-        minutes=1000,
+        minutes=1000, ai_minutes=200,
     ),
 }
 
@@ -258,6 +261,7 @@ async def ensure_catalog(session: AsyncSession, settings: Settings) -> None:
                 "seats": spec.users,
                 "numbers": spec.numbers,
                 "voice_minutes": spec.minutes,
+                "ai_minutes": spec.ai_minutes,
                 "sms_segments": 0,
             },
             "is_active": True,

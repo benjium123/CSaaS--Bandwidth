@@ -33,7 +33,7 @@ from app.models import (
     PaymentMethod,
     PlatformEvent,
 )
-from app.services import credits, spend
+from app.services import credits, plans, spend
 
 logger = structlog.get_logger(__name__)
 
@@ -49,6 +49,22 @@ DEFAULT_TTS_PROVIDER = "elevenlabs"
 DEFAULT_VOICE_PROVIDER = "livekit"
 
 # Allowed assistant fallbacks when a workspace cannot pay for a call.
+#: The metric the worker posts for the AI's time on a call; billed as flat AI minutes.
+AI_MINUTE_METRIC = "ai_voice_seconds"
+#: Per-component AI metrics that are inside the all-in AI minute price when on a call.
+ALL_IN_COMPONENT_METRICS = frozenset(
+    {"stt_seconds", "tts_characters", "llm_tokens_in", "llm_tokens_out"}
+)
+DEFAULT_AI_MINUTE_PRICE_MICROS = 350_000
+
+
+def _ai_minute_price(settings: Any) -> int:
+    return int(
+        getattr(settings, "ai_minute_price_micros", DEFAULT_AI_MINUTE_PRICE_MICROS)
+        or DEFAULT_AI_MINUTE_PRICE_MICROS
+    )
+
+
 CREDIT_FALLBACKS = ("human_flow", "busy")
 DEFAULT_CREDIT_FALLBACK = "busy"
 
@@ -181,8 +197,17 @@ async def record(
         cost_micros = int(unit_cost) * int(quantity)
 
     discount_micros = 0
+    ai_minutes = 0  # started AI-agent minutes, priced flat after the plan allowance (below)
+    byok = (getattr(org, "ai_key_mode", "platform") or "platform") == "byok"
     if source in PLATFORM_COST_SOURCES:
         price_micros = 0  # our own cost: in the P&L, never billed
+    elif not byok and call_id is not None and metric in ALL_IN_COMPONENT_METRICS:
+        # AI minutes are sold all-in: speech, voice and model usage on a call stays in the
+        # P&L as cost_micros but is never billed on its own.
+        price_micros = 0
+    elif not byok and metric == AI_MINUTE_METRIC:
+        ai_minutes = (int(quantity) + 59) // 60
+        price_micros = ai_minutes * _ai_minute_price(settings)  # final price set below
     else:
         from app.services import discounts
 
@@ -227,6 +252,23 @@ async def record(
     enforce = bool(
         settings is not None and getattr(settings, "ai_billing_enforce", False)
     )
+    if ai_minutes:
+        # After the insert, so a retried event (same idempotency key) never spends the
+        # allowance twice. Shadow mode only peeks: the row shows what WOULD be billed.
+        if enforce:
+            covered = await plans.take(session, org_id, "ai_minutes", ai_minutes)
+        else:
+            covered = min(ai_minutes, await plans.remaining(session, org_id, "ai_minutes"))
+        from app.services import discounts
+
+        listed = (ai_minutes - covered) * _ai_minute_price(settings)
+        price_micros = discounts.apply(
+            listed, await discounts.active_bps(session, org_id, "usage")
+        )
+        discount_micros = max(int(listed) - price_micros, 0)
+        event.price_micros = int(price_micros)
+        await session.flush()
+
     if enforce and (int(price_micros) > 0 or discount_micros > 0):
         await credits.charge_usage(
             session,
@@ -307,6 +349,11 @@ async def estimate_call_price(
     max_call_seconds = int(getattr(profile, "max_call_seconds", None) or 0)
     if max_call_seconds <= 0:
         max_call_seconds = 900
+
+    if (getattr(org, "ai_key_mode", "platform") or "platform") != "byok":
+        # All-in pricing: the worst case is every started minute at the flat AI rate. The
+        # plan allowance is ignored here on purpose - a reserve may over-hold, never under.
+        return ((max_call_seconds + 59) // 60) * _ai_minute_price(settings)
 
     llm_provider = getattr(profile, "llm_provider", None) or DEFAULT_LLM_PROVIDER
     stt_provider = getattr(profile, "stt_provider", None) or DEFAULT_STT_PROVIDER

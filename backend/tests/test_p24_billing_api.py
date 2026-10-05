@@ -234,7 +234,7 @@ async def test_topup_creates_a_checkout_link(client, session, monkeypatch):
 
     r = await client.post(
         "/api/v1/billing/topups",
-        json={"amount_micros": 5_000_000, "return_to": "onboarding"},
+        json={"amount_micros": 10_000_000, "return_to": "onboarding"},
         headers=auth_headers(token, org["id"]),
     )
     assert r.status_code == 200, r.text

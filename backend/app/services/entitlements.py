@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import FeatureDisabledError
 from app.models.entitlements import OrgFeature
+from app.models.org import Org
 
 U = {ALLOW_UNSCOPED_KEY: True}
 
@@ -153,6 +154,9 @@ CATALOG: dict[str, Feature] = {
     ),
 }
 
+#: Features a plan switches off by default (2026-10-06: Starter sees AI agents locked).
+PLAN_LOCKED_FEATURES: dict[str, tuple[str, ...]] = {"solo": ("ai_agent",)}
+
 
 def _memo(session: AsyncSession) -> dict:
     info = session.info
@@ -175,6 +179,13 @@ async def for_org(session: AsyncSession, org_id: uuid.UUID) -> dict[str, bool]:
     rows = (await session.execute(stmt)).all()
 
     result: dict[str, bool] = {key: feature.default_enabled for key, feature in CATALOG.items()}
+    plan_code = (
+        await session.execute(
+            sa.select(Org.plan_code).where(Org.id == org_id).execution_options(**U)
+        )
+    ).scalar_one_or_none()
+    for key in PLAN_LOCKED_FEATURES.get(plan_code or "", ()):
+        result[key] = False  # the plan's default; an explicit OrgFeature row below still wins
     for key, enabled in rows:
         result[key] = enabled
 
