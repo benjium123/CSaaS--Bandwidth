@@ -71,7 +71,17 @@ def test_every_operator_route_is_guarded_by_a_permission():
     assert len(ROUTES) >= 83
     legacy = [(m, p) for m, p, perm, _ in ROUTES if perm is None]
     assert legacy == [], "route still on the old role guard"
-    reads_that_change = [(m, p) for m, p, perm, _ in ROUTES if m != "GET" and perm == "ops:read"]
+    # A test digest is mailed only to the operator who asked: proof for that reader, no
+    # state change, so read_only operators may send one (tests/test_delivery_digest.py).
+    send_to_self = {
+        ("POST", "/api/v1/platform/orgs/{org_id}/delivery-digest/test"),
+        ("POST", "/api/v1/platform/messaging/ops-digest/test"),
+    }
+    reads_that_change = [
+        (m, p)
+        for m, p, perm, _ in ROUTES
+        if m != "GET" and perm == "ops:read" and (m, p) not in send_to_self
+    ]
     assert reads_that_change == []
 
 

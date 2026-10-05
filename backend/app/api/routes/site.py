@@ -790,7 +790,7 @@ async def _customer_context(chat: SiteChat) -> dict | None:
 
 
 @ops_router.post("/chats/{chat_id}/read")
-async def ops_mark_read(chat_id: uuid.UUID, op: Reader) -> dict:
+async def ops_mark_read(chat_id: uuid.UUID, op: Site) -> dict:
     chat = await op.session.get(SiteChat, chat_id)
     if chat is None:
         raise NotFoundError("Chat not found")
