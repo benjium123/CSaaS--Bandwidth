@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     # AI agent minutes are sold all-in (voice, speech, model) at one flat rate per started
     # minute, after the plan's ai_minutes allowance. $0.35 decided 2026-10-06.
     ai_minute_price_micros: int = 350_000
+    # AI agents v2: optional JSON list of curated voices ({id,name,gender,accent,description}).
+    # Empty = the defaults in api/routes/agent.py.
+    ai_curated_voices: str = ""
     # P24: Stripe secret key for prepaid credit top-ups. Empty means Stripe is not
     # configured, and billing endpoints answer 503 until it is set.
     stripe_secret_key: SecretStr = SecretStr("")
