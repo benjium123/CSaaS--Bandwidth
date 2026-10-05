@@ -5,7 +5,11 @@ plain backend venv can verify the worker/backend agent-name contract without pul
 the livekit SDK.
 """
 
-from agents.worker_config import AGENT_NAME_DEFAULT, resolve_agent_name, resolve_idle_processes
+from agents.worker_config import (
+    AGENT_NAME_DEFAULT,
+    resolve_agent_name,
+    resolve_idle_processes,
+)
 
 
 def test_the_default_matches_the_backends_dispatch_name() -> None:
@@ -29,7 +33,7 @@ def test_reads_the_process_environment_by_default(monkeypatch) -> None:
 
 
 # --- P43 call-monitor listener -------------------------------------------------------------
-from agents.worker_config import (  # noqa: E402
+from agents.worker_config import (
     MONITOR_AGENT_NAME_DEFAULT,
     resolve_monitor_agent_name,
     role_for_participant,

@@ -697,8 +697,10 @@ async def test_tool_endpoint_gating(builder, session):
     wh = worker_headers(worker_token())
     call_payload = {"call_id": str(call_id), "arguments": {}}
 
+    # book_appointment and transfer are real now (test_ai_worker_config.py);
+    # send_followup_sms is still not available.
     transfer = await client.post(
-        "/api/v1/agent/tools/transfer", json=call_payload, headers=wh
+        "/api/v1/agent/tools/send_followup_sms", json=call_payload, headers=wh
     )
     assert transfer.status_code == 501, transfer.text
 

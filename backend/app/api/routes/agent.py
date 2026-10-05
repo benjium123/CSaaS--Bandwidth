@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -337,6 +338,13 @@ async def post_agent_appointment(
     if call is None:
         raise NotFoundError("Call not found")
     set_org_context(session, call.org_id)
+    return await _book_appointment_for_call(request, session, call, payload)
+
+
+async def _book_appointment_for_call(
+    request: Request, session: AsyncSession, call, payload: AppointmentBookIn
+) -> AppointmentBookOut:
+    """Shared by POST /appointments and POST /tools/book_appointment (one code path)."""
     appt = await agent_svc.book_appointment(
         session,
         call,
@@ -416,6 +424,13 @@ async def post_agent_handoff(
     if call is None:
         raise NotFoundError("Call not found")
     set_org_context(session, call.org_id)
+    return await _handoff_for_call(request, session, call, payload)
+
+
+async def _handoff_for_call(
+    request: Request, session: AsyncSession, call, payload: HandoffIn
+) -> HandoffOut:
+    """Shared by POST /handoff and POST /tools/transfer (one code path)."""
     bus = request.app.state.event_bus
     agent_svc.publish_handoff(bus, call, reason=payload.reason, summary=payload.summary)
 
@@ -983,6 +998,43 @@ class ToolCallIn(BaseModel):
     arguments: dict = Field(default_factory=dict)
 
 
+async def _tool_book_appointment(request, session, call, call_id, arguments: dict) -> dict:
+    try:
+        body = AppointmentBookIn(
+            call_id=call_id,
+            contact_e164=str(arguments.get("contact_e164") or call.contact_e164),
+            raw_when=str(arguments.get("raw_when") or arguments.get("when") or ""),
+            notes=str(arguments.get("notes") or ""),
+        )
+    except PydanticValidationError as exc:
+        raise ValidationFailedError("We need a date and time for that appointment.") from exc
+    out = await _book_appointment_for_call(request, session, call, body)
+    return {"ok": True, "result": out.model_dump(mode="json")}
+
+
+async def _tool_transfer(request, session, call, call_id, arguments: dict) -> dict:
+    try:
+        body = HandoffIn(
+            call_id=call_id,
+            reason=str(arguments.get("reason") or "ai_requested"),
+            summary=str(arguments.get("summary") or ""),
+            to_user_id=arguments.get("to_user_id") or None,
+            queue_id=arguments.get("queue_id") or None,
+        )
+    except PydanticValidationError as exc:
+        raise ValidationFailedError("That transfer request was not valid.") from exc
+    out = await _handoff_for_call(request, session, call, body)
+    return {"ok": True, "result": out.model_dump(mode="json")}
+
+
+#: ONE registry of the tools /tools/{tool} routes to the same services the dedicated
+#: routes use. lookup_contact and webhook stay inline below; send_followup_sms is 501.
+_CALL_TOOL_HANDLERS = {
+    "book_appointment": _tool_book_appointment,
+    "transfer": _tool_transfer,
+}
+
+
 @router.post("/tools/{tool}", response_model=None)
 async def post_agent_tool(
     tool: str,
@@ -1021,7 +1073,11 @@ async def post_agent_tool(
         result = await agent_svc.call_webhook_tool(profile, arguments=payload.arguments)
         return {"ok": bool(result.get("ok")), "result": result}
 
-    if tool in ("book_appointment", "transfer", "send_followup_sms"):
+    handler = _CALL_TOOL_HANDLERS.get(tool)
+    if handler is not None:
+        return await handler(request, session, call, payload.call_id, payload.arguments)
+
+    if tool == "send_followup_sms":
         raise ToolNotAvailableError()
 
     raise NotFoundError("There is no action by that name.")

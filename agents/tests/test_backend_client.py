@@ -25,7 +25,7 @@ class _FakeAsyncClient:
         self.fail_from_call = fail_from_call
         self.post_calls: list[list] = []
 
-    async def post(self, url, headers=None, json=None):  # noqa: ANN001
+    async def post(self, url, headers=None, json=None):
         self.post_calls.append(json["segments"])
         call_number = len(self.post_calls)
         if self.fail_from_call is not None and call_number >= self.fail_from_call:

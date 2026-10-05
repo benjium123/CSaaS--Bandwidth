@@ -191,7 +191,7 @@ class Router:
             response = await self._client.get(f"{self._stt_url}/health", timeout=10.0)
             if response.status_code == 200:
                 health = response.json()
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort: any failure falls back
             health = None
 
         self._health_cache = (now, health)
@@ -211,9 +211,7 @@ class Router:
             return False
         if load1 / cpus > 0.85:
             return False
-        if live_busy >= live_capacity:
-            return False
-        return True
+        return live_busy < live_capacity
 
     async def _transcribe_local(self, wav: bytes) -> str | None:
         url = f"{self._stt_url}/transcribe?engine=zipformer&live=1"
@@ -229,7 +227,7 @@ class Router:
             return " ".join(
                 str(segment.get("text") or "") for segment in segments
             ).strip()
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort: any failure falls back
             return None
 
     async def _transcribe_deepgram(self, wav: bytes, seconds: float) -> str | None:
@@ -254,7 +252,7 @@ class Router:
             text = (alternatives[0].get("transcript") or "").strip()
             self.deepgram_seconds += seconds
             return text
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort: any failure falls back
             return None
 
     async def transcribe(self, wav: bytes, seconds: float) -> tuple[str, str | None]:
@@ -409,8 +407,7 @@ async def entrypoint(ctx: Any) -> None:
 
             end_ms = now_ms()
             start_ms = end_ms - int(duration * 1000)
-            if start_ms < 0:
-                start_ms = 0
+            start_ms = max(start_ms, 0)
 
             if duration <= MAX_UTTERANCE_SECONDS:
                 await handle_utterance(frames, start_ms, duration)

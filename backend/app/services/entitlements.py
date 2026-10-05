@@ -123,6 +123,14 @@ CATALOG: dict[str, Feature] = {
         "Detect voicemail on outbound calls",
     ),
     "ai_agent": Feature("ai_agent", "AI agent", "AI", True, None, "AI voice and text assistant"),
+    "ai_disclosure": Feature(
+        "ai_disclosure",
+        "AI call disclosure",
+        "AI",
+        True,
+        None,
+        "The AI agent says it is an automated assistant at the start of a call",
+    ),
     "ai_kb": Feature(
         "ai_kb", "AI knowledge base", "AI", True, None, "Documents the AI agent can search"
     ),

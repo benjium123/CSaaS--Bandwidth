@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Iterable
@@ -62,6 +63,83 @@ class BackendClient:
         except Exception:
             self._logger.exception("fetch_context call_id=%s failed", call_id)
         return None
+
+    async def fetch_config(self, call_id: str) -> dict | None:
+        """GET /agent/config/{call_id}: the worker's setup call. Returns the config dict;
+        ``{"_refused": True, ...}`` on 402 insufficient_credits (the caller must not speak
+        as the AI; the backend's credit fallback handles the call); None when the
+        endpoint could not be reached or answered something unusable, so the caller can
+        fall back to fetch_context and the call never goes silent."""
+        url = f"{self._base_url}/api/v1/agent/config/{call_id}"
+        for attempt in range(2):
+            headers = {"Authorization": f"Bearer {self._token()}"}
+            try:
+                response = await self._client.get(url, headers=headers)
+                if response.status_code == 200:
+                    return response.json()
+                if response.status_code == 402:
+                    return {"_refused": True}
+                self._logger.warning(
+                    "fetch_config call_id=%s status=%s", call_id, response.status_code
+                )
+                if response.status_code < 500:
+                    return None
+            except Exception:
+                self._logger.exception("fetch_config call_id=%s failed", call_id)
+            if attempt == 0:
+                await asyncio.sleep(0.5)
+        return None
+
+    async def _post_with_retry(self, name: str, path: str, payload: dict, attempts: int = 3) -> bool:
+        url = f"{self._base_url}{path}"
+        for attempt in range(attempts):
+            headers = {"Authorization": f"Bearer {self._token()}"}
+            try:
+                response = await self._client.post(url, headers=headers, json=payload)
+                if 200 <= response.status_code < 300:
+                    return True
+                self._logger.warning("%s status=%s", name, response.status_code)
+                if response.status_code < 500:
+                    return False
+            except Exception:
+                self._logger.exception("%s failed", name)
+            if attempt < attempts - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+        return False
+
+    async def post_usage(self, call_id: str, seconds: int) -> bool:
+        """One ai_voice_seconds event for the whole call; idempotent on the call id."""
+        payload = {
+            "events": [
+                {
+                    "call_id": call_id,
+                    "provider": "livekit",
+                    "kind": "voice",
+                    "metric": "ai_voice_seconds",
+                    "quantity": int(seconds),
+                    "source": "worker",
+                    "idempotency_key": f"ai-voice-{call_id}",
+                }
+            ]
+        }
+        return await self._post_with_retry(f"post_usage call_id={call_id}", "/api/v1/agent/usage", payload)
+
+    async def post_outcome(
+        self, call_id: str, disposition: str = "answered", summary: str = "", extracted: dict | None = None
+    ) -> bool:
+        payload = {
+            "outcomes": [
+                {
+                    "call_id": call_id,
+                    "disposition": disposition,
+                    "summary": summary,
+                    "extracted": extracted or {},
+                }
+            ]
+        }
+        return await self._post_with_retry(
+            f"post_outcome call_id={call_id}", "/api/v1/agent/outcome", payload
+        )
 
     async def post_transcript(self, call_id: str, segments: list) -> list:
         """POST `segments` in chunks of ``TRANSCRIPT_CHUNK_SIZE``, all-or-nothing per
