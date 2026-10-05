@@ -227,6 +227,7 @@ export interface Assistant {
   sms_turn_ceiling?: number;
   sms_handoff_keywords?: string[];
   sms_max_reply_chars?: number;
+  extra?: Record<string, unknown> | null;
 }
 
 export async function fetchAssistants(api: ApiClient): Promise<Assistant[]> {

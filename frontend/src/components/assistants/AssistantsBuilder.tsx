@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
+import { useCapabilities } from "@/api/capabilities";
 import {
   ASSISTANTS_KEY,
   COMPLIANCE_PREAMBLE,
@@ -24,6 +25,8 @@ import {
 import { AssistantAnalyticsPanel } from "@/components/assistants/AssistantAnalytics";
 import { CallMePanel } from "@/components/assistants/CallMePanel";
 import { KnowledgeTab } from "@/components/assistants/KnowledgeTab";
+import { SetupTab } from "@/components/assistants/SetupTab";
+import { TemplateGallery, UpgradeBanner } from "@/components/assistants/TemplateGallery";
 import { SimulatorDrawer } from "@/components/assistants/SimulatorDrawer";
 import { VoicePreviewButton } from "@/components/assistants/VoicePreviewButton";
 import {
@@ -206,6 +209,7 @@ export function AssistantsBuilder() {
   // P23a: tab is local React state, NOT a URL parameter. The surrounding SettingsPage
   // already owns ?tab= for the AI section's own tabs, and a second writer would fight it.
   const [tab, setTab] = React.useState("persona");
+  const [galleryOpen, setGalleryOpen] = React.useState(false);
   const [goLiveBlockersList, setGoLiveBlockersList] = React.useState<string[]>([]);
   const [simulatorOpen, setSimulatorOpen] = React.useState(false);
   const [lastAction, setLastAction] = React.useState<
@@ -221,6 +225,14 @@ export function AssistantsBuilder() {
 
   const selected = (assistantsQuery.data ?? []).find((a) => a.id === selectedId) ?? null;
 
+  // Starter plans have ai_agent off. Only an explicit false locks: a missing flag leaves the
+  // UI open and the server (requires_feature) stays the authority.
+  const capabilitiesQuery = useCapabilities(api);
+  const aiLocked = capabilitiesQuery.data?.features?.ai_agent === false;
+  const hasInterview = Boolean(
+    selected?.extra && typeof selected.extra === "object" && (selected.extra as Record<string, unknown>).interview,
+  );
+
   // (a) Keyed on `selectedId` (a stable primitive), NOT on `selected` (a fresh object
   // reference on every background refetch of the assistants list). A refetch that leaves
   // the same assistant selected must never re-run this and clobber whatever the user is
@@ -234,7 +246,12 @@ export function AssistantsBuilder() {
 
     // If the active tab became disabled because the user clicked New while on Tools,
     // fall back to Persona. Persona is the only tab a brand-new assistant can save.
-    setTab((current) => (selectedId === null ? "persona" : current));
+    setTab((current) => {
+      if (selectedId === null) return "persona";
+      const ex = selected?.extra as Record<string, unknown> | null | undefined;
+      if (ex?.interview) return "setup";
+      return current === "setup" ? "persona" : current;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
@@ -298,6 +315,7 @@ export function AssistantsBuilder() {
   });
 
   function startNew() {
+    setGalleryOpen(true);
     setSelectedId(null);
     setForm(EMPTY_FORM);
     setDirty(false);
@@ -518,6 +536,7 @@ export function AssistantsBuilder() {
   }
 
   const tabs = [
+    ...(hasInterview ? [{ id: "setup", label: "Setup", disabled: false }] : []),
     { id: "persona", label: "Persona", disabled: false },
     { id: "instructions", label: "Instructions", disabled: !selectedId },
     { id: "knowledge", label: "Knowledge", disabled: !selectedId },
@@ -533,7 +552,13 @@ export function AssistantsBuilder() {
           <h1 className="text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
             Assistants
           </h1>
-          <Button type="button" size="sm" onClick={startNew}>
+          <Button
+            type="button"
+            size="sm"
+            onClick={startNew}
+            disabled={aiLocked}
+            title={aiLocked ? "Upgrade to Team to create assistants" : undefined}
+          >
             New
           </Button>
         </div>
@@ -589,6 +614,24 @@ export function AssistantsBuilder() {
       </aside>
 
       <section className="min-h-0 overflow-y-auto p-[18px]">
+        {aiLocked && (
+          <div className="mb-[14px]">
+            <UpgradeBanner />
+          </div>
+        )}
+        {galleryOpen ? (
+          <TemplateGallery
+            locked={aiLocked}
+            onCancel={() => setGalleryOpen(false)}
+            onCreated={async (created) => {
+              await queryClient.invalidateQueries({ queryKey: ASSISTANTS_KEY, refetchType: "active" });
+              setGalleryOpen(false);
+              setSelectedId(created.id);
+              setTab("setup");
+            }}
+          />
+        ) : (
+          <>
         <div className="flex flex-wrap items-start justify-between gap-[11px]">
           <h1 className="text-[19px] font-semibold tracking-[-0.015em] text-[hsl(var(--cx-text))]">
             {selected ? selected.name : "New assistant"}
@@ -707,12 +750,14 @@ export function AssistantsBuilder() {
             onChange={setTab}
             ariaLabel="Assistant settings"
           >
-            <SurfaceCard className="max-w-2xl space-y-[14px]">
+            <SurfaceCard className={tab === "setup" ? "space-y-[14px]" : "max-w-2xl space-y-[14px]"}>
               {!selectedId && (
                 <p className="text-[13px] text-[hsl(var(--cx-muted))]">
                   Save this assistant first, then you can set up the rest.
                 </p>
               )}
+
+              {tab === "setup" && selected && <SetupTab key={selected.id} assistant={selected} locked={aiLocked} />}
 
               {tab === "persona" && renderPersona()}
 
@@ -825,6 +870,8 @@ export function AssistantsBuilder() {
           assistantId={selectedId}
           assistantName={selected?.name ?? ""}
         />
+          </>
+        )}
       </section>
     </div>
   );
