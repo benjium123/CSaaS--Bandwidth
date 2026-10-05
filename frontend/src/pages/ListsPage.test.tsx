@@ -57,6 +57,28 @@ const ROWS = [
   },
 ];
 
+const CONSENT_PATH = "/api/v1/compliance/ai-consent/lists/list-1";
+
+function listClient() {
+  return makeStubClient({
+    "/api/v1/outbound/lists/list-1/rows": ROWS,
+    "/api/v1/outbound/lists/list-1": LIST_1,
+    "/api/v1/outbound/lists": [LIST_1],
+  });
+}
+
+async function openList() {
+  await userEvent.click(await screen.findByText("Q3 buyers"));
+  await screen.findByText("buyers.csv");
+}
+
+async function revealConsentForm() {
+  await openList();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Mark list as AI-call consented" }),
+  );
+}
+
 describe("ListsPage", () => {
   it("renders existing lists and their import report", async () => {
     const client = makeStubClient({
@@ -156,5 +178,78 @@ describe("ListsPage", () => {
 
     await screen.findByText("Map columns: leads");
     expect(screen.getByRole("button", { name: "Commit import" })).toBeDisabled();
+  });
+
+  it("reveals the AI-call consent form when the button is clicked", async () => {
+    renderWithProviders(<ListsPage />, listClient());
+
+    await openList();
+    expect(
+      screen.queryByLabelText("Where and when did they agree?"),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Mark list as AI-call consented" }),
+    );
+
+    expect(screen.getByLabelText("Where and when did they agree?")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("These contacts gave prior consent to automated calls"),
+    ).toBeInTheDocument();
+  });
+
+  it("disables Save until both the evidence and the checkbox are filled", async () => {
+    renderWithProviders(<ListsPage />, listClient());
+
+    await revealConsentForm();
+
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+
+    await userEvent.type(
+      screen.getByLabelText("Where and when did they agree?"),
+      "signup form 2026-05-01",
+    );
+    expect(save).toBeDisabled();
+
+    await userEvent.click(
+      screen.getByLabelText("These contacts gave prior consent to automated calls"),
+    );
+    expect(save).toBeEnabled();
+  });
+
+  it("posts the consent body and shows how many contacts were recorded", async () => {
+    const client = makeStubClient({
+      "/api/v1/outbound/lists/list-1/rows": ROWS,
+      "/api/v1/outbound/lists/list-1": LIST_1,
+      "/api/v1/outbound/lists": [LIST_1],
+      [CONSENT_PATH]: { list_id: "list-1", recorded: 2 },
+    });
+    renderWithProviders(<ListsPage />, client);
+
+    await revealConsentForm();
+
+    await userEvent.type(
+      screen.getByLabelText("Where and when did they agree?"),
+      "signup form 2026-05-01",
+    );
+    await userEvent.click(
+      screen.getByLabelText("These contacts gave prior consent to automated calls"),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Consent recorded for 2 contacts.")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Where and when did they agree?"),
+    ).not.toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(client.calls.some((c) => c.path === CONSENT_PATH)).toBe(true),
+    );
+    const consentCall = client.calls.find((c) => c.path === CONSENT_PATH);
+    expect(consentCall?.init.json).toEqual({
+      evidence: "signup form 2026-05-01",
+      confirm: true,
+    });
   });
 });

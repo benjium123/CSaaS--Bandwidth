@@ -336,6 +336,30 @@ function ListDetail({ api, listId }: { api: ApiClient; listId: string }) {
   const [status, setStatus] = React.useState("");
   const { data: rows, isLoading: rowsLoading } = useListRows(api, listId, status || undefined);
 
+  const [aiFormOpen, setAiFormOpen] = React.useState(false);
+  const [aiEvidence, setAiEvidence] = React.useState("");
+  const [aiConfirmed, setAiConfirmed] = React.useState(false);
+  const [aiSaving, setAiSaving] = React.useState(false);
+  const [aiError, setAiError] = React.useState<string | null>(null);
+  const [aiSuccess, setAiSuccess] = React.useState<string | null>(null);
+
+  async function saveAiConsent() {
+    setAiError(null);
+    setAiSaving(true);
+    try {
+      const result = await api.request<{ recorded: number }>(
+        `/api/v1/compliance/ai-consent/lists/${listId}`,
+        { method: "POST", json: { evidence: aiEvidence.trim(), confirm: true } },
+      );
+      setAiSuccess(`Consent recorded for ${result.recorded} contacts.`);
+      setAiFormOpen(false);
+    } catch (err) {
+      setAiError((err as Error).message);
+    } finally {
+      setAiSaving(false);
+    }
+  }
+
   if (isLoading || !list) return <Spinner label="Loading list" />;
 
   return (
@@ -366,6 +390,71 @@ function ListDetail({ api, listId }: { api: ApiClient; listId: string }) {
           <CountCell label="Duplicate" value={list.duplicate_count} />
           <CountCell label="DNC" value={list.dnc_count} />
         </dl>
+      </ConsoleCard>
+
+      <ConsoleCard className="space-y-[11px] p-[18px]">
+        <SectionLabel>AI calls</SectionLabel>
+        <p className="text-[12.5px] text-[hsl(var(--cx-muted))]">
+          AI agents may only call people who agreed to be called by an automated assistant
+          (FCC TCPA rule). Purchased lists do not qualify.
+        </p>
+        {aiSuccess ? (
+          <p role="status" className="text-[12.5px] font-medium text-[hsl(var(--cx-live))]">
+            {aiSuccess}
+          </p>
+        ) : !aiFormOpen ? (
+          <Button
+            type="button"
+            className="rounded-full"
+            onClick={() => {
+              setAiError(null);
+              setAiFormOpen(true);
+            }}
+          >
+            Mark list as AI-call consented
+          </Button>
+        ) : (
+          <div className="max-w-lg space-y-[11px]">
+            <div className="space-y-[6px]">
+              <label
+                htmlFor="ai-consent-evidence"
+                className="block text-[11.5px] font-medium text-[hsl(var(--cx-muted))]"
+              >
+                Where and when did they agree?
+              </label>
+              <textarea
+                id="ai-consent-evidence"
+                required
+                value={aiEvidence}
+                placeholder="e.g. web form URL and date"
+                onChange={(e) => setAiEvidence(e.target.value)}
+                className="min-h-[64px] w-full rounded-[10px] border border-[hsl(var(--cx-line))] bg-[hsl(var(--cx-overlay))] px-[10px] py-[8px] text-[13px] text-[hsl(var(--cx-text))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--cx-accent))]"
+              />
+            </div>
+            <label className="flex items-center gap-[8px] text-[12.5px] text-[hsl(var(--cx-subtle))]">
+              <input
+                type="checkbox"
+                required
+                checked={aiConfirmed}
+                onChange={(e) => setAiConfirmed(e.target.checked)}
+              />
+              These contacts gave prior consent to automated calls
+            </label>
+            {aiError && (
+              <p role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">
+                {aiError}
+              </p>
+            )}
+            <Button
+              type="button"
+              className="rounded-full"
+              onClick={saveAiConsent}
+              disabled={aiSaving || !aiEvidence.trim() || !aiConfirmed}
+            >
+              {aiSaving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        )}
       </ConsoleCard>
 
       <div className="space-y-[11px]">

@@ -11,8 +11,15 @@ from pydantic import BaseModel, Field
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
 from app.compliance import service as svc
-from app.errors import ValidationFailedError
-from app.models import FEDERAL_WINDOW_END, FEDERAL_WINDOW_START, ConsentEvent, DncEntry
+from app.errors import NotFoundError, ValidationFailedError
+from app.models import (
+    FEDERAL_WINDOW_END,
+    FEDERAL_WINDOW_START,
+    ConsentEvent,
+    ContactList,
+    ContactListRow,
+    DncEntry,
+)
 from app.services import phone_region
 
 router = APIRouter(prefix="/api/v1/compliance", tags=["compliance"])
@@ -55,6 +62,17 @@ class AiConsentIn(BaseModel):
     #: Where/when the person agreed - the record a TCPA complaint is answered with, so it
     #: is required and bounded rather than optional.
     evidence: str = Field(min_length=1, max_length=500)
+
+
+class AiConsentListIn(BaseModel):
+    """Bulk AI-call consent for a whole contact list."""
+
+    #: Where/when these contacts agreed - copied verbatim onto every ledger row
+    #: (prefixed with the list name), the record a TCPA complaint is answered with.
+    evidence: str = Field(min_length=1, max_length=500)
+    #: The operator affirms the people on this list actually agreed. A purchased list does
+    #: not qualify, so an unconfirmed bulk write must never happen.
+    confirm: bool
 
 
 def _clamp_window(value: str, floor: str, is_start: bool) -> str:
@@ -163,6 +181,63 @@ async def record_ai_consent(
     )
     await ctx.session.commit()
     return {"contact_e164": e164, "ai_call_consent": True}
+
+
+@router.post("/ai-consent/lists/{list_id}")
+async def record_ai_consent_for_list(
+    list_id: uuid.UUID,
+    payload: AiConsentListIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> dict:
+    """Record AI-call consent for every ACCEPTED contact on a list, in one transaction.
+
+    The list must belong to this org (404 otherwise). Consent is written only for the
+    dialable rows - the ``accepted`` e164s, deduped - as ordinary ``ai_voice`` opt-ins with
+    source ``import`` and evidence ``list:<name>: <evidence>``. The operator must
+    affirmatively confirm first: a purchased list does not qualify, and nothing is written
+    until they say these people agreed.
+    """
+    if not payload.confirm:
+        raise ValidationFailedError("Confirm these contacts agreed to AI calls")
+
+    lst = (
+        await ctx.session.execute(
+            sa.select(ContactList).where(ContactList.id == list_id).limit(1)
+        )
+    ).scalar_one_or_none()
+    if lst is None:
+        raise NotFoundError("List not found")
+
+    rows = (
+        await ctx.session.execute(
+            sa.select(ContactListRow.e164).where(
+                ContactListRow.list_id == list_id,
+                ContactListRow.status == "accepted",
+                ContactListRow.e164.is_not(None),
+            )
+        )
+    ).scalars().all()
+
+    e164s: list[str] = []
+    seen: set[str] = set()
+    for e164 in rows:
+        if e164 and e164 not in seen:
+            seen.add(e164)
+            e164s.append(e164)
+
+    evidence = f"list:{lst.name}: {payload.evidence}"
+    for e164 in e164s:
+        await svc.record_ai_call_consent(
+            ctx.session,
+            ctx.org.id,
+            e164,
+            granted=True,
+            source="import",
+            evidence=evidence,
+            actor_user_id=ctx.actor_user_id,
+        )
+    await ctx.session.commit()
+    return {"list_id": str(list_id), "recorded": len(e164s)}
 
 
 @router.delete("/ai-consent/{e164}")
