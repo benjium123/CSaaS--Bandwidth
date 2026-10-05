@@ -63,7 +63,11 @@ SYSTEM_PREAMBLE_TEMPLATE = (
 _TOOL_SPECS = [
     llm_client.ToolSpec(
         name="book_appointment",
-        description="Book an appointment for this contact.",
+        description=(
+            "Request an appointment for this contact. This only records the request; "
+            "a team member confirms the exact time later. Never tell the contact it is "
+            "booked or confirmed."
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -378,7 +382,10 @@ async def _run_tool_call(
             await session.rollback()
             set_org_context(session, org_id)
             return "Could not book the appointment right now - please try again shortly."
-        return f"Booked for {appt.raw_when}."
+        return (
+            f'Appointment requested for "{appt.raw_when}" and is pending confirmation. '
+            "Tell the contact a team member will confirm the time; do not say it is booked."
+        )
     if call.name == "kb_search":
         query = str(call.arguments.get("query") or "")
         hits = await kb_svc.search(session, org_id, query)

@@ -445,7 +445,9 @@ async def test_6_9_book_appointment_when_arg_is_truncated_to_column_limit(sessio
         arguments = {"when": "x" * 500, "notes": "short note"}
 
     result = await sms_agent._run_tool_call(session, org_id, thread, FakeCall())
-    assert result.startswith("Booked for")
+    assert result.startswith("Appointment requested for")
+    assert "pending confirmation" in result
+    assert "Booked" not in result
 
     from app.models.scheduling import Appointment
 
