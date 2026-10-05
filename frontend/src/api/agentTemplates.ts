@@ -17,11 +17,23 @@ export interface Interview {
   never_do: string[];
   faqs: { q: string; a: string }[];
   handoff: { when: string[]; transfer_number: string };
-  booking: { enabled: boolean; rules: string };
+  booking: { enabled: boolean; rules: string; calendar?: boolean };
   after_call: { summary: boolean; fields: string[] };
 }
 
 export type PromptMode = "interview" | "custom";
+
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+/** Machine-readable booking hours stored on the profile at `extra.booking`. */
+export interface BookingHours {
+  enabled: boolean;
+  timezone: string;
+  slot_minutes: number;
+  lead_minutes: number;
+  horizon_days: number;
+  weekly: Record<Weekday, [string, string][]>;
+}
 
 export interface AgentTemplate {
   id: string;
@@ -62,8 +74,32 @@ export function emptyInterview(): Interview {
     never_do: [],
     faqs: [],
     handoff: { when: [], transfer_number: "" },
-    booking: { enabled: false, rules: "" },
+    booking: { enabled: false, rules: "", calendar: false },
     after_call: { summary: true, fields: [] },
+  };
+}
+
+function fullDayWindow(): [string, string][] {
+  return [["09:00", "17:00"]];
+}
+
+/** Mon-Fri 09:00-17:00, weekends closed. Timezone falls back to the browser or America/Chicago. */
+export function defaultBookingHours(timezone?: string): BookingHours {
+  return {
+    enabled: false,
+    timezone: timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Chicago",
+    slot_minutes: 30,
+    lead_minutes: 60,
+    horizon_days: 14,
+    weekly: {
+      mon: fullDayWindow(),
+      tue: fullDayWindow(),
+      wed: fullDayWindow(),
+      thu: fullDayWindow(),
+      fri: fullDayWindow(),
+      sat: [],
+      sun: [],
+    },
   };
 }
 
@@ -79,7 +115,7 @@ export function normalizeInterview(raw: Partial<Interview> | null | undefined): 
     never_do: r.never_do ?? [],
     faqs: r.faqs ?? [],
     handoff: { ...base.handoff, ...(r.handoff ?? {}), when: r.handoff?.when ?? [] },
-    booking: { ...base.booking, ...(r.booking ?? {}) },
+    booking: { ...base.booking, ...(r.booking ?? {}), calendar: r.booking?.calendar ?? false },
     after_call: { ...base.after_call, ...(r.after_call ?? {}), fields: r.after_call?.fields ?? [] },
   };
 }

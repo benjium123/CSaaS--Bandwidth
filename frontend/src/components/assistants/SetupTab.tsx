@@ -4,18 +4,49 @@ import { useAuth } from "@/auth/AuthContext";
 import { ASSISTANTS_KEY, patchAssistant, type Assistant } from "@/api/assistants";
 import {
   VOICES_KEY,
+  defaultBookingHours,
   listVoices,
   normalizeInterview,
   renderPrompt,
+  type BookingHours,
   type Interview,
   type PromptMode,
   type RenderedPrompt,
+  type Weekday,
 } from "@/api/agentTemplates";
 import { Button, Input, MutationStatus, Select, Textarea } from "@/components/ui/primitives";
 import { ConsoleCard, SurfaceCard } from "@/components/ui/consoleChrome";
 
 const DEBOUNCE_MS = 400;
 const LABEL = "block text-[11.5px] font-semibold text-[hsl(var(--cx-muted))]";
+
+const DAYS: [Weekday, string][] = [
+  ["mon", "Monday"],
+  ["tue", "Tuesday"],
+  ["wed", "Wednesday"],
+  ["thu", "Thursday"],
+  ["fri", "Friday"],
+  ["sat", "Saturday"],
+  ["sun", "Sunday"],
+];
+
+const TIME_INPUT =
+  "rounded-[10px] border border-[hsl(var(--cx-line))] bg-transparent px-2 py-[3px] text-[12.5px] text-[hsl(var(--cx-text))] disabled:opacity-50";
+
+/** Read the persisted hours off the profile, filling anything the server omitted. */
+function initialBookingHours(raw: unknown, timezone: string): BookingHours {
+  const base = defaultBookingHours(timezone);
+  if (!raw || typeof raw !== "object") return base;
+  const r = raw as Partial<BookingHours>;
+  return {
+    enabled: r.enabled ?? base.enabled,
+    timezone: r.timezone ?? base.timezone,
+    slot_minutes: r.slot_minutes ?? base.slot_minutes,
+    lead_minutes: r.lead_minutes ?? base.lead_minutes,
+    horizon_days: r.horizon_days ?? base.horizon_days,
+    weekly: { ...base.weekly, ...(r.weekly ?? {}) },
+  };
+}
 
 function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
   return (
@@ -96,6 +127,9 @@ export function SetupTab({ assistant, locked }: Props) {
   const [interview, setInterview] = React.useState<Interview>(() =>
     normalizeInterview(extra.interview as Partial<Interview> | undefined),
   );
+  const [hours, setHours] = React.useState<BookingHours>(() =>
+    initialBookingHours(extra.booking, interview.business.timezone),
+  );
   const [mode, setMode] = React.useState<PromptMode>(extra.prompt_mode === "custom" ? "custom" : "interview");
   const [prompt, setPrompt] = React.useState(assistant.system_prompt);
   const [greeting, setGreeting] = React.useState(assistant.greeting);
@@ -142,6 +176,27 @@ export function SetupTab({ assistant, locked }: Props) {
     setInterview((cur) => fn(cur));
   }
 
+  function editHours(fn: (h: BookingHours) => BookingHours) {
+    setDirty(true);
+    setHours((cur) => fn(cur));
+  }
+
+  function setDayOpen(day: Weekday, open: boolean) {
+    editHours((h) => {
+      const win = h.weekly[day]?.[0];
+      const next: [string, string][] = open ? [win ?? ["09:00", "17:00"]] : [];
+      return { ...h, weekly: { ...h.weekly, [day]: next } };
+    });
+  }
+
+  function setDayTime(day: Weekday, index: 0 | 1, value: string) {
+    editHours((h) => {
+      const win = h.weekly[day]?.[0] ?? ["09:00", "17:00"];
+      const next: [string, string] = index === 0 ? [value, win[1]] : [win[0], value];
+      return { ...h, weekly: { ...h.weekly, [day]: [next] } };
+    });
+  }
+
   const saveMutation = useMutation({
     mutationFn: () =>
       patchAssistant(api, assistant.id, {
@@ -149,7 +204,12 @@ export function SetupTab({ assistant, locked }: Props) {
         greeting,
         voice_id: interview.agent.voice_id || assistant.voice_id,
         language: interview.agent.language || assistant.language,
-        extra: { ...extra, interview, prompt_mode: mode },
+        extra: {
+          ...extra,
+          interview,
+          prompt_mode: mode,
+          booking: { ...hours, enabled: interview.booking.enabled && (interview.booking.calendar ?? false) },
+        },
       }),
     onSuccess: () => {
       setDirty(false);
@@ -160,6 +220,15 @@ export function SetupTab({ assistant, locked }: Props) {
   const b = interview.business;
   const voices = voicesQuery.data ?? [];
   const idp = `setup-${assistant.id}`;
+  const showHours = interview.booking.enabled && (interview.booking.calendar ?? false);
+  const hoursInvalid =
+    showHours &&
+    DAYS.some(([day]) => {
+      const win = hours.weekly[day]?.[0];
+      if (!win) return false;
+      const [start, end] = win;
+      return !(end > start);
+    });
 
   return (
     <div className="grid gap-[14px] min-[1000px]:grid-cols-2">
@@ -323,6 +392,89 @@ export function SetupTab({ assistant, locked }: Props) {
               />
             </Field>
           )}
+          {interview.booking.enabled && (
+            <label className="flex items-center gap-2 text-[13px] text-[hsl(var(--cx-text))]">
+              <input
+                type="checkbox"
+                checked={interview.booking.calendar ?? false}
+                onChange={(e) => edit((iv) => ({ ...iv, booking: { ...iv.booking, calendar: e.target.checked } }))}
+              />
+              Book real times on my calendar
+            </label>
+          )}
+          {showHours && (
+            <div className="space-y-[10px] rounded-[12px] bg-[hsl(var(--cx-overlay))] p-[10px]">
+              <Field id={`${idp}-bk-tz`} label="Booking timezone">
+                <Input
+                  id={`${idp}-bk-tz`}
+                  placeholder="America/Chicago"
+                  value={hours.timezone}
+                  onChange={(e) => editHours((h) => ({ ...h, timezone: e.target.value }))}
+                />
+              </Field>
+              <Field id={`${idp}-bk-slot`} label="Slot length">
+                <Select
+                  id={`${idp}-bk-slot`}
+                  value={String(hours.slot_minutes)}
+                  onChange={(e) => editHours((h) => ({ ...h, slot_minutes: Number(e.target.value) }))}
+                >
+                  <option value="15">15 minutes</option>
+                  <option value="30">30 minutes</option>
+                  <option value="45">45 minutes</option>
+                  <option value="60">60 minutes</option>
+                </Select>
+              </Field>
+              <div className="space-y-2">
+                <p className={LABEL}>Open hours</p>
+                {DAYS.map(([day, dayLabel]) => {
+                  const win = hours.weekly[day]?.[0];
+                  const open = Boolean(win);
+                  const start = win?.[0] ?? "09:00";
+                  const end = win?.[1] ?? "17:00";
+                  return (
+                    <div key={day} className="flex flex-wrap items-center gap-2">
+                      <label
+                        htmlFor={`${idp}-bk-${day}-open`}
+                        className="flex w-[96px] items-center gap-2 text-[12.5px] text-[hsl(var(--cx-text))]"
+                      >
+                        <input
+                          id={`${idp}-bk-${day}-open`}
+                          type="checkbox"
+                          checked={open}
+                          onChange={(e) => setDayOpen(day, e.target.checked)}
+                        />
+                        {dayLabel}
+                      </label>
+                      <input
+                        id={`${idp}-bk-${day}-start`}
+                        type="time"
+                        aria-label={`${dayLabel} start`}
+                        className={TIME_INPUT}
+                        disabled={!open}
+                        value={start}
+                        onChange={(e) => setDayTime(day, 0, e.target.value)}
+                      />
+                      <span className="text-[12px] text-[hsl(var(--cx-muted))]">to</span>
+                      <input
+                        id={`${idp}-bk-${day}-end`}
+                        type="time"
+                        aria-label={`${dayLabel} end`}
+                        className={TIME_INPUT}
+                        disabled={!open}
+                        value={end}
+                        onChange={(e) => setDayTime(day, 1, e.target.value)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              {hoursInvalid && (
+                <p role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">
+                  Each open day needs an end time after its start time.
+                </p>
+              )}
+            </div>
+          )}
         </Block>
 
         <Block title="After the call">
@@ -424,7 +576,11 @@ export function SetupTab({ assistant, locked }: Props) {
         )}
 
         <SurfaceCard className="flex flex-wrap items-center gap-2 p-[12px]">
-          <Button type="button" disabled={locked || saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+          <Button
+            type="button"
+            disabled={locked || saveMutation.isPending || hoursInvalid}
+            onClick={() => saveMutation.mutate()}
+          >
             Save setup
           </Button>
           {dirty && <span className="text-[11.5px] text-[hsl(var(--cx-flag))]">Unsaved changes</span>}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Assistant } from "@/api/assistants";
 import { emptyInterview, type AgentTemplate } from "@/api/agentTemplates";
@@ -61,6 +61,22 @@ function interviewAssistant(overrides: Partial<Assistant> = {}): Assistant {
     },
     ...overrides,
   };
+}
+
+function bookingAssistant(): Assistant {
+  const base = emptyInterview();
+  return interviewAssistant({
+    extra: {
+      template_id: "after_hours",
+      template_version: 1,
+      prompt_mode: "interview",
+      interview: {
+        ...base,
+        goal: "Take a message",
+        business: { ...base.business, timezone: "America/New_York" },
+      },
+    },
+  });
 }
 
 function makeClient(opts: { assistants?: Assistant[]; features?: Record<string, boolean> } = {}) {
@@ -174,6 +190,76 @@ describe("agent builder v2", () => {
         extra: { prompt_mode: "interview", template_id: "after_hours" },
       });
     });
+  });
+
+  it("calendar booking shows the weekly hours editor and saves them on the profile", async () => {
+    const client = makeClient({ assistants: [bookingAssistant()] });
+    renderWithProviders(<AssistantsBuilder />, client);
+    await userEvent.click(await screen.findByRole("button", { name: /Front desk/ }));
+    await screen.findByLabelText("System prompt");
+
+    await userEvent.click(screen.getByLabelText("Take booking requests"));
+    await userEvent.click(await screen.findByLabelText("Book real times on my calendar"));
+
+    expect(await screen.findByLabelText("Booking timezone")).toHaveValue("America/New_York");
+    expect(screen.getByLabelText("Slot length")).toHaveValue("30");
+
+    for (const day of ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]) {
+      expect(screen.getByLabelText(day)).toBeChecked();
+      expect(screen.getByLabelText(`${day} start`)).toHaveValue("09:00");
+      expect(screen.getByLabelText(`${day} end`)).toHaveValue("17:00");
+    }
+    expect(screen.getByLabelText("Saturday")).not.toBeChecked();
+    expect(screen.getByLabelText("Sunday")).not.toBeChecked();
+    expect(screen.getByLabelText("Saturday start")).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save setup" }));
+    await waitFor(() => {
+      const patch = client.calls.find((c) => c.init.method === "PATCH");
+      expect(patch?.init.json).toMatchObject({
+        extra: {
+          prompt_mode: "interview",
+          template_id: "after_hours",
+          booking: {
+            enabled: true,
+            timezone: "America/New_York",
+            slot_minutes: 30,
+            lead_minutes: 60,
+            horizon_days: 14,
+            weekly: {
+              mon: [["09:00", "17:00"]],
+              tue: [["09:00", "17:00"]],
+              wed: [["09:00", "17:00"]],
+              thu: [["09:00", "17:00"]],
+              fri: [["09:00", "17:00"]],
+              sat: [],
+              sun: [],
+            },
+          },
+        },
+      });
+    });
+  });
+
+  it("keeps Save disabled while an open day ends before it starts", async () => {
+    const client = makeClient({ assistants: [bookingAssistant()] });
+    renderWithProviders(<AssistantsBuilder />, client);
+    await userEvent.click(await screen.findByRole("button", { name: /Front desk/ }));
+    await screen.findByLabelText("System prompt");
+
+    await userEvent.click(screen.getByLabelText("Take booking requests"));
+    await userEvent.click(await screen.findByLabelText("Book real times on my calendar"));
+
+    const save = screen.getByRole("button", { name: "Save setup" });
+    expect(save).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("Monday end"), { target: { value: "08:00" } });
+    expect(screen.getByText(/end time after its start time/i)).toBeInTheDocument();
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Monday end"), { target: { value: "18:00" } });
+    expect(screen.queryByText(/end time after its start time/i)).not.toBeInTheDocument();
+    expect(save).toBeEnabled();
   });
 
   it("locked plan disables New and shows the upgrade call to action", async () => {
