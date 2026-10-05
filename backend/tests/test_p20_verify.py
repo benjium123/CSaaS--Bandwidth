@@ -454,6 +454,7 @@ async def test_me_router_does_not_shadow_auth_me(client, settings):
     assert me_paths == [
         "/api/v1/me/call-prefs",
         "/api/v1/me/capabilities",
+        "/api/v1/me/device/push-token",
         "/api/v1/me/emergency-address",
         "/api/v1/me/inbox-order",
         "/api/v1/me/login-events",

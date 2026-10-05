@@ -20,7 +20,8 @@ def test_the_shared_token_reaches_no_console_route():
     """Every operator route is a require_operator_permission route (no token path)."""
     assert all(perm is not None for _, _, perm, _ in ROUTES)
     platform = [(m, p) for m, p, _, _ in ROUTES if p.startswith("/api/v1/platform/")]
-    assert len(platform) == 7
+    # Billing, margin, messaging health/receipts/digests grew this set; update when it grows.
+    assert len(platform) == 11
 
 
 async def test_platform_routes_refuse_the_token(ops):  # noqa: F811

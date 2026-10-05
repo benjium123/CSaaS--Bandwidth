@@ -268,7 +268,8 @@ async def test_sign_up_to_a_working_inbox(
 
     numbers = (await client.get("/api/v1/numbers", headers=h)).json()
     assert sorted(n["e164"] for n in numbers) == NUMBERS
-    assert {n["emergency_status"] for n in numbers} == {"provisioning"}
+    # 5c63616: carrier 911 is off per workspace until a super admin switches it on.
+    assert {n["emergency_status"] for n in numbers} == {"off"}
 
     plan = (await client.get("/api/v1/billing/plan", headers=h)).json()
     assert plan["plan"]["code"] == "solo" and plan["plan"]["monthly_total_cents"] == 2000
