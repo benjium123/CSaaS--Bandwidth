@@ -24,8 +24,9 @@ from app.compliance.keywords import (
     classify_keyword,
     normalize,
 )
-from app.errors import ConflictError
+from app.errors import ConflictError, ValidationFailedError
 from app.models import ComplianceSettings, ConsentEvent, DncEntry, Org
+from app.models.compliance import AI_CONSENT_CHANNEL, CONSENT_SOURCES
 
 log = structlog.get_logger("compliance")
 
@@ -166,6 +167,51 @@ async def manual_opt_in(
     )
     assert row is not None
     return row
+
+
+# --------------------------------------------------------------------------------------
+# AI call consent (TCPA / FCC Feb 2024)
+# --------------------------------------------------------------------------------------
+async def has_ai_call_consent(session: AsyncSession, contact_e164: str) -> bool:
+    """Whether this contact has a recorded PRIOR EXPRESS consent for AI outbound calls.
+
+    The FCC's Feb 2024 ruling treats an AI voice as an "artificial voice" under the TCPA,
+    so an ``ai_calls`` campaign may only dial a contact with a recorded opt-in on the
+    ``ai_voice`` channel. Missing or undecided is a NO: consent must be affirmatively on
+    record, never inferred from a "voice" (human) opt-in.
+    """
+    latest = await latest_consent(session, contact_e164, channel=AI_CONSENT_CHANNEL)
+    return latest is not None and latest.event == "opt_in"
+
+
+async def record_ai_call_consent(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    contact_e164: str,
+    *,
+    granted: bool,
+    source: str,
+    evidence: str,
+    actor_user_id: uuid.UUID | None = None,
+) -> ConsentEvent | None:
+    """Append one ``ai_voice`` ledger row granting or revoking AI-call consent.
+
+    ``evidence`` records where/when the person agreed (or revoked) - the thing a TCPA
+    complaint is answered with - so it is stored verbatim and is NOT optional. The row is
+    an ordinary consent event, so ``has_ai_call_consent`` reads back the LATEST of these.
+    """
+    if source not in CONSENT_SOURCES:
+        raise ValidationFailedError(f"source must be one of: {', '.join(CONSENT_SOURCES)}")
+    return await record_consent(
+        session,
+        org_id,
+        contact_e164=contact_e164,
+        event="opt_in" if granted else "opt_out",
+        source=source,
+        channel=AI_CONSENT_CHANNEL,
+        actor_user_id=actor_user_id,
+        details={"evidence": evidence},
+    )
 
 
 # --------------------------------------------------------------------------------------

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
@@ -47,6 +47,14 @@ class ConsentOut(BaseModel):
     source: str
     keyword_matched: str | None
     created_at: datetime
+
+
+class AiConsentIn(BaseModel):
+    e164: str
+    source: Literal["manual", "import", "api"] = "manual"
+    #: Where/when the person agreed - the record a TCPA complaint is answered with, so it
+    #: is required and bounded rather than optional.
+    evidence: str = Field(min_length=1, max_length=500)
 
 
 def _clamp_window(value: str, floor: str, is_start: bool) -> str:
@@ -128,6 +136,54 @@ async def opt_in(
     await svc.manual_opt_in(ctx.session, ctx.org.id, e164, ctx.actor_user_id)
     await ctx.session.commit()
     return {"contact_e164": e164, "opted_out": False}
+
+
+@router.post("/ai-consent", status_code=201)
+async def record_ai_consent(
+    payload: AiConsentIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> dict:
+    """Record a contact's PRIOR EXPRESS consent for outbound AI calls.
+
+    FCC Feb 2024: an AI voice is an "artificial voice" under the TCPA, so an ``ai_calls``
+    campaign may only dial a contact that has one of these. Consent to be called by a
+    person (the ``voice`` channel) is not consent to be called by an AI.
+    """
+    e164 = to_e164(
+        payload.e164, await phone_region.strict_for_org(ctx.session, ctx.org.id, payload.e164)
+    )
+    await svc.record_ai_call_consent(
+        ctx.session,
+        ctx.org.id,
+        e164,
+        granted=True,
+        source=payload.source,
+        evidence=payload.evidence,
+        actor_user_id=ctx.actor_user_id,
+    )
+    await ctx.session.commit()
+    return {"contact_e164": e164, "ai_call_consent": True}
+
+
+@router.delete("/ai-consent/{e164}")
+async def revoke_ai_consent(
+    e164: str,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> dict:
+    """Revoke a contact's AI-call consent (records an ``opt_out`` on the ai_voice channel)."""
+    region = await phone_region.strict_for_org(ctx.session, ctx.org.id, e164)
+    normalized = to_e164(e164, region)
+    await svc.record_ai_call_consent(
+        ctx.session,
+        ctx.org.id,
+        normalized,
+        granted=False,
+        source="manual",
+        evidence="revoked by operator",
+        actor_user_id=ctx.actor_user_id,
+    )
+    await ctx.session.commit()
+    return {"contact_e164": normalized, "ai_call_consent": False}
 
 
 @router.get("/dnc")

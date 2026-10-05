@@ -13,6 +13,10 @@ own copy of opt-out/DNC/quiet-hours logic.
 DR-12: no_answer/busy/failed are retried up to ``campaign.max_attempts``, spaced
 ``campaign.retry_backoff_minutes`` apart. An AMD "machine" verdict is never retried - it is
 a completed contact, just not a human one.
+
+TCPA (FCC Feb 2024): an ``ai_calls`` campaign may only dial a contact with a recorded
+PRIOR consent for AI calls (``compliance_svc.has_ai_call_consent``). A plain ``voice``
+campaign - a human dialing - is unaffected.
 """
 
 from __future__ import annotations
@@ -475,6 +479,17 @@ async def dial_next(
         return None
     row = rows[0]
 
+    if campaign.channel == "ai_calls" and not await compliance_svc.has_ai_call_consent(
+        session, row.e164
+    ):
+        # FCC Feb 2024: an AI voice is an "artificial voice" under the TCPA, so an ai_calls
+        # campaign may only dial a contact with a recorded PRIOR consent for AI calls.
+        # Terminal, exactly like the opted-out/DNC block below - never retried.
+        row.status = "failed"
+        row.disposition = "no_ai_consent"
+        await session.commit()
+        return row
+
     allowed, defer_until = await _compliance_precheck(session, row.e164, campaign.org_id, moment)
     if not allowed and defer_until is not None:
         row.next_attempt_at = defer_until
@@ -628,6 +643,17 @@ async def dialer_tick(
 
         eligible: list[DialAttempt] = []
         for row in rows:
+            if campaign.channel == "ai_calls" and not await compliance_svc.has_ai_call_consent(
+                session, row.e164
+            ):
+                # FCC Feb 2024: an AI voice is an "artificial voice" under the TCPA, so an
+                # ai_calls campaign may only dial a contact with a recorded PRIOR consent
+                # for AI calls. Permanent, exactly like the opted-out/DNC block below -
+                # never retried.
+                row.status = "failed"
+                row.disposition = "no_ai_consent"
+                await session.commit()
+                continue
             allowed, defer_until = await _compliance_precheck(
                 session, row.e164, campaign.org_id, moment
             )

@@ -248,6 +248,20 @@ async def test_ai_campaign_answered_voicemail_and_dnc_contacts(
 
     set_org_context(session, org_id)
     await compliance_svc.add_dnc(session, org_id, dnc_contact)
+    # FCC Feb 2024: an ai_calls campaign may only dial a contact with a recorded PRIOR
+    # consent for AI calls, so EVERY contact this scenario exercises carries one -
+    # including the DNC contact, so that it is the DNC gate (disposition "blocked",
+    # asserted below) that stops it, not the AI-consent gate.
+    for contact in (answered_contact, voicemail_contact, dnc_contact):
+        await compliance_svc.record_ai_call_consent(
+            session,
+            org_id,
+            contact,
+            granted=True,
+            source="import",
+            evidence="imported web-form consent 2026-05-01",
+            actor_user_id=None,
+        )
     await session.commit()
 
     # parallel/3 so all three rows are claimed in ONE tick, same reasoning as

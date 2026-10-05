@@ -28,7 +28,13 @@ from app.db.types import GUID, PortableJSON
 # for help (so the reply is idempotent under webhook replay) without affecting opt-in state.
 CONSENT_EVENTS = ("opt_out", "opt_in", "dnc_add", "dnc_remove", "help_request")
 CONSENT_SOURCES = ("keyword", "manual", "import", "api")
-CHANNELS = ("sms", "voice")
+CHANNELS = ("sms", "voice", "ai_voice")
+
+#: The channel a PRIOR EXPRESS consent for outbound AI calls is recorded on. Deliberately
+#: separate from "voice" (a human dialing): since the FCC's Feb 2024 ruling an AI voice is
+#: an "artificial voice" under the TCPA, so consent to be called by a person is not consent
+#: to be called by an AI. `channel` is String(8) and "ai_voice" fits exactly - no migration.
+AI_CONSENT_CHANNEL = "ai_voice"
 
 # The federal TCPA floor, in the RECIPIENT's local time. An org may narrow this window;
 # it may never widen it.

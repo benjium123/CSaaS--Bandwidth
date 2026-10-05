@@ -481,6 +481,22 @@ async def test_ai_campaign_dials_through_the_assistant_path(
         from_numbers=[SECOND_OUR],
     )
 
+    # FCC Feb 2024: an ai_calls campaign may only dial a contact with a recorded PRIOR
+    # consent for AI calls. The voice campaign (a human dialing) needs none.
+    from app.compliance import service as compliance_svc
+
+    set_org_context(session, org_id)
+    await compliance_svc.record_ai_call_consent(
+        session,
+        org_id,
+        ai_contact,
+        granted=True,
+        source="manual",
+        evidence="web form ringlite.io/quote 2026-10-01",
+        actor_user_id=None,
+    )
+    await session.commit()
+
     await dialer_svc.start_dial_campaign(session, ai_campaign)
     await dialer_svc.start_dial_campaign(session, voice_campaign)
 
@@ -540,6 +556,19 @@ async def test_ai_campaign_respects_quiet_hours_consent_and_dnc(
 
     set_org_context(session, org_id)
     await compliance_svc.add_dnc(session, org_id, dnc_contact)
+    # FCC Feb 2024: an ai_calls campaign may only dial a contact with a recorded PRIOR
+    # consent for AI calls, so every contact this scenario exercises carries one - then it
+    # is the DNC / quiet-hours gates (asserted below), not the AI-consent gate, that act.
+    for contact in (dnc_contact, quiet_contact, allowed_contact):
+        await compliance_svc.record_ai_call_consent(
+            session,
+            org_id,
+            contact,
+            granted=True,
+            source="import",
+            evidence="imported consent 2026-05-01",
+            actor_user_id=None,
+        )
     await session.commit()
 
     # parallel/3 so all three rows are claimed in ONE tick - power mode claims one row per
