@@ -76,8 +76,8 @@ def freq(midi: float) -> float:
 def _envelope(length: int, sample_rate: int, attack: float, release: float) -> np.ndarray:
     """Raised-cosine attack/release envelope over ``length`` samples."""
     env = np.ones(length, dtype=np.float64)
-    attack_samples = min(int(round(attack * sample_rate)), length)
-    release_samples = min(int(round(release * sample_rate)), length)
+    attack_samples = min(round(attack * sample_rate), length)
+    release_samples = min(round(release * sample_rate), length)
     if attack_samples > 1:
         env[:attack_samples] = 0.5 * (
             1.0 - np.cos(np.pi * np.linspace(0.0, 1.0, attack_samples))
@@ -123,9 +123,9 @@ def render_loop(sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     normalised to -14 dBFS and the last 20 ms are crossfaded into the head so the loop
     can be played round and round without a seam.
     """
-    total = int(round(sample_rate * LOOP_SECONDS))
-    chord_samples = int(round(sample_rate * CHORD_SECONDS))
-    step_samples = max(1, int(round(sample_rate * ARPEGGIO_STEP_SECONDS)))
+    total = round(sample_rate * LOOP_SECONDS)
+    chord_samples = round(sample_rate * CHORD_SECONDS)
+    step_samples = max(1, round(sample_rate * ARPEGGIO_STEP_SECONDS))
     out = np.zeros(total, dtype=np.float64)
 
     for index, chord in enumerate(CHORDS):
@@ -152,7 +152,7 @@ def render_loop(sample_rate: int = SAMPLE_RATE) -> np.ndarray:
             position += note_length
             note += 1
 
-    crossfade = int(round(sample_rate * CROSSFADE_SECONDS))
+    crossfade = round(sample_rate * CROSSFADE_SECONDS)
     if 0 < crossfade < total:
         fade_in = np.linspace(0.0, 1.0, crossfade)
         out[:crossfade] = out[:crossfade] * fade_in + out[-crossfade:] * (1.0 - fade_in)

@@ -65,7 +65,7 @@ def sip_call_active(attributes: Mapping[str, str]) -> bool:
 
 
 # --- AI agents v2: the worker's setup comes from GET /agent/config -------------------------
-import math  # noqa: E402
+import math
 
 #: Neutral disposition posted at call end when nothing better is known; a member of the
 #: backend's OUTCOME_DISPOSITIONS.

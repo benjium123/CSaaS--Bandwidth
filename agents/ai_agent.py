@@ -18,7 +18,12 @@ from livekit.agents import (
     cli,
     function_tool,
 )
-from livekit.agents.metrics import EOUMetrics, InterruptionMetrics, LLMMetrics, TTSMetrics
+from livekit.agents.metrics import (
+    EOUMetrics,
+    InterruptionMetrics,
+    LLMMetrics,
+    TTSMetrics,
+)
 from livekit.plugins import anthropic, deepgram, elevenlabs, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -966,7 +971,9 @@ async def entrypoint(ctx: JobContext) -> None:
             except Exception:
                 logger.exception("post_usage failed for call_id=%s", call_id)
             try:
-                await backend.post_outcome(call_id, DEFAULT_OUTCOME_DISPOSITION)
+                await backend.post_outcome(
+                    call_id, "handoff" if handoff_completed else DEFAULT_OUTCOME_DISPOSITION
+                )
             except Exception:
                 logger.exception("post_outcome failed for call_id=%s", call_id)
         await backend.aclose()
