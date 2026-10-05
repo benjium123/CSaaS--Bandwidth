@@ -62,3 +62,81 @@ def sip_call_active(attributes: Mapping[str, str]) -> bool:
     counts as answered."""
     status = (attributes or {}).get("sip.callStatus")
     return status is None or status == "active"
+
+
+# --- AI agents v2: the worker's setup comes from GET /agent/config -------------------------
+import math  # noqa: E402
+
+#: Neutral disposition posted at call end when nothing better is known; a member of the
+#: backend's OUTCOME_DISPOSITIONS.
+DEFAULT_OUTCOME_DISPOSITION = "answered"
+
+#: OpenAI-compatible providers the worker can drive through livekit's openai plugin:
+#: provider -> (default base_url, API key env var, default model, base_url env override).
+OPENAI_COMPATIBLE_LLMS = {
+    "deepseek": ("https://api.deepseek.com", "DEEPSEEK_API_KEY", "deepseek-chat", "DEEPSEEK_BASE_URL"),
+    "telnyx": (
+        "https://api.telnyx.com/v2/ai",
+        "TELNYX_API_KEY",
+        "moonshotai/Kimi-K2-Instruct",
+        "TELNYX_AI_BASE_URL",
+    ),
+}
+
+
+def positive_int(value: object, fallback: int) -> int:
+    """`value` as an int >= 1, else `fallback` (profile limits come from JSON/DB)."""
+    try:
+        number = int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return fallback
+    return number if number >= 1 else fallback
+
+
+def resolve_limits(config: Mapping[str, object], max_fallback: int, silence_fallback: int) -> tuple[int, int]:
+    """(max_call_seconds, silence_timeout_seconds): the config's values win; the env
+    constants are fallbacks only."""
+    return (
+        positive_int(config.get("max_call_seconds"), max_fallback),
+        positive_int(config.get("silence_timeout_seconds"), silence_fallback),
+    )
+
+
+def is_credit_refusal(config: Mapping[str, object] | None) -> bool:
+    return bool(config and config.get("_refused"))
+
+
+def opening_lines(config: Mapping[str, object]) -> list[str]:
+    """What the AI says first: the disclosure (when on), then the greeting."""
+    lines: list[str] = []
+    if config.get("ai_disclosure"):
+        text = str(config.get("disclosure_text") or "").strip()
+        if text:
+            lines.append(text)
+    greeting = str(config.get("greeting") or "").strip()
+    if greeting:
+        lines.append(greeting)
+    return lines
+
+
+def resolve_llm(config: Mapping[str, object], environ: Mapping[str, str] | None = None) -> dict:
+    """Pure LLM choice. Returns {"kind": "anthropic"|"openai"|"compat", "model", "base_url",
+    "api_key"}. A compat provider (deepseek, telnyx) with no API key falls back to
+    anthropic, as deepseek always has."""
+    env = os.environ if environ is None else environ
+    provider = str(config.get("llm_provider") or env.get("LLM_PROVIDER") or "anthropic").strip().lower()
+    model = str(config.get("llm_model") or "")
+    if provider == "openai":
+        return {"kind": "openai", "model": model or "gpt-4o-mini", "base_url": "", "api_key": ""}
+    if provider in OPENAI_COMPATIBLE_LLMS:
+        default_url, key_env, default_model, url_env = OPENAI_COMPATIBLE_LLMS[provider]
+        api_key = env.get(key_env, "").strip()
+        if api_key:
+            base_url = str(config.get("llm_base_url") or "").strip() or env.get(url_env, "").strip() or default_url
+            return {"kind": "compat", "model": model or default_model, "base_url": base_url, "api_key": api_key}
+    return {"kind": "anthropic", "model": "" if provider != "anthropic" else model, "base_url": "", "api_key": ""}
+
+
+def billable_voice_seconds(joined_at: float, left_at: float) -> int:
+    """Whole seconds from the AI joining to leaving the room, rounded up (never negative)."""
+    return max(0, math.ceil(left_at - joined_at))

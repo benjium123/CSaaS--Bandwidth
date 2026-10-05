@@ -608,6 +608,35 @@ async def go_live_readiness(session, settings, *, org, profile) -> dict:
     }
 
 
+#: OrgNumber has no `extra` column (and this work package adds no migration), so the
+#: per-number switch lives in the existing per-number JSON, OrgNumber.provisioning.
+DISCLOSURE_NUMBER_KEY = "ai_disclosure"
+
+
+def disclosure_text_for(org_name: str) -> str:
+    return f"This call is answered by an automated assistant for {org_name or 'this business'}."
+
+
+def number_disclosure_off(number) -> bool:
+    return (getattr(number, "provisioning", None) or {}).get(DISCLOSURE_NUMBER_KEY) is False
+
+
+async def disclosure_enabled(session, call) -> bool:
+    """On unless a super admin switched it off for the org (entitlement) or the number."""
+    from app.services import entitlements
+
+    if not await entitlements.has(session, call.org_id, "ai_disclosure"):
+        return False
+    number = (
+        await session.execute(
+            sa.select(OrgNumber).where(
+                OrgNumber.org_id == call.org_id, OrgNumber.e164 == call.our_e164
+            )
+        )
+    ).scalar_one_or_none()
+    return not (number is not None and number_disclosure_off(number))
+
+
 async def resolve_worker_config(
     session, settings, *, call, profile, include_keys: bool
 ) -> dict:
@@ -618,6 +647,19 @@ async def resolve_worker_config(
     cfg = await ai_providers_svc.resolve_call_config(
         session, settings, org=org, profile=profile, include_keys=include_keys
     )
+
+    # Everything /agent/context returns, so the worker needs ONE setup call.
+    cfg["org_name"] = org.name or ""
+    cfg["contact_e164"] = call.contact_e164
+    cfg["direction"] = call.direction
+    cfg["system_prompt"] = getattr(profile, "system_prompt", "") or ""
+    cfg["extra_rules"] = list((getattr(profile, "extra", None) or {}).get("rules", []))
+    cfg["llm_provider"] = cfg.get("llm", {}).get("provider", "") or ""
+    cfg["llm_model"] = cfg.get("llm", {}).get("model", "") or ""
+    cfg["llm_base_url"] = (getattr(profile, "extra", None) or {}).get("llm_base_url", "") or ""
+
+    cfg["ai_disclosure"] = await disclosure_enabled(session, call)
+    cfg["disclosure_text"] = disclosure_text_for(org.name)
 
     cfg["greeting"] = getattr(profile, "greeting", "") or ""
     cfg["voice_id"] = cfg.get("tts", {}).get("voice_id", "")

@@ -1101,3 +1101,51 @@ async def delete_customer_account(
         payload.reason,
     )
     return Response(status_code=204)
+
+
+class AiDisclosureIn(BaseModel):
+    enabled: bool
+
+
+@router.patch("/orgs/{org_id}/numbers/{number_id}/ai-disclosure")
+async def set_number_ai_disclosure(
+    org_id: uuid.UUID, number_id: uuid.UUID, payload: AiDisclosureIn, op: Major
+) -> dict:
+    """Super admins only: switch the AI agent's "automated assistant" opening line on or
+    off for one number. Off is stored as ``provisioning["ai_disclosure"] = False`` (OrgNumber
+    has no `extra` column); on removes the key so the org-level feature decides."""
+    from app.models import OrgNumber
+    from app.services import agent as agent_svc
+    from app.services import audit as audit_svc
+
+    set_org_context(op.session, org_id)
+    number = (
+        await op.session.execute(
+            sa.select(OrgNumber).where(OrgNumber.org_id == org_id, OrgNumber.id == number_id)
+        )
+    ).scalar_one_or_none()
+    if number is None:
+        raise NotFoundError("Number not found")
+    before = not agent_svc.number_disclosure_off(number)
+    stored = dict(number.provisioning or {})
+    if payload.enabled:
+        stored.pop(agent_svc.DISCLOSURE_NUMBER_KEY, None)
+    else:
+        stored[agent_svc.DISCLOSURE_NUMBER_KEY] = False
+    number.provisioning = stored
+    audit_svc.record(
+        op.session,
+        org_id,
+        action="number_ai_disclosure.updated",
+        target_type="org_number",
+        target_id=str(number.id),
+        actor_user_id=op.user.id,
+        detail={
+            "operator_user_id": str(op.user.id),
+            "e164": number.e164,
+            "from": before,
+            "to": payload.enabled,
+        },
+    )
+    await op.session.commit()
+    return {"org_id": str(org_id), "number_id": str(number.id), "enabled": payload.enabled}

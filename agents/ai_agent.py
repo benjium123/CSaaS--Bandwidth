@@ -25,7 +25,16 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from .backend_client import BackendClient, format_handoff_summary
 from .beep_detector import BeepDetector, VoicemailHeuristic
 from .transcript_buffer import TranscriptBuffer, assemble_instructions
-from .worker_config import resolve_agent_name, resolve_idle_processes
+from .worker_config import (
+    DEFAULT_OUTCOME_DISPOSITION,
+    billable_voice_seconds,
+    is_credit_refusal,
+    opening_lines,
+    resolve_agent_name,
+    resolve_idle_processes,
+    resolve_limits,
+    resolve_llm,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,29 +150,26 @@ def _item_text(item: Any) -> str:
 
 
 def _llm_from_context(context: dict[str, Any]) -> Any:
-    # Default (and ultimate fallback for an unrecognized provider string) is anthropic
-    # claude-haiku per the phase-8 plan: cheap + fast for voice.
-    provider = str(
-        context.get("llm_provider") or os.getenv("LLM_PROVIDER") or "anthropic"
-    ).strip().lower()
-    model = context.get("llm_model")
-    if provider == "openai":
-        return openai.LLM(model=model or "gpt-4o-mini")
-    if provider == "deepseek":
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-        if not api_key:
-            logger.error(
-                "LLM_PROVIDER=deepseek but DEEPSEEK_API_KEY is not set; "
-                "falling back to anthropic claude-haiku-4-5"
-            )
-            return anthropic.LLM(model="claude-haiku-4-5")
-        # The openai plugin speaks any OpenAI-compatible endpoint; DeepSeek is one.
+    # Default (and ultimate fallback for an unrecognized provider string, or an
+    # OpenAI-compatible provider whose API key is missing) is anthropic claude-haiku per
+    # the phase-8 plan: cheap + fast for voice. The choice itself is pure and unit-tested
+    # in worker_config.resolve_llm; this only builds the plugin object.
+    choice = resolve_llm(context)
+    if choice["kind"] == "openai":
+        return openai.LLM(model=choice["model"])
+    if choice["kind"] == "compat":
+        # The openai plugin speaks any OpenAI-compatible endpoint (DeepSeek, Telnyx AI).
         return openai.LLM(
-            base_url="https://api.deepseek.com",
-            model=model or "deepseek-chat",
-            api_key=api_key,
+            base_url=choice["base_url"], model=choice["model"], api_key=choice["api_key"]
         )
-    return anthropic.LLM(model=model or "claude-haiku-4-5")
+    provider = str(context.get("llm_provider") or os.getenv("LLM_PROVIDER") or "").strip().lower()
+    if provider not in ("", "anthropic"):
+        logger.error(
+            "LLM provider %s unusable (unknown or API key not set); "
+            "falling back to anthropic claude-haiku-4-5",
+            provider,
+        )
+    return anthropic.LLM(model=choice["model"] or "claude-haiku-4-5")
 
 
 class CsaasAgent(Agent):
@@ -317,11 +323,35 @@ async def entrypoint(ctx: JobContext) -> None:
         LIVEKIT_API_SECRET,
     )
 
+    ai_joined_at = time.time()
+
+    # /agent/config is the setup call; /agent/context is the fallback so a network
+    # failure never leaves the call silent (and old backends keep working).
     context: dict[str, Any] = {}
     try:
-        context = await backend.fetch_context(call_id) or {}
+        config = await backend.fetch_config(call_id)
     except Exception:
-        logger.exception("failed to fetch context for call_id=%s", call_id)
+        logger.exception("failed to fetch config for call_id=%s", call_id)
+        config = None
+    if is_credit_refusal(config):
+        # 402 insufficient_credits: say nothing as the AI; the backend's credit fallback
+        # decides what happens to the call.
+        logger.info("insufficient credits; AI not joining call_id=%s", call_id)
+        await backend.aclose()
+        ctx.shutdown()
+        return
+    if config:
+        context = config
+        if config.get("effective_prompt"):
+            context = {**config, "system_prompt": config["effective_prompt"]}
+    else:
+        try:
+            context = await backend.fetch_context(call_id) or {}
+        except Exception:
+            logger.exception("failed to fetch context for call_id=%s", call_id)
+    max_call_seconds, silence_hangup_seconds = resolve_limits(
+        context, AI_MAX_CALL_SECONDS, AI_SILENCE_HANGUP_SECONDS
+    )
 
     contact_e164 = str(context.get("contact_e164") or "")
     direction = str(context.get("direction") or "inbound")
@@ -484,7 +514,7 @@ async def entrypoint(ctx: JobContext) -> None:
             await asyncio.sleep(1)
             if stop_event.is_set():
                 return
-            if time.monotonic() - call_start < AI_MAX_CALL_SECONDS:
+            if time.monotonic() - call_start < max_call_seconds:
                 continue
             if agent.handoff_requested and not handoff_completed:
                 continue
@@ -530,7 +560,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 last_agent_at,
                 agent.handoff_requested,
                 handoff_completed,
-                AI_SILENCE_HANGUP_SECONDS,
+                silence_hangup_seconds,
             ):
                 logger.info(
                     "silence watchdog triggered for call_id=%s", call_id
@@ -903,9 +933,10 @@ async def entrypoint(ctx: JobContext) -> None:
             room_input_options=RoomInputOptions(),
         )
         if not stop_event.is_set():
-            greeting = context.get("greeting")
-            if greeting:
-                await session.say(str(greeting))
+            lines = opening_lines(context)
+            if lines:
+                # Disclosure (when on) first, then the greeting.
+                await session.say(" ".join(lines))
             else:
                 await session.generate_reply()
         await stop_event.wait()
@@ -925,6 +956,19 @@ async def entrypoint(ctx: JobContext) -> None:
             _percentile(latencies_ms, 95),
             interruption_count,
         )
+        # Best-effort billing/outcome posts; each retries inside BackendClient and
+        # neither may ever crash the call teardown.
+        if call_id:
+            try:
+                await backend.post_usage(
+                    call_id, billable_voice_seconds(ai_joined_at, time.time())
+                )
+            except Exception:
+                logger.exception("post_usage failed for call_id=%s", call_id)
+            try:
+                await backend.post_outcome(call_id, DEFAULT_OUTCOME_DISPOSITION)
+            except Exception:
+                logger.exception("post_outcome failed for call_id=%s", call_id)
         await backend.aclose()
 
 
