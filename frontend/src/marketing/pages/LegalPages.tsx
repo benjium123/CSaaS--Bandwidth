@@ -15,7 +15,7 @@ export function PrivacyPage() {
     <SitePage title="Privacy policy" description="What Ringlite collects, why we collect it, and the choices you have.">
       <article className="ms-prose rl-wrap">
         <h1>Privacy policy</h1>
-        <p>Last updated September 2026</p>
+        <p>Last updated October 2026</p>
 
         <h2>What Ringlite is</h2>
         <p>Ringlite is a business phone system that runs in the browser. It gives your team numbers, calls, texts (SMS and MMS), voicemail, call recording and transcripts, AI call summaries and a shared inbox. We serve teams in the US and the UK.</p>
@@ -43,6 +43,16 @@ export function PrivacyPage() {
           <li>Speech transcription and AI summary providers.</li>
           <li>Authorities when the law requires it, or for a 911 call.</li>
         </ul>
+
+        <h2>Google user data</h2>
+        <p>If you connect a Google Calendar, Ringlite asks Google for permission to see and edit events on your calendars, plus your email address so we can show which account is connected.</p>
+        <ul>
+          <li><strong>What we read.</strong> Only the start and end times of your events and whether each one marks you as busy, so your AI assistant offers callers only times you are free. We do not request event titles, descriptions, locations or guest names.</li>
+          <li><strong>What we write.</strong> One event for each appointment your assistant books, with the caller's phone number and the booking notes, so it appears on your calendar.</li>
+          <li><strong>What we never do.</strong> We do not sell Google user data, use it for advertising, share it with anyone except as needed to run this feature, or use it to train AI models.</li>
+          <li><strong>Storage and removal.</strong> Your Google access token is stored encrypted. Disconnecting the calendar in Ringlite deletes it and revokes our access at Google; you can also remove access at any time from your Google Account's security settings.</li>
+        </ul>
+        <p>Ringlite's use and transfer to any other app of information received from Google APIs will adhere to the <a className="rl-text-link" href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
 
         <h2>How we protect information</h2>
         <p>Data is encrypted in transit (TLS). We use access controls, per-workspace isolation, audit logs and two-step sign-in.</p>

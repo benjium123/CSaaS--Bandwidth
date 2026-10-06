@@ -21,6 +21,7 @@ from app.models.billing import (
     PaymentMethod,
 )
 from app.models.branding import DOMAIN_STATUSES, OrgBranding
+from app.models.calendar import CalendarConnection
 from app.models.callflow import (
     FLOW_STATUSES,
     QUEUE_ENTRY_STATES,
@@ -339,6 +340,7 @@ __all__ = [
     "VoiceEvent",
     "RoutingPolicy",
     "Appointment",
+    "CalendarConnection",
     "KbChunk",
     "KbDocument",
     "CHANNEL_KINDS",

@@ -2,6 +2,7 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { ASSISTANTS_KEY, patchAssistant, type Assistant } from "@/api/assistants";
+import { CALENDAR_CONNECTIONS_KEY, listCalendarConnections } from "@/api/calendars";
 import {
   VOICES_KEY,
   defaultBookingHours,
@@ -45,6 +46,7 @@ function initialBookingHours(raw: unknown, timezone: string): BookingHours {
     lead_minutes: r.lead_minutes ?? base.lead_minutes,
     horizon_days: r.horizon_days ?? base.horizon_days,
     weekly: { ...base.weekly, ...(r.weekly ?? {}) },
+    calendar_connection_id: typeof r.calendar_connection_id === "string" ? r.calendar_connection_id : null,
   };
 }
 
@@ -144,6 +146,10 @@ export function SetupTab({ assistant, locked }: Props) {
   const first = React.useRef(true);
 
   const voicesQuery = useQuery({ queryKey: VOICES_KEY, queryFn: () => listVoices(api) });
+  const calendarsQuery = useQuery({
+    queryKey: CALENDAR_CONNECTIONS_KEY,
+    queryFn: () => listCalendarConnections(api),
+  });
 
   const runRender = React.useCallback(
     async (iv: Interview, force: boolean) => {
@@ -422,6 +428,23 @@ export function SetupTab({ assistant, locked }: Props) {
                   <option value="30">30 minutes</option>
                   <option value="45">45 minutes</option>
                   <option value="60">60 minutes</option>
+                </Select>
+              </Field>
+              <Field id={`${idp}-bk-cal`} label="Sync with calendar">
+                <Select
+                  id={`${idp}-bk-cal`}
+                  value={hours.calendar_connection_id ?? ""}
+                  onChange={(e) => editHours((h) => ({ ...h, calendar_connection_id: e.target.value || null }))}
+                >
+                  <option value="">Ringlite calendar only</option>
+                  {(calendarsQuery.data?.connections ?? [])
+                    .filter((c) => c.status === "active" || c.id === hours.calendar_connection_id)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        Google: {c.account_email}
+                        {c.status !== "active" ? " (reconnect needed)" : ""}
+                      </option>
+                    ))}
                 </Select>
               </Field>
               <div className="space-y-2">

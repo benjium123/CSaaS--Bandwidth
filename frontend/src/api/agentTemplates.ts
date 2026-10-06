@@ -33,6 +33,8 @@ export interface BookingHours {
   lead_minutes: number;
   horizon_days: number;
   weekly: Record<Weekday, [string, string][]>;
+  /** A connected external calendar to book around and into; null = Ringlite's only. */
+  calendar_connection_id?: string | null;
 }
 
 export interface AgentTemplate {

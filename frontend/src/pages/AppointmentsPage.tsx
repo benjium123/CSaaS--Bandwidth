@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/primitives";
 import { InitialsAvatar, PageHeader, SurfaceCard } from "@/components/ui/consoleChrome";
 import { formatPhone } from "@/lib/format";
+import { CalendarConnectionsCard } from "@/components/calendar/CalendarConnectionsCard";
 
 const STATUS_OPTIONS = ["booked", "canceled", "done"];
 
@@ -130,6 +131,8 @@ export function AppointmentsPage() {
           </Select>
         }
       />
+
+      <CalendarConnectionsCard />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading ? (

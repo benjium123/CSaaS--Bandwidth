@@ -551,6 +551,10 @@ class Settings(BaseSettings):
     monitor_restricted_daily_calls: int = 100
     groq_api_key: SecretStr = SecretStr("")
     google_api_key: SecretStr = SecretStr("")
+    # Calendar connections (2026-10-07): the Google OAuth web client customers connect
+    # their calendar through. Both empty = the "Connect Google Calendar" button is hidden.
+    google_calendar_client_id: str = ""
+    google_calendar_client_secret: SecretStr = SecretStr("")
 
     stt_provider: str = "deepgram"
     deepgram_api_key: SecretStr = SecretStr("")

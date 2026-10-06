@@ -244,11 +244,14 @@ async def issue_state(
     org_id,
     nonce: str,
     redirect_to: str | None = None,
+    namespace: str = "sso",
 ) -> str:
+    """``namespace`` keeps flows apart: a calendar-connect state ("cal") can never be
+    consumed by the SSO callback, nor an SSO state by the calendar callback."""
     state = secrets.token_urlsafe(32)
     payload = {"org_id": str(org_id), "nonce": nonce, "redirect_to": redirect_to}
     raw = json.dumps(payload)
-    key = f"sso:state:{state}"
+    key = f"{namespace}:state:{state}"
 
     client = _state_redis_client(settings)
     if client is None:
@@ -259,13 +262,13 @@ async def issue_state(
     return state
 
 
-async def consume_state(settings: Settings, state: str) -> dict | None:
+async def consume_state(settings: Settings, state: str, namespace: str = "sso") -> dict | None:
     """Read AND delete state. Unknown/expired/replayed states return None.
 
     Unlike ``session_cache``, this store fails CLOSED. A Redis outage must reject the
     login attempt rather than silently accepting an unverified state.
     """
-    key = f"sso:state:{state}"
+    key = f"{namespace}:state:{state}"
     try:
         client = _state_redis_client(settings)
         if client is None:

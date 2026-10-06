@@ -145,13 +145,15 @@ async def free_slots(
     now: datetime,
     limit: int = 5,
     after: datetime | None = None,
+    busy: list[tuple[datetime, datetime]] | None = None,
 ) -> list[datetime]:
     """The next ``limit`` open slot starts for this org, earliest first, as aware UTC.
 
     Days are walked (in ``cfg.timezone``) from ``max(now + lead, after)`` up to
     ``now + horizon_days``; a slot counts only when it STARTS on the window grid and
     ENDS by the window's end, and only when no existing booked appointment of this org
-    falls inside ``[slot, slot + slot_minutes)``.
+    falls inside ``[slot, slot + slot_minutes)`` and no ``busy`` interval (a connected
+    calendar's busy time, aware UTC ``[start, end)``) overlaps it.
     """
     now_utc = _as_utc(now)
     span = timedelta(minutes=cfg.slot_minutes)
@@ -179,7 +181,9 @@ async def free_slots(
                     continue
                 if candidate > horizon_utc:
                     break
-                if _is_free(booked, candidate, span):
+                if _is_free(booked, candidate, span) and not _overlaps_busy(
+                    busy, candidate, span
+                ):
                     slots.append(candidate)
                     if len(slots) >= limit:
                         break
@@ -199,6 +203,7 @@ async def book_slot(
     call_id: uuid.UUID | None,
     notes: str,
     now: datetime,
+    busy: list[tuple[datetime, datetime]] | None = None,
 ) -> Appointment:
     """Book ``start`` (aware UTC) for this org, or raise ConflictError.
 
@@ -212,6 +217,8 @@ async def book_slot(
     now_utc = _as_utc(now)
 
     if not _allowed_start(cfg, start_utc, now_utc):
+        raise ConflictError(CONFLICT_MESSAGE)
+    if _overlaps_busy(busy, start_utc, timedelta(minutes=cfg.slot_minutes)):
         raise ConflictError(CONFLICT_MESSAGE)
     if await _count_in_slot(session, org_id, cfg, start_utc) > 0:
         raise ConflictError(CONFLICT_MESSAGE)
@@ -320,6 +327,16 @@ def _is_free(booked: list[datetime], candidate: datetime, span: timedelta) -> bo
         if candidate <= start < end:
             return False
     return True
+
+
+def _overlaps_busy(
+    busy: list[tuple[datetime, datetime]] | None, candidate: datetime, span: timedelta
+) -> bool:
+    end = candidate + span
+    for busy_start, busy_end in busy or ():
+        if _as_utc(busy_start) < end and candidate < _as_utc(busy_end):
+            return True
+    return False
 
 
 def _as_utc(value: datetime) -> datetime:

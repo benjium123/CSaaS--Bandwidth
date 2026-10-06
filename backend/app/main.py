@@ -18,6 +18,7 @@ from app.api.routes import ai_providers as ai_provider_routes
 from app.api.routes import analytics as analytics_routes
 from app.api.routes import auth as auth_routes
 from app.api.routes import billing as billing_routes
+from app.api.routes import calendar as calendar_routes
 from app.api.routes import calls as call_routes
 from app.api.routes import compliance as compliance_routes
 from app.api.routes import contacts as contact_routes
@@ -310,6 +311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(porting_routes.router)
     app.include_router(porting_routes.ops_router)
     app.include_router(sso_routes.router)
+    app.include_router(calendar_routes.router)
     app.include_router(saml_routes.router)
     app.include_router(enterprise_sso_routes.router)
     app.include_router(scim_routes.router)

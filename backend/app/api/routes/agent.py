@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -25,6 +25,7 @@ from starlette.datastructures import UploadFile
 
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission, requires_feature
+from app.config import Settings
 from app.db.base import set_org_context
 from app.db.session import get_session
 from app.errors import (
@@ -49,6 +50,7 @@ from app.services import (
     voice_preview,
 )
 from app.services import audit as audit_svc
+from app.services import calendars as calendars_svc
 from app.services import kb as kb_svc
 
 router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
@@ -399,17 +401,28 @@ def _parse_optional_iso(value: str | None) -> datetime | None:
     return parsed
 
 
-async def _availability_for_call(session: AsyncSession, call, after_raw) -> dict:
+async def _availability_for_call(
+    session: AsyncSession, settings: Settings, call, after_raw
+) -> dict:
     """Shared by GET /availability and POST /tools/check_availability (one code path)."""
     profile = await agent_svc.resolve_call_profile(session, call)
     cfg = booking.parse_booking(profile) if profile is not None else None
     if cfg is None:
         return {"enabled": False, "timezone": "", "slots": []}
 
+    now = datetime.now(timezone.utc)
     after = _parse_optional_iso(after_raw if isinstance(after_raw, str) else None)
-    slots = await booking.free_slots(
-        session, call.org_id, cfg, now=datetime.now(timezone.utc), after=after
+    # A connected calendar's busy time; raises (503) rather than offer an unchecked slot.
+    busy = await calendars_svc.external_busy(
+        session,
+        settings,
+        call.org_id,
+        profile,
+        start=min(now, after) if after else now,
+        end=now + timedelta(days=cfg.horizon_days + 1),
+        now=now,
     )
+    slots = await booking.free_slots(session, call.org_id, cfg, now=now, after=after, busy=busy)
     return {
         "enabled": True,
         "timezone": cfg.timezone,
@@ -432,7 +445,8 @@ async def get_agent_availability(
     if call is None:
         raise NotFoundError("Call not found")
     set_org_context(session, call.org_id)
-    return AvailabilityOut(**await _availability_for_call(session, call, after))
+    settings: Settings = request.app.state.settings
+    return AvailabilityOut(**await _availability_for_call(session, settings, call, after))
 
 
 class AppointmentSlotIn(BaseModel):
@@ -460,6 +474,14 @@ async def _book_slot_for_call(
     if start is None:
         raise ValidationFailedError("That time was not a valid booking time.")
 
+    settings: Settings = request.app.state.settings
+    now = datetime.now(timezone.utc)
+    span = timedelta(minutes=cfg.slot_minutes)
+    # Re-read the connected calendar for exactly this slot: someone may have added an
+    # event since check_availability ran.
+    busy = await calendars_svc.external_busy(
+        session, settings, call.org_id, profile, start=start, end=start + span, now=now
+    )
     appt = await booking.book_slot(
         session,
         call.org_id,
@@ -468,7 +490,12 @@ async def _book_slot_for_call(
         contact_e164=call.contact_e164,
         call_id=call.id,
         notes=payload.notes,
-        now=datetime.now(timezone.utc),
+        now=now,
+        busy=busy,
+    )
+    await session.commit()
+    await calendars_svc.push_booking(
+        session, settings, appt, profile, slot_minutes=cfg.slot_minutes, now=now
     )
     await session.commit()
 
@@ -1295,7 +1322,7 @@ async def _tool_transfer(request, session, call, call_id, arguments: dict) -> di
 async def _tool_check_availability(request, session, call, call_id, arguments: dict) -> dict:
     after_raw = arguments.get("after")
     result = await _availability_for_call(
-        session, call, str(after_raw) if after_raw else None
+        session, request.app.state.settings, call, str(after_raw) if after_raw else None
     )
     return {"ok": True, "result": result}
 

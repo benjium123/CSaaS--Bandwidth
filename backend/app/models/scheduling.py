@@ -35,6 +35,12 @@ class Appointment(Base, TenantScoped, TimestampMixin):
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="booked")
     #: "ai" or the user id that created it.
     created_by: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="ai")
+    #: Where a copy of this booking was written (2026-10-07), so a later cancel can remove
+    #: it there too. Both NULL = Ringlite's calendar only.
+    calendar_connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), sa.ForeignKey("calendar_connections.id", ondelete="SET NULL"), nullable=True
+    )
+    external_event_id: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
 
 
 class KbDocument(Base, TenantScoped, TimestampMixin):
