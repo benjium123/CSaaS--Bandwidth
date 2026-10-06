@@ -131,6 +131,14 @@ CATALOG: dict[str, Feature] = {
         None,
         "The AI agent says it is an automated assistant at the start of a call",
     ),
+    "ai_consent_gate": Feature(
+        "ai_consent_gate",
+        "AI outbound consent gate",
+        "AI",
+        False,
+        None,
+        "AI calling campaigns only dial contacts with a recorded consent for AI calls",
+    ),
     "ai_kb": Feature(
         "ai_kb", "AI knowledge base", "AI", True, None, "Documents the AI agent can search"
     ),

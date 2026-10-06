@@ -15,8 +15,9 @@ DR-12: no_answer/busy/failed are retried up to ``campaign.max_attempts``, spaced
 a completed contact, just not a human one.
 
 TCPA (FCC Feb 2024): an ``ai_calls`` campaign may only dial a contact with a recorded
-PRIOR consent for AI calls (``compliance_svc.has_ai_call_consent``). A plain ``voice``
-campaign - a human dialing - is unaffected.
+PRIOR consent for AI calls (``compliance_svc.has_ai_call_consent``) - but only when a super
+admin has switched the ``ai_consent_gate`` feature on for the workspace (off by default,
+2026-10-06). A plain ``voice`` campaign - a human dialing - is never affected.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ from app.models import (
 )
 from app.providers import registry_org
 from app.services import credentials as credential_svc
-from app.services import pacing, smart_routing
+from app.services import entitlements, pacing, smart_routing
 from app.services.outbox import record_platform_event
 from app.services.sender import pick_deterministic
 from app.voice_plane import service as voice_plane_svc
@@ -351,6 +352,18 @@ async def _claim_due_rows(
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def _missing_ai_consent(
+    session: AsyncSession, campaign: OutboundCampaign, e164: str
+) -> bool:
+    """True when an ai_calls campaign must skip ``e164``: the workspace has the AI consent
+    gate on (super-admin switch) and the contact has no recorded consent for AI calls."""
+    if campaign.channel != "ai_calls":
+        return False
+    if not await entitlements.has(session, campaign.org_id, "ai_consent_gate"):
+        return False
+    return not await compliance_svc.has_ai_call_consent(session, e164)
+
+
 async def _compliance_precheck(
     session: AsyncSession, e164: str, org_id: uuid.UUID, now: datetime
 ) -> tuple[bool, datetime | None]:
@@ -479,9 +492,7 @@ async def dial_next(
         return None
     row = rows[0]
 
-    if campaign.channel == "ai_calls" and not await compliance_svc.has_ai_call_consent(
-        session, row.e164
-    ):
+    if await _missing_ai_consent(session, campaign, row.e164):
         # FCC Feb 2024: an AI voice is an "artificial voice" under the TCPA, so an ai_calls
         # campaign may only dial a contact with a recorded PRIOR consent for AI calls.
         # Terminal, exactly like the opted-out/DNC block below - never retried.
@@ -643,9 +654,7 @@ async def dialer_tick(
 
         eligible: list[DialAttempt] = []
         for row in rows:
-            if campaign.channel == "ai_calls" and not await compliance_svc.has_ai_call_consent(
-                session, row.e164
-            ):
+            if await _missing_ai_consent(session, campaign, row.e164):
                 # FCC Feb 2024: an AI voice is an "artificial voice" under the TCPA, so an
                 # ai_calls campaign may only dial a contact with a recorded PRIOR consent
                 # for AI calls. Permanent, exactly like the opted-out/DNC block below -

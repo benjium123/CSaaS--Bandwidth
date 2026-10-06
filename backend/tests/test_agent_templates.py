@@ -10,6 +10,7 @@ from app.services import entitlements
 from tests.conftest import auth_headers, create_org, register_and_login
 
 IDS = {
+    "ai_receptionist",
     "after_hours",
     "support_triage",
     "missed_call_textback",
@@ -22,13 +23,13 @@ IDS = {
 }
 
 
-def test_catalog_has_nine_ids_and_no_receptionist():
+def test_catalog_has_ten_ids_receptionist_first():
     ids = {t["id"] for t in tpl.TEMPLATES}
-    assert ids == IDS and len(tpl.TEMPLATES) == 9
-    assert not any(
-        "receptionist" in t["id"] or "receptionist" in t["name"].lower() for t in tpl.TEMPLATES
-    )
+    assert ids == IDS and len(tpl.TEMPLATES) == 10
+    assert tpl.TEMPLATES[0]["id"] == "ai_receptionist"
     by = {t["id"]: t for t in tpl.TEMPLATES}
+    assert by["ai_receptionist"]["channel"] == "voice"
+    assert by["ai_receptionist"]["interview"]["booking"]["enabled"] is True
     assert by["medical_front_desk"]["available"] is False
     assert by["medical_front_desk"]["unavailable_reason"] == "Needs a signed BAA"
     assert by["missed_call_textback"]["channel"] == "sms"

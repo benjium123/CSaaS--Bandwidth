@@ -20,12 +20,14 @@ from __future__ import annotations
 import uuid
 from random import Random
 
+import pytest
 import sqlalchemy as sa
 
 from app.compliance import service as compliance_svc
 from app.db.base import set_org_context
 from app.models import AgentProfile, ContactList, ContactListRow, DialAttempt
 from app.services import dialer as dialer_svc
+from app.services import entitlements
 from tests.conftest import FROZEN_NOW, auth_headers, make_org_with_number
 from tests.test_p23b_wiring import OUR, A, B, C, _dial_campaign, _ready_list
 
@@ -225,17 +227,28 @@ async def test_bulk_ai_consent_is_tenant_scoped(app_with_loopback, session):
     assert await compliance_svc.has_ai_call_consent(session, A) is False
 
 
-async def test_ai_calls_tick_blocks_unconsented_contact(
-    app_with_loopback, session, monkeypatch
-):
-    """An ai_calls campaign tick never dials a contact without recorded AI consent: the
-    row lands ``failed``/``no_ai_consent`` (terminal, never retried), while a consented
-    contact is dialed."""
+@pytest.mark.parametrize("gate_on", [True, False])
+async def test_ai_calls_tick_consent_gate(app_with_loopback, session, monkeypatch, gate_on):
+    """With the super-admin ``ai_consent_gate`` switch on, an ai_calls campaign tick never
+    dials a contact without recorded AI consent: the row lands ``failed``/``no_ai_consent``
+    (terminal, never retried), while a consented contact is dialed. With the switch off
+    (the default) both contacts are dialed."""
     client, _carrier, _app = app_with_loopback
     _token, org, _number = await make_org_with_number(
-        client, "ai-consent-dial@example.com", "Org AI Dial", OUR
+        client, f"ai-consent-dial-{int(gate_on)}@example.com", "Org AI Dial", OUR
     )
     org_id = uuid.UUID(org["id"])
+
+    if gate_on:
+        await entitlements.set_feature(
+            session,
+            org_id,
+            "ai_consent_gate",
+            enabled=True,
+            price_override_micros=None,
+            actor_user_id=None,
+        )
+        await session.commit()
 
     set_org_context(session, org_id)
     profile = AgentProfile(
@@ -291,6 +304,9 @@ async def test_ai_calls_tick_blocks_unconsented_contact(
 
     await dialer_svc.dialer_tick(session, None, None, None, Random(1), now=FROZEN_NOW)
 
+    if not gate_on:
+        assert sorted(called) == sorted([consented, not_consented])
+        return
     assert called == [consented]
 
     set_org_context(session, org_id)
