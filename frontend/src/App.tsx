@@ -35,6 +35,7 @@ import { VerificationBanner } from "@/components/kyc/VerificationBanner";
 import { MonitoringBanner } from "@/components/kyc/MonitoringBanner";
 import { ReportNumberPage } from "@/pages/ReportNumberPage";
 import { StepUpDialog } from "@/components/security/StepUpDialog";
+import { PasskeysCard } from "@/components/settings/PasskeysCard";
 import { ViewAsBanner } from "@/components/security/ViewAsBanner";
 import { SecureAccountPage } from "@/pages/SecureAccountPage";
 import { OpsPage } from "@/pages/OpsPage";
@@ -249,6 +250,17 @@ export function App() {
         <>
           <Routes>
             <Route path="/ops" element={<main className="mx-auto max-w-6xl p-4 sm:p-6"><OpsPage /></main>} />
+            {/* The step-up dialog sends "add a passkey" to /settings/team?tab=security, which
+                needs a workspace. An operator with none would loop between that dialog and the
+                picker, so give them the passkey card on its own. */}
+            <Route
+              path="/settings/*"
+              element={
+                <main className="mx-auto max-w-xl p-4 sm:p-6">
+                  <PasskeysCard onAdded={() => window.location.assign("/ops")} />
+                </main>
+              }
+            />
             <Route path="/report" element={<ReportNumberPage />} />
             <Route path="*" element={<OrgPickerPage />} />
           </Routes>
