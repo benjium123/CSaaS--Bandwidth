@@ -109,7 +109,16 @@ type Application = {
   account_type?: AccountType;
 };
 
-type Alert = { id: string; kind: string; status: string; detail: Record<string, unknown> | null; created_at: string | null };
+type Alert = {
+  id: string;
+  kind: string;
+  status: string;
+  detail: Record<string, unknown> | null;
+  created_at: string | null;
+  org_id?: string | null;
+  org_name?: string | null;
+  user_email?: string | null;
+};
 type Ban = { id: string; kind: string; hint: string | null; reason: string; added_by: string | null; added_at: string | null };
 
 
@@ -532,7 +541,7 @@ function QueueTab({ onOpen }: { onOpen: (orgId: string) => void }) {
   );
 }
 
-function AlertsTab() {
+function AlertsTab({ onOpen }: { onOpen: (orgId: string) => void }) {
   const q = useOps<Alert[]>(["alerts"], "/api/v1/ops/alerts");
   const action = useOpsAction(null);
   if (q.isPending) return <Spinner label="Loading alerts" />;
@@ -547,10 +556,22 @@ function AlertsTab() {
         >
           <div className="flex items-center justify-between gap-2">
             <span className="text-[13.5px] font-semibold text-[hsl(var(--cx-text))]">{a.kind.replace(/_/g, " ")}</span>
-            <Button type="button" size="sm" variant="outline" onClick={() => action.mutate({ path: `/api/v1/ops/alerts/${a.id}/review`, json: { note: "" } })}>
-              Mark reviewed
-            </Button>
+            <div className="flex items-center gap-2">
+              {a.org_id && (
+                <Button type="button" size="sm" onClick={() => onOpen(a.org_id!)}>
+                  Open
+                </Button>
+              )}
+              <Button type="button" size="sm" variant="outline" onClick={() => action.mutate({ path: `/api/v1/ops/alerts/${a.id}/review`, json: { note: "" } })}>
+                Mark reviewed
+              </Button>
+            </div>
           </div>
+          <p className="text-[12.5px] text-[hsl(var(--cx-muted))]">
+            {[a.org_name ?? (a.org_id ? "Workspace" : "System"), a.user_email, a.created_at ? new Date(a.created_at).toLocaleString() : null]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
           <KeyValues data={a.detail} />
         </li>
       ))}
@@ -1053,7 +1074,7 @@ function Switchboard({
               {tab === "console" && <ConsoleTab />}
               {tab === "customers" && <CustomerAccountsTab />}
               {tab === "queue" && <QueueTab onOpen={setOpenOrg} />}
-              {tab === "alerts" && <AlertsTab />}
+              {tab === "alerts" && <AlertsTab onOpen={setOpenOrg} />}
               {tab === "bans" && <BanListTab />}
               {tab === "monitoring" && <MonitoringTab />}
               {tab === "billing" && <BillingTab />}

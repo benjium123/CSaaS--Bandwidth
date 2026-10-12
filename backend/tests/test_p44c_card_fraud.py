@@ -60,6 +60,19 @@ async def test_foreign_card_is_refused(session):
     assert err.value.code == "card_country_mismatch"
 
 
+async def test_operator_approved_foreign_card_is_accepted_only_that_card(session):
+    org = await _org(session, "US")
+    profile = (
+        await session.execute(sa.select(KycProfile).where(KycProfile.org_id == org.id))
+    ).scalar_one()
+    profile.limits = {"approved_card_fingerprints": ["fp-ok"]}
+    await session.commit()
+    await card_risk.check_new_card(session, org.id, fingerprint="fp-ok", card_country="GB")
+    with pytest.raises(PermissionDeniedError) as err:
+        await card_risk.check_new_card(session, org.id, fingerprint="fp-other", card_country="GB")
+    assert err.value.code == "card_country_mismatch"
+
+
 async def test_home_card_is_accepted(session):
     org = await _org(session, "GB")
     await card_risk.check_new_card(session, org.id, fingerprint="fp1", card_country="GB")

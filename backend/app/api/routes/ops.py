@@ -800,11 +800,42 @@ async def alerts(op: Reader, status: str = Query(default="open")) -> list[dict]:
         .scalars()
         .all()
     )
+    # Who each alert is about, so the console can open it. An alert raised against a person
+    # (a flagged sign-in) opens that person's first workspace.
+    from app.models import OrgMembership
+
+    user_ids = {a.user_id for a in rows if a.user_id}
+    emails: dict = {}
+    first_org: dict = {}
+    if user_ids:
+        emails = dict(
+            (await op.session.execute(sa.select(User.id, User.email).where(User.id.in_(user_ids)))).all()
+        )
+        # JUSTIFIED allow_unscoped: an operator resolving memberships across workspaces.
+        for uid, oid in (
+            await op.session.execute(
+                sa.select(OrgMembership.user_id, OrgMembership.org_id)
+                .where(OrgMembership.user_id.in_(user_ids))
+                .order_by(OrgMembership.created_at)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).all():
+            first_org.setdefault(uid, oid)
+    org_of = {a.id: a.org_id or first_org.get(a.user_id) for a in rows}
+    org_ids = {oid for oid in org_of.values() if oid}
+    names = (
+        dict((await op.session.execute(sa.select(Org.id, Org.name).where(Org.id.in_(org_ids)))).all())
+        if org_ids
+        else {}
+    )
     return [
         {
             "id": str(a.id),
             "kind": a.kind,
             "user_id": str(a.user_id) if a.user_id else None,
+            "user_email": emails.get(a.user_id),
+            "org_id": str(org_of[a.id]) if org_of[a.id] else None,
+            "org_name": names.get(org_of[a.id]),
             "status": a.status,
             "detail": a.detail,
             "created_at": _iso(a.created_at),

@@ -95,6 +95,24 @@ async def check_checkout(
     set_org_context(session, org_id)
 
 
+async def _operator_approved(
+    session: AsyncSession, org_id: uuid.UUID, fingerprint: str | None
+) -> bool:
+    """An operator vouched for THIS card on THIS workspace (kyc_profiles.limits
+    ``approved_card_fingerprints``). Lifts only the country rule; every other check stands."""
+    if not fingerprint:
+        return False
+    from app.models import KycProfile
+
+    set_org_context(session, org_id)
+    limits = (
+        await session.execute(
+            sa.select(KycProfile.limits).where(KycProfile.org_id == org_id).limit(1)
+        )
+    ).scalar_one_or_none() or {}
+    return fingerprint in (limits.get("approved_card_fingerprints") or [])
+
+
 async def check_new_card(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -108,7 +126,7 @@ async def check_new_card(
 
     home = (await phone_region.for_org(session, org_id)).upper()
     country = (card_country or "").upper()
-    if country and country != home:
+    if country and country != home and not await _operator_approved(session, org_id, fingerprint):
         await open_alert(
             session, org_id, "card_country_mismatch", {"card_country": country, "home": home}
         )

@@ -1101,6 +1101,11 @@ async def set_limits(
         elif key in previous:
             cleaned = cleaned if cleaned is not None else {}
             cleaned[key] = previous[key]
+    # Operator-approved foreign cards (card_risk._operator_approved) are not on the limits
+    # form; keep them through an unrelated limits edit.
+    if previous.get("approved_card_fingerprints"):
+        cleaned = cleaned if cleaned is not None else {}
+        cleaned["approved_card_fingerprints"] = previous["approved_card_fingerprints"]
     cleaned = cleaned or None
     profile.deposit_required_cents = deposit_required_cents
     profile.limits = cleaned
