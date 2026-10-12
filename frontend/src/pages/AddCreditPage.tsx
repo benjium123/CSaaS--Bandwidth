@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
-import { CAPABILITIES_QUERY_KEY } from "@/api/capabilities";
+import { Navigate } from "react-router-dom";
+import { CAPABILITIES_QUERY_KEY, useGate } from "@/api/capabilities";
 import { mutationErrorMessage } from "@/components/ui/primitives";
 import { JourneyShell } from "@/components/journey/JourneyShell";
 
@@ -13,6 +14,7 @@ const MAX_DOLLARS = 5_000;
 export function AddCreditPage() {
   const { api } = useAuth();
   const qc = useQueryClient();
+  const gate = useGate();
   const returned = new URLSearchParams(window.location.search).get("topup") === "done";
   const [amount, setAmount] = useState("10");
   const [pending, setPending] = useState(false);
@@ -36,6 +38,10 @@ export function AddCreditPage() {
       setPending(false);
     }
   }
+
+  // A workspace that is already set up (numbers in place) has nothing left to do here; the
+  // "you will move on automatically" promise below needs someone to actually move it on.
+  if (gate.org?.onboarding_step === "ready") return <Navigate to="/inbox" replace />;
 
   return <JourneyShell step={2}>
     <header className="rj-in" style={{ marginTop: 34 }}>
