@@ -262,7 +262,8 @@ export function App() {
               }
             />
             <Route path="/report" element={<ReportNumberPage />} />
-            <Route path="*" element={<OrgPickerPage />} />
+            {/* An operator with no workspace has nothing to pick: go straight to the console. */}
+            <Route path="*" element={<Navigate to="/ops" replace />} />
           </Routes>
           <SupportAlerts />
           <StepUpDialog />
