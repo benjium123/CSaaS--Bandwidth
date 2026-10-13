@@ -461,6 +461,89 @@ async def complete_identity_recovery(
 
 
 # --------------------------------------------------------------------------------------
+# Account deletion request (Google Play data-deletion requirement). The customer asks;
+# an operator completes it with the ops "Delete account permanently" flow.
+# --------------------------------------------------------------------------------------
+DELETION_REQUEST_KIND = "account_deletion_request"
+
+
+class DeletionRequestIn(BaseModel):
+    current_password: str
+    reason: str | None = Field(default=None, max_length=300)
+
+
+async def _open_deletion_request(session: AsyncSession, user_id: uuid.UUID) -> SecurityAlert | None:
+    return await session.scalar(
+        sa.select(SecurityAlert)
+        .where(
+            SecurityAlert.kind == DELETION_REQUEST_KIND,
+            SecurityAlert.user_id == user_id,
+            SecurityAlert.status == "open",
+        )
+        .order_by(SecurityAlert.created_at.desc())
+        .limit(1)
+    )
+
+
+@router.get("/deletion-request")
+async def get_deletion_request(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    alert = await _open_deletion_request(session, user.id)
+    if alert is None:
+        return {"status": "none", "requested_at": None}
+    return {"status": "pending", "requested_at": _aware(alert.created_at).isoformat()}
+
+
+@router.post("/deletion-request", status_code=201)
+async def request_account_deletion(
+    payload: DeletionRequestIn,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    from app.services import customer_accounts
+
+    settings: Settings = request.app.state.settings
+    await enforce_rate_limit(request, f"deletion-request:{user.id}")
+    await lockout.ensure_not_locked(session, user)
+    if not verify_password(payload.current_password, user.hashed_password):
+        await lockout.fail(
+            session,
+            settings,
+            request,
+            user,
+            outcome="bad_password",
+            error=UnauthenticatedError("Your password is incorrect"),
+        )
+    existing = await _open_deletion_request(session, user.id)
+    if existing is not None:
+        return {"status": "pending", "requested_at": _aware(existing.created_at).isoformat()}
+
+    rows = await customer_accounts.memberships(session, user.id)
+    workspaces = [
+        {"id": str(org.id), "name": org.name, "role": role} for org, role, _ in rows
+    ]
+    alert = SecurityAlert(
+        kind=DELETION_REQUEST_KIND,
+        user_id=user.id,
+        org_id=rows[0][0].id if len(rows) == 1 else None,
+        detail={
+            "target_user_id": str(user.id),
+            "email": user.email,
+            "reason": (payload.reason or "").strip() or None,
+            "workspaces": workspaces,
+            "is_owner": any(w["role"] == "owner" for w in workspaces),
+        },
+    )
+    session.add(alert)
+    await session.commit()
+    await session.refresh(alert)
+    return {"status": "pending", "requested_at": _aware(alert.created_at).isoformat()}
+
+
+# --------------------------------------------------------------------------------------
 # The user's own security activity
 # --------------------------------------------------------------------------------------
 @router.get("/activity")

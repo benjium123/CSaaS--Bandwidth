@@ -52,6 +52,7 @@ export const PUBLIC_ROUTES: PublicRoute[] = [
   { path: "/legal/privacy", priority: 0.3, changefreq: "yearly" },
   { path: "/legal/terms", priority: 0.3, changefreq: "yearly" },
   { path: "/legal/refunds", priority: 0.3, changefreq: "yearly" },
+  { path: "/delete-account", priority: 0.2, changefreq: "yearly" },
 ];
 
 /** "/" -> "https://ringlite.io/", "/pricing" -> "https://ringlite.io/pricing". */

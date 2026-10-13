@@ -14,6 +14,7 @@ import { PasskeysCard } from "@/components/settings/PasskeysCard";
 import {
   AccountActivityCard,
   ChangePasswordCard,
+  DeleteAccountCard,
   EmailCodesCard,
   RecoveryCodesCard,
   SessionPolicyCard,
@@ -299,6 +300,10 @@ export function SettingsSecurityPage() {
 
       <SurfaceCard className="space-y-[12px]">
         <LoginHistoryCard scope="me" />
+      </SurfaceCard>
+
+      <SurfaceCard className="space-y-[12px]">
+        <DeleteAccountCard />
       </SurfaceCard>
 
       <SurfaceCard className="space-y-[12px]">

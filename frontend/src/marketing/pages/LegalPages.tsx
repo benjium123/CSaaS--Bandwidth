@@ -166,3 +166,52 @@ export function RefundPage() {
     </SitePage>
   );
 }
+
+/** Google Play data-deletion page: how to ask for deletion, what goes and what stays. */
+export function DeleteAccountPage() {
+  return (
+    <SitePage title="Delete your Ringlite account" description="How to ask Ringlite to delete your account and data, what is deleted and what we keep.">
+      <article className="ms-prose rl-wrap">
+        <h1>Delete your Ringlite account</h1>
+        <p>Last updated October 2026</p>
+        <p>This page applies to Ringlite on the web, the Ringlite Android app and the Ringlite desktop app. They share one account, so deleting it removes access everywhere.</p>
+
+        <h2>How to ask for deletion</h2>
+        <ol>
+          <li><Link className="rl-text-link" to="/login">Log in to Ringlite</Link> in a web browser.</li>
+          <li>Open <strong>Settings → Security</strong>.</li>
+          <li>Under <strong>Delete account</strong>, choose <strong>Request account deletion</strong>, enter your password and send the request.</li>
+        </ol>
+        <p>If you cannot log in, email <a className="rl-text-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> from your account&apos;s email address with the subject &quot;Delete my account&quot;.</p>
+        <p>We confirm the request by email and complete it within 30 days.</p>
+
+        <h2>Workspace owners</h2>
+        <p>If you own a workspace, deleting your account closes the whole workspace: its phone numbers are released, its plan is cancelled, and every member loses access. To keep the workspace running, transfer ownership to another member first, then ask to delete your own account.</p>
+
+        <h2>What we delete</h2>
+        <ul>
+          <li>Your profile: name, email, phone number, password, passkeys and two-factor settings.</li>
+          <li>Your sign-in sessions and signed-in app devices.</li>
+          <li>For a closed workspace: contacts, messages, call history, voicemails, recordings, transcripts, AI summaries, uploaded files and settings.</li>
+          <li>Identity verification data we hold for your workspace. Our verification provider deletes its copy under its own retention rules.</li>
+        </ul>
+
+        <h2>What we keep, and for how long</h2>
+        <ul>
+          <li><strong>Invoices and payment records</strong>: kept for 7 years, because tax and accounting law requires it.</li>
+          <li><strong>Call and message logs and recordings</strong> still in backups or carrier records: deleted within 90 days.</li>
+          <li><strong>Everything else</strong> is deleted when we complete the request, within 30 days.</li>
+          <li>To prevent fraud, we may keep a one-way fingerprint of identifiers from an account that was closed for abuse, so it cannot sign up again.</li>
+        </ul>
+
+        <h2>Deleting some data without deleting the account</h2>
+        <p>To delete specific data, such as a recording or a conversation, without closing your account, email <a className="rl-text-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.</p>
+
+        <h2>Contact</h2>
+        <p>Ringlite is operated by {LEGAL_ENTITY}, {LEGAL_ADDRESS}. Email <a className="rl-text-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> or call {SUPPORT_PHONE}. See also our <Link className="rl-text-link" to="/legal/privacy">privacy policy</Link>.</p>
+
+        <p><Link className="rl-text-link" to="/">Back to home</Link></p>
+      </article>
+    </SitePage>
+  );
+}

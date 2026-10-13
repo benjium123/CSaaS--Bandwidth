@@ -285,3 +285,72 @@ export function EmailCodesCard() {
     </div>
   );
 }
+
+type DeletionRequest = { status: "none" | "pending"; requested_at: string | null };
+
+/** Google Play data-deletion requirement: the customer asks here, an operator completes it
+ * from the ops console. Public explanation lives at /delete-account. */
+export function DeleteAccountCard() {
+  const { api } = useAuth();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = React.useState(false);
+  const [password, setPassword] = React.useState("");
+  const [reason, setReason] = React.useState("");
+  const status = useQuery({
+    queryKey: ["auth", "deletion-request"],
+    queryFn: () => api.request<DeletionRequest>("/api/v1/auth/deletion-request"),
+  });
+  const send = useMutation({
+    mutationFn: () =>
+      api.request<DeletionRequest>("/api/v1/auth/deletion-request", {
+        method: "POST",
+        json: { current_password: password, reason: reason.trim() || null },
+      }),
+    onSuccess: (res) => {
+      setPassword("");
+      setOpen(false);
+      queryClient.setQueryData(["auth", "deletion-request"], res);
+    },
+  });
+  const pending = status.data?.status === "pending";
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-sm font-medium">Delete account</p>
+        <p className="text-xs text-muted-foreground">
+          Ask us to delete your Ringlite account and its data. If you own a workspace, the whole
+          workspace closes: its numbers are released and its members lose access. We confirm by
+          email before anything is deleted. <a className="underline" href="/delete-account" target="_blank" rel="noreferrer">What is deleted and what we keep</a>
+        </p>
+      </div>
+      {status.isLoading ? (
+        <Spinner />
+      ) : pending ? (
+        <p className="text-sm">
+          Deletion requested
+          {status.data?.requested_at ? ` on ${new Date(status.data.requested_at).toLocaleDateString()}` : ""}.
+          Our team will contact you at your account email to complete it.
+        </p>
+      ) : !open ? (
+        <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+          Request account deletion
+        </Button>
+      ) : (
+        <div className="space-y-3 rounded-xl border border-destructive/40 p-3">
+          <Input aria-label="Reason (optional)" placeholder="Reason (optional)" maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} />
+          <Input aria-label="Your password" type="password" autoComplete="current-password" placeholder="Your password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <div className="flex gap-2">
+            <Button type="button" disabled={!password || send.isPending} onClick={() => send.mutate()}>
+              Send deletion request
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+      {send.isError && <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(send.error)}</p>}
+    </div>
+  );
+}
