@@ -111,7 +111,13 @@ class InboxAssignmentsIn(BaseModel):
 
 
 async def _rows_with_e164(session) -> list[tuple[Inbox, str]]:
-    stmt = sa.select(Inbox, OrgNumber.e164).join(OrgNumber, OrgNumber.id == Inbox.number_id)
+    # A released (or failed) number is gone from the workspace: its line disappears from
+    # every client (web rail, Android line list) on their next refresh.
+    stmt = (
+        sa.select(Inbox, OrgNumber.e164)
+        .join(OrgNumber, OrgNumber.id == Inbox.number_id)
+        .where(OrgNumber.status.not_in(("released", "failed")))
+    )
     return list((await session.execute(stmt)).all())
 
 

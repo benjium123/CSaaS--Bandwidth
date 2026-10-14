@@ -325,6 +325,8 @@ function CallDetailPanel({ api, call }: { api: ApiClient; call: CallDetailOut })
     queryKey: ["inboxes"],
     queryFn: () => fetchInboxes(api),
     staleTime: 1000,
+    // Lines added to or released from the workspace show up live (paused in a hidden tab).
+    refetchInterval: () => (document.visibilityState === "visible" ? 15_000 : false),
   });
   const inboxes = inboxesQuery.data ?? [];
   const owningInbox = inboxes.find((inbox) => inbox.e164 === call.our_e164) ?? null;
