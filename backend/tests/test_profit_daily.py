@@ -36,6 +36,21 @@ async def _seed(session):
             id=uuid.uuid4(), org_id=a, entry_type="usage", seq=seq, amount_micros=amount,
             balance_after_micros=0, reference=ref, created_at=AT, updated_at=AT,
         ))
+    # A $15 number charge refunded to the balance the same day: not revenue.
+    num_ref = f"num:{uuid.uuid4()}:2026-10-15"
+    session.add(CreditLedgerEntry(
+        id=uuid.uuid4(), org_id=a, entry_type="usage", seq=10, amount_micros=-15_000_000,
+        balance_after_micros=0, reference=num_ref, created_at=AT, updated_at=AT,
+    ))
+    session.add(CreditLedgerEntry(
+        id=uuid.uuid4(), org_id=a, entry_type="refund", seq=11, amount_micros=15_000_000,
+        balance_after_micros=0, reference=f"refund:{num_ref}", created_at=AT, updated_at=AT,
+    ))
+    # A card refund reference is not a usage charge: left to the payments section.
+    session.add(CreditLedgerEntry(
+        id=uuid.uuid4(), org_id=a, entry_type="refund", seq=12, amount_micros=1_000_000,
+        balance_after_micros=0, reference="refund:pi_123", created_at=AT, updated_at=AT,
+    ))
     session.add(ProviderSpendDaily(
         id=uuid.uuid4(), org_id=a, period_date=DAY, provider="signalwire",
         metric="voice_min_out", quantity=18, cost_micros=144_000, created_at=AT, updated_at=AT,

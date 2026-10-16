@@ -6,7 +6,8 @@ Read-only and operator-only (the route enforces it); every query is explicitly u
 Same money definitions as services/console.py (accrual view), split by day (UTC) and
 service so the page can filter without another request:
 
-- charged      = usage debited from balances (ledger 'usage', by reference prefix)
+- charged      = usage debited from balances (ledger 'usage', by reference prefix), less
+                 usage refunded to the balance (ledger 'refund' of "refund:<usage ref>")
                  + bundle units consumed x the org's average paid price per unit
                  + payments that are not prepayments (plans, 10DLC, invoices), cash back off
 - carrier_cost = provider_spend_daily estimate; Telnyx's own billed cost (telnyx_cost_daily)
@@ -141,13 +142,28 @@ async def daily(
             CreditLedgerEntry.created_at,
             CreditLedgerEntry.reference,
             CreditLedgerEntry.amount_micros,
+            CreditLedgerEntry.entry_type,
         ).where(
-            CreditLedgerEntry.entry_type == "usage",
+            CreditLedgerEntry.entry_type.in_(("usage", "refund")),
             CreditLedgerEntry.created_at >= lo,
             CreditLedgerEntry.created_at < hi,
             scope(CreditLedgerEntry.org_id),
         ),
     )
+    # A usage charge refunded to the balance comes back off what we charged, on the refund's
+    # day. Card refunds (top-ups) are handled with the payments below, so a refund whose
+    # inner reference is not a usage charge is skipped here.
+    usage = [
+        (created_at, reference, amount)
+        if entry_type == "usage"
+        else (created_at, reference[len("refund:"):], int(amount))  # +: comes off charged
+        for created_at, reference, amount, entry_type in usage
+        if entry_type == "usage"
+        or (
+            (reference or "").startswith("refund:")
+            and service_for_reference(reference[len("refund:"):]) != "other"
+        )
+    ]
     sms_ids: set[uuid.UUID] = set()
     for _, reference, _ in usage:
         if (reference or "").startswith("sms:"):
