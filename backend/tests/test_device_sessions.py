@@ -331,6 +331,59 @@ async def test_refresh_reuse_revokes(browser, app_client, session):
     assert me.status_code == 401, me.text
 
 
+async def _age_rotation(session, minutes: int = 5) -> None:
+    """Pretend the last rotation (and the client's last call) happened ``minutes`` ago."""
+    session.expire_all()
+    row = await _device_row(session)
+    then = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    row.refresh_rotated_at = then
+    row.last_seen_at = then
+    await session.commit()
+
+
+async def test_refresh_lost_response_rotates_again(browser, app_client, session):
+    """The app never received the rotated pair (dropped connection) and retries with the old
+    refresh token after the grace window: it gets a fresh pair instead of being signed out."""
+    email = "dev-lost@example.com"
+    await _register_confirm_and_login(browser, email)
+    token_a = (await _device_login(app_client, email)).json()["refresh_token"]
+
+    lost = await _device_refresh(app_client, token_a)
+    assert lost.status_code == 200, lost.text
+    await _age_rotation(session)
+
+    retry = await _device_refresh(app_client, token_a)
+    assert retry.status_code == 200, retry.text
+    fresh = retry.json()
+    assert fresh["refresh_token"] not in (token_a, lost.json()["refresh_token"])
+
+    me = await app_client.get("/api/v1/me/sessions", headers=auth_headers(fresh["access_token"]))
+    assert me.status_code == 200, me.text
+    nxt = await _device_refresh(app_client, fresh["refresh_token"])
+    assert nxt.status_code == 200, nxt.text
+
+
+async def test_refresh_reuse_after_new_pair_used_revokes(browser, app_client, session):
+    """Once the rotated pair has been used, the old refresh token replayed later is a leak."""
+    email = "dev-used@example.com"
+    await _register_confirm_and_login(browser, email)
+    token_a = (await _device_login(app_client, email)).json()["refresh_token"]
+
+    r = await _device_refresh(app_client, token_a)
+    assert r.status_code == 200, r.text
+    await _age_rotation(session)
+    me = await app_client.get(
+        "/api/v1/me/sessions", headers=auth_headers(r.json()["access_token"])
+    )
+    assert me.status_code == 200, me.text
+
+    replay = await _device_refresh(app_client, token_a)
+    assert replay.status_code == 401, replay.text
+    assert "refresh_invalid" in replay.text
+    after = await _device_refresh(app_client, r.json()["refresh_token"])
+    assert after.status_code == 401, after.text
+
+
 async def test_refresh_race_inside_grace_is_not_theft(browser, app_client, session):
     email = "dev-race@example.com"
     await _register_confirm_and_login(browser, email)

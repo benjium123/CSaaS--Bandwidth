@@ -117,7 +117,14 @@ async def _authenticate_device(
     request.state.session_created = _aware(row.created_at)
     now = datetime.now(timezone.utc)
     last_seen = _aware(row.last_seen_at)
-    if last_seen is None or now - last_seen >= timedelta(seconds=60):
+    rotated = _aware(row.refresh_rotated_at) if row.refresh_rotated_at else None
+    # The first call after a rotation always stamps last_seen_at: device_sessions.refresh
+    # reads "last_seen <= rotated" as "the new pair was never received".
+    if (
+        last_seen is None
+        or now - last_seen >= timedelta(seconds=60)
+        or (rotated is not None and last_seen <= rotated)
+    ):
         row.last_seen_at = now
         await session.commit()
 

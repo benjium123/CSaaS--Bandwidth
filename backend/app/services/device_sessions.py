@@ -172,6 +172,38 @@ async def refresh(session: AsyncSession, settings: Settings, token: str) -> dict
                 raise ConflictError(
                     "Your session was just refreshed. Try again.", code="refresh_in_progress"
                 )
+            # The pair the last rotation issued was never used (auth/deps marks its first use):
+            # the client lost that response on a slow or dropped connection. Rotate again from
+            # the previous secret instead of treating it as a leak.
+            seen = _aware(row.last_seen_at)
+            if rotated is not None and (seen is None or seen <= rotated):
+                retry = await session.execute(
+                    sa.update(IdentitySession)
+                    .where(
+                        IdentitySession.id == sid,
+                        IdentitySession.refresh_hash == row.refresh_hash,
+                        IdentitySession.prev_refresh_hash == presented,
+                        IdentitySession.revoked_at.is_(None),
+                    )
+                    .values(
+                        refresh_hash=_hash(new_secret),
+                        refresh_rotated_at=now,
+                        refresh_generation=(row.refresh_generation or 0) + 1,
+                        last_seen_at=now,
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                if retry.rowcount == 1:
+                    await session.commit()
+                    await session.refresh(row)
+                    user = await session.get(User, row.user_id)
+                    if user is None or not user.is_active:
+                        raise invalid
+                    return token_pair(row, user, settings, f"{REFRESH_PREFIX}.{row.id}.{new_secret}")
+                await session.rollback()
+                raise ConflictError(
+                    "Your session was just refreshed. Try again.", code="refresh_in_progress"
+                )
             # An already-rotated secret used later: it leaked. End the session.
             owner = await session.get(User, row.user_id)
             identity_svc.record_login_event(

@@ -225,3 +225,24 @@ async def test_default_order_is_mine_then_department_then_unassigned(client, ses
 
     got = [i["id"] for i in await _inboxes(client, owner_h)]
     assert got == [mine, dept_inbox, unassigned]
+
+
+async def test_released_number_drops_out_of_the_lines_list(client, session):
+    """A released (or failed) number's line disappears from GET /inboxes, so the web
+    rail and the Android line list stop offering it on their next refresh."""
+    from app.models import OrgNumber
+
+    _token, org, h = await _owner_org(client, session)
+    for e164 in ("+12145553011", "+12145553012", "+12145553013"):
+        await _add_number(client, h, e164)
+    set_org_context(session, uuid.UUID(org["id"]))
+    numbers = {
+        n.e164: n
+        for n in (await session.execute(sa.select(OrgNumber))).scalars().all()
+    }
+    numbers["+12145553012"].status = "released"
+    numbers["+12145553012"].is_active = False
+    numbers["+12145553013"].status = "failed"
+    await session.commit()
+
+    assert [i["e164"] for i in await _inboxes(client, h)] == ["+12145553011"]
