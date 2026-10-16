@@ -127,12 +127,14 @@ fi
 # 8.8: stage the tracked-file archive, then rsync --delete it into place so files removed
 # from git actually disappear from the box (a plain tar overlay never deletes stale
 # files). .env, backups/, var/ (media volume mount point) and frontend/dist (shipped
-# separately, immediately below) are excluded so this can never touch them.
+# separately, immediately below) are excluded so this can never touch them. So are .env
+# backups (.env.bak-*): taken by hand before a config change, they are untracked, and
+# --delete silently wiped every one of them on the next deploy (2026-10-16).
 say "Shipping tracked files (git archive HEAD) via a staging dir"
 ssh "$TARGET" "mkdir -p ${STAGING_DIR} && rm -rf ${STAGING_DIR:?}/* ${STAGING_DIR}/.[!.]* 2>/dev/null; mkdir -p ${STAGING_DIR}"
 git archive --format=tar HEAD | ssh "$TARGET" "tar -x -C ${STAGING_DIR}"
 ssh "$TARGET" "rsync -a --delete \
-  --exclude='.env' --exclude='backups/' --exclude='var/' --exclude='frontend/dist/' \
+  --exclude='.env' --exclude='.env.bak*' --exclude='backups/' --exclude='var/' --exclude='frontend/dist/' \
   --exclude='.deploy-staging/' \
   --exclude='deploy/livekit/livekit.yaml' --exclude='deploy/livekit/sip.yaml' \
   ${STAGING_DIR}/ ${REMOTE_DIR}/"

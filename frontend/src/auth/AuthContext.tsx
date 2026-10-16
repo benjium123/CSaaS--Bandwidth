@@ -194,6 +194,20 @@ export function useAuth(): AuthValue {
   return ctx;
 }
 
+/** The server was unreachable or briefly failing - a 502 while the API restarts during a deploy,
+ *  a 500, a network drop (fetch throws a TypeError). That says nothing about the session,
+ *  which is still valid, so it must not sign anyone out. Anything else (a 401 above all)
+ *  keeps meaning "not signed in". */
+const isTransient = (err: unknown) =>
+  err instanceof TypeError ||
+  (err instanceof ApiError && (err.status >= 500 || err.status === 408 || err.status === 429));
+
+/** First load: how long to keep asking while the API is unreachable (a deploy restart takes
+ *  ~40 s) before giving up and showing sign-in. */
+export const ME_RETRY_DELAYS_MS = [2000, 3000, 5000, 8000, 12000, 15000];
+
+const TRANSIENT = Symbol("transient");
+
 export function AuthProvider({
   children,
   client,
@@ -204,6 +218,8 @@ export function AuthProvider({
   const api = React.useMemo(() => client ?? createClient(), [client]);
   const queryClient = useQueryClient();
   const [me, setMe] = React.useState<Me | null>(null);
+  const meRef = React.useRef<Me | null>(null);
+  meRef.current = me;
   // H3: a live support view pins the workspace for this tab (auth/viewAs.ts).
   const [orgId, setOrgId] = React.useState<string | null>(loadViewAs()?.orgId ?? api.auth.orgId);
   const [ready, setReady] = React.useState(false);
@@ -235,7 +251,7 @@ export function AuthProvider({
     api.onUnauthorized = forget;
   }, [api, forget]);
 
-  const loadMe = React.useCallback(async () => {
+  const fetchMe = React.useCallback(async (): Promise<Me | null | typeof TRANSIENT> => {
     try {
       const fetched = await api.request<Me>("/api/v1/auth/me");
       const view = loadViewAs();
@@ -247,18 +263,36 @@ export function AuthProvider({
         setOrgId(null);
       }
       return next;
-    } catch {
+    } catch (err) {
+      // A restart or a blip: whoever is signed in stays signed in.
+      if (isTransient(err)) return TRANSIENT;
       setMe(null);
       return null;
     }
   }, [api, orgId]);
 
+  const loadMe = React.useCallback(async (): Promise<Me | null> => {
+    const result = await fetchMe();
+    return result === TRANSIENT ? meRef.current : result;
+  }, [fetchMe]);
+
   React.useEffect(() => {
+    let cancelled = false;
     (async () => {
-      // P42: the session cookie is invisible to scripts, so always ask the server.
-      await loadMe();
-      setReady(true);
+      // P42: the session cookie is invisible to scripts, so always ask the server - and keep
+      // asking through a deploy restart rather than showing sign-in to someone still signed in.
+      let result = await fetchMe();
+      for (const delay of ME_RETRY_DELAYS_MS) {
+        if (result !== TRANSIENT || cancelled) break;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        result = await fetchMe();
+      }
+      if (result === TRANSIENT && !cancelled) setMe(null);
+      if (!cancelled) setReady(true);
     })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
