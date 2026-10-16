@@ -633,6 +633,15 @@ async def _run_once_locked(app) -> dict[str, int]:
     except Exception:
         log.exception("sweeper_telnyx_balance_alert_failed")
 
+    # SignalWire balance guard: email at $6, pause SignalWire numbers at $5.25 (5 minutes).
+    from app.services import signalwire_guard
+
+    try:
+        async with get_sessionmaker()() as session:
+            results.update(await signalwire_guard.tick(session, app.state.settings))
+    except Exception:
+        log.exception("sweeper_signalwire_guard_failed")
+
     # P41 trust & safety: hourly re-verification / Stripe reconcile / AI summaries, and a
     # daily sanctions + Tor list refresh. Same reserve-the-slot-first discipline as spend.
     from app.services import kyc_tick

@@ -111,6 +111,14 @@ class SignalWireMessagingCarrier(SignalWireVoiceMixin, SignalWireNumberProviderM
             self._client = None
 
     async def send_message(self, msg: OutboundMessage) -> SendResult:
+        from app.services import signalwire_guard
+
+        if await signalwire_guard.paused_cached():
+            return SendResult(
+                "rejected",
+                None,
+                CarrierError("invalid_request", "carrier_paused", False, "SignalWire is paused"),
+            )
         form: list[tuple[str, str]] = [
             ("From", msg.from_),
             ("To", msg.to),

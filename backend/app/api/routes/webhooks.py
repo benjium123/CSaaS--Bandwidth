@@ -712,6 +712,21 @@ async def carrier_voice(
 ) -> Response:
     """Every carrier's voice ingestion other than Bandwidth's three named subpaths above -
     each verifies with its own scheme, same reasoning as carrier_messaging."""
+    if carrier_name == "signalwire":
+        from app.services import signalwire_guard
+
+        if await signalwire_guard.paused_cached():
+            # Balance guard: a NEW inbound call on a SignalWire number is turned away
+            # unanswered (no minutes billed); status callbacks of other calls pass through.
+            fields = dict(parse_qsl((await request.body()).decode("utf-8", "replace")))
+            if fields.get("Direction") == "inbound" and fields.get("CallStatus") in (
+                "ringing", "queued"
+            ):
+                log.warning("signalwire_inbound_rejected_paused", to=fields.get("To", ""))
+                return Response(
+                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Reject/></Response>',
+                    media_type="application/xml",
+                )
     return await _handle_voice_webhook(carrier_name, request, session)
 
 

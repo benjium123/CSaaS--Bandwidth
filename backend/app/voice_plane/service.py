@@ -199,6 +199,16 @@ async def start_room_call(
             session, settings, org_id, from_e164=from_e164, user_id=exposure.placed_by(identity)
         )
         await telephony_billing.require_call_credit(session, org_id, call)
+        if trunk_carrier == "signalwire":
+            from app.services import signalwire_guard
+
+            if await signalwire_guard.is_paused(session):
+                from app.errors import FeatureUnavailableError
+
+                raise FeatureUnavailableError(
+                    "Calling on this line is paused. Call from another line or contact support.",
+                    code="carrier_paused",
+                )
     room = room_name_for_call(call.id)
     from app.services.exposure import placed_by as exposure_placed_by
 

@@ -636,6 +636,28 @@ async def console_delete_fixed_cost(cost_id: uuid.UUID, op: Billing) -> Response
     return Response(status_code=204)
 
 
+class SignalWireBalanceIn(BaseModel):
+    balance_micros: int = Field(ge=0, le=100_000_000_000)
+
+
+@router.get("/signalwire-guard")
+async def console_signalwire_guard(op: Reader) -> dict:
+    from app.services import signalwire_guard
+
+    return await signalwire_guard.get_state(op.session)
+
+
+@router.post("/signalwire-guard")
+async def console_set_signalwire_balance(payload: SignalWireBalanceIn, op: Billing) -> dict:
+    """The balance shown in the SignalWire dashboard; re-arms the $6 email and lifts the
+    $5.25 pause when the new balance is above it."""
+    from app.services import signalwire_guard
+
+    return await signalwire_guard.set_balance(
+        op.session, payload.balance_micros, by=str(op.user.id)
+    )
+
+
 class AdjustIn(BaseModel):
     amount_micros: int = Field(ge=-100_000_000_000, le=100_000_000_000)
     note: str = Field(min_length=3, max_length=255)
