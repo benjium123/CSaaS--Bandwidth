@@ -8,7 +8,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from app.db.base import set_org_context
-from app.models import BillingPayment, CreditLedgerEntry, FixedCost
+from app.models import BillingPayment, CreditLedgerEntry, FixedCost, OrgNumber
 from app.models.billing_v2 import TelnyxCostDaily
 from app.models.spend import ProviderSpendDaily
 from app.services import profit_daily
@@ -59,6 +59,14 @@ async def _seed(session):
         id=uuid.uuid4(), org_id=a, period_date=DAY, provider="signalwire",
         metric="number_mrc", quantity=3, cost_micros=97_000, created_at=AT, updated_at=AT,
     ))
+    # Number rental is booked whole on the renewal day (bought Sep 15 -> renews Oct 15);
+    # the spread-out number_mrc rows above are ignored. One bought Sep 20 does not renew today.
+    for e164, bought in (("+12145550101", 15), ("+12145550102", 20)):
+        session.add(OrgNumber(
+            id=uuid.uuid4(), org_id=a, e164=e164, carrier="signalwire", status="active",
+            is_active=True, monthly_cost_cents=100,
+            purchased_at=datetime(2026, 9, bought, 9, 0, tzinfo=timezone.utc),
+        ))
     session.add(BillingPayment(
         id=uuid.uuid4(), org_id=a, kind="topup", state="paid", paid_micros=15_000_000,
         list_micros=15_000_000, stripe_fee_micros=735_000, paid_at=AT, created_at=AT,
@@ -108,14 +116,15 @@ async def test_one_workspace_by_service(session):
     assert day["services"]["transcription"]["charged"] == 20_000
     assert day["services"]["recording"]["charged"] == 30_000
     numbers = day["services"]["numbers"]
-    assert numbers["charged"] == 2_499_000 and numbers["carrier_cost"] == 97_000
+    assert numbers["charged"] == 2_499_000 and numbers["carrier_cost"] == 1_000_000
+    assert numbers["units"] == 1
     # A top-up's Stripe fee is a cost of the day but of no one service.
     assert day["unallocated_stripe_fees"] == 735_000
     assert day["total"]["stripe_fees"] == 735_000
     assert day["fixed_costs"] == 0  # fixed costs only in the all-workspaces view
     assert day["total"]["charged"] == 162_000 + 20_000 + 30_000 + 2_499_000
     assert day["total"]["profit"] == (
-        day["total"]["charged"] - 144_000 - 97_000 - 735_000
+        day["total"]["charged"] - 144_000 - 1_000_000 - 735_000
     )
     assert body["org_name"] == "Profit A"
 
@@ -157,3 +166,11 @@ async def test_route_is_operator_only(ops, session, ops_settings):
     )
     assert r.status_code == 200, r.text
     assert _day(r.json())["services"]["calls"]["charged"] == 162_000
+
+
+async def test_number_rental_only_on_renewal_day(session):
+    a, _ = await _seed(session)
+    body = await profit_daily.daily(session, date(2026, 10, 16), date(2026, 10, 20), a)
+    by_day = {d["date"]: d["services"].get("numbers", {}).get("carrier_cost", 0)
+              for d in body["days"]}
+    assert by_day["2026-10-16"] == 0 and by_day["2026-10-20"] == 1_000_000

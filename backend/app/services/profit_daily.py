@@ -26,6 +26,7 @@ left out; console.platform_costs still reports it as "unattributed".
 from __future__ import annotations
 
 import uuid
+from calendar import monthrange
 from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
@@ -41,10 +42,12 @@ from app.models import (
     FixedCost,
     Message,
     Org,
+    OrgNumber,
 )
 from app.models.billing_v2 import TelnyxCostDaily
 from app.models.spend import ProviderSpendDaily
 from app.services.console import U, _fixed_cost_micros, day_range
+from app.services.spend import resolve_rate
 
 SERVICES: tuple[tuple[str, str], ...] = (
     ("calls", "Calls"),
@@ -308,6 +311,8 @@ async def daily(
             ProviderSpendDaily.metric,
         ),
     ):
+        if metric == "number_mrc":
+            continue  # booked whole on each renewal day below, not spread over the month
         service = service_for_metric(metric)
         c = cell[(day, service)]
         if provider == "telnyx" and (oid, day, service) in telnyx_actual:
@@ -320,6 +325,39 @@ async def daily(
         _, day, service = key
         cell[(day, service)]["carrier_cost"] += cost
         cell[(day, service)]["units"] += qty
+
+    # --- number rental: the carrier bills a whole month on the purchase day and on each
+    # monthly renewal day (owner 2026-10-17), which is also when we charge the customer.
+    rates: dict[str, int] = {}
+    for oid, carrier, monthly_cents, purchased_at, created_at, released_at in await _rows(
+        session,
+        sa.select(
+            OrgNumber.org_id,
+            OrgNumber.carrier,
+            OrgNumber.monthly_cost_cents,
+            OrgNumber.purchased_at,
+            OrgNumber.created_at,
+            OrgNumber.released_at,
+        ).where(
+            OrgNumber.status.in_(("active", "released")),
+            scope(OrgNumber.org_id),
+        ),
+    ):
+        bought = (purchased_at or created_at).date()
+        gone = released_at.date() if released_at is not None else None
+        if monthly_cents is not None:
+            monthly = int(monthly_cents) * 10_000
+        else:
+            if carrier not in rates:
+                rates[carrier] = (await resolve_rate(session, carrier, "number_mrc"))[0]
+            monthly = rates[carrier]
+        day = max(start, bought)
+        while day <= end and (gone is None or day < gone):
+            renewal_day = min(bought.day, monthrange(day.year, day.month)[1])
+            if day.day == renewal_day:
+                cell[(day, "numbers")]["carrier_cost"] += monthly
+                cell[(day, "numbers")]["units"] += 1
+            day += timedelta(days=1)
 
     # --- AI provider cost -------------------------------------------------------------------
     for occurred_at, metric, kind, cost in await _rows(
