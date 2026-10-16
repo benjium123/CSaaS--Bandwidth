@@ -219,6 +219,7 @@ async def create(
     checkout = await stripe_client._run_sync(
         stripe.checkout.Session.create,
         **extra,
+        **stripe_client.checkout_branding(settings),
         mode="subscription",
         payment_method_types=["card"],
         payment_method_options=stripe_client.THREE_DS_OPTIONS,
@@ -229,7 +230,7 @@ async def create(
         subscription_data={"metadata": plan_metadata},
         success_url=f"{base}/choose-numbers?purchase={purchase.id}",
         cancel_url=f"{base}/choose-numbers?purchase={purchase.id}&cancelled=1",
-        idempotency_key=f"number-purchase-{purchase.id}-{plan_code}-{billing_interval}",
+        idempotency_key=f"number-purchase-{purchase.id}-{plan_code}-{billing_interval}-brand",
     )
     purchase.checkout_id = checkout["id"]
     purchase.checkout_url = checkout["url"]

@@ -129,6 +129,12 @@ class Settings(BaseSettings):
     allow_non_usd_pricing: bool = False
     # P24: where a customer lands after completing a top-up. Empty derives from
     # public_web_url.
+    #: What Stripe Checkout shows as the seller, per session (branding_settings). The Stripe
+    #: account is shared with other products, so its own public name must not be changed to
+    #: brand Ringlite. Empty = Stripe's account default.
+    stripe_checkout_display_name: str = "Ringlite"
+    #: Checkout's button colour (#RRGGBB): Ringlite's brand blue. Empty = Stripe's default.
+    stripe_checkout_button_color: str = "#3B76E8"
     stripe_success_url: str = ""
     # P24: where a customer lands after cancelling a top-up. Empty derives from
     # public_web_url.

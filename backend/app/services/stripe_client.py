@@ -84,6 +84,20 @@ async def _run_sync(func, *args, **kwargs):
     return _plain(result)
 
 
+def checkout_branding(settings) -> dict:
+    """``branding_settings`` for a Checkout Session: the shared Stripe account sells for several
+    products, so Ringlite's checkouts name and colour themselves rather than relying on the
+    account's public name. Returns {} when nothing is configured."""
+    out = {}
+    name = (getattr(settings, "stripe_checkout_display_name", "") or "").strip()
+    color = (getattr(settings, "stripe_checkout_button_color", "") or "").strip()
+    if name:
+        out["display_name"] = name[:30]
+    if color:
+        out["button_color"] = color
+    return {"branding_settings": out} if out else {}
+
+
 #: P44c: ask for 3D Secure on every Checkout payment the card supports it for. An
 #: authenticated payment shifts fraud-chargeback liability to the card issuer, and a thief
 #: holding only the card number cannot pass the bank's challenge.
@@ -136,7 +150,9 @@ async def create_checkout_session(
     elif customer_email:
         params["customer_email"] = customer_email
 
-    session_obj = await _run_sync(stripe.checkout.Session.create, **params)
+    session_obj = await _run_sync(
+        stripe.checkout.Session.create, **params, **checkout_branding(settings)
+    )
     return {"id": session_obj["id"], "url": session_obj["url"]}
 
 
@@ -200,7 +216,9 @@ async def create_bundle_checkout_session(
     }
     if customer_email:
         params["customer_email"] = customer_email
-    session_obj = await _run_sync(stripe.checkout.Session.create, **params)
+    session_obj = await _run_sync(
+        stripe.checkout.Session.create, **params, **checkout_branding(settings)
+    )
     return {"id": session_obj["id"], "url": session_obj["url"]}
 
 
@@ -296,7 +314,9 @@ async def create_subscription_checkout_session(
     elif customer_email:
         params["customer_email"] = customer_email
 
-    session_obj = await _run_sync(stripe.checkout.Session.create, **params)
+    session_obj = await _run_sync(
+        stripe.checkout.Session.create, **params, **checkout_branding(settings)
+    )
     log.info("stripe_subscription_checkout_created", org_id=str(org.id), plan_code=plan_code)
     return {
         "id": session_obj["id"],
