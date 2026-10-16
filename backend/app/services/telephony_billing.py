@@ -151,7 +151,12 @@ async def unit_price(session: AsyncSession, org_id: uuid.UUID, provider: str, me
     from app.services import discounts
 
     listed = await list_unit_price(session, org_id, provider, metric)
-    bps = await discounts.active_bps(session, org_id, discounts.category_for_metric(metric))
+    category = discounts.category_for_metric(metric)
+    bps = 0
+    if category == "usage" and provider == "telnyx":
+        bps = await discounts.active_bps(session, org_id, "usage_telnyx")
+    if not bps:
+        bps = await discounts.active_bps(session, org_id, category)
     return discounts.apply(listed, bps)
 
 

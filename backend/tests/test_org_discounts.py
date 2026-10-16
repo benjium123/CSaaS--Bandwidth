@@ -119,6 +119,37 @@ async def test_unit_price_numbers_discount(session):
     assert await telephony_billing.unit_price(session, org_id, "bandwidth", "sms_out") == 15_000
 
 
+async def test_usage_telnyx_discount_applies_only_on_telnyx(session):
+    """Owner deal 2026-10-16: list price on SignalWire, the discounted rate on Telnyx."""
+    org_id = await _new_org(session, "Carrier Discount Org")
+    await discounts.set_discount(
+        session, org_id, "usage_telnyx", percent_bps=2500, ends_at=None, note=None,
+        actor_user_id=None,
+    )
+    await session.commit()
+    sw = await telephony_billing.unit_price(session, org_id, "signalwire", "voice_min_out")
+    tx = await telephony_billing.unit_price(session, org_id, "telnyx", "voice_min_out")
+    listed = await telephony_billing.list_unit_price(session, org_id, "telnyx", "voice_min_out")
+    assert sw == listed
+    assert tx == listed * 7500 // 10_000
+    # Numbers are never touched by a usage discount.
+    assert await telephony_billing.unit_price(
+        session, org_id, "telnyx", "number_mrc"
+    ) == await telephony_billing.list_unit_price(session, org_id, "telnyx", "number_mrc")
+
+    # A plain usage discount still applies everywhere; usage_telnyx wins on Telnyx.
+    await discounts.set_discount(
+        session, org_id, "usage", percent_bps=1000, ends_at=None, note=None, actor_user_id=None
+    )
+    await session.commit()
+    assert await telephony_billing.unit_price(
+        session, org_id, "signalwire", "voice_min_out"
+    ) == listed * 9000 // 10_000
+    assert await telephony_billing.unit_price(
+        session, org_id, "telnyx", "voice_min_out"
+    ) == listed * 7500 // 10_000
+
+
 async def test_expired_discount_is_ignored(session):
     org_id = await _new_org(session, "Expired Discount Org")
     future = datetime.now(timezone.utc) + timedelta(days=1)

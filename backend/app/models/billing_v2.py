@@ -142,7 +142,12 @@ class TelnyxCostDaily(Base):
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
 
-DISCOUNT_CATEGORIES: tuple[str, ...] = ("subscription", "bundles", "usage", "numbers", "tendlc")
+#: usage_telnyx: a usage discount that applies only to traffic carried by Telnyx (owner deal
+#: 2026-10-16: Ali pays list on SignalWire, the old discounted rate once moved to Telnyx).
+#: When set, it replaces "usage" for Telnyx-carried usage.
+DISCOUNT_CATEGORIES: tuple[str, ...] = (
+    "subscription", "bundles", "usage", "numbers", "tendlc", "usage_telnyx"
+)
 
 
 class OrgDiscount(Base, TenantScoped, TimestampMixin):

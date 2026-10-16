@@ -66,6 +66,10 @@ export const DISCOUNT_LABELS: Record<string, { label: string; help: string }> = 
     label: "10DLC fee",
     help: "Ringlite's texting-registration service fee (carrier fees stay at cost)",
   },
+  usage_telnyx: {
+    label: "Usage on Telnyx",
+    help: "Usage carried by Telnyx only; replaces Usage there (other carriers pay Usage or list)",
+  },
 };
 
 /** Label/help for a category key, with a passthrough for a category this bundle does not know. */
