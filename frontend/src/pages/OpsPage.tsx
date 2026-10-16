@@ -11,6 +11,7 @@ import { CustomerAccountsTab } from "@/components/ops/CustomerAccountsTab";
 import { AccountsTab } from "@/components/ops/AccountsTab";
 import { BillingTab } from "@/components/ops/BillingTab";
 import { ConsoleTab } from "@/components/ops/ConsoleTab";
+import { ProfitTab } from "@/components/ops/ProfitTab";
 import { PortReviewTab } from "@/components/ops/PortReviewTab";
 import { WebsiteTab } from "@/components/ops/WebsiteTab";
 import { SupportTab } from "@/components/ops/SupportTab";
@@ -909,6 +910,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: "Money",
     items: [
       { id: "console", label: "Console", title: "Console", lede: "Orgs, profit, traffic and credit tools." },
+      { id: "profit", label: "Profit", title: "Profit by day", lede: "What we charged, what carriers, AI, Stripe and the server cost us, and the profit - per day, per workspace, per service. Also the SignalWire balance guard." },
       { id: "billing", label: "Billing", title: "Billing", lede: "Prices, balances and payments." },
     ],
   },
@@ -1072,6 +1074,7 @@ function Switchboard({
             </header>
             <section key={tab} aria-label={current.label} className={tab === "queue" ? "" : "sb-panel sb-panel-pad sb-legacy sb-rise"} style={{ "--i": 1 } as React.CSSProperties}>
               {tab === "console" && <ConsoleTab />}
+              {tab === "profit" && <ProfitTab />}
               {tab === "customers" && <CustomerAccountsTab />}
               {tab === "queue" && <QueueTab onOpen={setOpenOrg} />}
               {tab === "alerts" && <AlertsTab onOpen={setOpenOrg} />}

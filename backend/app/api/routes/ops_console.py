@@ -636,6 +636,16 @@ async def console_delete_fixed_cost(cost_id: uuid.UUID, op: Billing) -> Response
     return Response(status_code=204)
 
 
+@router.get("/profit-daily")
+async def console_profit_daily(
+    op: Reader, start: Start = None, end: End = None, org_id: uuid.UUID | None = None
+) -> dict:
+    """Profit by day and service (Switchboard > Profit). org_id narrows to one workspace."""
+    from app.services import profit_daily
+
+    return await profit_daily.daily(op.session, start, end, org_id)
+
+
 class SignalWireBalanceIn(BaseModel):
     balance_micros: int = Field(ge=0, le=100_000_000_000)
 
