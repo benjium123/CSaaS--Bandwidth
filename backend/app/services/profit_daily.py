@@ -45,9 +45,8 @@ from app.models import (
     OrgNumber,
 )
 from app.models.billing_v2 import TelnyxCostDaily
-from app.models.spend import ProviderSpendDaily
+from app.models.spend import DEFAULT_RATES_MICROS, ProviderRate, ProviderSpendDaily
 from app.services.console import U, _fixed_cost_micros, day_range
-from app.services.spend import resolve_rate
 
 SERVICES: tuple[tuple[str, str], ...] = (
     ("calls", "Calls"),
@@ -328,7 +327,7 @@ async def daily(
 
     # --- number rental: the carrier bills a whole month on the purchase day and on each
     # monthly renewal day (owner 2026-10-17), which is also when we charge the customer.
-    rates: dict[str, int] = {}
+    rates: dict[tuple[uuid.UUID, str], int] = {}
     for oid, carrier, monthly_cents, purchased_at, created_at, released_at in await _rows(
         session,
         sa.select(
@@ -348,9 +347,20 @@ async def daily(
         if monthly_cents is not None:
             monthly = int(monthly_cents) * 10_000
         else:
-            if carrier not in rates:
-                rates[carrier] = (await resolve_rate(session, carrier, "number_mrc"))[0]
-            monthly = rates[carrier]
+            if (oid, carrier) not in rates:
+                override = await _rows(
+                    session,
+                    sa.select(ProviderRate.unit_cost_micros).where(
+                        ProviderRate.org_id == oid,
+                        ProviderRate.provider == carrier,
+                        ProviderRate.metric == "number_mrc",
+                    ),
+                )
+                rates[(oid, carrier)] = int(
+                    override[0][0] if override
+                    else DEFAULT_RATES_MICROS.get(carrier, {}).get("number_mrc", 0)
+                )
+            monthly = rates[(oid, carrier)]
         day = max(start, bought)
         while day <= end and (gone is None or day < gone):
             renewal_day = min(bought.day, monthrange(day.year, day.month)[1])
