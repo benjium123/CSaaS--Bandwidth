@@ -84,6 +84,15 @@ def renewals_between(created: datetime, start: datetime, end: datetime) -> int:
         month += 1
 
 
+def _row_charge_micros(row: dict) -> int:
+    """A log row's charge. Messaging rows leave ``charge`` at 0 and carry the real money in
+    ``charge_details`` (measured 2026-10-16: "Outbound SMS" + "SMS Outbound Carrier Fee"),
+    so the larger of the two is used."""
+    top = abs(float(row.get("charge") or 0))
+    parts = sum(abs(float(d.get("charge") or 0)) for d in row.get("charge_details") or [])
+    return round(max(top, parts) * 1_000_000)
+
+
 async def _paged_charges(client, url: str, params: dict, since: datetime) -> int:  # noqa: ANN001
     total = 0
     next_url: str | None = url
@@ -96,7 +105,7 @@ async def _paged_charges(client, url: str, params: dict, since: datetime) -> int
             created = _parse_ts(row.get("created_at"))
             if created is not None and created < since:
                 continue
-            total += round(abs(float(row.get("charge") or 0)) * 1_000_000)
+            total += _row_charge_micros(row)
         next_url = (body.get("links") or {}).get("next")
         pages += 1
     return total

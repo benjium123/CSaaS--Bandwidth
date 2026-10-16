@@ -130,7 +130,10 @@ async def test_spend_sums_voice_messaging_and_rentals(settings, monkeypatch):
             ], "links": {"next": "https://example.signalwire.com/api/voice/logs?page_token=x"}})
         if path == "/api/messaging/logs":
             return httpx.Response(200, json={"data": [
-                {"created_at": "2026-10-16T12:10:00Z", "charge": 0.00415}], "links": {}})
+                {"created_at": "2026-10-16T12:10:00Z", "charge": 0.0, "charge_details": [
+                    {"description": "Outbound SMS", "charge": 0.00415},
+                    {"description": "SMS Outbound Carrier Fee", "charge": 0.003}]}],
+                "links": {}})
         if path.endswith("/IncomingPhoneNumbers.json"):
             return httpx.Response(200, json={"incoming_phone_numbers": [
                 {"date_created": "Sat, 19 Sep 2026 01:30:41 +0000"},
@@ -144,7 +147,7 @@ async def test_spend_sums_voice_messaging_and_rentals(settings, monkeypatch):
         lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
     )
     spent = await signalwire_guard.fetch_spend_micros(settings, T0)
-    assert spent == 144_000 + 54_000 + 4_150 + 1_000_000
+    assert spent == 144_000 + 54_000 + 7_150 + 1_000_000
 
 
 async def test_paused_signalwire_refuses_texts(session, monkeypatch):
