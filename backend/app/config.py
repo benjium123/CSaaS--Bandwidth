@@ -97,34 +97,34 @@ class Settings(BaseSettings):
     #: deliberately accepts that with the flag below.
     stripe_price_currency: str = "usd"
     #: RETIRED: the old per-number $15/month price. Only purchases made on it still use it.
-    stripe_number_price_id: str = "price_1UJHkZ744iNFjjqnkirIkrGn"
+    stripe_number_price_id: str = "price_1URDfQLz6FHVmZlMMMtyvTBg"
     #: Live workspace plans (services/plan_billing.py). Each plan includes as many users as
     #: phone numbers; add-ons are $15/month per user ($12 on Business) and $5/month per number.
-    stripe_plan_solo_price_id: str = "price_1UJgDb744iNFjjqnvYvbd3YV"  # $15, 1 user + 1 number
-    stripe_plan_team_price_id: str = "price_1UJgDc744iNFjjqnQzOaPoqM"  # $45, 3 + 3
-    stripe_plan_business_price_id: str = "price_1UJiBb744iNFjjqn2ZTTG1e1"  # $130, 10 + 10
-    stripe_extra_user_price_id: str = "price_1UJgDc744iNFjjqnRz5Bqqpm"  # $15/month (Solo, Team)
-    stripe_business_extra_user_price_id: str = "price_1UJiBc744iNFjjqnjcjruFqz"  # $12/month
-    stripe_extra_number_price_id: str = "price_1UJgDd744iNFjjqn9RTKz7AX"  # $5/month
+    stripe_plan_solo_price_id: str = "price_1URDfRLz6FHVmZlMNouh66aR"  # $15, 1 user + 1 number
+    stripe_plan_team_price_id: str = "price_1URDfTLz6FHVmZlMQzkAXVKw"  # $45, 3 + 3
+    stripe_plan_business_price_id: str = "price_1URDfULz6FHVmZlMayeWH9p8"  # $130, 10 + 10
+    stripe_extra_user_price_id: str = "price_1URDfVLz6FHVmZlMZNJHGXRG"  # $15/month (Solo, Team)
+    stripe_business_extra_user_price_id: str = "price_1URDfWLz6FHVmZlMSOkK7zuZ"  # $12/month
+    stripe_extra_number_price_id: str = "price_1URDfYLz6FHVmZlM4q6FRMD0"  # $5/month
     # Yearly twins (ten months' price, billed every year): two months free.
-    stripe_plan_solo_year_price_id: str = "price_1UJjFp744iNFjjqnMR6hQHiz"  # $150/year
-    stripe_plan_team_year_price_id: str = "price_1UJjFp744iNFjjqniMlDw5Om"  # $450/year
-    stripe_plan_business_year_price_id: str = "price_1UJjFq744iNFjjqnuOJRuOos"  # $1,300/year
-    stripe_extra_user_year_price_id: str = "price_1UJjFq744iNFjjqnwJVvGEPJ"  # $150/year
-    stripe_business_extra_user_year_price_id: str = "price_1UJjFq744iNFjjqntzNfAoSx"  # $120/year
-    stripe_extra_number_year_price_id: str = "price_1UJjFr744iNFjjqns14JPZCQ"  # $50/year
+    stripe_plan_solo_year_price_id: str = "price_1URDfZLz6FHVmZlMRv9Z6VVO"  # $150/year
+    stripe_plan_team_year_price_id: str = "price_1URDfaLz6FHVmZlMb77pBJb9"  # $450/year
+    stripe_plan_business_year_price_id: str = "price_1URDfaLz6FHVmZlM9co6Dz2e"  # $1,300/year
+    stripe_extra_user_year_price_id: str = "price_1URDfbLz6FHVmZlMfH0uHePN"  # $150/year
+    stripe_business_extra_user_year_price_id: str = "price_1URDfcLz6FHVmZlMXvfh9NDR"  # $120/year
+    stripe_extra_number_year_price_id: str = "price_1URDfdLz6FHVmZlMHvbRotKz"  # $50/year
     #: Number packs (plan_billing.NUMBER_PACKS). Empty = not on sale yet.
-    stripe_number_pack_25_price_id: str = "price_1UMfnX744iNFjjqneEDMy3aK"  # $105/month, 25 numbers
-    stripe_number_pack_50_price_id: str = "price_1UMfnX744iNFjjqnlXUKskyy"  # $195/month, 50 numbers
+    stripe_number_pack_25_price_id: str = "price_1URDlVLz6FHVmZlMLBBLBVU0"  # $105/month, 25 numbers
+    stripe_number_pack_50_price_id: str = "price_1URDlWLz6FHVmZlMiZbF6OrT"  # $195/month, 50 numbers
     # $350/month, 100 numbers
-    stripe_number_pack_100_price_id: str = "price_1UMfnY744iNFjjqnKsQNVYQl"
+    stripe_number_pack_100_price_id: str = "price_1URDlWLz6FHVmZlMyp0Vvur1"
     stripe_number_pack_25_year_price_id: str = ""  # $1,050/year
     stripe_number_pack_50_year_price_id: str = ""  # $1,950/year
     stripe_number_pack_100_year_price_id: str = ""  # $3,500/year
-    #: Live 10DLC campaign pass-through fees (prod_VJxPdkTbXGhw6k): $10/month standard,
+    #: Live 10DLC campaign pass-through fees: $10/month standard,
     #: $2/month sole proprietor. See services/tendlc.py for the one-time fees.
-    stripe_tendlc_standard_price_id: str = "price_1UJJUY744iNFjjqnhOjPZHaj"
-    stripe_tendlc_sole_prop_price_id: str = "price_1UJJUZ744iNFjjqn1pnIhHFu"
+    stripe_tendlc_standard_price_id: str = "price_1URDfeLz6FHVmZlM7EBvlSnW"
+    stripe_tendlc_sole_prop_price_id: str = "price_1URDffLz6FHVmZlMmtg6AABL"
     #: Only set this once amounts are actually denominated in stripe_price_currency.
     allow_non_usd_pricing: bool = False
     # P24: where a customer lands after completing a top-up. Empty derives from

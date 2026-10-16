@@ -26,6 +26,17 @@ privacy/terms URLs, support email support@ringlite.io, invoice prefix RL, brandi
 statement descriptor stays SABINE-based (AdAgentIQ shares the account). Stripe also shows
 "Business ownership information: Incomplete" and account representative "Invalid" — user must fix.
 
+**Update 2026-10-16 (Stripe moved to Apex Path LLC, acct_1NdgvYLz6FHVmZlM):** all 18 prices copied
+exactly (same amounts/intervals/lookup keys, metadata copied_from=<old id>) incl. number packs 25/50/100;
+webhook we_1URDgCLz6FHVmZlME2e8cHAk (same 18 events, api 2026-05-27.dahlia) proven with a signed
+checkout.session.expired -> 204. Box .env: STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / all 18
+STRIPE_*_PRICE_ID (backup .env.bak-stripe-move-202610161608). config.py defaults = new ids.
+Old Sabine endpoint we_1UIdIT744iNFjjqnsFf9UBaX DISABLED (AdAgency endpoint untouched). Nothing was
+live in the old account (0 subscriptions/cards/10DLC); its 2 historical payments can only be refunded
+from the Sabine dashboard. Apex Path account is SHARED (elliotwaveanalysis, cheaptts, ...): our webhook
+gets their events and must keep 2xx-ing them. **[USER]** set Apex Path dashboard branding / public
+name Ringlite / support email / statement descriptor as needed.
+
 Legend: **[USER]** needs a user decision/action first · **[CODE]** ready to build · **[OPS]** box work.
 
 ---
