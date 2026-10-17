@@ -59,7 +59,11 @@ def stripe(stripe_stub):
         retrieve=Mock(return_value={"invoice_settings": {"default_payment_method": "pm_cust"}})
     )
     stripe_stub.Subscription.create = Mock(return_value={"id": "sub_new", "status": "active"})
-    stripe_stub.Subscription.cancel = Mock(side_effect=lambda *a, **kw: calls.append("cancel"))
+    def cancel(*a, **kw):
+        calls.append("cancel")
+        state["own"] = {**state["own"], "status": "canceled"}
+
+    stripe_stub.Subscription.cancel = Mock(side_effect=cancel)
     stripe_stub.calls = calls
     stripe_stub.state = state
     return stripe_stub
@@ -476,3 +480,24 @@ async def test_customer_level_discount_gets_no_move(session, stripe, field):
     assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
     stripe.Subscription.cancel.assert_not_called()
     stripe.SubscriptionItem.create.assert_not_called()
+
+
+async def test_cancel_failing_for_real_then_plan_deleted_creates_nothing(session, stripe):
+    org, reg = await _active(session)
+    stripe.Subscription.cancel.side_effect = RuntimeError("stripe down")
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
+    assert "monthly_on" not in reg.filing  # only the marker names the target
+    assert reg.filing["monthly_cancelling"] == PLAN_SUB
+
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, _deleted_plan())
+    stripe.Subscription.create.assert_not_called()
+    assert reg.subscription_id == "sub_tendlc"
+
+
+async def test_restore_skips_when_the_own_subscription_still_bills(session, stripe):
+    org, reg = await _moved(session, stripe)
+    stripe.state["own"] = {**stripe.state["own"], "status": "trialing"}
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, _deleted_plan())
+    stripe.Subscription.create.assert_not_called()
+    assert reg.subscription_id == "sub_tendlc"
+    assert "monthly_item_id" not in reg.filing and "monthly_on" not in reg.filing

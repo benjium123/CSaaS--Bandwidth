@@ -1175,6 +1175,14 @@ async def _refund_unused(settings, reg) -> str:
 # --------------------------------------------------------------------------------------
 _MONTHLY_PRODUCT_NAME = "Texting registration, monthly"
 _monthly_product_id: str | None = None
+_MOVE_KEYS = (
+    "monthly_item_id",
+    "monthly_on",
+    "own_sub_cancelled",
+    "monthly_cancelling",
+    "monthly_window",
+    "orphan_alerted",
+)
 
 
 async def _monthly_product(stripe) -> str:
@@ -1317,7 +1325,6 @@ async def _move_cancel_own(session, stripe, reg, filing, own, now) -> str | None
         **filing,
         "monthly_cancelling": plan_sub,
         "monthly_window": opens.isoformat(),
-        "monthly_on": plan_sub,
     }
     await session.commit()
     await stripe_client._run_sync(
@@ -1380,10 +1387,19 @@ async def restore_standalone_monthly(session, settings, org_id, plan_sub_id, pla
         .all()
     )
     for reg in regs:
-        if (reg.filing or {}).get("monthly_on") != plan_sub_id:
+        filing = reg.filing or {}
+        if filing.get("monthly_on") != plan_sub_id:
+            continue
+        if not (filing.get("own_sub_cancelled") and filing.get("monthly_item_id")):
             continue
         try:
             stripe = stripe_client._stripe(settings)
+            own = await stripe_client._run_sync(stripe.Subscription.retrieve, reg.subscription_id)
+            if own["status"] != "canceled":
+                # The own subscription still bills: a second one would charge twice. The
+                # item went with the deleted plan, so only the bookkeeping is cleared.
+                reg.filing = {k: v for k, v in filing.items() if k not in _MOVE_KEYS}
+                continue
             customer = plan_sub.get("customer")
             if isinstance(customer, dict):
                 customer = customer.get("id")
@@ -1427,19 +1443,7 @@ async def restore_standalone_monthly(session, settings, org_id, plan_sub_id, pla
                 **kwargs,
             )
             reg.subscription_id = sub["id"]
-            reg.filing = {
-                k: v
-                for k, v in reg.filing.items()
-                if k
-                not in (
-                    "monthly_item_id",
-                    "monthly_on",
-                    "own_sub_cancelled",
-                    "monthly_cancelling",
-                    "monthly_window",
-                    "orphan_alerted",
-                )
-            }
+            reg.filing = {k: v for k, v in filing.items() if k not in _MOVE_KEYS}
             log.info("tendlc_monthly_restored", registration_id=str(reg.id))
             if sub.get("status") not in ("active", "trialing"):
                 await _alert_orphan(
