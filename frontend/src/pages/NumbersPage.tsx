@@ -234,6 +234,11 @@ export function NumbersPage() {
   }
 
   async function assign(numberId: string, campaignId: string) {
+    // Moving a number that is already on a campaign pauses its texting; confirm first.
+    const current = (numbers ?? []).find((n) => n.id === numberId)?.campaign_id;
+    if (campaignId && current && campaignId !== current) {
+      if (!window.confirm("Moving this number pauses its texting until the carriers confirm the new campaign. Move it?")) return;
+    }
     try {
       await assignCampaign.mutateAsync({ numberId, campaign_id: campaignId || null });
     } catch {

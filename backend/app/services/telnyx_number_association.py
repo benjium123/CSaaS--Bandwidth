@@ -103,6 +103,13 @@ ATTEMPT_KEY = "telnyx_campaign_assignment"
 MARKER_STATE_UNCONFIRMED = "unconfirmed"
 MARKER_STATE_ASSIGNED = "assigned"
 
+#: ``OrgNumber.provisioning`` key holding the durable marker of a campaign MOVE (unassign at
+#: Telnyx, then assign to the new campaign). Present while a move is unfinished or failed.
+MOVE_KEY = "telnyx_campaign_move"
+MOVE_STATE_UNASSIGNING = "unassigning"
+MOVE_STATE_ASSIGNING = "assigning"
+MOVE_STATE_FAILED = "failed"
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -273,6 +280,8 @@ def _record_assigned(
         }
     )
     provisioning[ATTEMPT_KEY] = marker
+    # A confirmed assignment supersedes any earlier failed move marker.
+    provisioning.pop(MOVE_KEY, None)
     number.provisioning = provisioning
 
 
@@ -471,3 +480,259 @@ async def associate_number_with_telnyx(
         return locked_number
     finally:
         await reg_client.aclose()
+
+
+# --------------------------------------------------------------------------------------
+# Moving a number from one campaign to another
+# --------------------------------------------------------------------------------------
+def _set_move_marker(number: OrgNumber, **fields: object) -> None:
+    provisioning = _provisioning(number)
+    marker = provisioning.get(MOVE_KEY)
+    marker = dict(marker) if isinstance(marker, Mapping) else {}
+    marker.update(fields)
+    provisioning[MOVE_KEY] = marker
+    number.provisioning = provisioning
+
+
+async def _record_move_event(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    campaign_ids: list[uuid.UUID],
+    e164: str,
+    payload_type: str,
+    status: str,
+    reasons: list[str] | None = None,
+) -> None:
+    """One ``tendlc_events`` row per move step, on the registration of the target campaign
+    (else the source's). Never raises: the timeline must not mask the move's real outcome."""
+    from app.db.base import set_org_context
+    from app.models.tendlc import TenDlcRegistration
+    from app.services import tendlc_events
+
+    try:
+        set_org_context(session, org_id)
+        registration_id = None
+        for cid in campaign_ids:
+            registration_id = (
+                await session.execute(
+                    sa.select(TenDlcRegistration.id)
+                    .where(TenDlcRegistration.campaign_id == cid)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if registration_id is not None:
+                break
+        await tendlc_events.record(
+            session,
+            org_id=org_id,
+            registration_id=registration_id,
+            event=tendlc_events.CarrierEvent(
+                telnyx_event_id=None,
+                event_type="local.number.move",
+                subject="number",
+                telnyx_id=e164,
+                payload_type=payload_type,
+                status=status,
+                reasons=[r[:500] for r in (reasons or [])],
+                raw={},
+            ),
+            verified=True,
+        )
+    except Exception:
+        log.exception("telnyx_number_move_event_failed")
+
+
+async def _fail_move(
+    session: AsyncSession,
+    *,
+    number_id: uuid.UUID,
+    org_id: uuid.UUID,
+    from_campaign_id: uuid.UUID,
+    to_campaign_id: uuid.UUID,
+    e164: str,
+    payload_type: str,
+    error: str,
+    keep_marker: bool,
+    number_off_campaign: bool,
+) -> None:
+    """Commit the failure: marker (or none), FAILED event and an ops alert."""
+    from app.services import card_risk
+
+    await session.rollback()
+    locked = await _locked_number(session, number_id)
+    if keep_marker:
+        _set_move_marker(locked, state=MOVE_STATE_FAILED, error=error[:500], failed_at=_now_iso())
+    else:
+        provisioning = _provisioning(locked)
+        provisioning.pop(MOVE_KEY, None)
+        locked.provisioning = provisioning
+    await _record_move_event(
+        session,
+        org_id=org_id,
+        campaign_ids=[to_campaign_id, from_campaign_id],
+        e164=e164,
+        payload_type=payload_type,
+        status="FAILED",
+        reasons=[error or "unknown error"],
+    )
+    await card_risk.open_alert(
+        session,
+        org_id,
+        "tendlc_number_move_failed",
+        {
+            "number_id": str(number_id),
+            "number": e164,
+            "from_campaign_id": str(from_campaign_id),
+            "to_campaign_id": str(to_campaign_id),
+            "step": payload_type,
+            "number_off_campaign": number_off_campaign,
+            "error": error[:500],
+        },
+    )
+    await session.commit()
+
+
+async def move_number_to_campaign(
+    session: AsyncSession,
+    settings: Settings,
+    number: OrgNumber,
+    campaign: Campaign,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> OrgNumber:
+    """Move a Telnyx number that is on one campaign to another approved campaign.
+
+    Order of effects: every local and carrier-side GATE first (nothing changes if the
+    target is unusable); a durable move marker; ``DELETE`` at Telnyx; ``campaign_id`` cleared
+    only after Telnyx confirms (or says it never had the number); then the ordinary,
+    marker-guarded ``associate_number_with_telnyx`` for the new campaign. A failure after
+    the DELETE leaves ``campaign_id`` NULL (the carrier no longer has the number on the old
+    campaign), a ``failed`` move marker, a FAILED event and an ops alert, and raises in
+    plain words. A failed DELETE never touches ``campaign_id``.
+    """
+    if number.id is None or campaign.id is None:
+        raise ValidationFailedError("Save the number and the campaign before moving it")
+    number_id = number.id
+    to_campaign_id = campaign.id
+
+    locked_number = await _locked_number(session, number_id)
+    locked_campaign = await _locked_campaign(session, to_campaign_id)
+    _require_same_org(locked_number, locked_campaign)
+    _require_assignable_number(locked_number)
+    carrier_campaign_id = _require_approved_campaign_ref(locked_campaign)
+
+    from_campaign_id = locked_number.campaign_id
+    if from_campaign_id is None:
+        raise ConflictError("This number is not on a campaign yet; assign it instead of moving it")
+    if from_campaign_id == to_campaign_id:
+        raise ConflictError("This number is already on that campaign")
+    if _provisioning(locked_number).get(MOVE_KEY):
+        raise ConflictError(
+            "An earlier campaign move for this number did not finish; reconcile the "
+            "number's provisioning state with Telnyx before moving it again"
+        )
+    org_id = locked_number.org_id
+    e164 = locked_number.e164
+
+    carrier_settings = await _telnyx_carrier_settings(session, settings)
+    api_key = _api_key_from(carrier_settings)
+
+    reg_client = TelnyxRegistrationClient(api_key=api_key, client=client)
+    try:
+        # Gate on the NEW campaign before the old assignment is touched.
+        await _require_campaign_approved_at_telnyx(
+            reg_client, carrier_campaign_id, number_ref=str(number_id)
+        )
+        _set_move_marker(
+            locked_number,
+            state=MOVE_STATE_UNASSIGNING,
+            from_campaign_id=str(from_campaign_id),
+            to_campaign_id=str(to_campaign_id),
+            attempted_at=_now_iso(),
+        )
+        await session.commit()
+        log.info("telnyx_number_move_started", number_id=str(number_id))
+
+        try:
+            await reg_client.delete_phone_number_campaign(e164)
+        except (FeatureUnavailableError, ValidationFailedError) as exc:
+            # A refusal (4xx) means the number is unchanged; a timeout/transport error
+            # leaves the carrier outcome unknown, so the marker stays for a human.
+            unknown = isinstance(exc, FeatureUnavailableError)
+            await _fail_move(
+                session,
+                number_id=number_id,
+                org_id=org_id,
+                from_campaign_id=from_campaign_id,
+                to_campaign_id=to_campaign_id,
+                e164=e164,
+                payload_type="UNASSIGN",
+                error=str(exc),
+                keep_marker=unknown,
+                number_off_campaign=False,
+            )
+            if unknown:
+                raise
+            raise ValidationFailedError(
+                f"Telnyx would not take the number off its current campaign: {exc}. "
+                "Nothing was changed."
+            ) from exc
+    finally:
+        await reg_client.aclose()
+
+    # Telnyx no longer has the number on the old campaign: make our record say so.
+    locked_number = await _locked_number(session, number_id)
+    provisioning = _provisioning(locked_number)
+    provisioning.pop(ATTEMPT_KEY, None)
+    locked_number.provisioning = provisioning
+    locked_number.campaign_id = None
+    _set_move_marker(locked_number, state=MOVE_STATE_ASSIGNING)
+    await _record_move_event(
+        session,
+        org_id=org_id,
+        campaign_ids=[to_campaign_id, from_campaign_id],
+        e164=e164,
+        payload_type="UNASSIGN",
+        status="OK",
+    )
+    await session.commit()
+
+    try:
+        await associate_number_with_telnyx(
+            session, settings, locked_number, locked_campaign, client=client
+        )
+    except Exception as exc:
+        message = str(exc) or type(exc).__name__
+        await _fail_move(
+            session,
+            number_id=number_id,
+            org_id=org_id,
+            from_campaign_id=from_campaign_id,
+            to_campaign_id=to_campaign_id,
+            e164=e164,
+            payload_type="ASSIGN",
+            error=message,
+            keep_marker=True,
+            number_off_campaign=True,
+        )
+        raise ValidationFailedError(
+            "The number was removed from its old campaign but the new one refused it: "
+            f"{message}. It can't text until this is fixed."
+        ) from exc
+
+    result = await _locked_number(session, number_id)
+    provisioning = _provisioning(result)
+    provisioning.pop(MOVE_KEY, None)
+    result.provisioning = provisioning
+    await _record_move_event(
+        session,
+        org_id=org_id,
+        campaign_ids=[to_campaign_id, from_campaign_id],
+        e164=e164,
+        payload_type="ASSIGN",
+        status="OK",
+    )
+    await session.commit()
+    log.info("telnyx_number_move_done", number_id=str(number_id))
+    return result

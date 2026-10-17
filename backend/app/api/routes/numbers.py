@@ -821,6 +821,15 @@ async def assign_campaign(
         # AND at Telnyx, commits a durable attempt marker BEFORE the POST, and sets
         # campaign_id only after a confirmed response - so this route never records a
         # Telnyx campaign association locally before the carrier has accepted it.
+        if number.campaign_id is not None and number.campaign_id != campaign.id:
+            # Already on another campaign: unassign at Telnyx, then assign to the new one.
+            number = await telnyx_number_association.move_number_to_campaign(
+                ctx.session,
+                request.app.state.settings,
+                number,
+                campaign,
+            )
+            return await _out(ctx.session, number)
         number = await telnyx_number_association.associate_number_with_telnyx(
             ctx.session,
             request.app.state.settings,

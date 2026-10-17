@@ -818,8 +818,10 @@ async def associate_numbers(session, settings, reg, campaign, *, client=None) ->
     done = 0
     reg_id, reg_org_id = reg.id, reg.org_id
     for number in numbers:
-        if number.campaign_id is not None or (number.provisioning or {}).get(
-            "telnyx_campaign_assignment"
+        if (
+            number.campaign_id is not None
+            or (number.provisioning or {}).get("telnyx_campaign_assignment")
+            or (number.provisioning or {}).get("telnyx_campaign_move")
         ):
             continue
         number_id, number_e164 = number.id, number.e164
@@ -900,6 +902,23 @@ async def associate_new_numbers(session, settings, org_id) -> None:
             )
         ).scalar_one_or_none()
         if reg is None:
+            return
+        telnyx_approved = [
+            c
+            for c in (
+                await session.execute(
+                    sa.select(Campaign).where(
+                        Campaign.org_id == org_id, Campaign.status == "approved"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+            if _telnyx_ref(c)
+        ]
+        if len(telnyx_approved) > 1:
+            # Never guess which campaign a new number belongs on: the customer picks.
+            log.info("tendlc_numbers_need_choice", org_id=str(org_id))
             return
         campaign = await session.get(Campaign, reg.campaign_id)
         await associate_numbers(session, settings, reg, campaign)

@@ -24,7 +24,8 @@ Documented endpoints (base ``https://api.telnyx.com/v2``), whose success respons
 flat top-level JSON objects (NOT wrapped in a ``data`` envelope):
 ``POST /10dlc/brand``, ``GET /10dlc/brand/{brandId}``,
 ``POST /10dlc/campaignBuilder``, ``GET /10dlc/campaign/{campaignId}`` and
-``POST /10dlc/phone_number_campaigns``.
+``POST /10dlc/phone_number_campaigns``, ``GET /10dlc/phone_number_campaigns/{phoneNumber}``
+and ``DELETE /10dlc/phone_number_campaigns/{phoneNumber}``.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ _PHONE_NUMBER_CAMPAIGN_PATH = "/10dlc/phone_number_campaigns"
 
 
 def _timeout_message(operation: str, method: str) -> str:
-    if method.upper() == "POST":
+    if method.upper() in ("POST", "DELETE"):
         # A timed-out write is ambiguous: the carrier may have applied it. Say so, and
         # do not retry - see the module docstring.
         return (
@@ -233,6 +234,29 @@ class TelnyxRegistrationClient:
         )
         return _require_id(data, ("phoneNumber", "phone_number"), "phone-number")
 
+    async def get_phone_number_campaign(self, phone: str) -> dict | None:
+        """GET /10dlc/phone_number_campaigns/{phoneNumber}. None when Telnyx has no
+        assignment for the number (404)."""
+        return await self._send(
+            "GET",
+            f"{_PHONE_NUMBER_CAMPAIGN_PATH}/{quote(str(phone), safe='')}",
+            operation="phone-number assignment lookup",
+            payload=None,
+            not_found_ok=True,
+        )
+
+    async def delete_phone_number_campaign(self, phone: str) -> dict | None:
+        """DELETE /10dlc/phone_number_campaigns/{phoneNumber}: take the number off its
+        campaign at Telnyx. None when Telnyx says the number is not assigned (404); the
+        caller treats that as success."""
+        return await self._send(
+            "DELETE",
+            f"{_PHONE_NUMBER_CAMPAIGN_PATH}/{quote(str(phone), safe='')}",
+            operation="phone-number unassignment",
+            payload=None,
+            not_found_ok=True,
+        )
+
     # -- transport ------------------------------------------------------------
 
     async def _post(self, path: str, payload: dict, operation: str) -> dict:
@@ -248,7 +272,8 @@ class TelnyxRegistrationClient:
         *,
         operation: str,
         payload: dict | None,
-    ) -> dict:
+        not_found_ok: bool = False,
+    ) -> dict | None:
         client = await self._get_client()
         headers = {"Authorization": f"Bearer {self.api_key}"}
         kwargs: dict = {"headers": headers}
@@ -267,6 +292,10 @@ class TelnyxRegistrationClient:
             )
             raise FeatureUnavailableError(f"Telnyx {operation} is unreachable") from exc
 
+        if not_found_ok and resp.status_code == 404:
+            return None
         if resp.status_code >= 400:
             raise _http_failure(operation, resp)
+        if method.upper() == "DELETE" and not resp.content.strip():
+            return {}
         return _parse_body(operation, resp)

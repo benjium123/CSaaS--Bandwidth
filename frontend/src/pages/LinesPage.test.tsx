@@ -133,6 +133,24 @@ describe("LinesPage", () => {
     expect(within(own).getByRole("option", { name: "Spare (12/50)" })).not.toBeDisabled();
   });
 
+  it("confirms before moving a line to another campaign, and sends only on yes", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const client = makeStubClient(stubs());
+    renderWithProviders(<LinesPage />, client);
+    await screen.findByText("Sales A");
+    const own = screen.getByLabelText("Campaign for +12145550101");
+    await userEvent.selectOptions(own, "c-2");
+    expect(confirm).toHaveBeenCalledWith("Moving this number pauses its texting until the carriers confirm the new campaign. Move it?");
+    expect(client.calls.some((c) => c.path === "/api/v1/numbers/n-a/campaign")).toBe(false);
+
+    confirm.mockReturnValue(true);
+    await userEvent.selectOptions(own, "c-2");
+    await vi.waitFor(() =>
+      expect(client.calls.some((c) => c.path === "/api/v1/numbers/n-a/campaign")).toBe(true),
+    );
+    confirm.mockRestore();
+  });
+
   it("shows the 409 campaign_full message", async () => {
     const client = makeStubClient(
       stubs({

@@ -98,9 +98,14 @@ export function CampaignPicker({
         className="h-8 px-2 text-xs text-foreground"
         value={number.campaign_id ?? ""}
         disabled={assign.isPending}
-        onChange={(e) =>
-          assign.mutate({ numberId: number.id, campaign_id: e.target.value || null })
-        }
+        onChange={(e) => {
+          const next = e.target.value || null;
+          // Moving a number that is already on a campaign pauses its texting; confirm first.
+          if (next && number.campaign_id && next !== number.campaign_id) {
+            if (!window.confirm("Moving this number pauses its texting until the carriers confirm the new campaign. Move it?")) return;
+          }
+          assign.mutate({ numberId: number.id, campaign_id: next });
+        }}
       >
         {/* A carrier-side campaign can be moved but not cleared (the API refuses). */}
         <option value="" disabled={number.carrier_campaign_locked && Boolean(number.campaign_id)}>

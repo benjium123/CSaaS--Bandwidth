@@ -449,6 +449,32 @@ describe("NumbersPage", () => {
     });
   });
 
+  it("confirms before moving a number that is already on a campaign", async () => {
+    const stubs = baseStubs({
+      "/api/v1/numbers": [numberFixture({ campaign_id: "camp-0" })],
+      "/api/v1/registration/campaigns": [
+        { id: "camp-0", name: "Old" },
+        { id: "camp-1", name: "10DLC Main" },
+      ],
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const client = makeStubClient(stubs);
+    renderWithProviders(<NumbersPage />, client);
+
+    const select = await screen.findByLabelText("Campaign for +12145550100");
+    await userEvent.selectOptions(select, "camp-1");
+    expect(confirm).toHaveBeenCalledWith("Moving this number pauses its texting until the carriers confirm the new campaign. Move it?");
+    expect(client.calls.some((c) => c.path === "/api/v1/numbers/num-1/campaign")).toBe(false);
+
+    confirm.mockReturnValue(true);
+    await userEvent.selectOptions(select, "camp-1");
+    await waitFor(() => {
+      const call = client.calls.find((c) => c.path === "/api/v1/numbers/num-1/campaign");
+      expect(call?.init.json).toEqual({ campaign_id: "camp-1" });
+    });
+    confirm.mockRestore();
+  });
+
   it("shows a retry alert and refetches when the numbers list fails to load", async () => {
     const client = makeStubClient(
       baseStubs({ "/api/v1/numbers": new Error("numbers list down") }),
