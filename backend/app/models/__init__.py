@@ -463,6 +463,7 @@ __all__ = [
     "AdminInvite",
     "NumberPurchase",
     "TenDlcRegistration",
+    "TenDlcEvent",
     "EmergencyAddress",
     "PlatformSetting",
     "SupportRequest",
@@ -498,3 +499,4 @@ from app.models.porting import PortRequest  # noqa: E402
 from app.models.site import SiteChat, SiteChatMessage, SiteLead  # noqa: E402
 from app.models.support import PlatformSetting, SupportRequest  # noqa: E402
 from app.models.tendlc import TenDlcRegistration
+from app.models.tendlc_event import TenDlcEvent

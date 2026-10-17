@@ -41,3 +41,6 @@ class TenDlcRegistration(Base, TenantScoped, TimestampMixin):
     otp_sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     evidence_checked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     detail: Mapped[str | None] = mapped_column(sa.Text())
+    #: Phase 1: the carrier's own words for the last refusal:
+    #: {"subject": "brand"|"campaign", "reasons": [str], "verified": bool, "at": iso}.
+    rejection: Mapped[dict | None] = mapped_column(PortableJSON(), nullable=True)
