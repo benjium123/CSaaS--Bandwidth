@@ -226,16 +226,21 @@ async def telnyx_tendlc_webhook(request: Request, session: AsyncSession = Depend
     except ValueError:
         return Response(status_code=400)
     settings = request.app.state.settings
-    verified = telnyx_webhooks.verify(
-        request.headers, settings.telnyx_public_key.get_secret_value(), raw
-    )
-    event = tendlc_events.parse(body)
-    if event is None:
-        return Response(status_code=204)
+    event_type = None
     try:
-        await tendlc.handle_carrier_event(session, settings, event, verified=verified)
+        verified = telnyx_webhooks.verify(
+            request.headers, settings.telnyx_public_key.get_secret_value(), raw
+        )
+        event = tendlc_events.parse(body)
+        if event is not None:
+            event_type = event.event_type
+            await tendlc.handle_carrier_event(session, settings, event, verified=verified)
     except Exception:  # never make Telnyx retry-storm us; the 5-min poll is the safety net
-        log.exception("tendlc_webhook_failed", event_type=event.event_type)
+        log.exception("tendlc_webhook_failed", event_type=event_type)
+        try:
+            await session.rollback()
+        except Exception:
+            log.exception("tendlc_webhook_rollback_failed")
     return Response(status_code=204)
 
 

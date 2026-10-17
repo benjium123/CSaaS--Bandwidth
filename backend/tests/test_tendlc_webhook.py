@@ -134,3 +134,41 @@ async def test_route_answers_204_and_400(client):
         },
     )
     assert r.status_code == 204
+
+
+async def test_route_204_for_non_object_json(client):
+    for body in (b"[]", b'"x"', b"null", b"5"):
+        r = await client.post("/api/v1/webhooks/telnyx/10dlc", content=body)
+        assert r.status_code == 204, body
+
+
+async def test_unverified_event_does_not_overwrite_verified_rejection(
+    session, stripe_stub, telnyx
+):
+    reg_id, sm = await _to_campaign_filed(session, telnyx)
+    telnyx.campaign_status = {"campaignStatus": "MNO_REJECTED"}
+    real = _ev(
+        "10dlc.campaign.update",
+        {"campaignId": "C456", "status": "REJECTED", "reasons": [{"description": "Real reason"}]},
+        "v1",
+    )
+    forged = _ev(
+        "10dlc.campaign.update",
+        {"campaignId": "C456", "status": "REJECTED", "reasons": [{"description": "Forged"}]},
+        "v2",
+    )
+    async with sm() as s:
+        await tendlc.handle_carrier_event(s, _settings(), real, verified=True, client=telnyx.client)
+    async with sm() as s:
+        await tendlc.handle_carrier_event(
+            s, _settings(), forged, verified=False, client=telnyx.client
+        )
+    async with sm() as s:
+        reg = (
+            await s.execute(
+                sa.select(TenDlcRegistration)
+                .where(TenDlcRegistration.id == reg_id)
+                .execution_options(**_UNSCOPED)
+            )
+        ).scalar_one()
+        assert reg.rejection["reasons"] == ["Real reason"] and reg.rejection["verified"] is True

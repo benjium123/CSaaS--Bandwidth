@@ -538,7 +538,12 @@ async def handle_carrier_event(session, settings, event, *, verified: bool, clie
     if row is None:
         await session.commit()
         return "duplicate"
-    if event.subject in ("brand", "campaign") and tendlc_events.is_rejection(event):
+    kept = reg.rejection or {}
+    if (
+        event.subject in ("brand", "campaign")
+        and tendlc_events.is_rejection(event)
+        and (verified or not kept.get("verified"))
+    ):
         reg.rejection = {
             "subject": event.subject,
             "reasons": list(event.reasons),
