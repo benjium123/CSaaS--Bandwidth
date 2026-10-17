@@ -361,6 +361,10 @@ async def file_campaign_with_telnyx(
     # Best-effort de-duplication only; the committed marker is the guard that matters.
     payload[REFERENCE_ID_FIELD] = reference_id
 
+    from app.services.tendlc_events import webhook_fields
+
+    payload.update(webhook_fields(settings))
+
     carrier_settings = await _telnyx_carrier_settings(session, settings)
     api_key = _api_key_from(carrier_settings)
 

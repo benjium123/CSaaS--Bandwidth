@@ -206,6 +206,10 @@ async def file_brand_with_telnyx(
         mobile_phone=mobile_phone,
     )
 
+    from app.services.tendlc_events import webhook_fields
+
+    payload.update(webhook_fields(settings))
+
     resolved = await _resolve_telnyx_settings(session, settings)
     api_key = _secret(getattr(resolved, "telnyx_api_key", None)).strip()
     if not api_key:

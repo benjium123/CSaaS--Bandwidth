@@ -262,3 +262,26 @@ async def test_a_repeating_assignment_failure_is_one_timeline_row(session, strip
             .all()
         )
     assert len(rows) == 1
+
+
+async def test_filings_carry_our_webhook_url_on_https(session, stripe_stub, telnyx):
+    import json
+
+    settings = _settings().model_copy(update={"public_base_url": "https://api.ringlite.test"})
+    org, brand, campaign, _ = await _workspace(session)
+    reg = await _checkout(session, org, brand, campaign)
+    await _pay(session, reg)
+    sm = get_sessionmaker()
+    await tendlc.tick(sm, settings, client=telnyx.client)
+    telnyx.brand_status = {"status": "OK", "identityStatus": "VERIFIED"}
+    await tendlc.tick(sm, settings, client=telnyx.client)
+    url = "https://api.ringlite.test/api/v1/webhooks/telnyx/10dlc"
+    brand_body = json.loads(telnyx.posts("/10dlc/brand")[0].content)
+    camp_body = json.loads(telnyx.posts("/10dlc/campaignBuilder")[0].content)
+    assert brand_body["webhookURL"] == url and camp_body["webhookURL"] == url
+    assert brand_body["webhookFailoverURL"] == url
+
+
+def test_no_webhook_fields_without_https():
+    settings = _settings().model_copy(update={"public_base_url": "http://localhost:8000"})
+    assert tendlc_events.webhook_fields(settings) == {}
