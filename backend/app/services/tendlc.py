@@ -28,7 +28,7 @@ import structlog
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ConflictError, FeatureUnavailableError, ValidationFailedError
 from app.models import Brand, Campaign, OrgNumber, TenDlcRegistration
-from app.services import stripe_client
+from app.services import stripe_client, tendlc_notices
 
 log = structlog.get_logger("tendlc")
 
@@ -499,6 +499,7 @@ async def advance(session, settings, reg_id, *, client=None) -> tuple[str, str]:
         await session.commit()
         if reg.stage == stage:
             break
+        await tendlc_notices.stage_changed(session, settings, reg, stage, reg.stage)
     return start, reg.stage
 
 
@@ -782,6 +783,7 @@ async def verify_otp(session, settings, reg, pin: str, *, client=None) -> None:
     reg.stage = "brand_filed"  # the next pass reads the brand's verified identity
     reg.detail = None
     await session.commit()
+    await tendlc_notices.stage_changed(session, settings, reg, "otp_pending", "brand_filed")
     await advance(session, settings, reg.id, client=client)
 
 
@@ -846,7 +848,7 @@ async def associate_numbers(session, settings, reg, campaign, *, client=None) ->
                 ).first()
                 if already is not None:
                     continue
-                await tendlc_events.record(
+                recorded = await tendlc_events.record(
                     session,
                     org_id=reg_org_id,
                     registration_id=reg_id,
@@ -862,7 +864,25 @@ async def associate_numbers(session, settings, reg, campaign, *, client=None) ->
                     ),
                     verified=True,
                 )
+                if recorded is not None:
+                    from app.services import card_risk
+
+                    await card_risk.open_alert(
+                        session,
+                        reg_org_id,
+                        "tendlc_number_failed",
+                        {
+                            "registration_id": str(reg_id),
+                            "number": str(number_e164),
+                            "error": str(exc)[:500],
+                        },
+                    )
                 await session.commit()
+                if recorded is not None:
+                    await session.refresh(reg)
+                    await tendlc_notices.number_failed(
+                        session, settings, reg, str(number_e164), str(exc)
+                    )
             except Exception:
                 log.exception("tendlc_assignment_event_failed", registration_id=str(reg_id))
     return done

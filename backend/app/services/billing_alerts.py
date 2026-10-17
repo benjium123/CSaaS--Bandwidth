@@ -203,8 +203,10 @@ async def evaluate(session: AsyncSession, settings, org: Org) -> str:  # noqa: A
 
 
 async def notify_owners(session: AsyncSession, settings, org: Org, subject: str, body: str,  # noqa: ANN001
-                        *, dedupe_key: str) -> None:
-    """One-off billing notice (auto-recharge declined / disabled). Does not commit."""
+                        *, dedupe_key: str, kind: str = "low_balance",
+                        in_app_body: str | None = None) -> None:
+    """One-off notice to owners/admins (auto-recharge declined / disabled; 10DLC changes via
+    ``kind``). Does not commit. ``in_app_body`` overrides the bell text (default: subject)."""
     from app.services import mailer, notifications
 
     recipients = await _recipients(session, org.id)
@@ -212,7 +214,7 @@ async def notify_owners(session: AsyncSession, settings, org: Org, subject: str,
     for user_id, _email in recipients:
         try:
             await notifications.create(
-                session, org.id, user_id=user_id, kind="low_balance", body=subject,
+                session, org.id, user_id=user_id, kind=kind, body=in_app_body or subject,
                 dedupe_key=dedupe_key[:128],
             )
         except Exception:

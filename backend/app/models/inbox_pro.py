@@ -20,6 +20,7 @@ NOTIFICATION_KINDS: tuple[str, ...] = (
     "low_balance",
     "messaging_health",
     "porting",
+    "texting",
 )
 
 
