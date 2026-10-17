@@ -452,6 +452,10 @@ def parse_items(settings: Settings, subscription: dict) -> ParsedItems:
     extra_users = extra_numbers = 0
     intervals: set[str] = set()
     for item in (subscription.get("items") or {}).get("data", []):
+        # The 10DLC monthly fee rides on the plan subscription (services/tendlc.py): it is
+        # not a plan, an add-on or an interval, so it is skipped, never guessed at.
+        if (item.get("metadata") or {}).get("kind") == "tendlc_monthly":
+            continue
         price_id = (item.get("price") or {}).get("id")
         quantity = int(item.get("quantity") or 0)
         if price_id in by_price:
@@ -624,6 +628,13 @@ async def handle_event(session: AsyncSession, request, event: dict) -> bool:
     stripe = stripe_client._stripe(settings)
     latest = await stripe_client._run_sync(stripe.Subscription.retrieve, obj["id"])
     await upsert_from_stripe(session, settings, latest, org_id)
+    if event.get("type") == "customer.subscription.deleted":
+        from app.services import tendlc
+
+        # A 10DLC monthly fee that rode on this plan must not silently stop billing.
+        await tendlc.restore_standalone_monthly(
+            session, settings, org_id, obj["id"], latest.get("customer")
+        )
     await session.commit()
     return True
 
