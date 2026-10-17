@@ -233,16 +233,24 @@ async def start_checkout(
     if campaign.brand_id != brand.id:
         raise ValidationFailedError("That campaign belongs to a different business profile.")
 
-    existing = (
-        await session.execute(
-            sa.select(TenDlcRegistration)
-            .where(
-                TenDlcRegistration.org_id == org_id,
-                TenDlcRegistration.stage.in_(OPEN_STAGES),
+    open_rows = (
+        (
+            await session.execute(
+                sa.select(TenDlcRegistration)
+                .where(
+                    TenDlcRegistration.org_id == org_id,
+                    TenDlcRegistration.stage.in_(OPEN_STAGES),
+                )
+                .with_for_update()
             )
-            .with_for_update()
         )
-    ).scalar_one_or_none()
+        .scalars()
+        .all()
+    )
+    # An approved (active) registration never blocks another campaign; one in flight does.
+    if tier_for(brand) == "sole_proprietor" and any(r.stage == "active" for r in open_rows):
+        raise ConflictError("A sole proprietor business can register one texting campaign.")
+    existing = next((r for r in open_rows if r.stage != "active"), None)
     if existing is not None:
         if (
             existing.stage == "checkout"
@@ -823,6 +831,23 @@ async def associate_numbers(session, settings, reg, campaign, *, client=None) ->
     from app.services.telnyx_number_association import associate_number_with_telnyx
 
     if campaign.status != "approved" or not _telnyx_ref(campaign):
+        return 0
+    others = (
+        (
+            await session.execute(
+                sa.select(Campaign).where(
+                    Campaign.org_id == reg.org_id,
+                    Campaign.status == "approved",
+                    Campaign.id != campaign.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if any(_telnyx_ref(c) for c in others):
+        # A second campaign takes no numbers by itself: the customer chooses which move.
+        log.info("tendlc_numbers_need_choice", registration_id=str(reg.id))
         return 0
     numbers = (
         (

@@ -529,7 +529,7 @@ async def texting_registration(
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:read"))],
 ) -> dict:
     """The workspace's self-serve texting registration (or none) and what it costs."""
-    from app.models import Notification
+    from app.models import Notification, TenDlcRegistration
     from app.services import notifications, tendlc
 
     reg = await tendlc.current(ctx.session, ctx.org.id)
@@ -553,8 +553,28 @@ async def texting_registration(
                 ctx.session, ctx.org.id, ctx.actor_user_id, ids=list(unread)
             )
             await ctx.session.commit()
+    all_regs = (
+        (
+            await ctx.session.execute(
+                sa.select(TenDlcRegistration)
+                .where(
+                    TenDlcRegistration.org_id == ctx.org.id,
+                    TenDlcRegistration.stage != "expired",
+                )
+                .order_by(TenDlcRegistration.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    in_flight = any(r.stage in tendlc.OPEN_STAGES and r.stage != "active" for r in all_regs)
+    can_add = not in_flight and any(
+        r.stage == "active" and r.fee_tier != "sole_proprietor" for r in all_regs
+    )
     return {
         "registration": await _texting_out(ctx, reg) if reg else None,
+        "registrations": [await _texting_out(ctx, r) for r in all_regs],
+        "can_add_campaign": can_add,
         "quotes": {tier: tendlc.customer_quote(tier) for tier in tendlc.MONTHLY_CENTS},
         # An approved business that only refiles a declined campaign skips the brand fee.
         "quotes_resubmit": {

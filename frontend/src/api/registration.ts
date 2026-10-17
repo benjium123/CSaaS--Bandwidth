@@ -379,6 +379,10 @@ export interface TextingRegistration extends TextingQuote {
 
 export interface TextingRegistrationState {
   registration: TextingRegistration | null;
+  /** Every registration of the workspace except expired ones, newest first (older servers omit it). */
+  registrations?: TextingRegistration[];
+  /** True when an approved business may file one more campaign (none is in flight). */
+  can_add_campaign?: boolean;
   quotes: { standard: TextingQuote; sole_proprietor: TextingQuote };
   /** Quotes for an already approved business refiling a declined campaign (no brand fee). */
   quotes_resubmit?: { standard: TextingQuote; sole_proprietor: TextingQuote };

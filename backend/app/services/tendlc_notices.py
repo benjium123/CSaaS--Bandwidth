@@ -7,6 +7,7 @@ error here is logged and swallowed."""
 
 from __future__ import annotations
 
+import sqlalchemy as sa
 import structlog
 
 from app.models import Org
@@ -32,13 +33,18 @@ def _link(base: str) -> str:
     return f"Review it here: {(base or '').rstrip('/')}{_LINK_PATH}"
 
 
-def body_for(reg, stage: str, base: str = "") -> str:  # noqa: ANN001
+CHOOSE_NUMBERS = "Choose which numbers use it on the Numbers page."
+
+
+def body_for(reg, stage: str, base: str = "", extra: str = "") -> str:  # noqa: ANN001
     """Email body: the subject sentence, the registration detail (carrier reason plus the
     refund/stop text) when there is one, then the link line."""
     parts = [NOTIFY_STAGES[stage]]
     detail = (getattr(reg, "detail", None) or "").strip()
     if detail:
         parts.append(detail)
+    if extra:
+        parts.append(extra)
     parts.append(_link(base))
     return "\n\n".join(parts)
 
@@ -75,6 +81,19 @@ async def _swallow(session, reg) -> None:  # noqa: ANN001
         pass
 
 
+async def _approved_campaigns(session, org_id) -> int:  # noqa: ANN001
+    from app.models import Campaign
+
+    rows = (
+        await session.execute(
+            sa.select(Campaign.carrier_refs).where(
+                Campaign.org_id == org_id, Campaign.status == "approved"
+            )
+        )
+    ).scalars().all()
+    return sum(1 for refs in rows if (refs or {}).get("telnyx"))
+
+
 async def stage_changed(session, settings, reg, old_stage: str, new_stage: str) -> bool:  # noqa: ANN001
     try:
         if new_stage not in NOTIFY_STAGES or old_stage == new_stage:
@@ -85,8 +104,12 @@ async def stage_changed(session, settings, reg, old_stage: str, new_stage: str) 
         reason = _first_reason(reg, new_stage)
         in_app = f"{subject}: {reason}" if reason else subject
         base = getattr(settings, "public_web_url", "") or ""
+        extra = ""
+        if new_stage == "active" and await _approved_campaigns(session, reg.org_id) > 1:
+            extra = CHOOSE_NUMBERS
+            in_app = f"{in_app}. {extra}"
         return await _send(
-            session, settings, reg, subject, in_app, body_for(reg, new_stage, base),
+            session, settings, reg, subject, in_app, body_for(reg, new_stage, base, extra),
             f"tendlc:{reg.id}:{new_stage}",
         )
     except Exception:

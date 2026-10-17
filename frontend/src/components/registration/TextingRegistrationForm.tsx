@@ -74,6 +74,7 @@ export function TextingRegistrationForm({
   pending,
   error,
   onSubmit,
+  approvedBrandOnly = false,
 }: {
   brands: RegistrationBrand[];
   campaigns: RegistrationCampaign[];
@@ -83,6 +84,8 @@ export function TextingRegistrationForm({
   pending: boolean;
   error: unknown;
   onSubmit: (input: TextingCheckoutInput) => void;
+  /** Adding another campaign: only the already approved business can be picked. */
+  approvedBrandOnly?: boolean;
 }): JSX.Element {
   const [brandId, setBrandId] = useState("");
   const [campaignId, setCampaignId] = useState("");
@@ -97,8 +100,10 @@ export function TextingRegistrationForm({
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
 
-  const eligibleBrands = brands.filter(
-    (brand) => isSelectable(brand.status) || isReusableBrand(brand.status),
+  const eligibleBrands = brands.filter((brand) =>
+    approvedBrandOnly
+      ? isReusableBrand(brand.status)
+      : isSelectable(brand.status) || isReusableBrand(brand.status),
   );
   const selectedBrand = brands.find((brand) => brand.id === brandId);
   const brandReused = selectedBrand !== undefined && isReusableBrand(selectedBrand.status);

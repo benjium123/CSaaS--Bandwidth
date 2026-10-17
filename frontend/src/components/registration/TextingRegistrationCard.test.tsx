@@ -693,3 +693,43 @@ describe("TextingRegistrationCard advisory campaign check", () => {
     expect(screen.getByRole("button", { name: "Pay and register" })).toBeEnabled();
   });
 });
+
+describe("TextingRegistrationCard more campaigns", () => {
+  function multiRoutes(canAdd: boolean) {
+    const first = registration({ id: "reg-1", stage: "active", campaign_id: "camp-1" });
+    const second = registration({ id: "reg-2", stage: "campaign_filed", campaign_id: "camp-2" });
+    return {
+      ...routes({
+        registration: second,
+        brands: [brand({ status: "approved" })],
+        campaigns: [campaign({ id: "camp-3", name: "Third", use_case: "CUSTOMER_CARE" })],
+      }),
+      "/api/v1/registration/texting": {
+        registration: second,
+        registrations: [second, first],
+        can_add_campaign: canAdd,
+        quotes: QUOTES,
+      },
+    };
+  }
+
+  it("lists every registration newest first", async () => {
+    const client = makeStubClient(multiRoutes(false));
+    renderWithProviders(<TextingRegistrationCard />, client);
+    const sections = await screen.findAllByRole("region", { name: /Texting campaign/ });
+    expect(sections).toHaveLength(2);
+    expect(sections[0]).toHaveAccessibleName("Texting campaign 2");
+    expect(screen.queryByRole("button", { name: "Add another campaign" })).toBeNull();
+  });
+
+  it("offers Add another campaign and opens the form limited to the approved business", async () => {
+    const client = makeStubClient(multiRoutes(true));
+    renderWithProviders(<TextingRegistrationCard />, client);
+    await userEvent.click(await screen.findByRole("button", { name: "Add another campaign" }));
+    expect(
+      screen.getByText(/choose which numbers use it on the Numbers page/),
+    ).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Business profile"), "brand-1");
+    expect(screen.getByText(/already approved/)).toBeInTheDocument();
+  });
+});

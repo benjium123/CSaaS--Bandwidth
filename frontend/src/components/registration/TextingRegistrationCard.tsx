@@ -81,7 +81,9 @@ function OtpStep({
   return (
     <>
       <p className={MUTED}>
-        {"The carrier texted a 6-digit code to the owner's mobile. It is valid for 24 hours."}
+        {
+          "The carrier texted a 6-digit code to the owner's mobile. It is valid for 24 hours."
+        }
       </p>
       {canManage ? (
         <>
@@ -104,19 +106,30 @@ function OtpStep({
                 autoComplete="one-time-code"
                 maxLength={6}
                 value={pin}
-                onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                onChange={(event) =>
+                  setPin(event.target.value.replace(/\D/g, "").slice(0, 6))
+                }
               />
             </div>
             <div className="flex items-center gap-2">
               <Button type="submit" disabled={pin.length !== 6 || pending}>
                 Verify
               </Button>
-              <Button type="button" variant="outline" disabled={resendPending} onClick={onResend}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={resendPending}
+                onClick={onResend}
+              >
                 Send a new code
               </Button>
             </div>
           </form>
-          <MutationStatus pending={pending} error={error} pendingLabel={"Checking code\u2026"} />
+          <MutationStatus
+            pending={pending}
+            error={error}
+            pendingLabel={"Checking code\u2026"}
+          />
           <MutationStatus
             pending={resendPending}
             error={resendError}
@@ -130,7 +143,11 @@ function OtpStep({
 }
 
 /** The checklist for every stage after payment. */
-function ProgressSteps({ registration }: { registration: TextingRegistration }): JSX.Element {
+function ProgressSteps({
+  registration,
+}: {
+  registration: TextingRegistration;
+}): JSX.Element {
   const rank = STAGE_RANK[registration.stage] ?? 0;
   const detail = registration.detail ?? "";
 
@@ -149,7 +166,10 @@ function ProgressSteps({ registration }: { registration: TextingRegistration }):
 
   return (
     <>
-      <ol aria-label="Texting registration progress" className="flex flex-col gap-[4px]">
+      <ol
+        aria-label="Texting registration progress"
+        className="flex flex-col gap-[4px]"
+      >
         {steps.map((step) => (
           <li
             key={step.label}
@@ -159,7 +179,9 @@ function ProgressSteps({ registration }: { registration: TextingRegistration }):
             <span aria-hidden="true">{step.done ? "\u2713" : "\u25cb"}</span>
             <span
               className={
-                step.done ? "text-[hsl(var(--cx-text))]" : "text-[hsl(var(--cx-muted))]"
+                step.done
+                  ? "text-[hsl(var(--cx-text))]"
+                  : "text-[hsl(var(--cx-muted))]"
               }
             >
               {step.label}
@@ -170,7 +192,8 @@ function ProgressSteps({ registration }: { registration: TextingRegistration }):
       {detail !== "" ? <p className={MUTED}>{detail}</p> : null}
       {registration.stage === "active" ? (
         <p className={MUTED}>
-          Texting is live. Your numbers are being added to your campaign automatically.
+          Texting is live. Your numbers are being added to your campaign
+          automatically.
         </p>
       ) : null}
     </>
@@ -180,13 +203,19 @@ function ProgressSteps({ registration }: { registration: TextingRegistration }):
 /** Plain-words label for one carrier event. */
 export function activityLabel(event: TextingEvent): string {
   const status = (event.status ?? "").toUpperCase();
-  if (event.subject === "number" && status === "FAILED") return "Number not added";
+  if (event.subject === "number" && status === "FAILED")
+    return "Number not added";
   if (/REJECT|FAIL/.test(status)) return "Needs changes";
-  if (/ACCEPT|VERIFIED|APPROV|PROVISIONED|REGISTERED|^OK$/.test(status)) return "Approved";
+  if (/ACCEPT|VERIFIED|APPROV|PROVISIONED|REGISTERED|^OK$/.test(status))
+    return "Approved";
   return "Update";
 }
 
-function ActivityList({ registrationId }: { registrationId: string }): JSX.Element | null {
+function ActivityList({
+  registrationId,
+}: {
+  registrationId: string;
+}): JSX.Element | null {
   const { api } = useAuth();
   const events = useTextingEvents(api, registrationId);
   const items = events.data?.items ?? [];
@@ -194,7 +223,10 @@ function ActivityList({ registrationId }: { registrationId: string }): JSX.Eleme
   return (
     <div className="flex flex-col gap-[4px]">
       <SectionLabel>Activity</SectionLabel>
-      <ul aria-label="Texting registration activity" className="flex flex-col gap-[4px]">
+      <ul
+        aria-label="Texting registration activity"
+        className="flex flex-col gap-[4px]"
+      >
         {items.map((event) => (
           <li key={event.id} className="text-[12.5px]">
             <span className="text-[hsl(var(--cx-muted))]">
@@ -202,7 +234,10 @@ function ActivityList({ registrationId }: { registrationId: string }): JSX.Eleme
             </span>{" "}
             <span className="font-medium">{activityLabel(event)}</span>
             {event.reasons.length > 0 ? (
-              <span className="text-[hsl(var(--cx-muted))]"> - {event.reasons.join("; ")}</span>
+              <span className="text-[hsl(var(--cx-muted))]">
+                {" "}
+                - {event.reasons.join("; ")}
+              </span>
             ) : null}
           </li>
         ))}
@@ -224,16 +259,21 @@ export function TextingRegistrationCard({
   const checkout = useTextingCheckout(api);
   const verify = useVerifyTextingOtp(api);
   const resend = useResendTextingOtp(api);
+  const [addingCampaign, setAddingCampaign] = useState(false);
 
   function renderForm(
     data: TextingRegistrationState,
     registration: TextingRegistration | null,
+    approvedBrandOnly = false,
   ): JSX.Element {
     const rejected =
       registration !== null &&
-      (registration.stage === "brand_rejected" || registration.stage === "campaign_rejected");
+      (registration.stage === "brand_rejected" ||
+        registration.stage === "campaign_rejected");
     const detail = registration?.detail ?? "";
-    const brands: RegistrationBrand[] = Array.isArray(brandsQuery.data) ? brandsQuery.data : [];
+    const brands: RegistrationBrand[] = Array.isArray(brandsQuery.data)
+      ? brandsQuery.data
+      : [];
     const campaigns: RegistrationCampaign[] = Array.isArray(campaignsQuery.data)
       ? campaignsQuery.data
       : [];
@@ -242,7 +282,9 @@ export function TextingRegistrationCard({
     let body: JSX.Element;
     if (!canManage) {
       body = (
-        <p className={MUTED}>Ask a workspace admin to register this workspace for texting.</p>
+        <p className={MUTED}>
+          Ask a workspace admin to register this workspace for texting.
+        </p>
       );
     } else if (brandsQuery.isLoading || campaignsQuery.isLoading) {
       body = <Spinner label="Loading business profiles" />;
@@ -257,6 +299,7 @@ export function TextingRegistrationCard({
           campaigns={campaigns}
           quotes={data.quotes}
           quotesResubmit={data.quotes_resubmit}
+          approvedBrandOnly={approvedBrandOnly}
           pending={checkout.isPending}
           error={checkout.error}
           onSubmit={(input) =>
@@ -286,20 +329,98 @@ export function TextingRegistrationCard({
   }
 
   function renderStage(): JSX.Element {
-    if (texting.isLoading) return <Spinner label="Loading texting registration" />;
+    if (texting.isLoading)
+      return <Spinner label="Loading texting registration" />;
     if (texting.error) return <ErrorAlert error={texting.error} />;
 
     const data = texting.data;
-    if (data === undefined) return <Spinner label="Loading texting registration" />;
+    if (data === undefined)
+      return <Spinner label="Loading texting registration" />;
 
     const { registration } = data;
     if (registration === null) return renderForm(data, null);
 
+    const all = data.registrations ?? [];
+    if (all.length > 1 || addingCampaign) {
+      return (
+        <>
+          {all.map((item, index) => (
+            <section
+              key={item.id}
+              aria-label={`Texting campaign ${all.length - index}`}
+              className="flex flex-col gap-[9px]"
+            >
+              {index > 0 || addingCampaign ? (
+                <SectionLabel>{`Campaign ${all.length - index}`}</SectionLabel>
+              ) : null}
+              {renderRegistration(data, item, index === 0 && !addingCampaign)}
+              <ActivityList registrationId={item.id} />
+            </section>
+          ))}
+          {data.can_add_campaign && canManage ? (
+            addingCampaign ? (
+              <div className="flex flex-col gap-[9px]">
+                <SectionLabel>Add another campaign</SectionLabel>
+                <p className={MUTED}>
+                  Each campaign is reviewed by the carriers on its own. After it
+                  is approved, choose which numbers use it on the Numbers page.
+                </p>
+                {renderForm(data, null, true)}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setAddingCampaign(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAddingCampaign(true)}
+              >
+                Add another campaign
+              </Button>
+            )
+          ) : null}
+        </>
+      );
+    }
+    return (
+      <>
+        {renderRegistration(data, registration, true)}
+        {data.can_add_campaign && canManage ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setAddingCampaign(true)}
+          >
+            Add another campaign
+          </Button>
+        ) : null}
+      </>
+    );
+  }
+
+  function renderRegistration(
+    data: TextingRegistrationState,
+    registration: TextingRegistration,
+    newest: boolean,
+  ): JSX.Element {
     switch (registration.stage) {
       case "expired":
       case "cancelled":
       case "brand_rejected":
       case "campaign_rejected":
+        if (!newest) {
+          return (
+            <p className={MUTED}>
+              Not approved
+              {registration.detail ? `: ${registration.detail}` : "."}
+            </p>
+          );
+        }
         return renderForm(data, registration);
       case "checkout": {
         const checkoutUrl = registration.checkout_url;
@@ -320,7 +441,9 @@ export function TextingRegistrationCard({
             canManage={canManage}
             pending={verify.isPending}
             error={verify.error}
-            onVerify={(pin) => verify.mutate({ registrationId: registration.id, pin })}
+            onVerify={(pin) =>
+              verify.mutate({ registrationId: registration.id, pin })
+            }
             resendPending={resend.isPending}
             resendError={resend.error}
             resendSuccess={resend.isSuccess}
@@ -347,7 +470,9 @@ export function TextingRegistrationCard({
     <ConsoleCard className="flex flex-col gap-[9px]">
       <SectionLabel>Register for texting</SectionLabel>
       {renderStage()}
-      {texting.data?.registration ? (
+      {texting.data?.registration &&
+      (texting.data.registrations ?? []).length <= 1 &&
+      !addingCampaign ? (
         <ActivityList registrationId={texting.data.registration.id} />
       ) : null}
     </ConsoleCard>
