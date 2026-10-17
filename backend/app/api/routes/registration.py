@@ -519,9 +519,30 @@ async def texting_registration(
     ctx: Annotated[OrgContext, Depends(require_permission("compliance:read"))],
 ) -> dict:
     """The workspace's self-serve texting registration (or none) and what it costs."""
-    from app.services import tendlc
+    from app.models import Notification
+    from app.services import notifications, tendlc
 
     reg = await tendlc.current(ctx.session, ctx.org.id)
+    if ctx.actor_user_id:
+        # Opening the registration page clears the texting banner for this person.
+        unread = (
+            (
+                await ctx.session.execute(
+                    sa.select(Notification.id).where(
+                        Notification.user_id == ctx.actor_user_id,
+                        Notification.kind == "texting",
+                        Notification.read_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if unread:
+            await notifications.mark_read(
+                ctx.session, ctx.org.id, ctx.actor_user_id, ids=list(unread)
+            )
+            await ctx.session.commit()
     return {
         "registration": await _texting_out(ctx, reg) if reg else None,
         "quotes": {tier: tendlc.customer_quote(tier) for tier in tendlc.MONTHLY_CENTS},
@@ -555,6 +576,45 @@ async def texting_checkout(
         customer_email=await _actor_email(ctx),
     )
     return await _texting_out(ctx, reg)
+
+
+@router.get("/texting/{registration_id}/events")
+async def texting_events(
+    registration_id: uuid.UUID,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:read"))],
+) -> dict:
+    """The registration's carrier timeline, newest first (never the raw payload)."""
+    from app.models import TenDlcEvent
+
+    reg = await _own_registration(ctx, registration_id)
+    rows = (
+        (
+            await ctx.session.execute(
+                sa.select(TenDlcEvent)
+                .where(TenDlcEvent.registration_id == reg.id)
+                .order_by(TenDlcEvent.received_at.desc(), TenDlcEvent.id)
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": str(e.id),
+                "subject": e.subject,
+                "telnyx_id": e.telnyx_id,
+                "event_type": e.event_type,
+                "payload_type": e.payload_type,
+                "status": e.status,
+                "reasons": list(e.reasons or []),
+                "verified": e.verified,
+                "received_at": e.received_at,
+            }
+            for e in rows
+        ]
+    }
 
 
 async def _actor_email(ctx: OrgContext) -> str | None:
