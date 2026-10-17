@@ -72,6 +72,10 @@ CONFIRMED_KINDS = frozenset({"call_scam", "text_held_confirmed"})
 #: Where a pending operator decision lives inside `case_file`. NOT "recommendation" - that
 #: key is already taken by the AI case file, where it holds a plain string.
 PENDING_ACTION = "pending_action"
+#: Set when an operator REJECTS a recommendation (owner 2026-10-17): the business is known, so
+#: the call reviewer's "suspicious" verdicts are still recorded but no longer counted. "Scam"
+#: always counts. Applying a later recommendation, or a pause rewriting the case file, ends it.
+TRUSTED_CALLS = "trusted_suspicious_calls"
 
 
 def _now() -> datetime:
@@ -128,6 +132,8 @@ async def current_score(
     stmt = sa.select(sa.func.coalesce(sa.func.sum(MonitorSignal.weight), 0)).where(
         MonitorSignal.org_id == state.org_id, in_window
     )
+    if (state.case_file or {}).get(TRUSTED_CALLS):
+        stmt = stmt.where(MonitorSignal.kind != "call_suspicious")
     if hard_only:
         stmt = stmt.where(MonitorSignal.kind.not_in(tuple(SOFT_KINDS)))
     if kinds is not None:

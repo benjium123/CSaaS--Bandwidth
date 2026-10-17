@@ -150,6 +150,35 @@ async def test_rejecting_a_recommendation_does_not_leave_it_to_reappear(session,
     assert state.level == "normal"
 
 
+async def test_a_rejected_workspace_stops_counting_suspicious_calls_but_not_scams(
+    session, detect_only
+):
+    """Owner 2026-10-17: after a reject, low-severity "suspicious" call verdicts (a cold caller
+    selling websites) must not walk the account back into the queue; a "scam" verdict still
+    counts."""
+    org_id = await _org(session)
+    state = await monitor_score.get_state(session, org_id, create=True)
+    # What the reject branch of the decision endpoint writes.
+    state.case_file = {monitor_score.TRUSTED_CALLS: {"at": NOW.isoformat(), "by": "op"}}
+    await session.commit()
+
+    for n in range(8):
+        await monitor_score.add_signal(
+            session, detect_only, org_id, "call_suspicious", f"suspicious {n}"
+        )
+    await session.commit()
+    set_org_context(session, org_id)
+    state = await monitor_score.get_state(session, org_id, create=True)
+    assert state.score == 0
+    assert monitor_score.recommended_level(state) is None
+
+    await monitor_score.add_signal(session, detect_only, org_id, "call_scam", "scam")
+    await session.commit()
+    set_org_context(session, org_id)
+    state = await monitor_score.get_state(session, org_id, create=True)
+    assert state.score == monitor_score.WEIGHTS["call_scam"]
+
+
 async def test_a_signal_stamped_at_the_operators_decision_is_not_counted_again(
     session, detect_only
 ):

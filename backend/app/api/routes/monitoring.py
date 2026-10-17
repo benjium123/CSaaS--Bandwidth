@@ -920,9 +920,29 @@ async def decide_recommendation(
     # recompute as if nobody had looked, so the score is cleared to the decision point -
     # the same mechanism `unpause` uses to stop old signals re-pausing an account.
     monitor_score.clear_recommendation(state)
+    case = dict(state.case_file or {})
     if payload.action == "reject":
         state.cleared_before = _now()
         state.score = 0
+        # Owner 2026-10-17: a rejected recommendation means the business is known, so its
+        # low-severity "suspicious call" verdicts stop counting (monitor_score.TRUSTED_CALLS).
+        case[monitor_score.TRUSTED_CALLS] = {"at": _now().isoformat(), "by": str(op.user.id)}
+    else:
+        case.pop(monitor_score.TRUSTED_CALLS, None)
+    state.case_file = case
+    # The decision answers every open recommendation alert for this workspace; leaving them
+    # open put the same account back in front of the operator after they had decided.
+    from app.models import SecurityAlert
+
+    await op.session.execute(
+        sa.update(SecurityAlert)
+        .where(
+            SecurityAlert.org_id == org_id,
+            SecurityAlert.kind == "monitor_action_recommended",
+            SecurityAlert.status == "open",
+        )
+        .values(status="reviewed")
+    )
     state.reviewed_by = op.user.id
     state.reviewed_at = _now()
     await op.session.commit()
