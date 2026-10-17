@@ -91,6 +91,15 @@ class Campaign(Base, TenantScoped, TimestampMixin):
 
     help_message: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
     opt_out_message: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
+    #: What carrier vetters read (migration 0100). Keywords are comma separated.
+    privacy_policy_url: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
+    terms_url: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
+    opt_in_keywords: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    opt_out_keywords: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    help_keywords: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    opt_in_message: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
+    opt_in_proof_url: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
+    expected_monthly_messages: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
 
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="draft")
     carrier_refs: Mapped[dict] = mapped_column(PortableJSON(), nullable=False, default=dict)
