@@ -91,6 +91,35 @@ async def test_plan_invoice_stores_its_tendlc_monthly_line(session):
     assert row.kind == "plan" and row.detail["tendlc_micros"] == 1250 * CENT
 
 
+async def test_plan_invoice_line_found_by_subscription_item_id(session):
+    """Stripe puts the SUBSCRIPTION's metadata on a subscription line, so the 10DLC line is
+    found by the item id saved on the registration (new and old invoice shapes)."""
+    org, brand, campaign, _ = await _workspace(session)
+    set_org_context(session, org.id)
+    session.add(
+        TenDlcRegistration(
+            org_id=org.id, brand_id=brand.id, campaign_id=campaign.id, fee_tier="standard",
+            stage="active", filing={"monthly_item_id": "si_10dlc"}, paid_at=PAID_AT,
+        )
+    )
+    await session.commit()
+    plan_meta = {"kind": "workspace_plan"}
+    lines = [
+        {"amount": 3600, "metadata": plan_meta, "subscription_item": "si_plan"},
+        {
+            "amount": 1250,
+            "metadata": plan_meta,
+            "parent": {"subscription_item_details": {"subscription_item": "si_10dlc"}},
+        },
+    ]
+    inv = _invoice(org.id, kind="workspace_plan", invoice_id="in_p2", paid=4850, lines=lines)
+    assert await payments.record_subscription_invoice(session, inv)
+    await session.commit()
+    set_org_context(session, org.id)
+    row = (await session.execute(sa.select(BillingPayment))).scalar_one()
+    assert row.detail["tendlc_micros"] == 1250 * CENT
+
+
 async def test_first_filing_that_went_active(session):
     org = await _reg(session, stage="active")
     await _payment(session, org, fee=200 * CENT)

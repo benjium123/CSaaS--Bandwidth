@@ -488,7 +488,9 @@ async def daily(
             if not c or not any(c.values()):
                 continue
             row = {f: int(c.get(f, 0)) for f in FIELDS}
-            row["profit"] = row["charged"] - row["carrier_cost"] - row["ai_cost"] - row["stripe_fees"]
+            row["profit"] = (
+                row["charged"] - row["carrier_cost"] - row["ai_cost"] - row["stripe_fees"]
+            )
             services[key] = row
             for f, v in row.items():
                 by_service_totals[key][f] += v

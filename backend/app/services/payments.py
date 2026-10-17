@@ -335,6 +335,42 @@ def _invoice_intent(invoice: dict) -> str | None:
     return str(intent) if intent else None
 
 
+def _line_item_id(line: dict) -> str | None:
+    """The subscription item behind an invoice line, in both Stripe shapes."""
+    details = (line.get("parent") or {}).get("subscription_item_details") or {}
+    item = details.get("subscription_item") or line.get("subscription_item")
+    if isinstance(item, dict):
+        item = item.get("id")
+    return str(item) if item else None
+
+
+async def _tendlc_line_cents(session: AsyncSession, org_id: uuid.UUID, invoice: dict) -> int:
+    """Cents of a plan invoice that are the 10DLC monthly fee riding on it. Matched by the
+    subscription item id saved on the registration: a subscription line's ``metadata`` is
+    the SUBSCRIPTION's, not the item's, so it cannot be relied on (kept as a fallback)."""
+    from app.models import TenDlcRegistration
+
+    item_ids = {
+        str(item)
+        for (filing,) in (
+            await session.execute(
+                sa.select(TenDlcRegistration.filing)
+                .where(TenDlcRegistration.org_id == org_id)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).all()
+        if (item := (filing or {}).get("monthly_item_id"))
+    }
+    total = 0
+    for line in ((invoice.get("lines") or {}).get("data")) or []:
+        line = line or {}
+        if _line_item_id(line) in item_ids or (
+            (line.get("metadata") or {}).get("kind") == "tendlc_monthly"
+        ):
+            total += int(line.get("amount") or 0)
+    return total
+
+
 async def record_subscription_invoice(session: AsyncSession, invoice: dict) -> bool:
     """``invoice.paid`` for a plan (or per-number) subscription -> one paid billing_payments
     row, so the console counts subscription revenue and what the workspace's coupons took
@@ -373,11 +409,7 @@ async def record_subscription_invoice(session: AsyncSession, invoice: dict) -> b
         "billing_reason": invoice.get("billing_reason"),
     }
     if kind == "plan":
-        tendlc_cents = sum(
-            int((line or {}).get("amount") or 0)
-            for line in ((invoice.get("lines") or {}).get("data")) or []
-            if ((line or {}).get("metadata") or {}).get("kind") == "tendlc_monthly"
-        )
+        tendlc_cents = await _tendlc_line_cents(session, org_id, invoice)
         if tendlc_cents > 0:
             detail["tendlc_micros"] = min(tendlc_cents * _CENT, max(paid, 0))
     intent = _invoice_intent(invoice)
