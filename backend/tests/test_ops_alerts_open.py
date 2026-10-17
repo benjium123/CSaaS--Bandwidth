@@ -20,7 +20,9 @@ async def test_alerts_carry_workspace_and_person(ops, session):  # noqa: F811
     await register_and_login(ops, "flagged@example.com")
     user = (
         await session.execute(
-            sa.select(User).where(User.email == "flagged@example.com").execution_options(allow_unscoped=True)
+            sa.select(User)
+            .where(User.email == "flagged@example.com")
+            .execution_options(allow_unscoped=True)
         )
     ).scalar_one()
     member_org = (

@@ -199,7 +199,8 @@ async def refresh(session: AsyncSession, settings: Settings, token: str) -> dict
                     user = await session.get(User, row.user_id)
                     if user is None or not user.is_active:
                         raise invalid
-                    return token_pair(row, user, settings, f"{REFRESH_PREFIX}.{row.id}.{new_secret}")
+                    refresh = f"{REFRESH_PREFIX}.{row.id}.{new_secret}"
+                    return token_pair(row, user, settings, refresh)
                 await session.rollback()
                 raise ConflictError(
                     "Your session was just refreshed. Try again.", code="refresh_in_progress"

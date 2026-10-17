@@ -901,7 +901,11 @@ async def alerts(op: Reader, status: str = Query(default="open")) -> list[dict]:
     first_org: dict = {}
     if user_ids:
         emails = dict(
-            (await op.session.execute(sa.select(User.id, User.email).where(User.id.in_(user_ids)))).all()
+            (
+                await op.session.execute(
+                    sa.select(User.id, User.email).where(User.id.in_(user_ids))
+                )
+            ).all()
         )
         # JUSTIFIED allow_unscoped: an operator resolving memberships across workspaces.
         for uid, oid in (
@@ -916,7 +920,11 @@ async def alerts(op: Reader, status: str = Query(default="open")) -> list[dict]:
     org_of = {a.id: a.org_id or first_org.get(a.user_id) for a in rows}
     org_ids = {oid for oid in org_of.values() if oid}
     names = (
-        dict((await op.session.execute(sa.select(Org.id, Org.name).where(Org.id.in_(org_ids)))).all())
+        dict(
+            (
+                await op.session.execute(sa.select(Org.id, Org.name).where(Org.id.in_(org_ids)))
+            ).all()
+        )
         if org_ids
         else {}
     )
