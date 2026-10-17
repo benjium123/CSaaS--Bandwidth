@@ -81,6 +81,7 @@ class FakeTelnyx:
         self.campaign_status = {"campaignStatus": "TCR_PENDING"}
         self.fail_brand_post = False
         self.bad_pin = False
+        self.fail_assignment = False
         #: What a brand search (GET /10dlc/brand?displayName=...) returns.
         self.brand_records: list[dict] = []
 
@@ -108,6 +109,8 @@ class FakeTelnyx:
             return httpx.Response(200, json={"campaignId": "C456", "brandId": "B123"})
         if "/10dlc/campaign/" in path:
             return httpx.Response(200, json={"campaignId": "C456", **self.campaign_status})
+        if path.endswith("/10dlc/phone_number_campaigns") and self.fail_assignment:
+            return httpx.Response(400, json={"errors": [{"detail": "Number already assigned"}]})
         if path.endswith("/10dlc/phone_number_campaigns"):
             body = json.loads(request.content)
             return httpx.Response(200, json=body)

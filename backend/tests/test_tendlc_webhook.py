@@ -99,6 +99,7 @@ async def test_rejection_reason_is_saved_and_the_status_rechecked(session, strip
             )
         ).scalar_one()
         assert reg.rejection["reasons"] == ["Opt-in is not described"]
+        assert "Opt-in is not described" in reg.detail
 
 
 async def test_the_same_event_twice_is_one_row(session, stripe_stub, telnyx):
@@ -172,3 +173,41 @@ async def test_unverified_event_does_not_overwrite_verified_rejection(
             )
         ).scalar_one()
         assert reg.rejection["reasons"] == ["Real reason"] and reg.rejection["verified"] is True
+
+
+async def test_poll_only_rejection_keeps_the_generic_words(session, stripe_stub, telnyx):
+    reg_id, sm = await _to_campaign_filed(session, telnyx)
+    telnyx.campaign_status = {"campaignStatus": "MNO_REJECTED"}
+    await tendlc.tick(sm, _settings(), client=telnyx.client)
+    assert await _stage(reg_id) == "campaign_rejected"
+    async with sm() as s:
+        reg = (
+            await s.execute(
+                sa.select(TenDlcRegistration)
+                .where(TenDlcRegistration.id == reg_id)
+                .execution_options(**_UNSCOPED)
+            )
+        ).scalar_one()
+        assert reg.rejection is None
+        assert reg.detail.startswith("The carriers did not approve this campaign")
+
+
+async def test_a_failed_number_assignment_is_on_the_timeline(session, stripe_stub, telnyx):
+    reg_id, sm = await _to_campaign_filed(session, telnyx)
+    telnyx.fail_assignment = True
+    telnyx.campaign_status = {"campaignStatus": "MNO_PROVISIONED"}
+    await tendlc.tick(sm, _settings(), client=telnyx.client)
+    async with sm() as s:
+        rows = (
+            (
+                await s.execute(
+                    sa.select(TenDlcEvent)
+                    .where(TenDlcEvent.subject == "number")
+                    .execution_options(**_UNSCOPED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1 and rows[0].status == "FAILED"
+    assert rows[0].reasons and rows[0].registration_id == reg_id

@@ -601,9 +601,13 @@ async def _step(session, settings, reg, client) -> None:
             reg.stage = "brand_approved"
             reg.detail = None
         elif verdict == REJECTED:
-            advance_status(brand, "rejected", error="The carrier did not accept this business.")
+            from app.services.tendlc_events import rejection_text
+
+            why = rejection_text(reg.rejection, "The carrier did not accept this business.")
+            advance_status(brand, "rejected", error=why)
             reg.stage = "brand_rejected"
-            reg.detail = await _refund_unused(settings, reg)
+            refund = await _refund_unused(settings, reg)
+            reg.detail = refund if reg.rejection is None else f"{why} {refund}"
         return
 
     if reg.stage == "brand_approved":
@@ -642,9 +646,13 @@ async def _step(session, settings, reg, client) -> None:
             await session.commit()
             await associate_numbers(session, settings, reg, campaign, client=client)
         elif verdict == REJECTED:
-            advance_status(campaign, "rejected", error="The carriers did not accept this campaign.")
+            from app.services.tendlc_events import rejection_text
+
+            why = rejection_text(reg.rejection, "The carriers did not accept this campaign.")
+            advance_status(campaign, "rejected", error=why)
             reg.stage = "campaign_rejected"
-            reg.detail = await _cancel_monthly(settings, reg)
+            stop = await _cancel_monthly(settings, reg)
+            reg.detail = stop if reg.rejection is None else f"{why} {stop}"
         return
 
     if reg.stage == "active":
@@ -779,17 +787,42 @@ async def associate_numbers(session, settings, reg, campaign, *, client=None) ->
             return 0
         numbers = numbers[:1]
     done = 0
+    reg_id, reg_org_id = reg.id, reg.org_id
     for number in numbers:
         if number.campaign_id is not None or (number.provisioning or {}).get(
             "telnyx_campaign_assignment"
         ):
             continue
+        number_id, number_e164 = number.id, number.e164
         try:
             await associate_number_with_telnyx(session, settings, number, campaign, client=client)
             done += 1
-        except Exception:
+        except Exception as exc:
             await session.rollback()
-            log.exception("tendlc_number_association_failed", number_id=str(number.id))
+            log.exception("tendlc_number_association_failed", number_id=str(number_id))
+            from app.services import tendlc_events
+
+            try:
+                set_org_context(session, reg_org_id)
+                await tendlc_events.record(
+                    session,
+                    org_id=reg_org_id,
+                    registration_id=reg_id,
+                    event=tendlc_events.CarrierEvent(
+                        telnyx_event_id=None,
+                        event_type="local.number.assignment",
+                        subject="number",
+                        telnyx_id=str(number_e164),
+                        payload_type="ASSIGNMENT",
+                        status="FAILED",
+                        reasons=[str(exc)[:500] or type(exc).__name__],
+                        raw={},
+                    ),
+                    verified=True,
+                )
+                await session.commit()
+            except Exception:
+                log.exception("tendlc_assignment_event_failed", registration_id=str(reg_id))
     return done
 
 
