@@ -71,37 +71,129 @@ async def number_purchase_queue(op: Reader) -> list[dict]:
 
 
 @router.get("/texting-registrations")
-async def texting_registrations(op: Reader) -> list[dict]:
+async def texting_registrations(
+    op: Reader, stage: Annotated[str | None, Query(max_length=32)] = None
+) -> list[dict]:
     """Self-serve 10DLC registrations across workspaces, newest first."""
-    from app.models import Brand, Campaign, Org, TenDlcRegistration
+    from app.models import Brand, Campaign, Org, OrgNumber, TenDlcEvent, TenDlcRegistration
 
+    query = (
+        sa.select(TenDlcRegistration, Org.name, Brand, Campaign)
+        .join(Org, Org.id == TenDlcRegistration.org_id)
+        .join(Brand, Brand.id == TenDlcRegistration.brand_id)
+        .join(Campaign, Campaign.id == TenDlcRegistration.campaign_id)
+        .order_by(TenDlcRegistration.created_at.desc())
+        .limit(100)
+        .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    )
+    if stage:
+        query = query.where(TenDlcRegistration.stage == stage)
     # JUSTIFIED: named operators follow registrations across customer workspaces.
-    rows = (
-        await op.session.execute(
-            sa.select(TenDlcRegistration, Org.name, Brand.name, Campaign.name)
-            .join(Org, Org.id == TenDlcRegistration.org_id)
-            .join(Brand, Brand.id == TenDlcRegistration.brand_id)
-            .join(Campaign, Campaign.id == TenDlcRegistration.campaign_id)
-            .order_by(TenDlcRegistration.created_at.desc())
-            .limit(100)
-            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+    rows = (await op.session.execute(query)).all()
+    reg_ids = [reg.id for reg, *_ in rows]
+
+    # Newest event per registration, failed number ids per registration, and numbers on each
+    # campaign: three grouped queries over the listed ids, never one per row.
+    last_events: dict = {}
+    failed: dict = {}
+    assigned: dict = {}
+    if reg_ids:
+        # JUSTIFIED: same cross-workspace operator read as the list above.
+        events = (
+            await op.session.execute(
+                sa.select(TenDlcEvent)
+                .where(TenDlcEvent.registration_id.in_(reg_ids))
+                .order_by(TenDlcEvent.received_at.desc(), TenDlcEvent.id)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalars()
+        for e in events:
+            last_events.setdefault(e.registration_id, e)
+            if e.subject == "number" and e.status == "FAILED":
+                failed.setdefault(e.registration_id, set()).add(e.telnyx_id)
+        # JUSTIFIED: same cross-workspace operator read as the list above.
+        counts = (
+            await op.session.execute(
+                sa.select(OrgNumber.org_id, OrgNumber.campaign_id, sa.func.count(OrgNumber.id))
+                .where(OrgNumber.campaign_id.in_([c.id for *_, c in rows]))
+                .group_by(OrgNumber.org_id, OrgNumber.campaign_id)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).all()
+        assigned = {(org_id, campaign_id): n for org_id, campaign_id, n in counts}
+
+    out = []
+    for reg, org_name, brand, campaign in rows:
+        last = last_events.get(reg.id)
+        out.append(
+            {
+                "id": str(reg.id),
+                "org_id": str(reg.org_id),
+                "org_name": org_name,
+                "brand_name": brand.name,
+                "campaign_name": campaign.name,
+                "stage": reg.stage,
+                "fee_tier": reg.fee_tier,
+                "detail": reg.detail,
+                "paid_at": reg.paid_at.isoformat() if reg.paid_at else None,
+                "updated_at": reg.updated_at.isoformat() if reg.updated_at else None,
+                "brand_telnyx_id": (brand.carrier_refs or {}).get("telnyx"),
+                "campaign_telnyx_id": (campaign.carrier_refs or {}).get("telnyx"),
+                "rejection": reg.rejection or None,
+                "brand_reused": bool((reg.filing or {}).get("brand_reused")),
+                "last_event": (
+                    {
+                        "event_type": last.event_type,
+                        "status": last.status,
+                        "received_at": last.received_at.isoformat(),
+                        "verified": last.verified,
+                    }
+                    if last
+                    else None
+                ),
+                "numbers_assigned": assigned.get((reg.org_id, reg.campaign_id), 0),
+                "numbers_failed": len(failed.get(reg.id, ())),
+            }
         )
-    ).all()
-    return [
-        {
-            "id": str(reg.id),
-            "org_id": str(reg.org_id),
-            "org_name": org_name,
-            "brand_name": brand_name,
-            "campaign_name": campaign_name,
-            "stage": reg.stage,
-            "fee_tier": reg.fee_tier,
-            "detail": reg.detail,
-            "paid_at": reg.paid_at.isoformat() if reg.paid_at else None,
-            "updated_at": reg.updated_at.isoformat() if reg.updated_at else None,
-        }
-        for reg, org_name, brand_name, campaign_name in rows
-    ]
+    return out
+
+
+@router.get("/texting-registrations/{reg_id}/events")
+async def texting_registration_events(reg_id: uuid.UUID, op: Reader) -> dict:
+    """One registration's carrier timeline, newest first (never the raw payload)."""
+    from app.models import TenDlcEvent
+
+    await _registration_org(op, reg_id)
+    # JUSTIFIED: named operators read any workspace's registration timeline.
+    rows = (
+        (
+            await op.session.execute(
+                sa.select(TenDlcEvent)
+                .where(TenDlcEvent.registration_id == reg_id)
+                .order_by(TenDlcEvent.received_at.desc(), TenDlcEvent.id)
+                .limit(100)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": str(e.id),
+                "subject": e.subject,
+                "telnyx_id": e.telnyx_id,
+                "event_type": e.event_type,
+                "payload_type": e.payload_type,
+                "status": e.status,
+                "reasons": list(e.reasons or []),
+                "verified": e.verified,
+                "received_at": e.received_at,
+            }
+            for e in rows
+        ]
+    }
 
 
 async def _registration_org(op: OperatorContext, reg_id: uuid.UUID) -> uuid.UUID:

@@ -28,6 +28,13 @@ function registration(over: Record<string, unknown>): Record<string, unknown> {
     detail: null,
     paid_at: null,
     updated_at: null,
+    brand_telnyx_id: null,
+    campaign_telnyx_id: null,
+    rejection: null,
+    brand_reused: false,
+    last_event: null,
+    numbers_assigned: 0,
+    numbers_failed: 0,
     ...over,
   };
 }
@@ -41,6 +48,13 @@ const REGISTRATIONS: Record<string, unknown>[] = [
     campaign_name: "Alerts",
     stage: "needs_attention",
     detail: "Brand filing was interrupted",
+    brand_telnyx_id: "B-ADA-1",
+    campaign_telnyx_id: "C-ADA-1",
+    rejection: { subject: "campaign", reasons: ["Opt-in is unclear"], verified: false, at: "2026-10-17T10:00:00Z" },
+    brand_reused: true,
+    last_event: { event_type: "TCR_CAMPAIGN_UPDATE", status: "REJECTED", received_at: "2026-10-17T10:00:00Z", verified: false },
+    numbers_assigned: 2,
+    numbers_failed: 1,
   }),
   registration({ id: "reg-paid", org_id: "org-bo", org_name: "Bo Cafe", brand_name: "Bo", campaign_name: "Bo Alerts" }),
   registration({ id: "reg-active", org_id: "org-cy", org_name: "Cy Shop", brand_name: "Cy", campaign_name: "Cy Alerts", stage: "active" }),
@@ -112,7 +126,7 @@ describe("OpsPage - texting registrations", () => {
     expect(bo.queryByRole("button", { name: "Reconcile with carrier" })).toBeNull();
 
     for (const orgName of ["Cy Shop", "Di Deli"]) {
-      expect(within(rowFor(orgName)).queryAllByRole("button")).toHaveLength(0);
+      expect(within(rowFor(orgName)).queryAllByRole("button", { name: /Reconcile|Cancel/ })).toHaveLength(0);
     }
   });
 
@@ -122,7 +136,7 @@ describe("OpsPage - texting registrations", () => {
 
     const ada = await screen.findByRole("listitem", { name: "Texting registration for Ada Bakery" });
     expect(ada).toHaveTextContent("needs attention · Ada Bakery");
-    expect(within(ada).queryAllByRole("button")).toHaveLength(0);
+    expect(within(ada).queryAllByRole("button", { name: /Reconcile|Cancel/ })).toHaveLength(0);
     expect(screen.queryByRole("button", { name: "Cancel and refund" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reconcile with carrier" })).toBeNull();
   });
@@ -209,5 +223,60 @@ describe("OpsPage - texting registrations", () => {
     );
     expect(client.calls.filter((c) => c.path.endsWith("/cancel"))).toHaveLength(0);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows carrier ids, last event, numbers, reason and the resubmit tag", async () => {
+    renderOps(stubsFor(ADMIN));
+    await openTextingTab();
+
+    const ada = within(await screen.findByRole("listitem", { name: "Texting registration for Ada Bakery" }));
+    expect(ada.getByText("B-ADA-1")).toBeInTheDocument();
+    expect(ada.getByText("C-ADA-1")).toBeInTheDocument();
+    expect(ada.getByText(/TCR_CAMPAIGN_UPDATE · REJECTED/)).toBeInTheDocument();
+    expect(ada.getByText("2 on campaign · 1 failed")).toBeInTheDocument();
+    expect(ada.getByText("Carrier: Opt-in is unclear (unsigned)")).toBeInTheDocument();
+    expect(ada.getByText("Resubmit (no brand fee)")).toBeInTheDocument();
+    const bo = within(screen.getByRole("listitem", { name: "Texting registration for Bo Cafe" }));
+    expect(bo.queryByText("Resubmit (no brand fee)")).toBeNull();
+  });
+
+  it("filters by stage", async () => {
+    renderOps(stubsFor(ADMIN));
+    await openTextingTab();
+    await screen.findByRole("listitem", { name: "Texting registration for Ada Bakery" });
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Filter by stage" }), "active");
+
+    expect(screen.queryByRole("listitem", { name: "Texting registration for Ada Bakery" })).toBeNull();
+    expect(screen.getByRole("listitem", { name: "Texting registration for Cy Shop" })).toBeInTheDocument();
+  });
+
+  it("opens a timeline that lists the carrier events", async () => {
+    const client = renderOps(
+      stubsFor(ADMIN, {
+        "/api/v1/ops/texting-registrations/reg-att/events": {
+          items: [
+            {
+              id: "e1",
+              subject: "campaign",
+              telnyx_id: "C-ADA-1",
+              event_type: "TCR_CAMPAIGN_UPDATE",
+              payload_type: null,
+              status: "REJECTED",
+              reasons: ["Opt-in is unclear"],
+              verified: true,
+              received_at: "2026-10-17T10:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+    await openTextingTab();
+
+    const ada = within(await screen.findByRole("listitem", { name: "Texting registration for Ada Bakery" }));
+    expect(client.calls.some((c) => c.path.endsWith("/events"))).toBe(false);
+    await userEvent.click(ada.getByRole("button", { name: "Timeline" }));
+
+    expect(await ada.findByText(/campaign · REJECTED · Opt-in is unclear/)).toBeInTheDocument();
   });
 });

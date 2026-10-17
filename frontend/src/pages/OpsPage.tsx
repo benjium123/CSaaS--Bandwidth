@@ -671,7 +671,47 @@ type OpsTextingRegistration = {
   detail: string | null;
   paid_at: string | null;
   updated_at: string | null;
+  brand_telnyx_id: string | null;
+  campaign_telnyx_id: string | null;
+  rejection: { subject: string; reasons: string[]; verified: boolean; at: string } | null;
+  brand_reused: boolean;
+  last_event: { event_type: string; status: string | null; received_at: string; verified: boolean } | null;
+  numbers_assigned: number;
+  numbers_failed: number;
 };
+
+type OpsTextingEvent = {
+  id: string;
+  subject: string;
+  telnyx_id: string;
+  event_type: string;
+  payload_type: string | null;
+  status: string | null;
+  reasons: string[];
+  verified: boolean;
+  received_at: string;
+};
+
+function RegistrationTimeline({ registrationId }: { registrationId: string }) {
+  const q = useOps<{ items: OpsTextingEvent[] }>(
+    ["texting-registration-events", registrationId],
+    `/api/v1/ops/texting-registrations/${registrationId}/events`,
+  );
+  if (q.isPending) return <Spinner label="Loading timeline" />;
+  if (q.isError) return <p role="alert" className="text-sm text-destructive">{mutationErrorMessage(q.error)}</p>;
+  if (q.data.items.length === 0) return <p className="text-[12px] text-[hsl(var(--cx-muted))]">No carrier events yet.</p>;
+  return (
+    <ul className="space-y-1 text-[12px] text-[hsl(var(--cx-subtle))]">
+      {q.data.items.map((e) => (
+        <li key={e.id}>
+          {new Date(e.received_at).toLocaleString()} · {e.subject} · {e.status ?? e.event_type}
+          {e.reasons.length > 0 ? ` · ${e.reasons.join("; ")}` : ""}
+          {e.verified ? "" : " (unsigned)"}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 const CANCELLABLE_TEXTING_STAGES = ["checkout", "paid", "brand_filed", "otp_pending", "brand_approved", "campaign_filed"];
 
@@ -681,6 +721,8 @@ function TextingRegistrationsTab() {
   const q = useOps<OpsTextingRegistration[]>(["texting-registrations"], "/api/v1/ops/texting-registrations");
   const action = useOpsAction(null);
   const [message, setMessage] = React.useState("");
+  const [stageFilter, setStageFilter] = React.useState("");
+  const [openTimelines, setOpenTimelines] = React.useState<Record<string, boolean>>({});
   const { me } = useAuth();
   const isAdmin = me?.operator_role === "admin";
   if (q.isPending) return <Spinner label="Loading texting registrations" />;
@@ -701,14 +743,24 @@ function TextingRegistrationsTab() {
       setMessage(mutationErrorMessage(e));
     }
   }
+  const stages = Array.from(new Set(q.data.map((r) => r.stage)));
+  const shown = stageFilter ? q.data.filter((r) => r.stage === stageFilter) : q.data;
   return (
     <div className="space-y-3">
       {message && <p role="status" className="text-[13px] text-[hsl(var(--cx-text))]">{message}</p>}
+      {q.data.length > 0 && (
+        <Select aria-label="Filter by stage" value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+          <option value="">All stages</option>
+          {stages.map((st) => (
+            <option key={st} value={st}>{st.replace(/_/g, " ")}</option>
+          ))}
+        </Select>
+      )}
       {q.data.length === 0 ? (
         <p className="text-[13px] text-[hsl(var(--cx-muted))]">No texting registrations yet.</p>
       ) : (
         <ul className="space-y-2">
-          {q.data.map((r) => {
+          {shown.map((r) => {
             const canReconcile = isAdmin && r.stage === "needs_attention";
             const canCancel = isAdmin && (r.stage === "needs_attention" || CANCELLABLE_TEXTING_STAGES.includes(r.stage));
             return (
@@ -738,6 +790,33 @@ function TextingRegistrationsTab() {
                   {r.brand_name} / {r.campaign_name} · {r.fee_tier.replace(/_/g, " ")}
                 </p>
                 {r.detail && <p className="text-[12px] text-[hsl(var(--cx-muted))]">{r.detail}</p>}
+                {(r.brand_telnyx_id || r.campaign_telnyx_id) && (
+                  <p className="font-mono text-[11px] text-[hsl(var(--cx-muted))]">
+                    Brand <span>{r.brand_telnyx_id ?? "-"}</span> · Campaign <span>{r.campaign_telnyx_id ?? "-"}</span>
+                  </p>
+                )}
+                {r.last_event && (
+                  <p className="text-[12px] text-[hsl(var(--cx-subtle))]">
+                    {`${r.last_event.event_type} · ${r.last_event.status ?? "no status"} · ${new Date(r.last_event.received_at).toLocaleString()}${r.last_event.verified ? "" : " (unsigned)"}`}
+                  </p>
+                )}
+                <p className="text-[12px] text-[hsl(var(--cx-subtle))]">{`${r.numbers_assigned} on campaign · ${r.numbers_failed} failed`}</p>
+                {r.rejection && r.rejection.reasons.length > 0 && (
+                  <p className="text-[12px] text-[hsl(var(--cx-subtle))]">
+                    {`Carrier: ${r.rejection.reasons.join("; ")}${r.rejection.verified ? "" : " (unsigned)"}`}
+                  </p>
+                )}
+                {r.brand_reused && <p className="text-[12px] font-medium text-[hsl(var(--cx-text))]">Resubmit (no brand fee)</p>}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  aria-expanded={!!openTimelines[r.id]}
+                  onClick={() => setOpenTimelines((o) => ({ ...o, [r.id]: !o[r.id] }))}
+                >
+                  Timeline
+                </Button>
+                {openTimelines[r.id] && <RegistrationTimeline registrationId={r.id} />}
                 <p className="text-[12px] text-[hsl(var(--cx-muted))]">Registration {r.id}</p>
               </li>
             );
@@ -900,7 +979,7 @@ const NAV_GROUPS: { label: string; perm: string | null; items: NavItem[] }[] = [
     perm: "ops:kyc",
     items: [
       { id: "queue", label: "Review queue", title: "Review queue", lede: "People waiting to be let in. Oldest first; open one to see their ID and decide." },
-      { id: "texting", label: "Texting registrations", title: "Texting registrations", lede: "Self-serve 10DLC filings. Only the stuck ones need you." },
+      { id: "texting", label: "Texting registrations", title: "Texting registrations", lede: "Every self-serve 10DLC filing, newest first. Stuck ones need you." },
       { id: "ports", label: "Ports & grants", title: "Ports & grants", lede: "Number ports waiting for review, and credit grants waiting for a second operator." },
       { id: "alerts", label: "Security alerts", title: "Security alerts", lede: "Sign-ins and actions the system flagged." },
       { id: "bans", label: "Ban list", title: "Ban list", lede: "Identities that may not sign up again." },
