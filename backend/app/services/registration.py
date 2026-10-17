@@ -200,9 +200,13 @@ async def ensure_campaign_has_room(
     """
     from app.models import OrgNumber
 
-    await session.execute(
-        sa.select(Campaign.id).where(Campaign.id == campaign_id).with_for_update()
-    )
+    use_case = (
+        await session.execute(
+            sa.select(Campaign.use_case).where(Campaign.id == campaign_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    # A sole proprietor campaign takes exactly one number at the carrier.
+    limit = 1 if (use_case or "").upper() == "SOLE_PROPRIETOR" else MAX_NUMBERS_PER_CAMPAIGN
     query = (
         sa.select(sa.func.count())
         .select_from(OrgNumber)
@@ -210,5 +214,10 @@ async def ensure_campaign_has_room(
     )
     if number_id is not None:
         query = query.where(OrgNumber.id != number_id)
-    if int((await session.execute(query)).scalar_one()) >= MAX_NUMBERS_PER_CAMPAIGN:
+    if int((await session.execute(query)).scalar_one()) >= limit:
+        if limit == 1:
+            raise ConflictError(
+                "A sole proprietor campaign holds one number, and this one already has it.",
+                code="campaign_full",
+            )
         raise ConflictError(CAMPAIGN_FULL_MESSAGE, code="campaign_full")

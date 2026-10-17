@@ -296,6 +296,28 @@ async def test_route_full_target_is_refused_before_the_carrier(
         assert (await s.get(OrgNumber, uuid.UUID(nid))).campaign_id == ca
 
 
+async def test_route_full_sole_proprietor_target_is_refused_before_the_carrier(
+    app_with_carrier, session, monkeypatch, telnyx
+):
+    client, h, nid, (ca, cb) = await _route_world(app_with_carrier, session, monkeypatch, telnyx)
+    org_id = uuid.UUID(h["X-Org-Id"])
+    async with get_sessionmaker()() as s:
+        s.info["org_id"] = org_id
+        (await s.get(Campaign, cb)).use_case = "SOLE_PROPRIETOR"
+        s.add(OrgNumber(org_id=org_id, e164="+12025550998", carrier="telnyx",
+                        number_type="local", status="active", is_active=True, campaign_id=cb))
+        await s.commit()
+    r = await client.patch(
+        f"/api/v1/numbers/{nid}/campaign", json={"campaign_id": str(cb)}, headers=h
+    )
+    assert r.status_code == 409, r.text
+    assert "sole proprietor" in r.json()["error"]["message"]
+    assert telnyx.calls == []
+    async with get_sessionmaker()() as s:
+        s.info["org_id"] = org_id
+        assert (await s.get(OrgNumber, uuid.UUID(nid))).campaign_id == ca
+
+
 async def test_route_clearing_a_telnyx_campaign_is_still_refused(
     app_with_carrier, session, monkeypatch, telnyx
 ):
