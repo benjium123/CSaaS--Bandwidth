@@ -1239,7 +1239,7 @@ async def move_monthly_to_plan(session, settings, reg) -> bool:
     if reg.paid_at is None or not reg.subscription_id:
         return False
     now = datetime.now(timezone.utc)
-    if not filing.get("own_sub_cancelled"):
+    if not filing.get("own_sub_cancelled") and not filing.get("monthly_cancelling"):
         # Cheap guard before any Stripe call: the trial is 30 * UPFRONT_MONTHS days.
         if now < _as_utc(reg.paid_at) + timedelta(days=30 * UPFRONT_MONTHS - 3):
             return False
@@ -1248,31 +1248,30 @@ async def move_monthly_to_plan(session, settings, reg) -> bool:
         stripe = stripe_client._stripe(settings)
         if not filing.get("own_sub_cancelled"):
             own = await stripe_client._run_sync(stripe.Subscription.retrieve, reg.subscription_id)
-            if own["status"] != "trialing":
-                # Already billing (or gone): moving now would double charge this period.
+            if own["status"] == "canceled" and filing.get("monthly_cancelling"):
+                # Our cancel reached Stripe but we never saved that: carry on to the item.
+                filing = {**filing, "own_sub_cancelled": True}
+                reg.filing = filing
+                await session.commit()
+                plan_sub = await _plan_target(session, stripe, reg)
+                if plan_sub is None:
+                    await _late_orphan(session, reg, filing, now, "no eligible plan subscription")
+                    return False
+            elif own["status"] != "trialing":
+                # Already billing (or gone): moving now would double charge this period. A
+                # subscription that bills nothing must never be silently called standalone.
+                if own["status"] not in ("active", "past_due"):
+                    await _alert_orphan(
+                        session, reg, {"why": "own subscription is " + str(own["status"])}
+                    )
                 reg.filing = {**filing, "monthly_standalone": True}
                 await session.commit()
                 return False
-            opens = datetime.fromtimestamp(int(own["trial_end"]), timezone.utc) - timedelta(days=1)
-            if now < opens:
-                return False
-            plan_sub = await _plan_target(session, stripe, reg)
-            if plan_sub is None:
-                return False
-            await stripe_client._run_sync(
-                stripe.Subscription.cancel,
-                reg.subscription_id,
-                prorate=False,
-                idempotency_key=f"tendlc-move-cancel-{reg.id}",
-            )
-            filing = {
-                **filing,
-                "own_sub_cancelled": True,
-                "monthly_window": opens.isoformat(),
-                "monthly_on": plan_sub,
-            }
-            reg.filing = filing  # a new dict: the JSON column does not track in-place edits
-            await session.commit()
+            else:
+                plan_sub = await _move_cancel_own(session, stripe, reg, filing, own, now)
+                if plan_sub is None:
+                    return False
+                filing = reg.filing
         else:
             plan_sub = await _plan_target(session, stripe, reg)
             if plan_sub is None:
@@ -1291,7 +1290,7 @@ async def move_monthly_to_plan(session, settings, reg) -> bool:
                 quantity=1,
                 metadata={"kind": "tendlc_monthly", "registration_id": str(reg.id)},
                 proration_behavior="create_prorations",
-                idempotency_key=f"tendlc-monthly-{reg.id}",
+                idempotency_key=f"tendlc-monthly-{reg.id}-{plan_sub}",
             )
         except Exception:
             await _late_orphan(session, reg, filing, now, "item create failed")
@@ -1305,6 +1304,33 @@ async def move_monthly_to_plan(session, settings, reg) -> bool:
         return False
 
 
+async def _move_cancel_own(session, stripe, reg, filing, own, now) -> str | None:
+    """Window check, plan check, then cancel the own (trialing) subscription. The intent is
+    committed BEFORE the cancel so a lost response can be recognised on the next pass."""
+    opens = datetime.fromtimestamp(int(own["trial_end"]), timezone.utc) - timedelta(days=1)
+    if now < opens:
+        return None
+    plan_sub = await _plan_target(session, stripe, reg)
+    if plan_sub is None:
+        return None
+    reg.filing = {
+        **filing,
+        "monthly_cancelling": plan_sub,
+        "monthly_window": opens.isoformat(),
+        "monthly_on": plan_sub,
+    }
+    await session.commit()
+    await stripe_client._run_sync(
+        stripe.Subscription.cancel,
+        reg.subscription_id,
+        prorate=False,
+        idempotency_key=f"tendlc-move-cancel-{reg.id}",
+    )
+    reg.filing = {**reg.filing, "own_sub_cancelled": True}
+    await session.commit()
+    return plan_sub
+
+
 async def _plan_target(session, stripe, reg) -> str | None:
     """The plan subscription that may carry the fee: active, monthly, no coupon."""
     from app.services import plan_billing
@@ -1315,6 +1341,11 @@ async def _plan_target(session, stripe, reg) -> str | None:
     plan_sub = ent.subscription.stripe_subscription_id
     remote = await stripe_client._run_sync(stripe.Subscription.retrieve, plan_sub)
     if _has_discount(remote):
+        return None
+    customer = remote.get("customer")
+    if isinstance(customer, str):
+        customer = await stripe_client._run_sync(stripe.Customer.retrieve, customer)
+    if isinstance(customer, dict) and (customer.get("discount") or customer.get("discounts")):
         return None
     return plan_sub
 
@@ -1399,7 +1430,15 @@ async def restore_standalone_monthly(session, settings, org_id, plan_sub_id, pla
             reg.filing = {
                 k: v
                 for k, v in reg.filing.items()
-                if k not in ("monthly_item_id", "monthly_on", "own_sub_cancelled")
+                if k
+                not in (
+                    "monthly_item_id",
+                    "monthly_on",
+                    "own_sub_cancelled",
+                    "monthly_cancelling",
+                    "monthly_window",
+                    "orphan_alerted",
+                )
             }
             log.info("tendlc_monthly_restored", registration_id=str(reg.id))
             if sub.get("status") not in ("active", "trialing"):

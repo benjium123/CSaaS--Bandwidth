@@ -136,7 +136,7 @@ async def test_moves_onto_an_active_monthly_plan_item_before_cancel(session, str
     assert kwargs["price_data"]["recurring"] == {"interval": "month"}
     assert kwargs["metadata"] == {"kind": "tendlc_monthly", "registration_id": str(reg.id)}
     assert kwargs["proration_behavior"] == "create_prorations"
-    assert kwargs["idempotency_key"] == f"tendlc-monthly-{reg.id}"
+    assert kwargs["idempotency_key"] == f"tendlc-monthly-{reg.id}-{PLAN_SUB}"
     assert stripe.calls == ["cancel", "item_create"]
     cancel = stripe.Subscription.cancel.call_args
     assert cancel.args[0] == "sub_tendlc"
@@ -419,3 +419,60 @@ async def test_no_discount_category_for_10dlc_and_a_stray_row_changes_nothing(
     assert tendlc.quote("sole_proprietor")["due_today_cents"] == 3950
     assert "service_discount_bps" not in total["subscription_data"]["metadata"]
     assert tendlc.quote("standard")["service_discount_cents"] == 0
+
+
+async def test_cancel_applied_at_stripe_but_never_saved_still_gets_the_item(session, stripe):
+    def cancel(*a, **kw):
+        stripe.state["own"] = {**stripe.state["own"], "status": "canceled"}
+        raise TimeoutError("response lost")
+
+    stripe.Subscription.cancel.side_effect = cancel
+    _, reg = await _active(session)
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
+    assert reg.filing["monthly_cancelling"] == PLAN_SUB
+    assert "own_sub_cancelled" not in reg.filing
+
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is True
+    assert reg.filing["monthly_item_id"] == "si_10dlc"
+    assert "monthly_standalone" not in reg.filing
+    assert (await session.execute(sa.select(SecurityAlert))).scalars().all() == []
+
+
+async def test_canceled_own_subscription_without_a_marker_alerts_ops(session, stripe):
+    stripe.state["own"] = {"status": "canceled", "latest_invoice": "i", "trial_end": _ts(days=-1)}
+    _, reg = await _active(session)
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
+    alert = (await session.execute(sa.select(SecurityAlert))).scalar_one()
+    assert alert.kind == "tendlc_monthly_orphan"
+    assert reg.filing["monthly_standalone"] is True
+
+
+async def test_item_idempotency_key_names_the_plan_subscription(session, stripe):
+    _, reg = await _active(session)
+    await tendlc.move_monthly_to_plan(session, _settings(), reg)
+    key = stripe.SubscriptionItem.create.call_args.kwargs["idempotency_key"]
+    assert key == f"tendlc-monthly-{reg.id}-{PLAN_SUB}"
+
+
+async def test_restore_clears_the_move_bookkeeping(session, stripe):
+    org, reg = await _moved(session, stripe)
+    reg.filing = {
+        **reg.filing,
+        "monthly_window": "2026-01-01T00:00:00+00:00",
+        "orphan_alerted": True,
+        "monthly_cancelling": PLAN_SUB,
+    }
+    await session.commit()
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, _deleted_plan())
+    for key in ("monthly_window", "orphan_alerted", "monthly_cancelling", "monthly_item_id"):
+        assert key not in reg.filing
+
+
+@pytest.mark.parametrize("field", ["discount", "discounts"])
+async def test_customer_level_discount_gets_no_move(session, stripe, field):
+    stripe.state["plan"]["customer"] = "cus_1"
+    stripe.Customer.retrieve.return_value = {field: {"coupon": "c"} if field == "discount" else [1]}
+    _, reg = await _active(session)
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
+    stripe.Subscription.cancel.assert_not_called()
+    stripe.SubscriptionItem.create.assert_not_called()
