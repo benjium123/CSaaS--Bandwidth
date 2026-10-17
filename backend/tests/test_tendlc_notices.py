@@ -247,3 +247,23 @@ async def test_opening_registration_marks_texting_notices_read(client, session):
     ).scalars().all()
     by_kind = {n.kind: n.read_at for n in rows}
     assert by_kind["texting"] is not None and by_kind["low_balance"] is None
+
+
+async def test_same_stage_notice_emails_once(session, stripe_stub, telnyx):
+    from app.services import tendlc_notices
+
+    org_id, owner_id, reg_id, sm = await _drive(session, telnyx)
+    mailer.outbox.clear()
+    async with sm() as s:
+        reg = (
+            await s.execute(
+                sa.select(TenDlcRegistration)
+                .where(TenDlcRegistration.id == reg_id)
+                .execution_options(**_UNSCOPED)
+            )
+        ).scalar_one()
+        set_org_context(s, org_id)
+        assert await tendlc_notices.stage_changed(s, _settings(), reg, "paid", "active")
+        assert await tendlc_notices.stage_changed(s, _settings(), reg, "paid", "active")
+    assert len(mailer.outbox) == 1
+    assert len([n for n in await _notes(org_id) if "you can text now" in n.body]) == 1

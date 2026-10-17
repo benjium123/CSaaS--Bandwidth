@@ -204,23 +204,26 @@ async def evaluate(session: AsyncSession, settings, org: Org) -> str:  # noqa: A
 
 async def notify_owners(session: AsyncSession, settings, org: Org, subject: str, body: str,  # noqa: ANN001
                         *, dedupe_key: str, kind: str = "low_balance",
-                        in_app_body: str | None = None) -> None:
+                        in_app_body: str | None = None,
+                        email_only_if_new: bool = False) -> None:
     """One-off notice to owners/admins (auto-recharge declined / disabled; 10DLC changes via
     ``kind``). Does not commit. ``in_app_body`` overrides the bell text (default: subject)."""
     from app.services import mailer, notifications
 
     recipients = await _recipients(session, org.id)
     set_org_context(session, org.id)
+    created = False
     for user_id, _email in recipients:
         try:
-            await notifications.create(
+            row = await notifications.create(
                 session, org.id, user_id=user_id, kind=kind, body=in_app_body or subject,
                 dedupe_key=dedupe_key[:128],
             )
+            created = created or row is not None
         except Exception:
             log.exception("billing_alerts.notification_failed", org_id=str(org.id))
     emails = [e for _u, e in recipients if e]
-    if emails:
+    if emails and (created or not email_only_if_new):
         try:
             await mailer.send(settings, emails, f"{settings.app_name}: {subject}", body)
         except Exception:

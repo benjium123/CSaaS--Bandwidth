@@ -61,7 +61,7 @@ async def _send(session, settings, reg, subject: str, in_app: str, body: str,  #
         return False
     await billing_alerts.notify_owners(
         session, settings, org, subject, body, dedupe_key=dedupe_key, kind="texting",
-        in_app_body=in_app[:255],
+        in_app_body=in_app[:255], email_only_if_new=True,
     )
     await session.commit()
     return True
