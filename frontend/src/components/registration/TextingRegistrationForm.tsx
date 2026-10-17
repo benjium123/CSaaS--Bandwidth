@@ -35,6 +35,11 @@ function isSelectable(status: string): boolean {
   return REGISTERABLE_STATUSES.includes(status);
 }
 
+/** An approved business is reused as is; only its declined campaign is filed again. */
+function isReusableBrand(status: string): boolean {
+  return status === "approved";
+}
+
 /** One labelled control, bound with `<label htmlFor>` so every field has an accessible name. */
 function Field({
   id,
@@ -62,6 +67,7 @@ export function TextingRegistrationForm({
   brands,
   campaigns,
   quotes,
+  quotesResubmit,
   pending,
   error,
   onSubmit,
@@ -69,6 +75,8 @@ export function TextingRegistrationForm({
   brands: RegistrationBrand[];
   campaigns: RegistrationCampaign[];
   quotes: TextingRegistrationState["quotes"];
+  /** Same tiers without the brand fee, for an already approved business (older servers omit it). */
+  quotesResubmit?: TextingRegistrationState["quotes"];
   pending: boolean;
   error: unknown;
   onSubmit: (input: TextingCheckoutInput) => void;
@@ -82,12 +90,17 @@ export function TextingRegistrationForm({
   const [answers, setAnswers] = useState<Record<string, boolean | undefined>>({});
   const [terms, setTerms] = useState(false);
 
-  const eligibleBrands = brands.filter((brand) => isSelectable(brand.status));
+  const eligibleBrands = brands.filter(
+    (brand) => isSelectable(brand.status) || isReusableBrand(brand.status),
+  );
   const selectedBrand = brands.find((brand) => brand.id === brandId);
+  const brandReused = selectedBrand !== undefined && isReusableBrand(selectedBrand.status);
   const isSoleProp = selectedBrand?.entity_type === "SOLE_PROPRIETOR";
 
   const eligibleCampaigns = campaigns.filter(
-    (campaign) => campaign.brand_id === brandId && isSelectable(campaign.status),
+    (campaign) =>
+      campaign.brand_id === brandId &&
+      (isSelectable(campaign.status) || (brandReused && campaign.status === "rejected")),
   );
   const selectedCampaign = campaigns.find((campaign) => campaign.id === campaignId);
   const showUseCaseAlert =
@@ -106,6 +119,7 @@ export function TextingRegistrationForm({
 
   const solePropOk =
     !isSoleProp ||
+    brandReused ||
     (firstName.trim() !== "" && lastName.trim() !== "" && MOBILE_PATTERN.test(mobile.trim()));
 
   const allAnswered = TEXTING_ASSERTIONS.every((assertion) => answers[assertion.key] !== undefined);
@@ -120,7 +134,9 @@ export function TextingRegistrationForm({
     terms &&
     !pending;
 
-  const quote = quotes[isSoleProp ? "sole_proprietor" : "standard"];
+  const tierKey = isSoleProp ? "sole_proprietor" : "standard";
+  const useResubmit = brandReused && quotesResubmit !== undefined;
+  const quote = (useResubmit ? quotesResubmit : quotes)[tierKey];
   const quoteSentence =
     // Totals only: the customer sees what they pay, not how it splits between the carrier
     // fees and Ringlite's registration fee.
@@ -217,7 +233,13 @@ export function TextingRegistrationForm({
         </Field>
       </div>
 
-      {isSoleProp ? (
+      {brandReused ? (
+        <p className="text-[12.5px] text-[hsl(var(--cx-muted))]">
+          Your business is already approved - you pay only for the campaign review.
+        </p>
+      ) : null}
+
+      {isSoleProp && !brandReused ? (
         <>
           <p className="text-[12.5px] text-[hsl(var(--cx-muted))]">
             Sole proprietors can text from one number.

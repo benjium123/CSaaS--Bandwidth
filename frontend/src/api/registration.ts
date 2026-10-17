@@ -296,6 +296,8 @@ export interface TextingRegistration extends TextingQuote {
 export interface TextingRegistrationState {
   registration: TextingRegistration | null;
   quotes: { standard: TextingQuote; sole_proprietor: TextingQuote };
+  /** Quotes for an already approved business refiling a declined campaign (no brand fee). */
+  quotes_resubmit?: { standard: TextingQuote; sole_proprietor: TextingQuote };
 }
 
 export interface TextingCheckoutInput {

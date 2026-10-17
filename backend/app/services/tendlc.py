@@ -113,11 +113,13 @@ PIN_SMS = "Your Ringlite texting registration code is @OTP_PIN@. It expires in 2
 SUCCESS_SMS = "Thanks - your number is verified for business texting with Ringlite."
 
 
-def quote(tier: str, service_discount_bps: int = 0) -> dict:
-    """``service_discount_bps`` is the workspace's 10DLC discount (services/discounts.py). It
+def quote(tier: str, service_discount_bps: int = 0, *, brand_reused: bool = False) -> dict:
+    """``brand_reused``: the business is already approved, so only the campaign is filed and
+    the brand fee is neither charged nor refunded.
+    ``service_discount_bps`` is the workspace's 10DLC discount (services/discounts.py). It
     applies to Ringlite's own service fee only, never to the (marked-up) carrier fees."""
     monthly = sell_cents(MONTHLY_CENTS[tier])
-    brand = sell_cents(BRAND_FEE_CENTS)
+    brand = 0 if brand_reused else sell_cents(BRAND_FEE_CENTS)
     review = CAMPAIGN_REVIEW_SELL_CENTS
     bps = min(max(int(service_discount_bps), 0), 10_000)
     service = SERVICE_FEE_CENTS * (10_000 - bps) // 10_000
@@ -135,10 +137,10 @@ def quote(tier: str, service_discount_bps: int = 0) -> dict:
     }
 
 
-def customer_quote(tier: str, service_discount_bps: int = 0) -> dict:
+def customer_quote(tier: str, service_discount_bps: int = 0, *, brand_reused: bool = False) -> dict:
     """What the customer is shown: totals only, never the carrier / Ringlite split. Pass the
     workspace's 10DLC discount so the total shown matches what checkout charges."""
-    q = quote(tier, service_discount_bps)
+    q = quote(tier, service_discount_bps, brand_reused=brand_reused)
     return {
         key: q[key]
         for key in ("fee_tier", "monthly_cents", "upfront_months", "due_today_cents")
@@ -248,15 +250,20 @@ async def start_checkout(
         existing.stage = "expired"
 
     refs = brand.carrier_refs or {}
-    if brand.status not in ("draft", "submitted") or refs.get("telnyx"):
+    # An approved, carrier-registered business is reused: only a declined campaign is refiled.
+    brand_reused = brand.status == "approved" and bool(refs.get("telnyx"))
+    if not brand_reused and (brand.status not in ("draft", "submitted") or refs.get("telnyx")):
         raise ConflictError("This business profile has already been registered.")
-    if campaign.status not in ("draft", "submitted") or (campaign.carrier_refs or {}).get("telnyx"):
+    unfiled = campaign.status in ("draft", "submitted") and not (campaign.carrier_refs or {}).get(
+        "telnyx"
+    )
+    if not unfiled and not (brand_reused and campaign.status == "rejected"):
         raise ConflictError("This campaign has already been registered.")
 
     tier = tier_for(brand)
     mobile = (mobile_phone or "").strip() or None
     if tier == "sole_proprietor":
-        if not mobile or not _E164_US.match(mobile):
+        if not brand_reused and (not mobile or not _E164_US.match(mobile)):
             raise ValidationFailedError(
                 "Enter the owner's US mobile number as +1 and 10 digits. The carrier texts a "
                 "verification code to it."
@@ -280,15 +287,18 @@ async def start_checkout(
         "assertions": {k: bool(v) for k, v in (assertions or {}).items()},
         "sub_usecases": [str(s).strip().upper() for s in (sub_usecases or []) if s],
     }
+    if brand_reused:
+        filing["brand_reused"] = True
     # Dry-run both carrier payloads: exactly what the job will send, minus the ids.
-    build_brand_payload(
-        brand,
-        company_name=filing["company_name"],
-        first_name=filing["first_name"] or None,
-        last_name=filing["last_name"] or None,
-        brand_relationship=BRAND_RELATIONSHIP,
-        mobile_phone=mobile,
-    )
+    if not brand_reused:
+        build_brand_payload(
+            brand,
+            company_name=filing["company_name"],
+            first_name=filing["first_name"] or None,
+            last_name=filing["last_name"] or None,
+            brand_relationship=BRAND_RELATIONSHIP,
+            mobile_phone=mobile,
+        )
     build_campaign_payload(
         campaign,
         telnyx_brand_id="pending",
@@ -312,7 +322,7 @@ async def start_checkout(
     from app.services import discounts
 
     discount_bps = await discounts.active_bps(session, org_id, "tendlc")
-    fees = quote(tier, discount_bps)
+    fees = quote(tier, discount_bps, brand_reused=brand_reused)
     metadata = {"kind": "tendlc_fee", "registration_id": str(reg.id), "org_id": str(org_id)}
     if discount_bps:
         metadata["service_discount_bps"] = str(discount_bps)
@@ -569,6 +579,21 @@ async def _step(session, settings, reg, client) -> None:
     brand = await session.get(Brand, reg.brand_id)
     campaign = await session.get(Campaign, reg.campaign_id)
     filing = reg.filing or {}
+
+    if reg.stage == "paid" and filing.get("brand_reused"):
+        # The business is already approved: archive the declined campaign's carrier ids and
+        # file a fresh campaign under it. No brand POST, no OTP.
+        refs = dict(campaign.carrier_refs or {})
+        old = refs.pop("telnyx", None)
+        if old:
+            refs["telnyx_previous"] = [*(refs.get("telnyx_previous") or []), old]
+        refs.pop(_CAMPAIGN_MARKER, None)
+        campaign.carrier_refs = refs
+        campaign.status = "draft"  # a rejected campaign is terminal in advance_status
+        campaign.last_error = None
+        reg.stage = "brand_approved"
+        reg.detail = None
+        return
 
     if reg.stage == "paid":
         await _file(
@@ -1009,10 +1034,14 @@ async def cancel(session, settings, reg_id) -> str:
         raise ConflictError(f"This registration is {reg.stage}; it cannot be cancelled here.")
     brand = await session.get(Brand, reg.brand_id)
     campaign = await session.get(Campaign, reg.campaign_id)
-    fees = quote(reg.fee_tier)
+    reused = bool((reg.filing or {}).get("brand_reused"))
+    fees = quote(reg.fee_tier, brand_reused=reused)
     if _telnyx_ref(brand) is None and not (brand.carrier_refs or {}).get(_BRAND_MARKER):
         amount = fees["due_today_cents"]
-    elif _telnyx_ref(campaign) is None and not (campaign.carrier_refs or {}).get(_CAMPAIGN_MARKER):
+    elif (reused and reg.stage == "paid") or (
+        _telnyx_ref(campaign) is None and not (campaign.carrier_refs or {}).get(_CAMPAIGN_MARKER)
+    ):
+        # (A reused registration still at "paid" holds the declined campaign's old ref.)
         amount = fees["campaign_review_cents"] + UPFRONT_MONTHS * fees["monthly_cents"]
     else:
         amount = 0
@@ -1089,7 +1118,8 @@ async def _cancel_monthly(settings, reg) -> str:
 async def _refund_unused(settings, reg) -> str:
     """The carrier refused the business before any campaign was filed: refund what was
     never spent (the campaign review and the three months) and stop the monthly fee."""
-    fees = quote(reg.fee_tier)
+    reused = bool((reg.filing or {}).get("brand_reused"))
+    fees = quote(reg.fee_tier, brand_reused=reused)
     amount = fees["campaign_review_cents"] + UPFRONT_MONTHS * fees["monthly_cents"]
     if not reg.subscription_id:
         return "The carrier did not accept this business profile."

@@ -220,6 +220,7 @@ export function TextingRegistrationCard({
           brands={brands}
           campaigns={campaigns}
           quotes={data.quotes}
+          quotesResubmit={data.quotes_resubmit}
           pending={checkout.isPending}
           error={checkout.error}
           onSubmit={(input) =>

@@ -527,6 +527,11 @@ async def texting_registration(
     return {
         "registration": await _texting_out(ctx, reg) if reg else None,
         "quotes": {tier: tendlc.customer_quote(tier, bps) for tier in tendlc.MONTHLY_CENTS},
+        # An approved business that only refiles a declined campaign skips the brand fee.
+        "quotes_resubmit": {
+            tier: tendlc.customer_quote(tier, bps, brand_reused=True)
+            for tier in tendlc.MONTHLY_CENTS
+        },
     }
 
 

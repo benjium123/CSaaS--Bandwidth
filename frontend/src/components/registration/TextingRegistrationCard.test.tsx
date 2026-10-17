@@ -272,6 +272,36 @@ describe("TextingRegistrationCard checkout and pricing", () => {
     );
   });
 
+  it("an approved business with a declined campaign shows the campaign-only total", async () => {
+    const resubmit = {
+      standard: { ...QUOTES.standard, due_today_cents: 6050 },
+      sole_proprietor: { ...QUOTES.sole_proprietor, due_today_cents: 3350 },
+    };
+    const base = routes({
+      brands: [brand({ id: "brand-1", status: "approved" })],
+      campaigns: [campaign({ id: "camp-1", brand_id: "brand-1", status: "rejected" })],
+    });
+    const client = makeStubClient({
+      ...base,
+      "/api/v1/registration/texting": {
+        registration: null,
+        quotes: QUOTES,
+        quotes_resubmit: resubmit,
+      },
+    });
+    renderWithProviders(<TextingRegistrationCard />, client);
+
+    await userEvent.selectOptions(await screen.findByLabelText("Business profile"), "brand-1");
+
+    expect(
+      screen.getByText(
+        "Your business is already approved - you pay only for the campaign review.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Acme Alerts" })).toBeInTheDocument();
+    expect(screen.getByTestId("texting-quote").textContent).toContain("$60.50 today");
+  });
+
   it("a read-only user sees no Pay and register button and issues no writes", async () => {
     const client = makeStubClient(routes({ permissions: ["compliance:read"], registration: null }));
     renderWithProviders(<TextingRegistrationCard />, client);
