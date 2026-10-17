@@ -571,8 +571,8 @@ async def test_other_subscription_invoices_are_not_recorded(session):
     from app.services import payments
 
     org_id = await _new_org(session, "Tendlc Invoice Org")
-    tendlc_invoice = _plan_invoice(org_id, invoice_id="in_t", kind="tendlc_fee")
-    assert not await payments.record_subscription_invoice(session, tendlc_invoice)
+    unknown_invoice = _plan_invoice(org_id, invoice_id="in_t", kind="something_else")
+    assert not await payments.record_subscription_invoice(session, unknown_invoice)
     assert not await payments.record_subscription_invoice(
         session, {"id": "in_x", "amount_paid": 100}
     )

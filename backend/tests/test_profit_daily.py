@@ -151,7 +151,7 @@ def test_service_mapping():
     assert profit_daily.service_for_reference("weird") == "other"
     assert profit_daily.service_for_payment("topup") is None
     assert profit_daily.service_for_payment("voice_bundle") == "calls"
-    assert profit_daily.service_for_payment("tendlc") == "plans"
+    assert profit_daily.service_for_payment("tendlc") == "tendlc"
     assert profit_daily.service_for_metric("mms_out") == "mms"
 
 

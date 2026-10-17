@@ -10,6 +10,14 @@ service so the page can filter without another request:
                  usage refunded to the balance (ledger 'refund' of "refund:<usage ref>")
                  + bundle units consumed x the org's average paid price per unit
                  + payments that are not prepayments (plans, 10DLC, invoices), cash back off
+- 10DLC        = its own service: charged = what the customer paid for 10DLC (the checkout
+                 invoice, plus the 10DLC line of each plan invoice, moved out of "Plans");
+                 carrier cost = Telnyx's 10DLC fees DERIVED from tendlc_registrations (they
+                 are not attributed per workspace in telnyx_cost_daily). An approximation,
+                 booked on the registration's paid_at day: brand fee (450c) unless the
+                 business was already approved (filing.brand_reused) and the brand was
+                 filed; campaign review (1500c) + 3 months upfront once the campaign was
+                 filed; then one month on each paid_at + 30*k days (k >= 3) while active.
 - carrier_cost = provider_spend_daily estimate; Telnyx's own billed cost (telnyx_cost_daily)
                  replaces the Telnyx estimate for the same org/day/service when present
 - ai_cost      = ai_usage_events cost (what we paid AI providers)
@@ -37,16 +45,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import (
     AiUsageEvent,
     BillingPayment,
+    Brand,
     BundleLedgerEntry,
     CreditLedgerEntry,
     FixedCost,
     Message,
     Org,
     OrgNumber,
+    TenDlcRegistration,
 )
 from app.models.billing_v2 import TelnyxCostDaily
 from app.models.spend import DEFAULT_RATES_MICROS, ProviderRate, ProviderSpendDaily
 from app.services.console import U, _fixed_cost_micros, day_range
+
+# Telnyx's 10DLC costs (cents; mirrors services/tendlc.py, which owns the sell side).
+_TENDLC_BRAND_CENTS = 450
+_TENDLC_REVIEW_CENTS = 1500
+_TENDLC_MONTHLY_CENTS = {"standard": 1000, "sole_proprietor": 200}
+_TENDLC_UPFRONT_MONTHS = 3
+_TENDLC_BRAND_FILED_STAGES = (
+    "brand_filed", "otp_pending", "brand_approved", "campaign_filed", "active",
+    "brand_rejected", "campaign_rejected", "rejected",
+)
+_CENT = 10_000
 
 SERVICES: tuple[tuple[str, str], ...] = (
     ("calls", "Calls"),
@@ -58,7 +79,8 @@ SERVICES: tuple[tuple[str, str], ...] = (
     ("transcription", "Transcription"),
     ("summaries", "Summaries"),
     ("ai", "AI"),
-    ("plans", "Plans & 10DLC"),
+    ("plans", "Plans"),
+    ("tendlc", "10DLC"),
     ("other", "Other"),
 )
 FIELDS = ("charged", "carrier_cost", "ai_cost", "stripe_fees", "units")
@@ -103,6 +125,8 @@ def service_for_payment(kind: str) -> str | None:
         return {"voice": "calls", "sms": "sms", "mms": "mms"}.get(kind[: -len("_bundle")], "other")
     if kind.startswith("number"):
         return "numbers"
+    if kind == "tendlc":
+        return "tendlc"
     return "plans"
 
 
@@ -252,15 +276,76 @@ async def daily(
         if service is None:
             unallocated_fees[day] += int(fee or 0)
             continue
-        cell[(day, service)]["stripe_fees"] += int(fee or 0)
         if kind.endswith("_bundle"):
+            cell[(day, service)]["stripe_fees"] += int(fee or 0)
             continue  # bundles are revenue when consumed (above), never when bought
         refund = (detail or {}).get("refund") or {}
         if "refunded_micros" in refund:
             back = min(int(refund["refunded_micros"]), int(paid or 0))
         else:
             back = int(paid or 0) if state == "refunded" else 0
-        cell[(day, service)]["charged"] += int(paid or 0) - back
+        charged = int(paid or 0) - back
+        fee_v = int(fee or 0)
+        tendlc = min(int((detail or {}).get("tendlc_micros") or 0), int(paid or 0))
+        if service == "plans" and tendlc > 0:
+            # The 10DLC line of a plan invoice is 10DLC revenue, not plan revenue; a refund
+            # of the invoice is shared pro rata.
+            tendlc_net = tendlc - back * tendlc // int(paid)
+            tendlc_fee = fee_v * tendlc // int(paid)
+            cell[(day, "tendlc")]["charged"] += tendlc_net
+            cell[(day, "tendlc")]["stripe_fees"] += tendlc_fee
+            charged -= tendlc_net
+            fee_v -= tendlc_fee
+        cell[(day, service)]["stripe_fees"] += fee_v
+        cell[(day, service)]["charged"] += charged
+
+    # --- 10DLC carrier fees, derived from the registrations (see the module docstring) ----
+    regs = await _rows(
+        session,
+        sa.select(
+            TenDlcRegistration.brand_id,
+            TenDlcRegistration.fee_tier,
+            TenDlcRegistration.stage,
+            TenDlcRegistration.paid_at,
+            TenDlcRegistration.filing,
+            TenDlcRegistration.rejection,
+        ).where(
+            TenDlcRegistration.paid_at.is_not(None),
+            scope(TenDlcRegistration.org_id),
+        ),
+    )
+    telnyx_brands: set[uuid.UUID] = set()
+    brand_ids = {r[0] for r in regs}
+    if brand_ids:
+        for bid, refs in await _rows(
+            session, sa.select(Brand.id, Brand.carrier_refs).where(Brand.id.in_(brand_ids))
+        ):
+            if (refs or {}).get("telnyx"):
+                telnyx_brands.add(bid)
+    for brand_id, tier, stage, reg_paid_at, filing, rejection in regs:
+        monthly = _TENDLC_MONTHLY_CENTS.get(tier, _TENDLC_MONTHLY_CENTS["standard"]) * _CENT
+        paid_day = reg_paid_at.date()
+        one_time = 0
+        if not (filing or {}).get("brand_reused") and (
+            brand_id in telnyx_brands or stage in _TENDLC_BRAND_FILED_STAGES
+        ):
+            one_time += _TENDLC_BRAND_CENTS * _CENT
+        if stage in ("campaign_filed", "active", "campaign_rejected") or (
+            stage == "rejected" and (rejection or {}).get("subject") == "campaign"
+        ):
+            one_time += _TENDLC_REVIEW_CENTS * _CENT + _TENDLC_UPFRONT_MONTHS * monthly
+        if start <= paid_day <= end:
+            cell[(paid_day, "tendlc")]["units"] += 1
+            cell[(paid_day, "tendlc")]["carrier_cost"] += one_time
+        if stage == "active":
+            k = max(_TENDLC_UPFRONT_MONTHS, -(-((start - paid_day).days) // 30))
+            while True:
+                day = paid_day + timedelta(days=30 * k)
+                if day > end:
+                    break
+                if day >= start:
+                    cell[(day, "tendlc")]["carrier_cost"] += monthly
+                k += 1
 
     # --- carrier cost: estimate, with Telnyx actuals replacing the Telnyx estimate --------
     telnyx_actual: dict[tuple[uuid.UUID, date, str], tuple[int, int]] = {}

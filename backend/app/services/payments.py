@@ -299,11 +299,13 @@ async def record_topup_paid(
 
 
 #: Subscription metadata kind -> billing_payments.kind for the recurring invoices Stripe
-#: bills (plan, users and extra numbers; the retired per-number carts). 10DLC fees are not
-#: here: their refunds would need recording too.
+#: bills (plan, users and extra numbers; the retired per-number carts; the one-time 10DLC
+#: checkout invoice). The monthly 10DLC fee rides on the plan subscription: its invoice lines
+#: are summed into ``detail.tendlc_micros`` so Profit can show 10DLC on its own.
 SUBSCRIPTION_INVOICE_KINDS: dict[str, str] = {
     "workspace_plan": "plan",
     "number_purchase": "numbers",
+    "tendlc_fee": "tendlc",
 }
 _CENT = 10_000  # micros
 
@@ -365,6 +367,19 @@ async def record_subscription_invoice(session: AsyncSession, invoice: dict) -> b
     if existing is not None:
         return True
     paid_at = (invoice.get("status_transitions") or {}).get("paid_at")
+    detail = {
+        "invoice_id": str(invoice_id),
+        "subscription_id": sub_id,
+        "billing_reason": invoice.get("billing_reason"),
+    }
+    if kind == "plan":
+        tendlc_cents = sum(
+            int((line or {}).get("amount") or 0)
+            for line in ((invoice.get("lines") or {}).get("data")) or []
+            if ((line or {}).get("metadata") or {}).get("kind") == "tendlc_monthly"
+        )
+        if tendlc_cents > 0:
+            detail["tendlc_micros"] = min(tendlc_cents * _CENT, max(paid, 0))
     intent = _invoice_intent(invoice)
     if intent is not None and await _by_intent(session, intent) is not None:
         intent = None  # never collide with a row that already owns this intent
@@ -386,11 +401,7 @@ async def record_subscription_invoice(session: AsyncSession, invoice: dict) -> b
             paid_at=(
                 datetime.fromtimestamp(int(paid_at), timezone.utc) if paid_at else _now()
             ),
-            detail={
-                "invoice_id": str(invoice_id),
-                "subscription_id": sub_id,
-                "billing_reason": invoice.get("billing_reason"),
-            },
+            detail=detail,
         )
     )
     await session.flush()
