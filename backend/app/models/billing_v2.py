@@ -145,8 +145,9 @@ class TelnyxCostDaily(Base):
 #: usage_telnyx: a usage discount that applies only to traffic carried by Telnyx (owner deal
 #: 2026-10-16: Ali pays list on SignalWire, the old discounted rate once moved to Telnyx).
 #: When set, it replaces "usage" for Telnyx-carried usage.
+#: There is deliberately no "tendlc" category: no discount applies to 10DLC charges.
 DISCOUNT_CATEGORIES: tuple[str, ...] = (
-    "subscription", "bundles", "usage", "numbers", "tendlc", "usage_telnyx"
+    "subscription", "bundles", "usage", "numbers", "usage_telnyx"
 )
 
 

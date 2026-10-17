@@ -249,6 +249,9 @@ async def sync_subscription(session: AsyncSession, settings, org_id: uuid.UUID) 
     remote = await stripe_client._run_sync(stripe.Subscription.retrieve, sub_id)
     items = []
     for item in (remote.get("items") or {}).get("data", []):
+        if (item.get("metadata") or {}).get("kind") == "tendlc_monthly":
+            # The 10DLC fee is sold at cost + margin: a workspace coupon must never apply.
+            continue
         price_id = (item.get("price") or {}).get("id")
         coupon = coupons["numbers" if price_id in number_prices else "subscription"]
         items.append({"id": item["id"], "discounts": [{"coupon": coupon}] if coupon else ""})

@@ -633,7 +633,7 @@ async def handle_event(session: AsyncSession, request, event: dict) -> bool:
 
         # A 10DLC monthly fee that rode on this plan must not silently stop billing.
         await tendlc.restore_standalone_monthly(
-            session, settings, org_id, obj["id"], latest.get("customer")
+            session, settings, org_id, obj["id"], latest
         )
     await session.commit()
     return True

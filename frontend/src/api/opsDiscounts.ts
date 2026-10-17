@@ -62,10 +62,6 @@ export const DISCOUNT_LABELS: Record<string, { label: string; help: string }> = 
     label: "Phone numbers",
     help: "Number rental and setup (and extra numbers on the plan)",
   },
-  tendlc: {
-    label: "10DLC fee",
-    help: "Ringlite's texting-registration service fee (carrier fees stay at cost)",
-  },
   usage_telnyx: {
     label: "Usage on Telnyx",
     help: "Usage carried by Telnyx only; replaces Usage there (other carriers pay Usage or list)",

@@ -113,22 +113,20 @@ PIN_SMS = "Your Ringlite texting registration code is @OTP_PIN@. It expires in 2
 SUCCESS_SMS = "Thanks - your number is verified for business texting with Ringlite."
 
 
-def quote(tier: str, service_discount_bps: int = 0, *, brand_reused: bool = False) -> dict:
+def quote(tier: str, *, brand_reused: bool = False) -> dict:
     """``brand_reused``: the business is already approved, so only the campaign is filed and
-    the brand fee is neither charged nor refunded.
-    ``service_discount_bps`` is the workspace's 10DLC discount (services/discounts.py). It
-    applies to Ringlite's own service fee only, never to the (marked-up) carrier fees."""
+    the brand fee is neither charged nor refunded. No workspace discount ever applies to a
+    10DLC charge (owner rule 2026-10-18)."""
     monthly = sell_cents(MONTHLY_CENTS[tier])
     brand = 0 if brand_reused else sell_cents(BRAND_FEE_CENTS)
     review = CAMPAIGN_REVIEW_SELL_CENTS
-    bps = min(max(int(service_discount_bps), 0), 10_000)
-    service = SERVICE_FEE_CENTS * (10_000 - bps) // 10_000
+    service = SERVICE_FEE_CENTS
     return {
         "fee_tier": tier,
         "brand_fee_cents": brand,
         "campaign_review_cents": review,
         "service_fee_cents": service,
-        "service_discount_cents": SERVICE_FEE_CENTS - service,
+        "service_discount_cents": 0,
         "monthly_cents": monthly,
         "upfront_months": UPFRONT_MONTHS,
         "due_today_cents": (
@@ -137,10 +135,9 @@ def quote(tier: str, service_discount_bps: int = 0, *, brand_reused: bool = Fals
     }
 
 
-def customer_quote(tier: str, service_discount_bps: int = 0, *, brand_reused: bool = False) -> dict:
-    """What the customer is shown: totals only, never the carrier / Ringlite split. Pass the
-    workspace's 10DLC discount so the total shown matches what checkout charges."""
-    q = quote(tier, service_discount_bps, brand_reused=brand_reused)
+def customer_quote(tier: str, *, brand_reused: bool = False) -> dict:
+    """What the customer is shown: totals only, never the carrier / Ringlite split."""
+    q = quote(tier, brand_reused=brand_reused)
     return {
         key: q[key]
         for key in ("fee_tier", "monthly_cents", "upfront_months", "due_today_cents")
@@ -157,7 +154,6 @@ def public(
     reg: TenDlcRegistration,
     brand: Brand | None,
     campaign: Campaign | None,
-    service_discount_bps: int = 0,
 ) -> dict:
     return {
         "id": str(reg.id),
@@ -169,7 +165,10 @@ def public(
         "checkout_url": reg.checkout_url if reg.stage == "checkout" else None,
         "otp_sent_at": reg.otp_sent_at.isoformat() if reg.otp_sent_at else None,
         "detail": reg.detail,
-        **customer_quote(reg.fee_tier, service_discount_bps),
+        **customer_quote(
+            reg.fee_tier,
+            brand_reused=bool((reg.filing or {}).get("brand_reused")),
+        ),
     }
 
 
@@ -319,13 +318,8 @@ async def start_checkout(
     session.add(reg)
     await session.commit()
 
-    from app.services import discounts
-
-    discount_bps = await discounts.active_bps(session, org_id, "tendlc")
-    fees = quote(tier, discount_bps, brand_reused=brand_reused)
+    fees = quote(tier, brand_reused=brand_reused)
     metadata = {"kind": "tendlc_fee", "registration_id": str(reg.id), "org_id": str(org_id)}
-    if discount_bps:
-        metadata["service_discount_bps"] = str(discount_bps)
     base = settings.public_web_url.rstrip("/")
     params: dict[str, Any] = {
         "mode": "subscription",
@@ -1184,52 +1178,107 @@ _monthly_product_id: str | None = None
 
 
 async def _monthly_product(stripe) -> str:
+    """One shared Stripe product for the item. Found by metadata first (idempotency keys
+    expire after 24h, so a plain create would pile up products), cached per process."""
     global _monthly_product_id
     if _monthly_product_id is None:
-        product = await stripe_client._run_sync(
-            stripe.Product.create,
-            name=_MONTHLY_PRODUCT_NAME,
-            idempotency_key="tendlc-monthly-product",
+        found = await stripe_client._run_sync(
+            stripe.Product.search, query="metadata['kind']:'tendlc_monthly' AND active:'true'"
         )
-        _monthly_product_id = product["id"]
+        data = (found or {}).get("data") or []
+        if data:
+            _monthly_product_id = data[0]["id"]
+        else:
+            product = await stripe_client._run_sync(
+                stripe.Product.create,
+                name=_MONTHLY_PRODUCT_NAME,
+                metadata={"kind": "tendlc_monthly"},
+                idempotency_key="tendlc-monthly-product",
+            )
+            _monthly_product_id = product["id"]
     return _monthly_product_id
+
+
+def _has_discount(subscription: dict) -> bool:
+    if subscription.get("discount") or subscription.get("discounts"):
+        return True
+    return any(
+        item.get("discounts") or item.get("discount")
+        for item in (subscription.get("items") or {}).get("data", [])
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+async def _alert_orphan(session, reg, detail: dict) -> None:
+    from app.services import card_risk
+
+    await card_risk.open_alert(
+        session,
+        reg.org_id,
+        "tendlc_monthly_orphan",
+        {"registration_id": str(reg.id), **detail},
+    )
 
 
 async def move_monthly_to_plan(session, settings, reg) -> bool:
     """Once the three prepaid months run out, bill the monthly fee on the workspace's
     monthly plan subscription (same renewal invoice) instead of the 10DLC's own one.
 
-    The item is created first and the own subscription (still trialing, so it has never
-    charged) is cancelled right after; a failure in between is retried next pass and never
-    double charges. Only an active/trialing MONTHLY plan receives it; anything else leaves
-    the standalone subscription billing alone. Returns True when the fee is on the plan."""
+    From one day before the own subscription's trial ends: the own subscription (still
+    trialing, so it has never charged) is cancelled first, then the item is created with
+    prorations. If the item create fails after the cancel it is retried every pass, and
+    ops are alerted when it still fails a day after the window opened. Only an ACTIVE,
+    undiscounted MONTHLY plan receives it (a coupon would sell the fee below cost); anything
+    else leaves the standalone subscription billing alone. True when the fee is on the plan."""
     filing = reg.filing or {}
-    if filing.get("monthly_standalone") or filing.get("own_sub_cancelled"):
+    if filing.get("monthly_standalone") or filing.get("monthly_item_id"):
         return bool(filing.get("monthly_item_id"))
     if reg.paid_at is None or not reg.subscription_id:
         return False
-    paid = reg.paid_at if reg.paid_at.tzinfo else reg.paid_at.replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) < paid + timedelta(days=30 * UPFRONT_MONTHS - 2):
-        return False
-    from app.services import plan_billing
+    now = datetime.now(timezone.utc)
+    if not filing.get("own_sub_cancelled"):
+        # Cheap guard before any Stripe call: the trial is 30 * UPFRONT_MONTHS days.
+        if now < _as_utc(reg.paid_at) + timedelta(days=30 * UPFRONT_MONTHS - 3):
+            return False
 
     try:
         stripe = stripe_client._stripe(settings)
-        if not filing.get("monthly_item_id"):
+        if not filing.get("own_sub_cancelled"):
             own = await stripe_client._run_sync(stripe.Subscription.retrieve, reg.subscription_id)
             if own["status"] != "trialing":
                 # Already billing (or gone): moving now would double charge this period.
                 reg.filing = {**filing, "monthly_standalone": True}
                 await session.commit()
                 return False
-            ent = await plan_billing.entitlement(session, reg.org_id)
-            if (
-                ent is None
-                or ent.interval != plan_billing.MONTH
-                or ent.subscription.status not in ("active", "trialing")
-            ):
+            opens = datetime.fromtimestamp(int(own["trial_end"]), timezone.utc) - timedelta(days=1)
+            if now < opens:
                 return False
-            plan_sub = ent.subscription.stripe_subscription_id
+            plan_sub = await _plan_target(session, stripe, reg)
+            if plan_sub is None:
+                return False
+            await stripe_client._run_sync(
+                stripe.Subscription.cancel,
+                reg.subscription_id,
+                prorate=False,
+                idempotency_key=f"tendlc-move-cancel-{reg.id}",
+            )
+            filing = {
+                **filing,
+                "own_sub_cancelled": True,
+                "monthly_window": opens.isoformat(),
+                "monthly_on": plan_sub,
+            }
+            reg.filing = filing  # a new dict: the JSON column does not track in-place edits
+            await session.commit()
+        else:
+            plan_sub = await _plan_target(session, stripe, reg)
+            if plan_sub is None:
+                await _late_orphan(session, reg, filing, now, "no eligible plan subscription")
+                return False
+        try:
             item = await stripe_client._run_sync(
                 stripe.SubscriptionItem.create,
                 subscription=plan_sub,
@@ -1244,31 +1293,49 @@ async def move_monthly_to_plan(session, settings, reg) -> bool:
                 proration_behavior="create_prorations",
                 idempotency_key=f"tendlc-monthly-{reg.id}",
             )
-            filing = {**filing, "monthly_item_id": item["id"], "monthly_on": plan_sub}
-            reg.filing = filing  # a new dict: the JSON column does not track in-place edits
-            await session.commit()
-        own = await stripe_client._run_sync(stripe.Subscription.retrieve, reg.subscription_id)
-        if own["status"] != "canceled":
-            await stripe_client._run_sync(
-                stripe.Subscription.cancel,
-                reg.subscription_id,
-                prorate=False,
-                idempotency_key=f"tendlc-move-cancel-{reg.id}",
-            )
-        reg.filing = {**filing, "own_sub_cancelled": True}
+        except Exception:
+            await _late_orphan(session, reg, filing, now, "item create failed")
+            raise
+        reg.filing = {**filing, "monthly_item_id": item["id"], "monthly_on": plan_sub}
         await session.commit()
-        log.info("tendlc_monthly_moved", registration_id=str(reg.id), plan=filing["monthly_on"])
+        log.info("tendlc_monthly_moved", registration_id=str(reg.id), plan=plan_sub)
         return True
     except Exception:
         log.exception("tendlc_monthly_move_failed", registration_id=str(reg.id))
         return False
 
 
-async def restore_standalone_monthly(session, settings, org_id, plan_sub_id, customer) -> None:
-    """The plan subscription carrying a 10DLC monthly item was deleted: give each active
-    registration on it its own subscription again, or tell ops it is now unbilled."""
-    from app.services import card_risk
+async def _plan_target(session, stripe, reg) -> str | None:
+    """The plan subscription that may carry the fee: active, monthly, no coupon."""
+    from app.services import plan_billing
 
+    ent = await plan_billing.entitlement(session, reg.org_id)
+    if ent is None or ent.interval != plan_billing.MONTH or ent.subscription.status != "active":
+        return None
+    plan_sub = ent.subscription.stripe_subscription_id
+    remote = await stripe_client._run_sync(stripe.Subscription.retrieve, plan_sub)
+    if _has_discount(remote):
+        return None
+    return plan_sub
+
+
+async def _late_orphan(session, reg, filing: dict, now: datetime, why: str) -> None:
+    """The own subscription is cancelled but the item is not on a plan: after a day of
+    failed retries, tell ops the campaign is unbilled (once)."""
+    window = filing.get("monthly_window")
+    if not window or filing.get("orphan_alerted"):
+        return
+    if now < datetime.fromisoformat(window) + timedelta(days=1):
+        return
+    await _alert_orphan(session, reg, {"why": why})
+    reg.filing = {**filing, "orphan_alerted": True}
+    await session.commit()
+
+
+async def restore_standalone_monthly(session, settings, org_id, plan_sub_id, plan_sub) -> None:
+    """The plan subscription carrying a 10DLC monthly item was deleted: give each active
+    registration on it its own subscription again, or tell ops it is now unbilled.
+    `plan_sub` is the deleted subscription as Stripe reports it."""
     regs = (
         (
             await session.execute(
@@ -1281,31 +1348,52 @@ async def restore_standalone_monthly(session, settings, org_id, plan_sub_id, cus
         .scalars()
         .all()
     )
-    if isinstance(customer, dict):
-        customer = customer.get("id")
     for reg in regs:
         if (reg.filing or {}).get("monthly_on") != plan_sub_id:
             continue
         try:
-            if not customer:
-                raise ValueError("plan subscription has no customer")
             stripe = stripe_client._stripe(settings)
+            customer = plan_sub.get("customer")
+            if isinstance(customer, dict):
+                customer = customer.get("id")
+            method = plan_sub.get("default_payment_method")
+            if isinstance(method, dict):
+                method = method.get("id")
+            if not method and customer:
+                remote = await stripe_client._run_sync(stripe.Customer.retrieve, customer)
+                method = ((remote or {}).get("invoice_settings") or {}).get(
+                    "default_payment_method"
+                )
+                if isinstance(method, dict):
+                    method = method.get("id")
+            if not customer or not method:
+                raise ValueError("no customer or payment method to bill")
+            kwargs: dict = {}
+            period_end = plan_sub.get("current_period_end")
+            if not period_end:
+                data = (plan_sub.get("items") or {}).get("data") or []
+                period_end = data[0].get("current_period_end") if data else None
+            # The item already billed the workspace up to the end of this period.
+            if period_end and int(period_end) > datetime.now(timezone.utc).timestamp() + 3600:
+                kwargs["trial_end"] = int(period_end)
             sub = await stripe_client._run_sync(
                 stripe.Subscription.create,
                 customer=customer,
+                default_payment_method=method,
                 items=[
                     {
                         "price_data": {
                             "currency": "usd",
                             "unit_amount": quote(reg.fee_tier)["monthly_cents"],
                             "recurring": {"interval": "month"},
-                            "product_data": {"name": _MONTHLY_PRODUCT_NAME},
+                            "product": await _monthly_product(stripe),
                         },
                         "quantity": 1,
                     }
                 ],
                 metadata={"kind": "tendlc_fee", "registration_id": str(reg.id)},
                 idempotency_key=f"tendlc-monthly-restore-{reg.id}-{plan_sub_id}",
+                **kwargs,
             )
             reg.subscription_id = sub["id"]
             reg.filing = {
@@ -1314,11 +1402,12 @@ async def restore_standalone_monthly(session, settings, org_id, plan_sub_id, cus
                 if k not in ("monthly_item_id", "monthly_on", "own_sub_cancelled")
             }
             log.info("tendlc_monthly_restored", registration_id=str(reg.id))
+            if sub.get("status") not in ("active", "trialing"):
+                await _alert_orphan(
+                    session,
+                    reg,
+                    {"plan_subscription": plan_sub_id, "status": sub.get("status")},
+                )
         except Exception:
             log.exception("tendlc_monthly_orphan", registration_id=str(reg.id))
-            await card_risk.open_alert(
-                session,
-                org_id,
-                "tendlc_monthly_orphan",
-                {"registration_id": str(reg.id), "plan_subscription": plan_sub_id},
-            )
+            await _alert_orphan(session, reg, {"plan_subscription": plan_sub_id})

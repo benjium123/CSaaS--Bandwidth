@@ -3,7 +3,6 @@ prepaid months run out: item first, own subscription cancelled after, never both
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -15,7 +14,7 @@ from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_sessionmaker
 from app.errors import ValidationFailedError
 from app.models import SecurityAlert, Subscription, TenDlcRegistration
-from app.services import plan_billing, tendlc
+from app.services import plan_billing, stripe_client, tendlc
 from tests.test_tendlc_self_serve import (  # noqa: F401
     _checkout,
     _pay,
@@ -33,17 +32,36 @@ def _fresh_product_cache(monkeypatch):
     monkeypatch.setattr(tendlc, "_monthly_product_id", None)
 
 
+def _ts(**delta):
+    return int((datetime.now(timezone.utc) + timedelta(**delta)).timestamp())
+
+
 @pytest.fixture
 def stripe(stripe_stub):
     calls: list[str] = []
+    state = {
+        "own": {"status": "trialing", "latest_invoice": "in_1", "trial_end": _ts(hours=12)},
+        "plan": {"id": PLAN_SUB, "status": "active", "items": {"data": []}},
+    }
+
+    def retrieve(sub_id):
+        return state["plan"] if sub_id == PLAN_SUB else state["own"]
+
+    stripe_stub.Subscription.retrieve = Mock(side_effect=retrieve)
     stripe_stub.SubscriptionItem = SimpleNamespace(
         create=Mock(side_effect=lambda **kw: calls.append("item_create") or {"id": "si_10dlc"}),
         delete=Mock(),
     )
-    stripe_stub.Product = SimpleNamespace(create=Mock(return_value={"id": "prod_10dlc"}))
-    stripe_stub.Subscription.create = Mock(return_value={"id": "sub_new"})
+    stripe_stub.Product = SimpleNamespace(
+        search=Mock(return_value={"data": []}), create=Mock(return_value={"id": "prod_10dlc"})
+    )
+    stripe_stub.Customer = SimpleNamespace(
+        retrieve=Mock(return_value={"invoice_settings": {"default_payment_method": "pm_cust"}})
+    )
+    stripe_stub.Subscription.create = Mock(return_value={"id": "sub_new", "status": "active"})
     stripe_stub.Subscription.cancel = Mock(side_effect=lambda *a, **kw: calls.append("cancel"))
     stripe_stub.calls = calls
+    stripe_stub.state = state
     return stripe_stub
 
 
@@ -119,7 +137,7 @@ async def test_moves_onto_an_active_monthly_plan_item_before_cancel(session, str
     assert kwargs["metadata"] == {"kind": "tendlc_monthly", "registration_id": str(reg.id)}
     assert kwargs["proration_behavior"] == "create_prorations"
     assert kwargs["idempotency_key"] == f"tendlc-monthly-{reg.id}"
-    assert stripe.calls == ["item_create", "cancel"]
+    assert stripe.calls == ["cancel", "item_create"]
     cancel = stripe.Subscription.cancel.call_args
     assert cancel.args[0] == "sub_tendlc"
     assert cancel.kwargs["prorate"] is False
@@ -139,6 +157,7 @@ async def test_moves_onto_an_active_monthly_plan_item_before_cancel(session, str
         {"interval": "year"},
         {"plan": None},
         {"status": "past_due"},
+        {"status": "trialing"},  # a trialing plan would carry the fee for free
     ],
 )
 async def test_yearly_missing_or_unhealthy_plan_leaves_the_standalone_subscription(
@@ -152,37 +171,80 @@ async def test_yearly_missing_or_unhealthy_plan_leaves_the_standalone_subscripti
 
 
 async def test_already_billing_standalone_is_not_moved(session, stripe):
-    stripe.Subscription.retrieve.return_value = {"status": "active", "latest_invoice": "in_2"}
+    stripe.state["own"] = {"status": "active", "latest_invoice": "in_2", "trial_end": _ts(days=-1)}
     _, reg = await _active(session)
     assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
     stripe.SubscriptionItem.create.assert_not_called()
     stripe.Subscription.cancel.assert_not_called()
 
 
-async def test_stripe_error_on_item_create_cancels_nothing_and_retries(session, stripe):
-    stripe.SubscriptionItem.create.side_effect = RuntimeError("stripe down")
+async def test_window_opens_one_day_before_the_trial_ends(session, stripe):
+    stripe.state["own"]["trial_end"] = _ts(days=2)
     _, reg = await _active(session)
     assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
     stripe.Subscription.cancel.assert_not_called()
+    stripe.SubscriptionItem.create.assert_not_called()
+
+
+async def test_discounted_plan_gets_no_move(session, stripe):
+    stripe.state["plan"]["discounts"] = [{"coupon": "co_1"}]
+    _, reg = await _active(session)
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
+    stripe.Subscription.cancel.assert_not_called()
+    stripe.SubscriptionItem.create.assert_not_called()
+
+
+async def test_item_level_plan_discount_gets_no_move(session, stripe):
+    stripe.state["plan"]["items"] = {"data": [{"id": "si_p", "discounts": [{"coupon": "c"}]}]}
+    _, reg = await _active(session)
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
+    stripe.Subscription.cancel.assert_not_called()
+
+
+async def test_item_create_failure_after_cancel_retries_without_a_second_cancel(session, stripe):
+    stripe.SubscriptionItem.create.side_effect = RuntimeError("stripe down")
+    _, reg = await _active(session)
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
+    assert reg.filing["own_sub_cancelled"] is True
     assert "monthly_item_id" not in reg.filing
 
     stripe.SubscriptionItem.create.side_effect = None
     stripe.SubscriptionItem.create.return_value = {"id": "si_10dlc"}
     assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is True
-
-
-async def test_failed_own_cancel_retries_only_the_cancel(session, stripe):
-    stripe.Subscription.cancel.side_effect = RuntimeError("stripe down")
-    _, reg = await _active(session)
-    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
+    assert stripe.Subscription.cancel.call_count == 1
     assert reg.filing["monthly_item_id"] == "si_10dlc"
-    assert stripe.SubscriptionItem.create.call_count == 1
+    assert (await session.execute(sa.select(SecurityAlert))).scalars().all() == []
 
-    stripe.Subscription.cancel.side_effect = None
-    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is True
-    assert stripe.SubscriptionItem.create.call_count == 1  # no second item
-    assert stripe.Subscription.cancel.call_count == 2
-    assert reg.filing["own_sub_cancelled"] is True
+
+async def test_item_create_still_failing_a_day_after_the_window_alerts_ops_once(session, stripe):
+    stripe.SubscriptionItem.create.side_effect = RuntimeError("stripe down")
+    _, reg = await _active(session)
+    await tendlc.move_monthly_to_plan(session, _settings(), reg)
+    assert (await session.execute(sa.select(SecurityAlert))).scalars().all() == []
+
+    past = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    reg.filing = {**reg.filing, "monthly_window": past}
+    await session.commit()
+    await tendlc.move_monthly_to_plan(session, _settings(), reg)
+    await tendlc.move_monthly_to_plan(session, _settings(), reg)
+    alerts = (await session.execute(sa.select(SecurityAlert))).scalars().all()
+    assert [a.kind for a in alerts] == ["tendlc_monthly_orphan"]
+
+
+async def test_product_is_looked_up_before_one_is_created(session, stripe):
+    stripe.Product.search.return_value = {"data": [{"id": "prod_existing"}]}
+    _, reg = await _active(session)
+    await tendlc.move_monthly_to_plan(session, _settings(), reg)
+    stripe.Product.create.assert_not_called()
+    kwargs = stripe.SubscriptionItem.create.call_args.kwargs
+    assert kwargs["price_data"]["product"] == "prod_existing"
+    assert "tendlc_monthly" in stripe.Product.search.call_args.kwargs["query"]
+
+
+async def test_new_product_carries_the_kind_metadata(session, stripe):
+    _, reg = await _active(session)
+    await tendlc.move_monthly_to_plan(session, _settings(), reg)
+    assert stripe.Product.create.call_args.kwargs["metadata"] == {"kind": "tendlc_monthly"}
 
 
 async def test_tick_moves_through_the_active_stage(session, stripe, telnyx):
@@ -210,38 +272,150 @@ async def test_campaign_declined_after_the_move_deletes_the_item_only(session, s
     assert "monthly_item_id" not in reg.filing
 
 
-async def test_plan_deleted_recreates_a_standalone_subscription(session, stripe):
+def _deleted_plan(**over):
+    return {
+        "customer": "cus_1",
+        "default_payment_method": "pm_plan",
+        "current_period_end": _ts(days=20),
+    } | over
+
+
+async def _moved(session, stripe):
     org, reg = await _active(session)
     await tendlc.move_monthly_to_plan(session, _settings(), reg)
+    assert reg.filing["monthly_item_id"] == "si_10dlc"
+    return org, reg
 
-    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, "cus_1")
+
+async def test_plan_deleted_recreates_a_standalone_subscription(session, stripe):
+    org, reg = await _moved(session, stripe)
+    plan = _deleted_plan()
+
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, plan)
     await session.commit()
 
     kwargs = stripe.Subscription.create.call_args.kwargs
     assert kwargs["customer"] == "cus_1"
+    assert kwargs["default_payment_method"] == "pm_plan"
+    assert kwargs["trial_end"] == plan["current_period_end"]
     assert kwargs["metadata"] == {"kind": "tendlc_fee", "registration_id": str(reg.id)}
-    assert kwargs["items"][0]["price_data"]["unit_amount"] == 1250
+    price = kwargs["items"][0]["price_data"]
+    assert price["unit_amount"] == 1250 and price["product"] == "prod_10dlc"
     assert reg.subscription_id == "sub_new"
     assert "monthly_item_id" not in reg.filing and "monthly_on" not in reg.filing
+    assert (await session.execute(sa.select(SecurityAlert))).scalars().all() == []
+
+
+async def test_restore_falls_back_to_the_customers_default_card(session, stripe):
+    org, reg = await _moved(session, stripe)
+    plan = _deleted_plan(default_payment_method=None)
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, plan)
+    assert stripe.Subscription.create.call_args.kwargs["default_payment_method"] == "pm_cust"
+
+
+async def test_restore_without_any_card_alerts_ops(session, stripe):
+    org, reg = await _moved(session, stripe)
+    stripe.Customer.retrieve.return_value = {"invoice_settings": {}}
+    plan = _deleted_plan(default_payment_method=None)
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, plan)
+    await session.commit()
+    stripe.Subscription.create.assert_not_called()
+    alert = (await session.execute(sa.select(SecurityAlert))).scalar_one()
+    assert alert.kind == "tendlc_monthly_orphan"
+    assert reg.filing["monthly_item_id"] == "si_10dlc"
+
+
+async def test_restore_alerts_when_the_new_subscription_is_not_active(session, stripe):
+    org, reg = await _moved(session, stripe)
+    stripe.Subscription.create.return_value = {"id": "sub_new", "status": "incomplete"}
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, _deleted_plan())
+    await session.commit()
+    alert = (await session.execute(sa.select(SecurityAlert))).scalar_one()
+    assert alert.detail["status"] == "incomplete"
 
 
 async def test_plan_deleted_failure_opens_an_ops_alert(session, stripe):
-    org, reg = await _active(session)
-    await tendlc.move_monthly_to_plan(session, _settings(), reg)
+    org, reg = await _moved(session, stripe)
     stripe.Subscription.create.side_effect = RuntimeError("card declined")
-
-    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, "cus_1")
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, PLAN_SUB, _deleted_plan())
     await session.commit()
-
     alert = (await session.execute(sa.select(SecurityAlert))).scalar_one()
     assert alert.kind == "tendlc_monthly_orphan"
     assert alert.detail["registration_id"] == str(reg.id)
-    assert reg.filing["monthly_item_id"] == "si_10dlc"  # untouched, still retryable by ops
 
 
 async def test_other_plan_deleted_leaves_the_registration_alone(session, stripe):
-    org, reg = await _active(session)
-    await tendlc.move_monthly_to_plan(session, _settings(), reg)
-    await tendlc.restore_standalone_monthly(session, _settings(), org.id, "sub_other", "cus_1")
+    org, reg = await _moved(session, stripe)
+    other = _deleted_plan()
+    await tendlc.restore_standalone_monthly(session, _settings(), org.id, "sub_other", other)
     stripe.Subscription.create.assert_not_called()
-    assert uuid.UUID(str(reg.id))
+
+
+async def test_registration_card_shows_the_reused_brand_price(session, stripe):
+    _, reg = await _active(session)
+    reg.filing = {**reg.filing, "brand_reused": True}
+    assert tendlc.public(reg, None, None)["due_today_cents"] == 6050
+
+
+async def test_plan_discount_sync_leaves_the_tendlc_item_undiscounted(
+    session, stripe, monkeypatch
+):
+    from app.services import discounts
+
+    org, _ = await _active(session)
+    await discounts.set_discount(
+        session,
+        org.id,
+        "subscription",
+        percent_bps=3000,
+        ends_at=None,
+        note=None,
+        actor_user_id=None,
+    )
+    await session.commit()
+    modify = Mock(return_value={})
+    remote = {
+        "items": {
+            "data": [
+                {"id": "si_plan", "price": {"id": "price_plan"}},
+                {
+                    "id": "si_10dlc",
+                    "price": {"id": "price_10dlc"},
+                    "metadata": {"kind": "tendlc_monthly"},
+                },
+            ]
+        }
+    }
+    fake = SimpleNamespace(
+        Subscription=SimpleNamespace(retrieve=Mock(return_value=remote), modify=modify),
+        Coupon=SimpleNamespace(create=Mock(return_value={"id": "co_1"})),
+    )
+    monkeypatch.setattr(stripe_client, "_stripe", lambda settings: fake)
+    assert await discounts.sync_subscription(session, _settings(), org.id) is True
+    ids = {i["id"]: i for i in modify.call_args.kwargs["items"]}
+    assert ids["si_plan"]["discounts"] == [{"coupon": "co_1"}]
+    assert "si_10dlc" not in ids  # untouched, so never discounted
+
+
+async def test_no_discount_category_for_10dlc_and_a_stray_row_changes_nothing(
+    session, stripe
+):
+    from app.models import OrgDiscount
+    from app.services import discounts
+
+    org, brand, campaign, _ = await _workspace(session)
+    with pytest.raises(ValidationFailedError):
+        await discounts.set_discount(
+            session, org.id, "tendlc", percent_bps=2000, ends_at=None, note=None,
+            actor_user_id=None,
+        )
+    set_org_context(session, org.id)
+    session.add(OrgDiscount(org_id=org.id, category="tendlc", percent_bps=5000))
+    await session.commit()
+
+    await _checkout(session, org, brand, campaign)
+    total = stripe.checkout.Session.create.call_args.kwargs
+    assert tendlc.quote("standard")["due_today_cents"] == 6650
+    assert tendlc.quote("sole_proprietor")["due_today_cents"] == 3950
+    assert "service_discount_bps" not in total["subscription_data"]["metadata"]
+    assert tendlc.quote("standard")["service_discount_cents"] == 0

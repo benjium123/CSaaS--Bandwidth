@@ -14,7 +14,7 @@ vi.mock("@/auth/AuthContext", () => ({
 
 const ORG_ID = "o1";
 const BASE = `/api/v1/ops/console/orgs/${ORG_ID}/discounts`;
-const ALL_CATEGORIES = ["subscription", "bundles", "usage", "numbers", "tendlc"];
+const ALL_CATEGORIES = ["subscription", "bundles", "usage", "numbers"];
 
 type RequestInitLike = { method?: string; json?: unknown };
 
@@ -251,7 +251,7 @@ describe("OrgDiscountsPanel", () => {
         return {
           org_id: ORG_ID,
           categories: ALL_CATEGORIES,
-          discounts: [discount({ category: "tendlc", percent_bps: 2000, percent: 20 })],
+          discounts: [discount({ category: "numbers", percent_bps: 2000, percent: 20 })],
         };
       }
       if (method === "DELETE") {
@@ -263,10 +263,10 @@ describe("OrgDiscountsPanel", () => {
 
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Remove 10DLC fee discount" }));
+    await user.click(await screen.findByRole("button", { name: "Remove Phone numbers discount" }));
 
     await waitFor(() => expect(deletePath).not.toBeNull());
-    expect(deletePath).toBe(`${BASE}/tendlc`);
+    expect(deletePath).toBe(`${BASE}/numbers`);
   });
 
   it("warns when Stripe could not be updated", async () => {

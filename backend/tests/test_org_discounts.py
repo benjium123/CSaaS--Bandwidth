@@ -21,7 +21,6 @@ from app.services import (
     plan_billing,
     stripe_client,
     telephony_billing,
-    tendlc,
 )
 from tests.conftest import auth_headers
 from tests.test_ops_console import _new_org, _operator, ops, ops_settings  # noqa: F401
@@ -290,23 +289,6 @@ async def test_bundle_quote_uses_org_discount(session):
     expected = bundles.quote_from_list("sms", 1, 13_000_000, workspace_bps=1000)
     assert quoted == expected
 
-
-def test_tendlc_quote_service_discount():
-    tier = next(iter(tendlc.MONTHLY_CENTS))
-    base = tendlc.quote(tier)
-    discounted = tendlc.quote(tier, service_discount_bps=2000)
-
-    assert discounted["service_fee_cents"] == 400
-    assert discounted["service_discount_cents"] == 100
-    assert discounted["due_today_cents"] == base["due_today_cents"] - 100
-
-
-def test_tendlc_customer_quote_shows_the_discounted_total():
-    tier = next(iter(tendlc.MONTHLY_CENTS))
-    shown = tendlc.customer_quote(tier, 2000)
-    assert shown["due_today_cents"] == tendlc.quote(tier, 2000)["due_today_cents"]
-    assert "service_fee_cents" not in shown  # the Ringlite / carrier split stays hidden
-    assert tendlc.customer_quote(tier)["due_today_cents"] == tendlc.quote(tier)["due_today_cents"]
 
 
 async def test_discount_route_put_and_get(ops, session, ops_settings):
