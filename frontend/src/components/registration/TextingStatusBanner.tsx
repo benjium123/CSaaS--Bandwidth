@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchNotifications, markNotificationsRead } from "@/api/inboxPro";
 import { Button } from "@/components/ui/primitives";
@@ -14,6 +14,7 @@ const WARNING_WORDS = /needs (changes|attention)|could not be added/i;
 export function TextingStatusBanner() {
   const { api } = useAuth();
   const queryClient = useQueryClient();
+  const { pathname } = useLocation();
   const notifications = useQuery({
     queryKey: ["notifications"],
     queryFn: () => fetchNotifications(api, { limit: 50 }),
@@ -28,7 +29,8 @@ export function TextingStatusBanner() {
   const newest = (notifications.data?.items ?? [])
     .filter((n) => n.kind === "texting" && n.read_at === null)
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
-  if (!newest) return null;
+  // On the registration page itself the notice is being read (the server marks it read there).
+  if (!newest || pathname.startsWith("/settings/messaging")) return null;
 
   const warning = WARNING_WORDS.test(newest.body);
   return (
