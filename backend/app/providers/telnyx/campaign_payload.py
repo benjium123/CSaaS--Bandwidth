@@ -22,7 +22,21 @@ ASSERTION_FIELDS: tuple[str, ...] = (
 #: termsAndConditions is true-or-nothing; autoRenewal must be present either way.
 REQUIRED_ASSERTIONS: tuple[str, ...] = ("autoRenewal", "termsAndConditions")
 MAX_SAMPLES = 5
-OPTIONAL_TEXT = {"helpMessage": "help_message", "optoutMessage": "opt_out_message"}
+OPTIONAL_TEXT = {
+    "helpMessage": "help_message",
+    "optoutMessage": "opt_out_message",
+    "optinMessage": "opt_in_message",
+    "privacyPolicyLink": "privacy_policy_url",
+    "termsAndConditionsLink": "terms_url",
+}
+KEYWORD_FIELDS = {
+    "optinKeywords": "opt_in_keywords",
+    "optoutKeywords": "opt_out_keywords",
+    "helpKeywords": "help_keywords",
+}
+#: The Campaign columns for description / opt_in_process are String(4000); the appended
+#: line must fit in the same limit, so the customer's text is cut, never the line.
+MAX_VETTED_TEXT = 4000
 
 
 def _fail(field: str) -> NoReturn:
@@ -38,6 +52,22 @@ def _text(campaign: Campaign, field: str, *, required: bool) -> str | None:
     if required:
         _fail(field)
     return None
+
+
+def _keywords(campaign: Campaign, field: str) -> str | None:
+    """Comma separated, trimmed, upper-case, no empties; None when nothing is left."""
+    raw = getattr(campaign, field, None)
+    if not isinstance(raw, str):
+        return None
+    items = [part.strip().upper() for part in raw.split(",")]
+    joined = ",".join(item for item in items if item)
+    return joined or None
+
+
+def _with_line(text: str, line: str) -> str:
+    """Append ``line`` after a blank line, truncating ``text`` (never ``line``) to fit."""
+    suffix = f"\n\n{line}"
+    return text[: max(MAX_VETTED_TEXT - len(suffix), 0)].rstrip() + suffix
 
 
 def _usecase(campaign: Campaign) -> str:
@@ -133,5 +163,15 @@ def build_campaign_payload(
     for wire, field in OPTIONAL_TEXT.items():
         if text := _text(campaign, field, required=False):
             payload[wire] = text
+    for wire, field in KEYWORD_FIELDS.items():
+        if keywords := _keywords(campaign, field):
+            payload[wire] = keywords
+    volume = getattr(campaign, "expected_monthly_messages", None)
+    if isinstance(volume, int) and not isinstance(volume, bool) and volume > 0:
+        payload["description"] = _with_line(
+            payload["description"], f"Expected volume: about {volume} messages a month."
+        )
+    if proof := _text(campaign, "opt_in_proof_url", required=False):
+        payload["messageFlow"] = _with_line(payload["messageFlow"], f"Opt-in proof: {proof}")
     payload.update(_assertions(assertions))
     return payload

@@ -9,6 +9,7 @@ import {
   useRegistrationBrands,
   useRegistrationCampaigns,
   useSubmitCampaign,
+  useUpdateCampaign,
 } from "@/api/registration";
 import { useAuth } from "@/auth/AuthContext";
 import { ConsoleCard, ConsoleEmpty, SectionLabel } from "@/components/ui/consoleChrome";
@@ -54,6 +55,14 @@ interface CampaignFormFields {
   sample_messages: string;
   help_message: string;
   opt_out_message: string;
+  privacy_policy_url: string;
+  terms_url: string;
+  opt_in_keywords: string;
+  opt_out_keywords: string;
+  help_keywords: string;
+  opt_in_message: string;
+  opt_in_proof_url: string;
+  expected_monthly_messages: string;
 }
 
 const EMPTY_CAMPAIGN_FORM: CampaignFormFields = {
@@ -65,7 +74,40 @@ const EMPTY_CAMPAIGN_FORM: CampaignFormFields = {
   sample_messages: "",
   help_message: "",
   opt_out_message: "",
+  privacy_policy_url: "",
+  terms_url: "",
+  opt_in_keywords: "",
+  opt_out_keywords: "",
+  help_keywords: "",
+  opt_in_message: "",
+  opt_in_proof_url: "",
+  expected_monthly_messages: "",
 };
+
+const KEYWORD_HINT = "Comma separated, e.g. STOP, UNSUBSCRIBE";
+
+/** The form state for an existing campaign (edit mode). */
+function fieldsFromCampaign(campaign: RegistrationCampaign): CampaignFormFields {
+  return {
+    brand_id: campaign.brand_id,
+    name: campaign.name,
+    use_case: campaign.use_case,
+    description: campaign.description ?? "",
+    opt_in_process: campaign.opt_in_process ?? "",
+    sample_messages: (campaign.sample_messages ?? []).join("\n"),
+    help_message: campaign.help_message ?? "",
+    opt_out_message: campaign.opt_out_message ?? "",
+    privacy_policy_url: campaign.privacy_policy_url ?? "",
+    terms_url: campaign.terms_url ?? "",
+    opt_in_keywords: campaign.opt_in_keywords ?? "",
+    opt_out_keywords: campaign.opt_out_keywords ?? "",
+    help_keywords: campaign.help_keywords ?? "",
+    opt_in_message: campaign.opt_in_message ?? "",
+    opt_in_proof_url: campaign.opt_in_proof_url ?? "",
+    expected_monthly_messages:
+      campaign.expected_monthly_messages != null ? String(campaign.expected_monthly_messages) : "",
+  };
+}
 
 /** "1 number assigned" reads better than "1 numbers assigned"; everything else is plural. */
 function numberCountLabel(count: number): string {
@@ -99,22 +141,27 @@ function Field({
 }
 
 /**
- * The create-campaign form. The raw field values go to `useCreateCampaign`, which owns the
- * per-line trimming and blank-line dropping through `campaignCreateBody` - nothing is
- * filtered here, and the sample-messages textarea is split on newlines only.
+ * The create / edit campaign form. The raw field values go to `useCreateCampaign` (or
+ * `useUpdateCampaign` in edit mode), which owns the per-line trimming and blank-line
+ * dropping - nothing is filtered here, and the sample-messages textarea is split on
+ * newlines only. In edit mode the form is pre-filled and the brand cannot change.
  */
 function CampaignCreateForm({
   brands,
   pending,
   error,
   onCreate,
+  editing,
 }: {
   brands: RegistrationBrand[];
   pending: boolean;
   error: unknown;
   onCreate: (input: CampaignInput) => void;
+  editing?: RegistrationCampaign;
 }) {
-  const [fields, setFields] = useState<CampaignFormFields>(EMPTY_CAMPAIGN_FORM);
+  const [fields, setFields] = useState<CampaignFormFields>(
+    editing ? fieldsFromCampaign(editing) : EMPTY_CAMPAIGN_FORM,
+  );
 
   function update(key: keyof CampaignFormFields, value: string) {
     setFields((previous) => {
@@ -135,6 +182,17 @@ function CampaignCreateForm({
       sample_messages: fields.sample_messages.split("\n"),
       help_message: fields.help_message,
       opt_out_message: fields.opt_out_message,
+      privacy_policy_url: fields.privacy_policy_url,
+      terms_url: fields.terms_url,
+      opt_in_keywords: fields.opt_in_keywords,
+      opt_out_keywords: fields.opt_out_keywords,
+      help_keywords: fields.help_keywords,
+      opt_in_message: fields.opt_in_message,
+      opt_in_proof_url: fields.opt_in_proof_url,
+      expected_monthly_messages:
+        fields.expected_monthly_messages.trim() === ""
+          ? null
+          : Number(fields.expected_monthly_messages),
     });
   }
 
@@ -145,7 +203,7 @@ function CampaignCreateForm({
     // No native validation bubbles: the submit button already refuses an unselected brand
     // or an empty name, and the server is the authority on what a campaign needs.
     <form
-      aria-label="Add campaign"
+      aria-label={editing ? "Edit campaign" : "Add campaign"}
       noValidate
       className="flex flex-col gap-[11px]"
       onSubmit={handleSubmit}
@@ -155,6 +213,7 @@ function CampaignCreateForm({
           <Select
             id="campaign-brand"
             required
+            disabled={editing != null}
             value={fields.brand_id}
             onChange={(event) => update("brand_id", event.target.value)}
           >
@@ -229,11 +288,83 @@ function CampaignCreateForm({
             onChange={(event) => update("opt_out_message", event.target.value)}
           />
         </Field>
+
+        <Field id="campaign-privacy-policy-url" label="Privacy policy URL">
+          <Input
+            id="campaign-privacy-policy-url"
+            type="url"
+            value={fields.privacy_policy_url}
+            onChange={(event) => update("privacy_policy_url", event.target.value)}
+          />
+        </Field>
+
+        <Field id="campaign-terms-url" label="Terms URL">
+          <Input
+            id="campaign-terms-url"
+            type="url"
+            value={fields.terms_url}
+            onChange={(event) => update("terms_url", event.target.value)}
+          />
+        </Field>
+
+        <Field id="campaign-opt-in-keywords" label="Opt-in keywords" hint={KEYWORD_HINT}>
+          <Input
+            id="campaign-opt-in-keywords"
+            value={fields.opt_in_keywords}
+            onChange={(event) => update("opt_in_keywords", event.target.value)}
+          />
+        </Field>
+
+        <Field id="campaign-opt-out-keywords" label="Opt-out keywords" hint={KEYWORD_HINT}>
+          <Input
+            id="campaign-opt-out-keywords"
+            value={fields.opt_out_keywords}
+            onChange={(event) => update("opt_out_keywords", event.target.value)}
+          />
+        </Field>
+
+        <Field id="campaign-help-keywords" label="Help keywords" hint={KEYWORD_HINT}>
+          <Input
+            id="campaign-help-keywords"
+            value={fields.help_keywords}
+            onChange={(event) => update("help_keywords", event.target.value)}
+          />
+        </Field>
+
+        <Field id="campaign-opt-in-message" label="Opt-in confirmation message">
+          <Textarea
+            id="campaign-opt-in-message"
+            value={fields.opt_in_message}
+            onChange={(event) => update("opt_in_message", event.target.value)}
+          />
+        </Field>
+
+        <Field
+          id="campaign-opt-in-proof-url"
+          label="Opt-in proof (link to a screenshot or your sign-up page)"
+        >
+          <Input
+            id="campaign-opt-in-proof-url"
+            type="url"
+            value={fields.opt_in_proof_url}
+            onChange={(event) => update("opt_in_proof_url", event.target.value)}
+          />
+        </Field>
+
+        <Field id="campaign-expected-monthly-messages" label="Expected messages per month">
+          <Input
+            id="campaign-expected-monthly-messages"
+            type="number"
+            min={1}
+            value={fields.expected_monthly_messages}
+            onChange={(event) => update("expected_monthly_messages", event.target.value)}
+          />
+        </Field>
       </div>
 
       <div>
         <Button type="submit" disabled={pending || noBrand || noName}>
-          Create campaign
+          {editing ? "Save changes" : "Create campaign"}
         </Button>
       </div>
 
@@ -249,12 +380,14 @@ function CampaignCard({
   canManage,
   submitting,
   onSubmitCampaign,
+  onEdit,
 }: {
   campaign: RegistrationCampaign;
   parentBrand: RegistrationBrand | undefined;
   canManage: boolean;
   submitting: boolean;
   onSubmitCampaign: (campaignId: string) => void;
+  onEdit: (campaignId: string) => void;
 }) {
   const carrierRefs = Object.entries(campaign.carrier_refs);
   const missing = campaign.missing_for_submission;
@@ -329,6 +462,20 @@ function CampaignCard({
         </p>
       ) : null}
 
+      {canManage && (campaign.status === "draft" || campaign.status === "rejected") ? (
+        <div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-label={`Edit: ${campaign.name}`}
+            onClick={() => onEdit(campaign.id)}
+          >
+            Edit
+          </Button>
+        </div>
+      ) : null}
+
       {canManage && !terminal ? (
         <div className="flex flex-col gap-[4px]">
           <div className="flex flex-wrap items-center gap-2">
@@ -359,13 +506,18 @@ export function CampaignsPanel(): JSX.Element {
   const brandsQuery = useRegistrationBrands(api);
   const createMutation = useCreateCampaign(api);
   const submitMutation = useSubmitCampaign(api);
+  const updateMutation = useUpdateCampaign(api);
 
   const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   // Tracked by id so only the clicked row shows pending - see BrandsPanel.
   const [submittingId, setSubmittingId] = useState<string | null>(null);
 
   const brands = Array.isArray(brandsQuery.data) ? brandsQuery.data : [];
   const campaigns = Array.isArray(campaignsQuery.data) ? campaignsQuery.data : null;
+
+  const editing =
+    editingId !== null ? (campaigns?.find((campaign) => campaign.id === editingId) ?? null) : null;
 
   function handleSubmitCampaign(campaignId: string) {
     setSubmittingId(campaignId);
@@ -381,7 +533,10 @@ export function CampaignsPanel(): JSX.Element {
             type="button"
             size="sm"
             variant="outline"
-            onClick={() => setFormOpen((open) => !open)}
+            onClick={() => {
+              setEditingId(null);
+              setFormOpen((open) => !open);
+            }}
           >
             {formOpen ? "Cancel" : "Add campaign"}
           </Button>
@@ -415,6 +570,30 @@ export function CampaignsPanel(): JSX.Element {
         )
       ) : null}
 
+      {canManage && editing ? (
+        <div className="flex flex-col gap-[7px]">
+          <div className="flex items-center justify-between gap-2">
+            <SectionLabel>Edit campaign</SectionLabel>
+            <Button type="button" size="sm" variant="outline" onClick={() => setEditingId(null)}>
+              Cancel edit
+            </Button>
+          </div>
+          <CampaignCreateForm
+            key={editing.id}
+            brands={brands}
+            editing={editing}
+            pending={updateMutation.isPending}
+            error={updateMutation.error}
+            onCreate={({ brand_id: _brandId, ...patch }) =>
+              updateMutation.mutate(
+                { id: editing.id, patch },
+                { onSuccess: () => setEditingId(null) },
+              )
+            }
+          />
+        </div>
+      ) : null}
+
       {campaignsQuery.isLoading ? <Spinner label="Loading campaigns" /> : null}
 
       {campaignsQuery.isError ? (
@@ -437,6 +616,10 @@ export function CampaignsPanel(): JSX.Element {
           canManage={canManage}
           submitting={submitMutation.isPending && submittingId === campaign.id}
           onSubmitCampaign={handleSubmitCampaign}
+          onEdit={(campaignId) => {
+            setFormOpen(false);
+            setEditingId(campaignId);
+          }}
         />
       ))}
 

@@ -62,7 +62,7 @@ from typing import Annotated, Any, Literal
 import httpx
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.deps import (
@@ -86,6 +86,9 @@ from app.providers.telnyx.registration_status import (
     map_campaign_status,
 )
 from app.providers.telnyx.tollfree_verification import TelnyxTollfreeVerificationClient
+from app.services import (
+    audit as audit_svc,
+)
 from app.services import (
     provider_accounts,
     telnyx_brand_filing,
@@ -752,6 +755,12 @@ async def file_brand_telnyx(
 # ----------------------------------------------------------------------------------
 # Campaigns
 # ----------------------------------------------------------------------------------
+def _http_url(value: str | None) -> str | None:
+    if value is not None and not value.startswith(("https://", "http://")):
+        raise ValueError("must start with https:// or http://")
+    return value
+
+
 class CampaignIn(BaseModel):
     brand_id: uuid.UUID
     name: str = Field(min_length=1, max_length=127)
@@ -761,6 +770,44 @@ class CampaignIn(BaseModel):
     sample_messages: list[str] = []
     help_message: str | None = None
     opt_out_message: str | None = None
+    privacy_policy_url: str | None = Field(default=None, max_length=500)
+    terms_url: str | None = Field(default=None, max_length=500)
+    opt_in_keywords: str | None = Field(default=None, max_length=255)
+    opt_out_keywords: str | None = Field(default=None, max_length=255)
+    help_keywords: str | None = Field(default=None, max_length=255)
+    opt_in_message: str | None = Field(default=None, max_length=500)
+    opt_in_proof_url: str | None = Field(default=None, max_length=500)
+    expected_monthly_messages: int | None = Field(default=None, ge=1, le=10_000_000)
+
+    @field_validator("privacy_policy_url", "terms_url", "opt_in_proof_url")
+    @classmethod
+    def _urls(cls, value: str | None) -> str | None:
+        return _http_url(value)
+
+
+class CampaignPatchIn(BaseModel):
+    """Every CampaignIn field is optional; ``brand_id`` is not editable."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=127)
+    use_case: str | None = None
+    description: str | None = None
+    opt_in_process: str | None = None
+    sample_messages: list[str] | None = None
+    help_message: str | None = None
+    opt_out_message: str | None = None
+    privacy_policy_url: str | None = Field(default=None, max_length=500)
+    terms_url: str | None = Field(default=None, max_length=500)
+    opt_in_keywords: str | None = Field(default=None, max_length=255)
+    opt_out_keywords: str | None = Field(default=None, max_length=255)
+    help_keywords: str | None = Field(default=None, max_length=255)
+    opt_in_message: str | None = Field(default=None, max_length=500)
+    opt_in_proof_url: str | None = Field(default=None, max_length=500)
+    expected_monthly_messages: int | None = Field(default=None, ge=1, le=10_000_000)
+
+    @field_validator("privacy_policy_url", "terms_url", "opt_in_proof_url")
+    @classmethod
+    def _urls(cls, value: str | None) -> str | None:
+        return _http_url(value)
 
 
 class CampaignOut(BaseModel):
@@ -774,6 +821,19 @@ class CampaignOut(BaseModel):
     number_count: int
     number_cap: int = reg.MAX_NUMBERS_PER_CAMPAIGN
     missing_for_submission: list[str]
+    description: str | None = None
+    opt_in_process: str | None = None
+    sample_messages: list[str] = []
+    help_message: str | None = None
+    opt_out_message: str | None = None
+    privacy_policy_url: str | None = None
+    terms_url: str | None = None
+    opt_in_keywords: str | None = None
+    opt_out_keywords: str | None = None
+    help_keywords: str | None = None
+    opt_in_message: str | None = None
+    opt_in_proof_url: str | None = None
+    expected_monthly_messages: int | None = None
 
 
 async def _campaign_out(session, c: Campaign) -> CampaignOut:
@@ -792,6 +852,19 @@ async def _campaign_out(session, c: Campaign) -> CampaignOut:
         last_error=c.last_error,
         number_count=await reg.numbers_on_campaign(session, c.id),
         missing_for_submission=missing,
+        description=c.description,
+        opt_in_process=c.opt_in_process,
+        sample_messages=list(c.sample_messages or []),
+        help_message=c.help_message,
+        opt_out_message=c.opt_out_message,
+        privacy_policy_url=c.privacy_policy_url,
+        terms_url=c.terms_url,
+        opt_in_keywords=c.opt_in_keywords,
+        opt_out_keywords=c.opt_out_keywords,
+        help_keywords=c.help_keywords,
+        opt_in_message=c.opt_in_message,
+        opt_in_proof_url=c.opt_in_proof_url,
+        expected_monthly_messages=c.expected_monthly_messages,
     )
 
 
@@ -820,6 +893,45 @@ async def create_campaign(
         raise NotFoundError("Brand not found")
     campaign = Campaign(id=uuid.uuid4(), org_id=ctx.org.id, **payload.model_dump())
     ctx.session.add(campaign)
+    try:
+        await ctx.session.commit()
+    except IntegrityError as exc:
+        await ctx.session.rollback()
+        raise ConflictError(f"A campaign named {payload.name!r} already exists") from exc
+    return await _campaign_out(ctx.session, campaign)
+
+
+@router.patch(
+    "/campaigns/{campaign_id}",
+    response_model=CampaignOut,
+    dependencies=[Depends(requires_feature("tendlc"))],
+)
+async def edit_campaign(
+    campaign_id: uuid.UUID,
+    payload: CampaignPatchIn,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> CampaignOut:
+    """Edit a draft or declined campaign so a rejection is not re-filed word for word."""
+
+    campaign = await ctx.session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise NotFoundError("Campaign not found")
+    if campaign.status not in {"draft", "rejected"}:
+        raise ConflictError("Only a draft or declined campaign can be edited")
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
+        if value is None and key in {"name", "use_case", "sample_messages"}:
+            continue  # NOT NULL columns: an explicit null means "leave as is"
+        setattr(campaign, key, value)
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="tendlc.campaign_edited",
+        target_type="campaign",
+        target_id=str(campaign.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={"fields": sorted(changes)},
+    )
     try:
         await ctx.session.commit()
     except IntegrityError as exc:

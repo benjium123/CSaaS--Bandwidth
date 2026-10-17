@@ -44,7 +44,20 @@ export interface CampaignInput {
   sample_messages?: string[]; // server default []
   help_message?: string | null;
   opt_out_message?: string | null;
+  privacy_policy_url?: string | null;
+  terms_url?: string | null;
+  /** Comma separated, e.g. "STOP,UNSUBSCRIBE". */
+  opt_in_keywords?: string | null;
+  opt_out_keywords?: string | null;
+  help_keywords?: string | null;
+  opt_in_message?: string | null;
+  /** A link to a screenshot or the sign-up page. */
+  opt_in_proof_url?: string | null;
+  expected_monthly_messages?: number | null;
 }
+
+/** PATCH body for a draft or declined campaign. Matches CampaignPatchIn (no brand_id). */
+export type CampaignPatch = Partial<Omit<CampaignInput, "brand_id">>;
 
 /** GET/POST response. Matches the registration CampaignOut. */
 export interface RegistrationCampaign {
@@ -57,6 +70,19 @@ export interface RegistrationCampaign {
   last_error: string | null;
   number_count: number;
   missing_for_submission: string[];
+  description?: string | null;
+  opt_in_process?: string | null;
+  sample_messages?: string[];
+  help_message?: string | null;
+  opt_out_message?: string | null;
+  privacy_policy_url?: string | null;
+  terms_url?: string | null;
+  opt_in_keywords?: string | null;
+  opt_out_keywords?: string | null;
+  help_keywords?: string | null;
+  opt_in_message?: string | null;
+  opt_in_proof_url?: string | null;
+  expected_monthly_messages?: number | null;
 }
 
 /**
@@ -116,6 +142,13 @@ export function campaignCreateBody(input: CampaignInput): Record<string, unknown
     ["opt_in_process", input.opt_in_process],
     ["help_message", input.help_message],
     ["opt_out_message", input.opt_out_message],
+    ["privacy_policy_url", input.privacy_policy_url],
+    ["terms_url", input.terms_url],
+    ["opt_in_keywords", input.opt_in_keywords],
+    ["opt_out_keywords", input.opt_out_keywords],
+    ["help_keywords", input.help_keywords],
+    ["opt_in_message", input.opt_in_message],
+    ["opt_in_proof_url", input.opt_in_proof_url],
   ];
   for (const [key, value] of optional) {
     if (typeof value !== "string") continue;
@@ -130,6 +163,30 @@ export function campaignCreateBody(input: CampaignInput): Record<string, unknown
       .filter((message) => message !== "");
   }
 
+  if (typeof input.expected_monthly_messages === "number") {
+    body.expected_monthly_messages = input.expected_monthly_messages;
+  }
+
+  return body;
+}
+
+/**
+ * The PATCH body: only the keys present on `patch`. A blank text field goes out as `null`
+ * so an edit can clear a value; `name`, `use_case` and `sample_messages` are never null.
+ */
+export function campaignPatchBody(patch: CampaignPatch): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      body[key] = trimmed === "" && key !== "name" && key !== "use_case" ? null : trimmed;
+    } else if (Array.isArray(value)) {
+      body[key] = value.map((message) => message.trim()).filter((message) => message !== "");
+    } else {
+      body[key] = value;
+    }
+  }
   return body;
 }
 
@@ -173,6 +230,22 @@ export async function createCampaign(
   return api.request<RegistrationCampaign>(REGISTRATION_CAMPAIGNS_PATH, {
     method: "POST",
     json: campaignCreateBody(input),
+  });
+}
+
+function campaignPath(campaignId: string): string {
+  return `${REGISTRATION_CAMPAIGNS_PATH}/${encodeURIComponent(campaignId)}`;
+}
+
+/** Edit a draft or declined campaign. Anything else is a 409 from the server. */
+export async function updateCampaign(
+  api: ApiClient,
+  campaignId: string,
+  patch: CampaignPatch,
+): Promise<RegistrationCampaign> {
+  return api.request<RegistrationCampaign>(campaignPath(campaignId), {
+    method: "PATCH",
+    json: campaignPatchBody(patch),
   });
 }
 
@@ -230,6 +303,17 @@ export function useCreateCampaign(api: ApiClient) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CampaignInput) => createCampaign(api, input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["registration"], exact: false });
+    },
+  });
+}
+
+export function useUpdateCampaign(api: ApiClient) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: CampaignPatch }) =>
+      updateCampaign(api, id, patch),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["registration"], exact: false });
     },
