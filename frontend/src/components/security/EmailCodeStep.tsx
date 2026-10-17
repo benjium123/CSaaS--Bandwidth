@@ -48,7 +48,14 @@ export function EmailCodeStep({
       setSent(true);
       setWait(RESEND_SECONDS);
     } catch (err) {
-      setError((err as Error).message);
+      if ((err as { code?: string }).code === "email_code_throttled") {
+        // A code is already on its way (the page was refreshed right after sending):
+        // show the box for that code instead of a dead end.
+        setSent(true);
+        setWait(RESEND_SECONDS);
+      } else {
+        setError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }
