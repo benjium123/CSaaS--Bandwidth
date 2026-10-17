@@ -1,6 +1,6 @@
 import sqlalchemy as sa
 
-from app.db.base import ALLOW_UNSCOPED_KEY
+from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.db.session import get_sessionmaker
 from app.models import Campaign, TenDlcEvent, TenDlcRegistration
 from app.services import tendlc, tendlc_events
@@ -285,3 +285,68 @@ async def test_filings_carry_our_webhook_url_on_https(session, stripe_stub, teln
 def test_no_webhook_fields_without_https():
     settings = _settings().model_copy(update={"public_base_url": "http://localhost:8000"})
     assert tendlc_events.webhook_fields(settings) == {}
+
+
+async def test_a_brand_rejection_does_not_leak_into_a_later_campaign_rejection(
+    session, stripe_stub, telnyx
+):
+    reg_id, sm = await _to_campaign_filed(session, telnyx)
+    async with sm() as s:
+        reg = (
+            await s.execute(
+                sa.select(TenDlcRegistration)
+                .where(TenDlcRegistration.id == reg_id)
+                .execution_options(**_UNSCOPED)
+            )
+        ).scalar_one()
+        set_org_context(s, reg.org_id)
+        reg.rejection = {"subject": "brand", "reasons": ["Bad EIN"], "verified": True, "at": "x"}
+        await s.commit()
+    telnyx.campaign_status = {"campaignStatus": "MNO_REJECTED"}
+    await tendlc.tick(sm, _settings(), client=telnyx.client)
+    assert await _stage(reg_id) == "campaign_rejected"
+    async with sm() as s:
+        reg = (
+            await s.execute(
+                sa.select(TenDlcRegistration)
+                .where(TenDlcRegistration.id == reg_id)
+                .execution_options(**_UNSCOPED)
+            )
+        ).scalar_one()
+        assert "Bad EIN" not in reg.detail
+        assert reg.detail.startswith("The carriers did not approve this campaign")
+
+
+async def test_route_400_for_deeply_nested_json(client):
+    r = await client.post("/api/v1/webhooks/telnyx/10dlc", content=b"[" * 100000)
+    assert r.status_code == 400
+
+
+async def test_route_matched_campaign_event_is_204_and_recorded(
+    client, session, stripe_stub, telnyx
+):
+    reg_id, sm = await _to_campaign_filed(session, telnyx)
+    r = await client.post(
+        "/api/v1/webhooks/telnyx/10dlc",
+        json={
+            "data": {
+                "id": "route-1",
+                "event_type": "10dlc.campaign.update",
+                "payload": {"campaignId": "C456", "status": "ACCEPTED"},
+            }
+        },
+    )
+    assert r.status_code == 204
+    async with sm() as s:
+        rows = (
+            (
+                await s.execute(
+                    sa.select(TenDlcEvent)
+                    .where(TenDlcEvent.registration_id == reg_id)
+                    .execution_options(**_UNSCOPED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1

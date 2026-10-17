@@ -145,3 +145,13 @@ def test_rejection_text_falls_back():
         )
         == "The carrier said: Opt-in is not described; No privacy policy."
     )
+
+
+def test_rejection_text_ignores_another_subjects_reasons():
+    saved = {"subject": "brand", "reasons": ["Bad EIN"]}
+    assert tendlc_events.rejection_text(saved, "Generic.", subject="campaign") == "Generic."
+    assert (
+        tendlc_events.rejection_text(saved, "Generic.", subject="brand")
+        == "The carrier said: Bad EIN."
+    )
+    assert tendlc_events.rejection_text(None, "Generic.", subject="brand") == "Generic."

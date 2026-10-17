@@ -223,7 +223,7 @@ async def telnyx_tendlc_webhook(request: Request, session: AsyncSession = Depend
     raw = await request.body()
     try:
         body = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         return Response(status_code=400)
     settings = request.app.state.settings
     event_type = None

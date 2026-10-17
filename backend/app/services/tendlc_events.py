@@ -126,7 +126,9 @@ async def record(
     return row
 
 
-def rejection_text(rejection: dict | None, fallback: str) -> str:
+def rejection_text(rejection: dict | None, fallback: str, subject: str | None = None) -> str:
+    if subject is not None and (rejection or {}).get("subject") != subject:
+        return fallback
     raw = (rejection or {}).get("reasons")
     reasons = [r for r in (raw if isinstance(raw, list) else []) if isinstance(r, str) and r]
     if not reasons:

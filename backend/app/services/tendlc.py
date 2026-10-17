@@ -509,6 +509,7 @@ async def handle_carrier_event(session, settings, event, *, verified: bool, clie
             .join(Brand, Brand.id == TenDlcRegistration.brand_id)
             .join(Campaign, Campaign.id == TenDlcRegistration.campaign_id)
             .where(TenDlcRegistration.stage.notin_(("cancelled", "expired")))
+            .order_by(TenDlcRegistration.created_at.desc())
             .execution_options(**{ALLOW_UNSCOPED_KEY: True})
         )
     ).all()
@@ -603,11 +604,14 @@ async def _step(session, settings, reg, client) -> None:
         elif verdict == REJECTED:
             from app.services.tendlc_events import rejection_text
 
-            why = rejection_text(reg.rejection, "The carrier did not accept this business.")
+            mine = (reg.rejection or {}).get("subject") == "brand"
+            why = rejection_text(
+                reg.rejection, "The carrier did not accept this business.", subject="brand"
+            )
             advance_status(brand, "rejected", error=why[:500])
             reg.stage = "brand_rejected"
             refund = await _refund_unused(settings, reg)
-            reg.detail = refund if reg.rejection is None else f"{why} {refund}"
+            reg.detail = refund if not mine else f"{why} {refund}"
         return
 
     if reg.stage == "brand_approved":
@@ -648,11 +652,14 @@ async def _step(session, settings, reg, client) -> None:
         elif verdict == REJECTED:
             from app.services.tendlc_events import rejection_text
 
-            why = rejection_text(reg.rejection, "The carriers did not accept this campaign.")
+            mine = (reg.rejection or {}).get("subject") == "campaign"
+            why = rejection_text(
+                reg.rejection, "The carriers did not accept this campaign.", subject="campaign"
+            )
             advance_status(campaign, "rejected", error=why[:500])
             reg.stage = "campaign_rejected"
             stop = await _cancel_monthly(settings, reg)
-            reg.detail = stop if reg.rejection is None else f"{why} {stop}"
+            reg.detail = stop if not mine else f"{why} {stop}"
         return
 
     if reg.stage == "active":
