@@ -112,6 +112,29 @@
 .sb-brand-sub { font-family: var(--sb-serif); font-style: italic; font-size: 17px; color: var(--sb-dim); line-height: 1; }
 
 .sb-nav { display: flex; flex-direction: column; gap: 18px; }
+/* Owner 2026-10-17: Dashboard + role areas that open and close; bigger targets. */
+.sb-nav { gap: 4px; }
+.sb-nav a.sb-nav-top, .sb-nav-toggle {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px 10px; border: 0; border-radius: 8px; background: none; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 600; color: var(--sb-text); text-align: left;
+}
+.sb-nav-toggle:hover { background: rgba(236, 230, 214, 0.045); }
+.sb-nav-label { flex: 1; }
+.sb-chev { width: 12px; font-size: 11px; color: var(--sb-mute); }
+.sb-nav-sub { margin: 2px 0 8px 15px; padding-left: 8px; border-left: 1px solid var(--sb-line); display: flex; flex-direction: column; gap: 2px; }
+.sb-nav-sub a { font-size: 14.5px; padding: 8px 10px; }
+.sb-nav-sub a[aria-current="page"]::before { left: -9px; }
+/* Dashboard number cards and panels */
+.sb-kpi { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--sb-line); background: var(--sb-panel); color: var(--sb-text); cursor: pointer; font: inherit; }
+.sb-kpi:hover { border-color: var(--sb-line-2); }
+.sb-kpi[data-tone="warn"] { border-left: 3px solid var(--sb-amber); }
+.sb-kpi[data-tone="bad"] { border-left: 3px solid var(--sb-stop); }
+.sb-kpi-label { font-size: 12.5px; color: var(--sb-dim); }
+.sb-kpi-value { font-family: var(--sb-mono); font-size: 22px; line-height: 1.2; }
+.sb-kpi-sub { font-size: 12px; color: var(--sb-mute); }
+.sb-dash-card { padding: 16px 18px; border-radius: 12px; border: 1px solid var(--sb-line); background: var(--sb-panel); min-width: 0; }
+.sb-dash-h { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
 .sb-group-label {
   font-family: var(--sb-mono); font-size: 10.5px; letter-spacing: 0.16em;
   text-transform: uppercase; color: var(--sb-mute); padding: 0 10px 6px;
@@ -345,6 +368,8 @@
   .sb-account { margin: 0; padding: 0; border: 0; }
   .sb-nav { flex-direction: row; gap: 4px; }
   .sb-nav > div { display: contents; }
+  .sb-nav-sub { flex-direction: row; margin: 0; padding: 0; border: 0; }
+  .sb-nav a.sb-nav-top, .sb-nav-toggle { width: auto; white-space: nowrap; font-size: 14px; }
   .sb-nav a { white-space: nowrap; }
   .sb-nav a[aria-current="page"]::before { left: 10px; right: 10px; top: auto; bottom: -1px; width: auto; height: 2px; border-radius: 2px; }
   /* phones: brand and account on one row, the tabs on their own swipeable row below */

@@ -74,6 +74,8 @@ function renderOps(stubs: Record<string, unknown>) {
 /** renderWithProviders has no initial entries, and a nested MemoryRouter is not allowed,
  *  so the tab is reached by clicking the nav link. */
 async function openTextingTab() {
+  // The menu opens on the Dashboard with its areas folded; open Trust & safety first.
+  await userEvent.click(await screen.findByRole("button", { name: /Trust & safety/ }));
   await userEvent.click(await screen.findByRole("link", { name: "Texting registrations" }));
 }
 

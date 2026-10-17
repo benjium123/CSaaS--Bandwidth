@@ -18,6 +18,7 @@ import { SupportTab } from "@/components/ops/SupportTab";
 import { OperatorAuditTab } from "@/components/ops/OperatorAuditTab";
 import { PlatformMessagingHealth } from "@/components/billing/PlatformMessagingHealth";
 import { ServerSection } from "@/components/ops/ServerSection";
+import { DashboardTab } from "@/components/ops/DashboardTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAuthedBlob } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
@@ -885,54 +886,94 @@ function UsersTab() {
 }
 
 type NavItem = { id: string; label: string; title: string; lede: string };
-const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+/** Owner 2026-10-17: the menu is one Dashboard plus role areas that open and close.
+ *  `perm` is the operator permission that owns the area (null = every operator). */
+const DASHBOARD: NavItem = {
+  id: "dashboard",
+  label: "Dashboard",
+  title: "Dashboard",
+  lede: "Today's numbers, the last two weeks of money, and everything waiting on you.",
+};
+const NAV_GROUPS: { label: string; perm: string | null; items: NavItem[] }[] = [
   {
-    label: "Decide",
+    label: "Trust & safety",
+    perm: "ops:kyc",
     items: [
       { id: "queue", label: "Review queue", title: "Review queue", lede: "People waiting to be let in. Oldest first; open one to see their ID and decide." },
       { id: "texting", label: "Texting registrations", title: "Texting registrations", lede: "Self-serve 10DLC filings. Only the stuck ones need you." },
-      { id: "purchases", label: "Number purchases", title: "Number purchases", lede: "Paid orders that did not finish provisioning." },
-      { id: "alerts", label: "Security alerts", title: "Security alerts", lede: "Sign-ins and actions the system flagged." },
       { id: "ports", label: "Ports & grants", title: "Ports & grants", lede: "Number ports waiting for review, and credit grants waiting for a second operator." },
-      { id: "website", label: "Website", title: "Website chats & sales", lede: "Visitors who asked the chat for a person, and Talk to sales enquiries." },
-      { id: "support", label: "Support", title: "Support requests", lede: "Questions customers sent from the Help menu. Replies go out by email." },
+      { id: "alerts", label: "Security alerts", title: "Security alerts", lede: "Sign-ins and actions the system flagged." },
+      { id: "bans", label: "Ban list", title: "Ban list", lede: "Identities that may not sign up again." },
     ],
   },
   {
     label: "Customers",
+    perm: null,
     items: [
       { id: "customers", label: "All accounts", title: "All accounts", lede: "Every signup. Find someone, block them, or remove an account." },
       { id: "accounts", label: "Workspaces", title: "Workspaces", lede: "Every workspace and its state." },
       { id: "users", label: "Users", title: "Users", lede: "Unlock an account or reset a second factor." },
+      { id: "purchases", label: "Number purchases", title: "Number purchases", lede: "Paid orders that did not finish provisioning." },
     ],
   },
   {
     label: "Money",
+    perm: "ops:billing",
     items: [
-      { id: "console", label: "Console", title: "Console", lede: "Orgs, profit, traffic and credit tools." },
       { id: "profit", label: "Profit", title: "Profit by day", lede: "What we charged, what carriers, AI, Stripe and the server cost us, and the profit - per day, per workspace, per service. Also the SignalWire balance guard." },
       { id: "billing", label: "Billing", title: "Billing", lede: "Prices, balances and payments." },
+      { id: "console", label: "Console", title: "Console", lede: "Orgs, profit, traffic and credit tools." },
     ],
   },
   {
-    label: "Safety",
+    label: "Support",
+    perm: "ops:support",
+    items: [
+      { id: "support", label: "Support requests", title: "Support requests", lede: "Questions customers sent from the Help menu. Replies go out by email." },
+    ],
+  },
+  {
+    label: "Sales",
+    perm: "ops:site",
+    items: [
+      { id: "website", label: "Website chats & sales", title: "Website chats & sales", lede: "Visitors who asked the chat for a person, and Talk to sales enquiries." },
+    ],
+  },
+  {
+    label: "Ops",
+    perm: null,
     items: [
       { id: "monitoring", label: "Monitoring", title: "Monitoring", lede: "Traffic health and paused accounts." },
-      { id: "bans", label: "Ban list", title: "Ban list", lede: "Identities that may not sign up again." },
       { id: "health", label: "Messaging health", title: "Messaging health", lede: "Delivery, spam and opt-out rates for every workspace and carrier." },
       { id: "audit", label: "Operator audit", title: "Operator audit", lede: "Every change made by the platform team, who made it and why." },
       { id: "server", label: "Server", title: "Server", lede: "CPU, memory, disk and load for the whole server, and what each app uses." },
     ],
   },
 ];
-const TABS = NAV_GROUPS.flatMap((g) => g.items);
+const TABS = [DASHBOARD, ...NAV_GROUPS.flatMap((g) => g.items)];
 
 /** H2: sections that need more than ops:read are hidden from roles without it. */
 const TAB_PERMISSION: Record<string, string> = { audit: "ops:admin" };
 
+/** Areas follow the operator's role: a reviewer sees Trust & safety, billing sees Money, support
+ *  sees Support and Sales. Admins and read-only operators (whose job is to see everything) keep
+ *  every area. Hiding is tidiness only - every route still checks its own permission. */
 function navGroupsFor(permissions: string[] | undefined) {
-  const has = (id: string) => !TAB_PERMISSION[id] || Boolean(permissions?.includes(TAB_PERMISSION[id]));
-  return NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => has(i.id)) }));
+  const perms = permissions ?? [];
+  const has = (id: string) => !TAB_PERMISSION[id] || perms.includes(TAB_PERMISSION[id]);
+  const scoped = !perms.includes("ops:admin") && perms.some((p) => p !== "ops:read");
+  return NAV_GROUPS.filter((g) => !scoped || g.perm === null || perms.includes(g.perm))
+    .map((g) => ({ ...g, items: g.items.filter((i) => has(i.id)) }))
+    .filter((g) => g.items.length > 0);
+}
+
+const NAV_OPEN_KEY = "sb-nav-open";
+function readNavOpen(): Record<string, boolean> {
+  try {
+    return JSON.parse(window.localStorage.getItem(NAV_OPEN_KEY) ?? "{}") as Record<string, boolean>;
+  } catch {
+    return {};
+  }
 }
 
 function RailMark() {
@@ -963,7 +1004,7 @@ function useNavCounts() {
 export function OpsPage({ account, notice }: { account?: React.ReactNode; notice?: React.ReactNode } = {}) {
   const { me, orgId } = useAuth();
   const [params, setParams] = useSearchParams();
-  const tab = TABS.some((t) => t.id === params.get("section")) ? params.get("section")! : "queue";
+  const tab = TABS.some((t) => t.id === params.get("section")) ? params.get("section")! : "dashboard";
   const openOrg = params.get("application");
   const setOpenOrg = (application: string | null) =>
     setParams(application ? { section: "queue", application } : { section: "queue" });
@@ -1014,12 +1055,27 @@ function Switchboard({
   notice?: React.ReactNode;
 }) {
   const { me, logout } = useAuth();
+  const [, setParams] = useSearchParams();
   const counts = useNavCounts();
   const current = TABS.find((t) => t.id === tab)!;
+  const groups = navGroupsFor(me?.operator_permissions);
+  const [navOpen, setNavOpen] = React.useState(readNavOpen);
+  const toggleGroup = (label: string, open: boolean) =>
+    setNavOpen((prev) => {
+      const next = { ...prev, [label]: !open };
+      try {
+        window.localStorage.setItem(NAV_OPEN_KEY, JSON.stringify(next));
+      } catch {
+        /* private mode: the menu just forgets */
+      }
+      return next;
+    });
   const eyebrow =
-    tab === "queue"
-      ? `${counts.queue} waiting`
-      : NAV_GROUPS.find((g) => g.items.some((i) => i.id === tab))?.label ?? "";
+    tab === "dashboard"
+      ? "Today"
+      : tab === "queue"
+        ? `${counts.queue} waiting`
+        : NAV_GROUPS.find((g) => g.items.some((i) => i.id === tab))?.label ?? "";
 
   return (
     <div className="sb">
@@ -1032,9 +1088,26 @@ function Switchboard({
           </div>
         </div>
         <nav className="sb-nav" aria-label="Administration navigation">
-          {navGroupsFor(me?.operator_permissions).map((group) => (
-            <div key={group.label}>
-              <div className="sb-group-label">{group.label}</div>
+          <Link to="?section=dashboard" className="sb-nav-top" aria-current={tab === "dashboard" && !openOrg ? "page" : undefined}>
+            <span>Dashboard</span>
+          </Link>
+          {groups.map((group) => {
+            const open = navOpen[group.label] ?? group.items.some((i) => i.id === tab);
+            const waiting = group.items.reduce((n, i) => n + (counts[i.id] ?? 0), 0);
+            return (
+            <div key={group.label} className="sb-nav-group">
+              <button
+                type="button"
+                className="sb-nav-top sb-nav-toggle"
+                aria-expanded={open}
+                onClick={() => toggleGroup(group.label, open)}
+              >
+                <span className="sb-chev" aria-hidden="true">{open ? "▾" : "▸"}</span>
+                <span className="sb-nav-label">{group.label}</span>
+                {waiting > 0 && !open && <span className="sb-count" aria-hidden="true">{waiting}</span>}
+              </button>
+              {open && (
+              <div className="sb-nav-sub">
               {group.items.map((item) => (
                 <Link key={item.id} to={`?section=${item.id}`} aria-current={tab === item.id && !openOrg ? "page" : undefined}>
                   <span>{item.label}</span>
@@ -1045,13 +1118,17 @@ function Switchboard({
                   )}
                 </Link>
               ))}
+              </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </nav>
         <div className="sb-operator">
           <span>{me?.operator_role ?? "operator"}</span>
           <b title={me?.email}>{me?.email}</b>
           {hasWorkspace && <a href="/inbox">Back to your workspace</a>}
+          {hasWorkspace && <a href="/settings/providers">Carrier providers</a>}
           {account}
           <button type="button" className="sb-signout" onClick={logout}>
             Sign out
@@ -1073,6 +1150,13 @@ function Switchboard({
               </div>
             </header>
             <section key={tab} aria-label={current.label} className={tab === "queue" ? "" : "sb-panel sb-panel-pad sb-legacy sb-rise"} style={{ "--i": 1 } as React.CSSProperties}>
+              {tab === "dashboard" && (
+                <DashboardTab
+                  counts={counts}
+                  sections={groups.flatMap((g) => g.items.map((i) => i.id))}
+                  onNavigate={(section) => setParams({ section })}
+                />
+              )}
               {tab === "console" && <ConsoleTab />}
               {tab === "profit" && <ProfitTab />}
               {tab === "customers" && <CustomerAccountsTab />}

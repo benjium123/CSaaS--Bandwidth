@@ -258,6 +258,9 @@ describe("OpsPage", () => {
       },
     });
     renderWithProviders(<OpsPage />, client);
+    // The console opens on the Dashboard; the queue lives under Trust & safety.
+    await userEvent.click(await screen.findByRole("button", { name: /Trust & safety/ }));
+    await userEvent.click(await screen.findByRole("link", { name: /Review queue/ }));
     expect(await screen.findByText("Debt Relief Now LLC")).toBeInTheDocument();
     expect(screen.getByText(/video call needed/i)).toBeInTheDocument();
     expect(screen.getByText("AI: reject 91%")).toBeInTheDocument();

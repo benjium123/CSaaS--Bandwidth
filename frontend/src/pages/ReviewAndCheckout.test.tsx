@@ -17,8 +17,11 @@ describe("Review and paid number setup", () => {
       "/api/v1/ops/applications/org-1/approve": { ...application, status: "approved" },
     });
     renderWithProviders(<OpsPage />, client);
+    await userEvent.click(await screen.findByRole("button", { name: /Trust & safety/ }));
+    await userEvent.click(await screen.findByRole("link", { name: /Review queue/ }));
     await userEvent.click(await screen.findByRole("button", { name: /Ada/ }));
     expect(screen.getByRole("navigation", { name: "Administration navigation" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Money/ }));
     expect(screen.getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/?section=billing");
     const approve = await screen.findByRole("button", { name: "Approve" });
     // A failed check is never overridden by default: the admin ticks the override and
