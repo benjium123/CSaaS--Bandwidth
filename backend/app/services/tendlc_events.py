@@ -51,7 +51,8 @@ class CarrierEvent:
 
 def _reasons(payload: dict) -> list[str]:
     out: list[str] = []
-    for item in payload.get("reasons") or []:
+    raw = payload.get("reasons")
+    for item in raw if isinstance(raw, list) else []:
         text = item.get("description") if isinstance(item, dict) else item
         if isinstance(text, str) and text.strip():
             out.append(text.strip()[:500])
@@ -126,7 +127,8 @@ async def record(
 
 
 def rejection_text(rejection: dict | None, fallback: str) -> str:
-    reasons = [r for r in (rejection or {}).get("reasons") or [] if r]
+    raw = (rejection or {}).get("reasons")
+    reasons = [r for r in (raw if isinstance(raw, list) else []) if isinstance(r, str) and r]
     if not reasons:
         return fallback
     return "The carrier said: " + "; ".join(reasons) + "."

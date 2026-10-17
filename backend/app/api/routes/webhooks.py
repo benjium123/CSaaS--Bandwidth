@@ -211,6 +211,34 @@ async def bandwidth_messaging(
     return {"status": "ok", "events": len(outcomes)}
 
 
+@router.post("/telnyx/10dlc")
+async def telnyx_tendlc_webhook(request: Request, session: AsyncSession = Depends(get_session)):
+    """10DLC phase 1: brand / campaign / number status events. A trigger only - the status
+    is re-read from Telnyx. Unsigned or badly signed events are kept as unverified."""
+    import json
+
+    from app.providers.telnyx import webhooks as telnyx_webhooks
+    from app.services import tendlc, tendlc_events
+
+    raw = await request.body()
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return Response(status_code=400)
+    settings = request.app.state.settings
+    verified = telnyx_webhooks.verify(
+        request.headers, settings.telnyx_public_key.get_secret_value(), raw
+    )
+    event = tendlc_events.parse(body)
+    if event is None:
+        return Response(status_code=204)
+    try:
+        await tendlc.handle_carrier_event(session, settings, event, verified=verified)
+    except Exception:  # never make Telnyx retry-storm us; the 5-min poll is the safety net
+        log.exception("tendlc_webhook_failed", event_type=event.event_type)
+    return Response(status_code=204)
+
+
 @router.post("/{carrier_name}/messaging")
 async def carrier_messaging(
     carrier_name: str,

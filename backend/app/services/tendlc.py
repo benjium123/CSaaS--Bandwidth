@@ -498,6 +498,59 @@ async def advance(session, settings, reg_id, *, client=None) -> tuple[str, str]:
     return start, reg.stage
 
 
+async def handle_carrier_event(session, settings, event, *, verified: bool, client=None) -> str:
+    """10DLC phase 1: a Telnyx webhook is a TRIGGER. Record it on the workspace's timeline,
+    keep the carrier's reason text, then let advance() ask Telnyx itself what changed."""
+    from app.services import tendlc_events
+
+    rows = (
+        await session.execute(
+            sa.select(TenDlcRegistration, Brand, Campaign)
+            .join(Brand, Brand.id == TenDlcRegistration.brand_id)
+            .join(Campaign, Campaign.id == TenDlcRegistration.campaign_id)
+            .where(TenDlcRegistration.stage.notin_(("cancelled", "expired")))
+            .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+        )
+    ).all()
+    reg = None
+    if event.subject == "brand":
+        reg = next((r for r, b, _ in rows if _telnyx_ref(b) == event.telnyx_id), None)
+    elif event.subject == "campaign":
+        reg = next((r for r, _, c in rows if _telnyx_ref(c) == event.telnyx_id), None)
+    else:
+        number = (
+            await session.execute(
+                sa.select(OrgNumber).where(OrgNumber.e164 == event.telnyx_id)
+                .execution_options(**{ALLOW_UNSCOPED_KEY: True})
+            )
+        ).scalars().first()
+        if number is not None:
+            reg = next((r for r, _, _ in rows if r.org_id == number.org_id
+                        and r.stage == "active"), None)
+    if reg is None:
+        log.info("tendlc_event_unmatched", subject=event.subject, telnyx_id=event.telnyx_id)
+        return "unmatched"
+    reg_id, org_id = reg.id, reg.org_id
+    set_org_context(session, org_id)
+    row = await tendlc_events.record(
+        session, org_id=org_id, registration_id=reg_id, event=event, verified=verified
+    )
+    if row is None:
+        await session.commit()
+        return "duplicate"
+    if event.subject in ("brand", "campaign") and tendlc_events.is_rejection(event):
+        reg.rejection = {
+            "subject": event.subject,
+            "reasons": list(event.reasons),
+            "verified": verified,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+    await session.commit()
+    if reg.stage in WORKING_STAGES:
+        await advance(session, settings, reg_id, client=client)
+    return "recorded"
+
+
 async def _step(session, settings, reg, client) -> None:
     from app.providers.telnyx.registration_status import (
         APPROVED,
