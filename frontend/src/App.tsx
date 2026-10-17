@@ -31,6 +31,7 @@ import { SupportAlerts } from "@/components/shell/SupportAlerts";
 import { ConsoleSupportChat } from "@/components/shell/ConsoleSupportChat";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { LowBalanceBanner } from "@/components/billing/LowBalanceBanner";
+import { TextingStatusBanner } from "@/components/registration/TextingStatusBanner";
 import { VerificationBanner } from "@/components/kyc/VerificationBanner";
 import { MonitoringBanner } from "@/components/kyc/MonitoringBanner";
 import { ReportNumberPage } from "@/pages/ReportNumberPage";
@@ -164,6 +165,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <BannerRegion>
             <MonitoringBanner />
             <LowBalanceBanner />
+            <TextingStatusBanner />
             <VerificationBanner />
             <PasskeyGraceBanner />
           </BannerRegion>

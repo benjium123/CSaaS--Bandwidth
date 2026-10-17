@@ -212,6 +212,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, string> = {
   overdue: "Overdue",
   missed_call: "Missed calls",
   low_balance: "Balance",
+  texting: "Texting",
 };
 
 export function notificationKindLabel(kind: string): string {

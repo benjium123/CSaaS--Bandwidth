@@ -331,6 +331,27 @@ function textingRegistrationPath(registrationId: string): string {
   return `${TEXTING_REGISTRATION_PATH}/${encodeURIComponent(registrationId)}`;
 }
 
+export interface TextingEvent {
+  id: string;
+  subject: string;
+  telnyx_id: string;
+  event_type: string;
+  payload_type: string | null;
+  status: string | null;
+  reasons: string[];
+  verified: boolean;
+  received_at: string;
+}
+
+export async function fetchTextingEvents(
+  api: ApiClient,
+  registrationId: string,
+): Promise<{ items: TextingEvent[] }> {
+  return api.request<{ items: TextingEvent[] }>(
+    `${textingRegistrationPath(registrationId)}/events`,
+  );
+}
+
 export async function fetchTextingRegistration(
   api: ApiClient,
 ): Promise<TextingRegistrationState> {
@@ -381,6 +402,15 @@ export function useTextingRegistration(api: ApiClient) {
       if (stage === undefined) return false;
       return TEXTING_POLL_STAGES.includes(stage) ? TEXTING_POLL_MS : false;
     },
+  });
+}
+
+export function useTextingEvents(api: ApiClient, registrationId: string | null | undefined) {
+  return useQuery({
+    queryKey: [...TEXTING_REGISTRATION_KEY, "events", registrationId ?? null],
+    queryFn: () => fetchTextingEvents(api, registrationId as string),
+    enabled: Boolean(registrationId),
+    retry: false,
   });
 }
 

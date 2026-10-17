@@ -37,6 +37,7 @@ import * as React from "react";
 export const BANNER_PRIORITY = {
   monitoring: 10,
   credits: 20,
+  texting: 25,
   verification: 30,
   passkey: 40,
 } as const;

@@ -7,10 +7,12 @@ import {
   useRegistrationCampaigns,
   useResendTextingOtp,
   useTextingCheckout,
+  useTextingEvents,
   useTextingRegistration,
   useVerifyTextingOtp,
   type RegistrationBrand,
   type RegistrationCampaign,
+  type TextingEvent,
   type TextingRegistration,
   type TextingRegistrationState,
   type TextingStage,
@@ -175,6 +177,40 @@ function ProgressSteps({ registration }: { registration: TextingRegistration }):
   );
 }
 
+/** Plain-words label for one carrier event. */
+export function activityLabel(event: TextingEvent): string {
+  const status = (event.status ?? "").toUpperCase();
+  if (event.subject === "number" && status === "FAILED") return "Number not added";
+  if (/REJECT|FAIL/.test(status)) return "Needs changes";
+  if (/ACCEPT|VERIFIED|APPROV|PROVISIONED|REGISTERED|^OK$/.test(status)) return "Approved";
+  return "Update";
+}
+
+function ActivityList({ registrationId }: { registrationId: string }): JSX.Element | null {
+  const { api } = useAuth();
+  const events = useTextingEvents(api, registrationId);
+  const items = events.data?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-[4px]">
+      <SectionLabel>Activity</SectionLabel>
+      <ul aria-label="Texting registration activity" className="flex flex-col gap-[4px]">
+        {items.map((event) => (
+          <li key={event.id} className="text-[12.5px]">
+            <span className="text-[hsl(var(--cx-muted))]">
+              {new Date(event.received_at).toLocaleDateString()}
+            </span>{" "}
+            <span className="font-medium">{activityLabel(event)}</span>
+            {event.reasons.length > 0 ? (
+              <span className="text-[hsl(var(--cx-muted))]"> - {event.reasons.join("; ")}</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function TextingRegistrationCard({
   onCheckout = defaultCheckoutRedirect,
 }: { onCheckout?: (url: string) => void } = {}): JSX.Element {
@@ -311,6 +347,9 @@ export function TextingRegistrationCard({
     <ConsoleCard className="flex flex-col gap-[9px]">
       <SectionLabel>Register for texting</SectionLabel>
       {renderStage()}
+      {texting.data?.registration ? (
+        <ActivityList registrationId={texting.data.registration.id} />
+      ) : null}
     </ConsoleCard>
   );
 }

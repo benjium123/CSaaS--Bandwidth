@@ -425,6 +425,36 @@ describe("TextingRegistrationCard stages", () => {
     ).toBeInTheDocument();
   });
 
+  it("lists the activity timeline with reasons as plain text", async () => {
+    const client = makeStubClient({
+      ...routes({ registration: registration({ stage: "brand_filed" }) }),
+      "/api/v1/registration/texting/reg-1/events": {
+        items: [
+          {
+            id: "e2", subject: "number", telnyx_id: "+15125550100", event_type: "local.number.assignment",
+            payload_type: "ASSIGNMENT", status: "FAILED", reasons: ["<b>boom</b>"], verified: true,
+            received_at: "2026-10-18T11:00:00Z",
+          },
+          {
+            id: "e1", subject: "campaign", telnyx_id: "C1", event_type: "10dlc.campaign.update",
+            payload_type: "MNO_REVIEW", status: "REJECTED", reasons: ["Opt-in is not described"],
+            verified: true, received_at: "2026-10-18T10:00:00Z",
+          },
+        ],
+      },
+    });
+    renderWithProviders(<TextingRegistrationCard />, client);
+
+    const list = await screen.findByRole("list", { name: "Texting registration activity" });
+    const items = within(list).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("Number not added");
+    expect(items[0]).toHaveTextContent("<b>boom</b>");
+    expect(items[0].querySelector("b")).toBeNull();
+    expect(items[1]).toHaveTextContent("Needs changes");
+    expect(items[1]).toHaveTextContent("Opt-in is not described");
+  });
+
   it("shows the standard five steps for a filed brand", async () => {
     const client = makeStubClient(routes({ registration: registration({ stage: "brand_filed" }) }));
     renderWithProviders(<TextingRegistrationCard />, client);
