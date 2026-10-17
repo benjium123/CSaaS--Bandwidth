@@ -285,6 +285,9 @@ async def daily_lists_tick(session: AsyncSession, settings: Settings, client=Non
                     },
                 )
             )
+        # Write this workspace's rows while its context is still bound: the next
+        # set_org_context would make them a refused cross-tenant write.
+        await session.flush()
     await session.commit()
     counts["sanctions_hits"] = hits
     return counts
