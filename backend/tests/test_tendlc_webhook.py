@@ -2,7 +2,7 @@ import sqlalchemy as sa
 
 from app.db.base import ALLOW_UNSCOPED_KEY
 from app.db.session import get_sessionmaker
-from app.models import TenDlcEvent, TenDlcRegistration
+from app.models import Campaign, TenDlcEvent, TenDlcRegistration
 from app.services import tendlc, tendlc_events
 from tests.test_tendlc_self_serve import (  # noqa: F401
     _checkout,
@@ -211,3 +211,54 @@ async def test_a_failed_number_assignment_is_on_the_timeline(session, stripe_stu
         )
     assert len(rows) == 1 and rows[0].status == "FAILED"
     assert rows[0].reasons and rows[0].registration_id == reg_id
+
+
+async def test_a_long_rejection_still_moves_the_stage_and_fits_last_error(
+    session, stripe_stub, telnyx
+):
+    reg_id, sm = await _to_campaign_filed(session, telnyx)
+    telnyx.campaign_status = {"campaignStatus": "MNO_REJECTED"}
+    ev = _ev(
+        "10dlc.campaign.update",
+        {
+            "campaignId": "C456",
+            "status": "REJECTED",
+            "reasons": [{"description": c * 400} for c in "abc"],
+        },
+        "long1",
+    )
+    async with sm() as s:
+        await tendlc.handle_carrier_event(s, _settings(), ev, verified=True, client=telnyx.client)
+    assert await _stage(reg_id) == "campaign_rejected"
+    async with sm() as s:
+        errors = (
+            (
+                await s.execute(
+                    sa.select(Campaign.last_error).execution_options(**_UNSCOPED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert any(e for e in errors) and all(len(e or "") <= 500 for e in errors)
+
+
+async def test_a_repeating_assignment_failure_is_one_timeline_row(session, stripe_stub, telnyx):
+    reg_id, sm = await _to_campaign_filed(session, telnyx)
+    telnyx.fail_assignment = True
+    telnyx.campaign_status = {"campaignStatus": "MNO_PROVISIONED"}
+    await tendlc.tick(sm, _settings(), client=telnyx.client)
+    await tendlc.tick(sm, _settings(), client=telnyx.client)
+    async with sm() as s:
+        rows = (
+            (
+                await s.execute(
+                    sa.select(TenDlcEvent)
+                    .where(TenDlcEvent.subject == "number")
+                    .execution_options(**_UNSCOPED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1

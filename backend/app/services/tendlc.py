@@ -604,7 +604,7 @@ async def _step(session, settings, reg, client) -> None:
             from app.services.tendlc_events import rejection_text
 
             why = rejection_text(reg.rejection, "The carrier did not accept this business.")
-            advance_status(brand, "rejected", error=why)
+            advance_status(brand, "rejected", error=why[:500])
             reg.stage = "brand_rejected"
             refund = await _refund_unused(settings, reg)
             reg.detail = refund if reg.rejection is None else f"{why} {refund}"
@@ -649,7 +649,7 @@ async def _step(session, settings, reg, client) -> None:
             from app.services.tendlc_events import rejection_text
 
             why = rejection_text(reg.rejection, "The carriers did not accept this campaign.")
-            advance_status(campaign, "rejected", error=why)
+            advance_status(campaign, "rejected", error=why[:500])
             reg.stage = "campaign_rejected"
             stop = await _cancel_monthly(settings, reg)
             reg.detail = stop if reg.rejection is None else f"{why} {stop}"
@@ -804,6 +804,21 @@ async def associate_numbers(session, settings, reg, campaign, *, client=None) ->
 
             try:
                 set_org_context(session, reg_org_id)
+                already = (
+                    await session.execute(
+                        sa.select(tendlc_events.TenDlcEvent.id)
+                        .where(
+                            tendlc_events.TenDlcEvent.registration_id == reg_id,
+                            tendlc_events.TenDlcEvent.subject == "number",
+                            tendlc_events.TenDlcEvent.telnyx_id == str(number_e164),
+                            tendlc_events.TenDlcEvent.event_type == "local.number.assignment",
+                            tendlc_events.TenDlcEvent.status == "FAILED",
+                        )
+                        .limit(1)
+                    )
+                ).first()
+                if already is not None:
+                    continue
                 await tendlc_events.record(
                     session,
                     org_id=reg_org_id,
