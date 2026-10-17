@@ -7,12 +7,12 @@ retry of an ambiguous write. This module only decides WHEN to call them, and tur
 carrier's own verdict into the local status and approval evidence that the send gate reads.
 Nothing here marks anything approved that Telnyx has not reported as approved.
 
-Fees are Telnyx's, passed through at cost (support.telnyx.com "10DLC Fees and Charges"):
-brand registration $4.50 and campaign review $15 once, plus the monthly campaign fee,
-which Telnyx bills three months upfront. So checkout takes the one-time fees plus three
-months today, and the Stripe subscription starts charging the monthly fee from month four.
-On top of the carrier fees, Ringlite charges a one-time SERVICE_FEE_CENTS registration fee
-(its commission). The customer is shown totals only, never the split.
+Fees are Telnyx's (support.telnyx.com "10DLC Fees and Charges"): brand registration $4.50
+and campaign review $15 once, plus the monthly campaign fee, which Telnyx bills three months
+upfront. Each is sold at cost plus a markup (``sell_cents``). Checkout takes the one-time
+fees plus three months today, and the Stripe subscription charges the monthly fee from month
+four. On top, Ringlite charges a one-time SERVICE_FEE_CENTS registration fee. The customer
+is shown totals only, never the split.
 """
 
 from __future__ import annotations
@@ -39,6 +39,18 @@ CAMPAIGN_REVIEW_CENTS = 1500
 SERVICE_FEE_CENTS = 500
 UPFRONT_MONTHS = 3
 MONTHLY_CENTS = {"standard": 1000, "sole_proprietor": 200}
+#: Owner 2026-10-17: every carrier fee above (Telnyx's own cost) is sold at cost + 25%, but
+#: never less than $1.50 on top - Stripe takes its cut too. Brand $4.50 -> $6.00, review
+#: $15.00 -> $18.75, monthly $10.00 -> $12.50 and $2.00 -> $3.50.
+MARKUP_BPS = 2_500
+MIN_MARKUP_CENTS = 150
+
+
+def sell_cents(cost_cents: int) -> int:
+    """What the customer pays for a carrier fee that costs us ``cost_cents``."""
+    return cost_cents + max(-(-cost_cents * MARKUP_BPS // 10_000), MIN_MARKUP_CENTS)
+
+
 PRICE_SETTING = {
     "standard": "stripe_tendlc_standard_price_id",
     "sole_proprietor": "stripe_tendlc_sole_prop_price_id",
@@ -102,20 +114,22 @@ SUCCESS_SMS = "Thanks - your number is verified for business texting with Ringli
 
 def quote(tier: str, service_discount_bps: int = 0) -> dict:
     """``service_discount_bps`` is the workspace's 10DLC discount (services/discounts.py). It
-    applies to Ringlite's own service fee only - carrier fees pass through at cost."""
-    monthly = MONTHLY_CENTS[tier]
+    applies to Ringlite's own service fee only, never to the (marked-up) carrier fees."""
+    monthly = sell_cents(MONTHLY_CENTS[tier])
+    brand = sell_cents(BRAND_FEE_CENTS)
+    review = sell_cents(CAMPAIGN_REVIEW_CENTS)
     bps = min(max(int(service_discount_bps), 0), 10_000)
     service = SERVICE_FEE_CENTS * (10_000 - bps) // 10_000
     return {
         "fee_tier": tier,
-        "brand_fee_cents": BRAND_FEE_CENTS,
-        "campaign_review_cents": CAMPAIGN_REVIEW_CENTS,
+        "brand_fee_cents": brand,
+        "campaign_review_cents": review,
         "service_fee_cents": service,
         "service_discount_cents": SERVICE_FEE_CENTS - service,
         "monthly_cents": monthly,
         "upfront_months": UPFRONT_MONTHS,
         "due_today_cents": (
-            BRAND_FEE_CENTS + CAMPAIGN_REVIEW_CENTS + service + UPFRONT_MONTHS * monthly
+            brand + review + service + UPFRONT_MONTHS * monthly
         ),
     }
 
@@ -281,9 +295,6 @@ async def start_checkout(
         sub_usecases=filing["sub_usecases"],
     )
 
-    price_id = getattr(settings, PRICE_SETTING[tier], "")
-    if not price_id:
-        raise FeatureUnavailableError("Texting registration is being configured.")
     stripe = stripe_client._stripe(settings)
     reg = TenDlcRegistration(
         id=uuid.uuid4(),
@@ -308,7 +319,17 @@ async def start_checkout(
     params: dict[str, Any] = {
         "mode": "subscription",
         "line_items": [
-            {"price": price_id, "quantity": 1},
+            {
+                # The marked-up monthly fee (sell_cents), so a price change never needs a
+                # new Stripe Price id in the settings.
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": fees["monthly_cents"],
+                    "recurring": {"interval": "month"},
+                    "product_data": {"name": "Texting registration, monthly"},
+                },
+                "quantity": 1,
+            },
             {
                 "price_data": {
                     "currency": "usd",
@@ -878,7 +899,7 @@ async def cancel(session, settings, reg_id) -> str:
     if _telnyx_ref(brand) is None and not (brand.carrier_refs or {}).get(_BRAND_MARKER):
         amount = fees["due_today_cents"]
     elif _telnyx_ref(campaign) is None and not (campaign.carrier_refs or {}).get(_CAMPAIGN_MARKER):
-        amount = CAMPAIGN_REVIEW_CENTS + UPFRONT_MONTHS * MONTHLY_CENTS[reg.fee_tier]
+        amount = fees["campaign_review_cents"] + UPFRONT_MONTHS * fees["monthly_cents"]
     else:
         amount = 0
     detail = "Cancelled by our team."
@@ -954,7 +975,8 @@ async def _cancel_monthly(settings, reg) -> str:
 async def _refund_unused(settings, reg) -> str:
     """The carrier refused the business before any campaign was filed: refund what was
     never spent (the campaign review and the three months) and stop the monthly fee."""
-    amount = CAMPAIGN_REVIEW_CENTS + UPFRONT_MONTHS * MONTHLY_CENTS[reg.fee_tier]
+    fees = quote(reg.fee_tier)
+    amount = fees["campaign_review_cents"] + UPFRONT_MONTHS * fees["monthly_cents"]
     if not reg.subscription_id:
         return "The carrier did not accept this business profile."
     stripe = stripe_client._stripe(settings)
@@ -986,8 +1008,9 @@ async def _refund_unused(settings, reg) -> str:
         )
     else:
         log.error("tendlc_refund_no_payment", registration_id=str(reg.id))
+    kept = fees["brand_fee_cents"] + SERVICE_FEE_CENTS
     return (
         f"The carrier did not accept this business profile. ${amount / 100:.2f} was refunded; "
-        f"${(BRAND_FEE_CENTS + SERVICE_FEE_CENTS) / 100:.2f} for the registration filing is "
+        f"${kept / 100:.2f} for the registration filing is "
         "not refundable."
     )

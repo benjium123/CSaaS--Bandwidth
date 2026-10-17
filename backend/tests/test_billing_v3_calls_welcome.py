@@ -336,9 +336,10 @@ def test_tendlc_customer_quote_shows_totals_only():
     q = tendlc.customer_quote("standard")
     assert q == {
         "fee_tier": "standard",
-        "monthly_cents": 1000,
+        # Owner 2026-10-17: carrier fees at cost + 25%, at least $1.50 on top.
+        "monthly_cents": 1250,
         "upfront_months": 3,
-        "due_today_cents": 450 + 1500 + 500 + 3 * 1000,
+        "due_today_cents": 600 + 1875 + 500 + 3 * 1250,
     }
 
 
@@ -636,3 +637,13 @@ async def test_refused_auto_recharge_switches_auto_recharge_off(session, monkeyp
     assert "pending_intent" not in refreshed.credit_auto_recharge
     row = await _payment_row(session, org_id, intent["id"])
     assert row.kind == "auto_recharge" and row.state == "refunded"
+
+
+def test_tendlc_carrier_fees_are_sold_at_cost_plus_25pct_min_150():
+    """Owner 2026-10-17: $4.50 -> $6.00, $15 -> $18.75, $10 -> $12.50, $2 -> $3.50."""
+    from app.services import tendlc
+
+    assert [tendlc.sell_cents(c) for c in (450, 1500, 1000, 200)] == [600, 1875, 1250, 350]
+    sole = tendlc.quote("sole_proprietor")
+    assert sole["monthly_cents"] == 350
+    assert sole["due_today_cents"] == 600 + 1875 + 500 + 3 * 350
