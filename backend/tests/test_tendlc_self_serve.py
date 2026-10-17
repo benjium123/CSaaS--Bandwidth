@@ -244,7 +244,7 @@ async def test_checkout_charges_fees_plus_three_months_and_defers_the_monthly(se
     assert recurring["price_data"]["unit_amount"] == 1250  # $10 -> $12.50
     assert recurring["price_data"]["recurring"] == {"interval": "month"}
     # $4.50 brand + $15 review + 3 x $10 = $49.50 today, then $10/month from month four.
-    assert one_time["price_data"]["unit_amount"] == 6725  # 6 + 18.75 + 5 setup + 3 x 12.50
+    assert one_time["price_data"]["unit_amount"] == 6650  # 6 + 18 + 5 setup + 3 x 12.50
     assert params["subscription_data"]["trial_period_days"] == 90
     assert reg.stage == "checkout"
     assert reg.filing["sub_usecases"] == ["CUSTOMER_CARE", "MARKETING"]
@@ -257,7 +257,7 @@ async def test_sole_proprietor_pays_the_two_dollar_tier(session, stripe_stub):
     )
     params = stripe_stub.checkout.Session.create.call_args.kwargs
     assert params["line_items"][0]["price_data"]["unit_amount"] == 350  # $2 -> $3.50
-    assert params["line_items"][1]["price_data"]["unit_amount"] == 600 + 1875 + 500 + 3 * 350
+    assert params["line_items"][1]["price_data"]["unit_amount"] == 600 + 1800 + 500 + 3 * 350
     assert reg.fee_tier == "sole_proprietor"
     assert campaign.use_case == "SOLE_PROPRIETOR"
 
@@ -344,7 +344,7 @@ async def test_rejected_business_is_refunded_everything_but_the_brand_fee(
 
     assert await _stage(reg_id) == "brand_rejected"
     refund = stripe_stub.Refund.create.call_args.kwargs
-    assert (refund["payment_intent"], refund["amount"]) == ("pi_1", 1875 + 3 * 1250)
+    assert (refund["payment_intent"], refund["amount"]) == ("pi_1", 1800 + 3 * 1250)
     stripe_stub.Subscription.cancel.assert_called_once()
     assert telnyx.posts("/10dlc/campaignBuilder") == []
 

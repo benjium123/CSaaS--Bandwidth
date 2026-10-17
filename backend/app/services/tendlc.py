@@ -40,10 +40,11 @@ SERVICE_FEE_CENTS = 500
 UPFRONT_MONTHS = 3
 MONTHLY_CENTS = {"standard": 1000, "sole_proprietor": 200}
 #: Owner 2026-10-17: every carrier fee above (Telnyx's own cost) is sold at cost + 25%, but
-#: never less than $1.50 on top - Stripe takes its cut too. Brand $4.50 -> $6.00, review
-#: $15.00 -> $18.75, monthly $10.00 -> $12.50 and $2.00 -> $3.50.
+#: never less than $1.50 on top - Stripe takes its cut too. Brand $4.50 -> $6.00, monthly
+#: $10.00 -> $12.50 and $2.00 -> $3.50. The campaign review is a flat $18 (owner's figure).
 MARKUP_BPS = 2_500
 MIN_MARKUP_CENTS = 150
+CAMPAIGN_REVIEW_SELL_CENTS = 1800
 
 
 def sell_cents(cost_cents: int) -> int:
@@ -117,7 +118,7 @@ def quote(tier: str, service_discount_bps: int = 0) -> dict:
     applies to Ringlite's own service fee only, never to the (marked-up) carrier fees."""
     monthly = sell_cents(MONTHLY_CENTS[tier])
     brand = sell_cents(BRAND_FEE_CENTS)
-    review = sell_cents(CAMPAIGN_REVIEW_CENTS)
+    review = CAMPAIGN_REVIEW_SELL_CENTS
     bps = min(max(int(service_discount_bps), 0), 10_000)
     service = SERVICE_FEE_CENTS * (10_000 - bps) // 10_000
     return {

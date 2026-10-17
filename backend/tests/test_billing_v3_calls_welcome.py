@@ -339,7 +339,7 @@ def test_tendlc_customer_quote_shows_totals_only():
         # Owner 2026-10-17: carrier fees at cost + 25%, at least $1.50 on top.
         "monthly_cents": 1250,
         "upfront_months": 3,
-        "due_today_cents": 600 + 1875 + 500 + 3 * 1250,
+        "due_today_cents": 600 + 1800 + 500 + 3 * 1250,
     }
 
 
@@ -640,10 +640,11 @@ async def test_refused_auto_recharge_switches_auto_recharge_off(session, monkeyp
 
 
 def test_tendlc_carrier_fees_are_sold_at_cost_plus_25pct_min_150():
-    """Owner 2026-10-17: $4.50 -> $6.00, $15 -> $18.75, $10 -> $12.50, $2 -> $3.50."""
+    """Owner 2026-10-17: $4.50 -> $6.00, $10 -> $12.50, $2 -> $3.50; the review is a flat $18."""
     from app.services import tendlc
 
     assert [tendlc.sell_cents(c) for c in (450, 1500, 1000, 200)] == [600, 1875, 1250, 350]
     sole = tendlc.quote("sole_proprietor")
     assert sole["monthly_cents"] == 350
-    assert sole["due_today_cents"] == 600 + 1875 + 500 + 3 * 350
+    assert sole["due_today_cents"] == 600 + 1800 + 500 + 3 * 350
+    assert sole["campaign_review_cents"] == 1800
