@@ -691,8 +691,11 @@ async def _run_once_locked(app) -> dict[str, int]:
         except Exception:
             log.exception("sweeper_kyc_automation_failed")
 
+    # Sanctions + Tor lists are needed by every KYC review and login check, so they are
+    # downloaded even while KYC_ENFORCED is off (owner 2026-10-17: reviews showed
+    # "sanctions lists are not downloaded" forever).
     last_lists_run = getattr(app.state, "_security_lists_last_run", None)
-    if kyc_on and (
+    if (
         last_lists_run is None
         or time.monotonic() - last_lists_run >= SECURITY_LISTS_INTERVAL_SECONDS
     ):
