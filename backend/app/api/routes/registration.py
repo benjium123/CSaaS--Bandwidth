@@ -489,6 +489,11 @@ async def list_brands(
     return [_brand_out(b) for b in rows]
 
 
+class CheckoutReviewIn(BaseModel):
+    suggestions: list[dict] = Field(default_factory=list, max_length=20)
+    submitted_anyway: bool = False
+
+
 class TextingCheckoutIn(BaseModel):
     """Self-serve texting registration. Everything the carrier checks is validated before
     the customer is sent to pay."""
@@ -503,6 +508,8 @@ class TextingCheckoutIn(BaseModel):
     sub_usecases: list[str] = Field(default_factory=list, max_length=5)
     #: The campaign attestations the customer makes; never defaulted on their behalf.
     assertions: dict[str, bool]
+    #: The advisory "Check my campaign" result the customer saw, if they ran one.
+    review: CheckoutReviewIn | None = None
 
 
 class TextingOtpIn(BaseModel):
@@ -577,6 +584,7 @@ async def texting_checkout(
         assertions=payload.assertions,
         sub_usecases=payload.sub_usecases,
         customer_email=await _actor_email(ctx),
+        review=payload.review.model_dump() if payload.review else None,
     )
     return await _texting_out(ctx, reg)
 
@@ -938,6 +946,32 @@ async def edit_campaign(
         await ctx.session.rollback()
         raise ConflictError(f"A campaign named {payload.name!r} already exists") from exc
     return await _campaign_out(ctx.session, campaign)
+
+
+@router.post(
+    "/campaigns/{campaign_id}/check", dependencies=[Depends(requires_feature("tendlc"))]
+)
+async def check_campaign(
+    campaign_id: uuid.UUID,
+    request: Request,
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> dict:
+    """Advisory only: rule checks, link checks and one AI pass. Never blocks a filing."""
+    from app.services import campaign_review
+
+    campaign = await ctx.session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise NotFoundError("Campaign not found")
+    brand = await ctx.session.get(Brand, campaign.brand_id)
+    if brand is None:
+        raise NotFoundError("Campaign not found")
+    return await campaign_review.check(
+        ctx.session,
+        request.app.state.settings,
+        brand,
+        campaign,
+        actor_user_id=ctx.actor_user_id,
+    )
 
 
 @router.post("/campaigns/{campaign_id}/submit", response_model=CampaignOut)

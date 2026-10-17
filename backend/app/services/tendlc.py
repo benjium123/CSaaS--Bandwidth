@@ -28,6 +28,7 @@ import structlog
 from app.db.base import ALLOW_UNSCOPED_KEY, set_org_context
 from app.errors import ConflictError, FeatureUnavailableError, ValidationFailedError
 from app.models import Brand, Campaign, OrgNumber, TenDlcRegistration
+from app.services import audit as audit_svc
 from app.services import stripe_client, tendlc_notices
 
 log = structlog.get_logger("tendlc")
@@ -186,6 +187,21 @@ async def current(session, org_id) -> TenDlcRegistration | None:
 # --------------------------------------------------------------------------------------
 # Checkout
 # --------------------------------------------------------------------------------------
+def _clean_review(review: dict) -> dict:
+    """The advisory check the customer saw, kept on the filing: bounded and string-only."""
+
+    suggestions = [
+        {str(k)[:64]: v[:500] for k, v in s.items() if isinstance(v, str)}
+        for s in (review.get("suggestions") or [])[:20]
+        if isinstance(s, dict)
+    ]
+    return {
+        "suggestions": suggestions,
+        "submitted_anyway": bool(review.get("submitted_anyway")),
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def start_checkout(
     session,
     settings,
@@ -199,6 +215,7 @@ async def start_checkout(
     assertions: dict[str, bool],
     sub_usecases: list[str] | None = None,
     customer_email: str | None = None,
+    review: dict | None = None,
 ) -> TenDlcRegistration:
     """Validate everything the carrier will check, THEN take payment. A form error found
     after the customer paid would cost them a non-refundable filing."""
@@ -288,6 +305,19 @@ async def start_checkout(
     }
     if brand_reused:
         filing["brand_reused"] = True
+    if review:
+        filing["review"] = _clean_review(review)
+        audit_svc.record(
+            session,
+            org_id,
+            action="tendlc.review_acknowledged",
+            target_type="campaign",
+            target_id=str(campaign.id),
+            detail={
+                "submitted_anyway": filing["review"]["submitted_anyway"],
+                "suggestion_count": len(filing["review"]["suggestions"]),
+            },
+        )
     # Dry-run both carrier payloads: exactly what the job will send, minus the ids.
     if not brand_reused:
         build_brand_payload(

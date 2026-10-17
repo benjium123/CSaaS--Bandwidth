@@ -1,11 +1,14 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 
 import {
+  checkCampaign,
+  type CampaignCheckResult,
   type RegistrationBrand,
   type RegistrationCampaign,
   type TextingCheckoutInput,
   type TextingRegistrationState,
 } from "@/api/registration";
+import { useAuth } from "@/auth/AuthContext";
 import { Button, Input, MutationStatus, Select } from "@/components/ui/primitives";
 
 import {
@@ -89,6 +92,10 @@ export function TextingRegistrationForm({
   const [subUsecases, setSubUsecases] = useState<string[]>([]);
   const [answers, setAnswers] = useState<Record<string, boolean | undefined>>({});
   const [terms, setTerms] = useState(false);
+  const { api } = useAuth();
+  const [check, setCheck] = useState<CampaignCheckResult | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   const eligibleBrands = brands.filter(
     (brand) => isSelectable(brand.status) || isReusableBrand(brand.status),
@@ -134,6 +141,10 @@ export function TextingRegistrationForm({
     terms &&
     !pending;
 
+  // The check is advisory: it only changes the pay button's label and what rides along.
+  const hasLikelyRejection =
+    check !== null && check.suggestions.some((item) => item.severity === "likely-rejection");
+
   const tierKey = isSoleProp ? "sole_proprietor" : "standard";
   const useResubmit = brandReused && quotesResubmit !== undefined;
   const quote = (useResubmit ? quotesResubmit : quotes)[tierKey];
@@ -146,8 +157,30 @@ export function TextingRegistrationForm({
 
   function handleBrandChange(value: string) {
     setBrandId(value);
-    setCampaignId("");
+    changeCampaign("");
     setSubUsecases([]);
+  }
+
+  function changeCampaign(value: string) {
+    setCampaignId(value);
+    setCheck(null);
+    setCheckError(null);
+  }
+
+  async function runCheck() {
+    if (campaignId === "" || checking) return;
+    setChecking(true);
+    setCheckError(null);
+    try {
+      setCheck(await checkCampaign(api, campaignId));
+    } catch (caught) {
+      setCheck(null);
+      setCheckError(
+        caught instanceof Error ? caught.message : "We could not check this campaign.",
+      );
+    } finally {
+      setChecking(false);
+    }
   }
 
   function toggleSubUsecase(value: string) {
@@ -183,6 +216,9 @@ export function TextingRegistrationForm({
           )
         : [],
       assertions,
+      ...(check
+        ? { review: { suggestions: check.suggestions, submitted_anyway: hasLikelyRejection } }
+        : {}),
     });
   }
 
@@ -221,7 +257,7 @@ export function TextingRegistrationForm({
           <Select
             id="texting-campaign"
             value={campaignId}
-            onChange={(event) => setCampaignId(event.target.value)}
+            onChange={(event) => changeCampaign(event.target.value)}
           >
             <option value="">Select a campaign</option>
             {eligibleCampaigns.map((campaign) => (
@@ -355,9 +391,56 @@ export function TextingRegistrationForm({
         </p>
       ) : null}
 
+      <div className="flex flex-col gap-[6px]">
+        <div>
+          <Button
+            type="button"
+            disabled={campaignId === "" || checking}
+            onClick={() => void runCheck()}
+          >
+            {checking ? "Checking…" : "Check my campaign"}
+          </Button>
+        </div>
+        {checkError ? (
+          <div role="alert" className="text-[12.5px] text-[hsl(var(--cx-danger))]">
+            {checkError}
+          </div>
+        ) : null}
+        {check ? (
+          <div data-testid="campaign-check" className="flex flex-col gap-[6px]">
+            {check.suggestions.length === 0 ? (
+              <p className="text-[12.5px]">No problems found.</p>
+            ) : (
+              <ul className="flex flex-col gap-[6px]">
+                {check.suggestions.map((item, index) => (
+                  <li key={`${item.field}-${index}`} className="text-[12.5px]">
+                    <span className="font-medium">
+                      {item.severity === "likely-rejection" ? "Likely rejection" : "Improve"}
+                    </span>{" "}
+                    <span className="text-[hsl(var(--cx-muted))]">{item.field}</span>
+                    <div>{item.why}</div>
+                    {item.suggested_text ? (
+                      <div className="text-[hsl(var(--cx-muted))]">
+                        Suggested: {item.suggested_text}
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
+              {check.checks_left_today} checks left today
+            </p>
+          </div>
+        ) : null}
+        <p className="text-[11.5px] text-[hsl(var(--cx-muted))]">
+          These are suggestions. You can submit anyway.
+        </p>
+      </div>
+
       <div>
         <Button type="submit" disabled={!canSubmit}>
-          Pay and register
+          {hasLikelyRejection ? "Submit anyway" : "Pay and register"}
         </Button>
       </div>
 

@@ -392,6 +392,39 @@ export interface TextingCheckoutInput {
   mobile_phone: string | null;
   sub_usecases: string[];
   assertions: Record<string, boolean>;
+  /** The advisory "Check my campaign" result the customer saw; absent when no check ran. */
+  review?: CampaignReview;
+}
+
+export type CampaignFindingSeverity = "likely-rejection" | "improve";
+
+export interface CampaignFinding {
+  severity: CampaignFindingSeverity;
+  field: string;
+  why: string;
+  suggested_text: string;
+}
+
+export interface CampaignReview {
+  suggestions: CampaignFinding[];
+  submitted_anyway: boolean;
+}
+
+export interface CampaignCheckResult {
+  suggestions: CampaignFinding[];
+  /** False when the AI pass was unavailable; the rule checks are still all there. */
+  ai: boolean;
+  checks_left_today: number;
+}
+
+/** Advisory only: never blocks a filing. A 409 `check_limit` means 10 checks used today. */
+export async function checkCampaign(
+  api: ApiClient,
+  campaignId: string,
+): Promise<CampaignCheckResult> {
+  return api.request<CampaignCheckResult>(`${campaignPath(campaignId)}/check`, {
+    method: "POST",
+  });
 }
 
 export const TEXTING_REGISTRATION_KEY = ["registration", "texting"] as const;

@@ -8,6 +8,7 @@ import type {
   TextingQuote,
   TextingRegistration,
 } from "@/api/registration";
+import { ApiError } from "@/api/client";
 import { makeStubClient, renderWithProviders, type RouteStub } from "@/test/harness";
 
 import { TEXTING_ASSERTIONS, TEXTING_TERMS_LABEL } from "./copy";
@@ -585,5 +586,110 @@ describe("TextingRegistrationCard cancelled stage", () => {
     expect(
       screen.getByText("Ask a workspace admin to register this workspace for texting."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("TextingRegistrationCard advisory campaign check", () => {
+  const CHECK_PATH = "/api/v1/registration/campaigns/camp-1/check";
+
+  async function fillForm(client: ReturnType<typeof makeStubClient>) {
+    renderWithProviders(<TextingRegistrationCard onCheckout={() => {}} />, client);
+    await userEvent.selectOptions(await screen.findByLabelText("Business profile"), "brand-1");
+    await userEvent.selectOptions(screen.getByLabelText("Campaign"), "camp-1");
+    for (const assertion of TEXTING_ASSERTIONS) {
+      await answer(assertion.question, ANSWERS[assertion.key] ? "Yes" : "No");
+    }
+    await userEvent.click(screen.getByLabelText(TEXTING_TERMS_LABEL));
+  }
+
+  function baseRoutes(check: unknown) {
+    return {
+      ...routes({
+        brands: [brand({ id: "brand-1" })],
+        campaigns: [campaign({ id: "camp-1", brand_id: "brand-1", use_case: "CUSTOMER_CARE" })],
+      }),
+      [CHECK_PATH]: check,
+    };
+  }
+
+  function checkoutBody(client: ReturnType<typeof makeStubClient>) {
+    return client.calls.find(
+      (call) =>
+        call.path === "/api/v1/registration/texting/checkout" && call.init.method === "POST",
+    )?.init.json as Record<string, unknown> | undefined;
+  }
+
+  it("keeps the check disabled until a campaign is picked", async () => {
+    const client = makeStubClient(baseRoutes({ suggestions: [], ai: true, checks_left_today: 9 }));
+    renderWithProviders(<TextingRegistrationCard />, client);
+    await screen.findByLabelText("Business profile");
+    expect(screen.getByRole("button", { name: "Check my campaign" })).toBeDisabled();
+    expect(screen.getByText("These are suggestions. You can submit anyway.")).toBeInTheDocument();
+  });
+
+  it("a likely-rejection result relabels the button and submits anyway with the review", async () => {
+    const suggestions = [
+      {
+        severity: "likely-rejection",
+        field: "privacy_policy_url",
+        why: "No privacy policy link.",
+        suggested_text: "",
+      },
+      {
+        severity: "improve",
+        field: "help_message",
+        why: "No way to reach you.",
+        suggested_text: "Call +1 555 0100",
+      },
+    ];
+    const client = makeStubClient(baseRoutes({ suggestions, ai: true, checks_left_today: 7 }));
+    await fillForm(client);
+
+    await userEvent.click(screen.getByRole("button", { name: "Check my campaign" }));
+
+    expect(await screen.findByText("Likely rejection")).toBeInTheDocument();
+    expect(screen.getByText("Improve")).toBeInTheDocument();
+    expect(screen.getByText("No privacy policy link.")).toBeInTheDocument();
+    expect(screen.getByText("Suggested: Call +1 555 0100")).toBeInTheDocument();
+    expect(screen.getByText("7 checks left today")).toBeInTheDocument();
+
+    const submit = screen.getByRole("button", { name: "Submit anyway" });
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+
+    await waitFor(() => expect(checkoutBody(client)).toBeDefined());
+    expect(checkoutBody(client)?.review).toEqual({ suggestions, submitted_anyway: true });
+  });
+
+  it("a check with only improvements keeps the pay label and sends submitted_anyway false", async () => {
+    const suggestions = [
+      { severity: "improve", field: "brand.email", why: "Free email.", suggested_text: "" },
+    ];
+    const client = makeStubClient(baseRoutes({ suggestions, ai: false, checks_left_today: 8 }));
+    await fillForm(client);
+
+    await userEvent.click(screen.getByRole("button", { name: "Check my campaign" }));
+    await screen.findByText("Free email.");
+    await userEvent.click(screen.getByRole("button", { name: "Pay and register" }));
+
+    await waitFor(() => expect(checkoutBody(client)).toBeDefined());
+    expect(checkoutBody(client)?.review).toEqual({ suggestions, submitted_anyway: false });
+  });
+
+  it("without a check the checkout body has no review", async () => {
+    const client = makeStubClient(baseRoutes({ suggestions: [], ai: true, checks_left_today: 9 }));
+    await fillForm(client);
+    await userEvent.click(screen.getByRole("button", { name: "Pay and register" }));
+    await waitFor(() => expect(checkoutBody(client)).toBeDefined());
+    expect(checkoutBody(client)).not.toHaveProperty("review");
+  });
+
+  it("shows the daily limit message on a 409 check_limit", async () => {
+    const message = "You can check this campaign 10 times a day. Try again tomorrow.";
+    const client = makeStubClient(baseRoutes(new ApiError(409, "check_limit", message)));
+    await fillForm(client);
+    await userEvent.click(screen.getByRole("button", { name: "Check my campaign" }));
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pay and register" })).toBeEnabled();
   });
 });
