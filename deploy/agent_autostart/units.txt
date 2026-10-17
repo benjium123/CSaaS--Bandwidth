@@ -1,0 +1,18 @@
+[Unit]
+Description=Start/stop the Ringlite AI agent worker (csaas-agent-1) by whether any AI agent exists
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/csaas-agent-autostart.sh
+Nice=10
+[Unit]
+Description=Run csaas-agent-autostart every minute
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

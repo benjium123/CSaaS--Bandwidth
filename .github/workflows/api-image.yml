@@ -1,0 +1,44 @@
+name: API image
+
+# Owner 2026-10-17: the api image is built HERE, never on the shared VPS (an on-box build
+# pushed the box load to 9-22 and slowed every app on it). The box only pulls:
+#   deploy/deploy-api.sh <sha>
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/app/**"
+      - "backend/migrations/**"
+      - "backend/scripts/**"
+      - "backend/pyproject.toml"
+      - "backend/requirements.lock"
+      - "backend/alembic.ini"
+      - "deploy/Dockerfile"
+      - ".github/workflows/api-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/benjium123/csaas-api:${{ github.sha }}
+            ghcr.io/benjium123/csaas-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
