@@ -1208,12 +1208,9 @@ async def _monthly_product(stripe) -> str:
 
 
 def _has_discount(subscription: dict) -> bool:
-    if subscription.get("discount") or subscription.get("discounts"):
-        return True
-    return any(
-        item.get("discounts") or item.get("discount")
-        for item in (subscription.get("items") or {}).get("data", [])
-    )
+    """A subscription-level coupon would also reduce the 10DLC item. Item-level coupons (how
+    workspace plan discounts are applied) sit on the other items and do not."""
+    return bool(subscription.get("discount") or subscription.get("discounts"))
 
 
 def _as_utc(value: datetime) -> datetime:

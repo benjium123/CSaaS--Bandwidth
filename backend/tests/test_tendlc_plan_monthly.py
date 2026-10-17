@@ -198,11 +198,13 @@ async def test_discounted_plan_gets_no_move(session, stripe):
     stripe.SubscriptionItem.create.assert_not_called()
 
 
-async def test_item_level_plan_discount_gets_no_move(session, stripe):
+async def test_item_level_plan_discount_still_takes_the_fee_undiscounted(session, stripe):
     stripe.state["plan"]["items"] = {"data": [{"id": "si_p", "discounts": [{"coupon": "c"}]}]}
     _, reg = await _active(session)
-    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is False
-    stripe.Subscription.cancel.assert_not_called()
+    assert await tendlc.move_monthly_to_plan(session, _settings(), reg) is True
+    kwargs = stripe.SubscriptionItem.create.call_args.kwargs
+    assert "discounts" not in kwargs and "discount" not in kwargs
+    assert kwargs["price_data"]["unit_amount"] == 1250
 
 
 async def test_item_create_failure_after_cancel_retries_without_a_second_cancel(session, stripe):
