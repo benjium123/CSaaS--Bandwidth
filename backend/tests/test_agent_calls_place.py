@@ -111,7 +111,6 @@ async def _approve_kyc_for_calls(session, org_id: uuid.UUID, owner_email: str) -
     await session.commit()
 
 
-@pytest.mark.anyio
 async def test_agent_dials_only_from_a_line_it_holds(app_with_voice_carrier, session):
     client, fake, _app = app_with_voice_carrier
     owner_token = await register_and_login(client, "ap-owner@example.com")
@@ -155,7 +154,6 @@ async def test_agent_dials_only_from_a_line_it_holds(app_with_voice_carrier, ses
     assert other.status_code == 403, other.text
 
 
-@pytest.mark.anyio
 async def test_viewer_grant_stays_read_only_for_calls(app_with_voice_carrier, session):
     """A viewer may watch a line, never speak from it - unchanged by calls:place."""
     client, fake, _app = app_with_voice_carrier

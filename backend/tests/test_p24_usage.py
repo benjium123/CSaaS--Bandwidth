@@ -385,7 +385,7 @@ async def test_an_unpriced_provider_still_meters_at_zero_cost(session):
     event = await ai_usage.record(
         session,
         org.id,
-        provider="not-a-real-provider",
+        provider="no-such-llm",  # the column is String(16)
         kind="llm",
         metric="llm_tokens_in",
         quantity=10,
