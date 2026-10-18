@@ -905,7 +905,9 @@ async def test_transfer_to_an_outside_number_needs_external_transfer(app_with_ro
     assert not [req for req in requests if "TransferSIPParticipant" in req.url.path]
 
 
-async def test_external_transfer_bridges_a_new_billed_call_into_the_room(app_with_room_calls):
+async def test_external_transfer_bridges_a_new_billed_call_into_the_room(
+    app_with_room_calls, monkeypatch
+):
     """Option A (2026-09-28): the outside number is a NEW outbound call dialled into the
     SAME room; the original call stays live, and the user drops off once it answers."""
     client, _application, _fake_voice, requests = app_with_room_calls
@@ -916,7 +918,19 @@ async def test_external_transfer_bridges_a_new_billed_call_into_the_room(app_wit
     call_id, room = created.json()["id"], created.json()["room"]
     await voice_service.wait_for_pending_dial_tasks()
 
+    # The bridge dial starts once the response is out, as a real dial (seconds of ringing)
+    # always does. Tests share ONE SQLite connection (StaticPool): on Python 3.12 the task
+    # could otherwise write while the request's session is open, and that session's closing
+    # rollback wiped the "answered" update.
+    deferred: list = []
+    spawn = voice_service._spawn_dial_task
+    monkeypatch.setattr(
+        voice_service, "_spawn_dial_task", lambda coro, name="": deferred.append((coro, name))
+    )
     r = await client.post(f"/api/v1/calls/{call_id}/transfer", json={"to": OUTSIDE}, headers=h)
+    monkeypatch.setattr(voice_service, "_spawn_dial_task", spawn)
+    for coro, name in deferred:
+        spawn(coro, name=name)
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "answered"  # the customer is still on the call
     await voice_service.wait_for_pending_dial_tasks()
