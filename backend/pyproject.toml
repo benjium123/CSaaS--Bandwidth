@@ -43,6 +43,11 @@ dependencies = [
     # while using none of the shared state. It was present only in requirements.lock, which
     # the Dockerfile prefers but explicitly falls back FROM when no lock has been generated.
     "redis>=5.0",
+    # In requirements.lock (production) but were missing here, so CI's `pip install -e .`
+    # could not import the app: billing (stripe), KYC/knowledge PDFs (pypdf), Word files.
+    "stripe>=15.6",
+    "pypdf>=6.0",
+    "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]
