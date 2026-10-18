@@ -125,6 +125,30 @@ describe("CampaignsPanel filing fields", () => {
     expect(body.expected_monthly_messages).toBe(500);
   });
 
+  it("uploading a screenshot posts the file and fills the proof field", async () => {
+    const r = routes([campaign()]);
+    const proofPath = `${CAMPAIGNS}/camp-1/opt-in-proof`;
+    const client = makeStubClient({
+      ...r,
+      [proofPath]: campaign({ opt_in_proof_url: "https://app.test/api/v1/media/m1/content?exp=1&sig=s" }),
+    });
+    renderWithProviders(<CampaignsPanel />, client);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit: Owner outreach" }));
+    expect(screen.getByText("Or paste a link to your sign-up page.")).toBeInTheDocument();
+    const file = new File(["x"], "proof.png", { type: "image/png" });
+    await userEvent.upload(screen.getByLabelText("Upload a screenshot"), file);
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Opt-in proof (link to a screenshot or your sign-up page)"),
+      ).toHaveValue("https://app.test/api/v1/media/m1/content?exp=1&sig=s");
+    });
+    const call = client.calls.find((c) => c.path === proofPath);
+    expect(call?.init.method).toBe("POST");
+    expect(call?.init.body).toBeInstanceOf(FormData);
+  });
+
   it("no Edit button on a campaign that is past draft", async () => {
     renderWithProviders(
       <CampaignsPanel />,

@@ -9,6 +9,7 @@ import {
   useRegistrationBrands,
   useRegistrationCampaigns,
   useSubmitCampaign,
+  uploadOptInProof,
   useUpdateCampaign,
 } from "@/api/registration";
 import { useAuth } from "@/auth/AuthContext";
@@ -159,9 +160,26 @@ function CampaignCreateForm({
   onCreate: (input: CampaignInput) => void;
   editing?: RegistrationCampaign;
 }) {
+  const { api } = useAuth();
   const [fields, setFields] = useState<CampaignFormFields>(
     editing ? fieldsFromCampaign(editing) : EMPTY_CAMPAIGN_FORM,
   );
+  const [proofUploading, setProofUploading] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+
+  async function handleProofFile(file: File | undefined) {
+    if (!file || !editing) return;
+    setProofUploading(true);
+    setProofError(null);
+    try {
+      const saved = await uploadOptInProof(api, editing.id, file);
+      update("opt_in_proof_url", saved.opt_in_proof_url ?? "");
+    } catch (error) {
+      setProofError(error instanceof Error ? error.message : "The upload failed.");
+    } finally {
+      setProofUploading(false);
+    }
+  }
 
   function update(key: keyof CampaignFormFields, value: string) {
     setFields((previous) => {
@@ -342,6 +360,7 @@ function CampaignCreateForm({
         <Field
           id="campaign-opt-in-proof-url"
           label="Opt-in proof (link to a screenshot or your sign-up page)"
+          hint="Or paste a link to your sign-up page."
         >
           <Input
             id="campaign-opt-in-proof-url"
@@ -349,6 +368,28 @@ function CampaignCreateForm({
             value={fields.opt_in_proof_url}
             onChange={(event) => update("opt_in_proof_url", event.target.value)}
           />
+          {editing ? (
+            <>
+              <input
+                id="campaign-opt-in-proof-file"
+                type="file"
+                accept="image/*"
+                aria-label="Upload a screenshot"
+                disabled={proofUploading}
+                onChange={(event) => {
+                  void handleProofFile(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
+                className="text-[11.5px]"
+              />
+              {proofUploading ? <p className="text-[11.5px]">Uploading...</p> : null}
+              {proofError ? (
+                <p role="alert" className="text-[11.5px] text-[hsl(var(--cx-danger))]">
+                  {proofError}
+                </p>
+              ) : null}
+            </>
+          ) : null}
         </Field>
 
         <Field id="campaign-expected-monthly-messages" label="Expected messages per month">

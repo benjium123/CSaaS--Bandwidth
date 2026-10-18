@@ -61,7 +61,7 @@ from typing import Annotated, Any, Literal
 
 import httpx
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 
@@ -89,6 +89,7 @@ from app.providers.telnyx.tollfree_verification import TelnyxTollfreeVerificatio
 from app.services import (
     audit as audit_svc,
 )
+from app.services import media as media_svc
 from app.services import (
     provider_accounts,
     telnyx_brand_filing,
@@ -965,6 +966,61 @@ async def edit_campaign(
     except IntegrityError as exc:
         await ctx.session.rollback()
         raise ConflictError(f"A campaign named {payload.name!r} already exists") from exc
+    return await _campaign_out(ctx.session, campaign)
+
+
+#: How long the opt-in proof link stays valid. The carrier's reviewer opens it without a
+#: login, and re-vetting can come months later, so it is far longer than a browser link.
+OPT_IN_PROOF_URL_TTL = 2 * 365 * 24 * 3600
+
+
+@router.post(
+    "/campaigns/{campaign_id}/opt-in-proof",
+    response_model=CampaignOut,
+    dependencies=[Depends(requires_feature("tendlc"))],
+)
+async def upload_opt_in_proof(
+    campaign_id: uuid.UUID,
+    request: Request,
+    file: Annotated[UploadFile, File()],
+    ctx: Annotated[OrgContext, Depends(require_permission("compliance:manage"))],
+) -> CampaignOut:
+    """Store a screenshot of the opt-in flow and point the campaign's proof URL at it."""
+
+    campaign = await ctx.session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise NotFoundError("Campaign not found")
+    if campaign.status not in {"draft", "rejected"}:
+        raise ConflictError("Only a draft or declined campaign can be edited")
+    store = getattr(request.app.state, "media_store", None)
+    if store is None:  # pragma: no cover - lifespan always sets it
+        raise ValidationFailedError("Media storage is not configured")
+    settings = request.app.state.settings
+    data = await file.read()
+    asset = await media_svc.store_upload(
+        ctx.session,
+        ctx.org.id,
+        store,
+        data=data,
+        content_type=(file.content_type or "application/octet-stream").split(";")[0].strip(),
+        retention_days=0,  # kept: carriers can re-vet
+    )
+    campaign.opt_in_proof_url = media_svc.signed_url(
+        settings.public_base_url or "",
+        asset.id,
+        settings.jwt_secret.get_secret_value(),
+        OPT_IN_PROOF_URL_TTL,
+    )
+    audit_svc.record(
+        ctx.session,
+        ctx.org.id,
+        action="tendlc.opt_in_proof_uploaded",
+        target_type="campaign",
+        target_id=str(campaign.id),
+        actor_user_id=ctx.actor_user_id,
+        detail={"media_asset_id": str(asset.id)},
+    )
+    await ctx.session.commit()
     return await _campaign_out(ctx.session, campaign)
 
 

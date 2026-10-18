@@ -249,6 +249,21 @@ export async function updateCampaign(
   });
 }
 
+/** Upload a screenshot of the opt-in flow; the response's `opt_in_proof_url` points at it. */
+export async function uploadOptInProof(
+  api: ApiClient,
+  campaignId: string,
+  file: File,
+): Promise<RegistrationCampaign> {
+  const form = new FormData();
+  // Pass FormData as `body`, not `json`, so the browser supplies the multipart boundary.
+  form.append("file", file);
+  return api.request<RegistrationCampaign>(`${campaignPath(campaignId)}/opt-in-proof`, {
+    method: "POST",
+    body: form,
+  });
+}
+
 export async function submitCampaign(
   api: ApiClient,
   campaignId: string,
