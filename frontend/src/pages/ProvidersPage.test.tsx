@@ -78,7 +78,8 @@ const PROVIDER_RATES = [
   },
 ];
 
-const NUMBERS: NumberOut[] = [
+// `carrier` is no longer on NumberOut (hidden from customers); the fixture keeps it.
+const NUMBERS = [
   {
     id: "n1",
     e164: "+12145550100",
@@ -105,7 +106,7 @@ const NUMBERS: NumberOut[] = [
     campaign_id: null,
     answered_by: { mode: "human" },
   },
-];
+] as unknown as NumberOut[];
 
 const ME_OWNER = {
   id: "u1",
