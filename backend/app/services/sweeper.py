@@ -642,6 +642,15 @@ async def _run_once_locked(app) -> dict[str, int]:
     except Exception:
         log.exception("sweeper_signalwire_guard_failed")
 
+    # 10DLC approval evidence expires after 7 days; re-check Telnyx daily at 06:00 Central.
+    from app.services import tendlc_evidence_refresh
+
+    try:
+        async with get_sessionmaker()() as session:
+            results.update(await tendlc_evidence_refresh.tick(session, app.state.settings))
+    except Exception:
+        log.exception("sweeper_tendlc_evidence_refresh_failed")
+
     # P41 trust & safety: hourly re-verification / Stripe reconcile / AI summaries, and a
     # daily sanctions + Tor list refresh. Same reserve-the-slot-first discipline as spend.
     from app.services import kyc_tick
