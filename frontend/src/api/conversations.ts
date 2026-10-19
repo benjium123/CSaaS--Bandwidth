@@ -116,7 +116,10 @@ export interface MessageTimelineItem {
   id: string;
   direction: "inbound" | "outbound";
   body: string | null;
-  media: { url: string; content_type?: string | null }[] | null;
+  // Raw stored links (plain URL strings from the API; older shapes used objects).
+  media: (string | { url: string; content_type?: string | null })[] | null;
+  // Browser-ready attachments: a signed link to our stored copy plus its type.
+  media_items?: { url: string; content_type?: string | null; size_bytes?: number | null }[];
   status: string;
   occurred_at: string;
   error_code: string | null;

@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import mimetypes
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import httpx
 import sqlalchemy as sa
@@ -87,6 +90,100 @@ def signed_url(base_url: str, asset_id: uuid.UUID, secret: str, ttl: int) -> str
         f"{base_url.rstrip('/')}/api/v1/media/{asset_id}/content"
         f"?exp={exp}&sig={sign(asset_id, exp, secret)}"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Inbox previews
+# --------------------------------------------------------------------------------------
+#: Timeline links live 12-13 h. The expiry is rounded UP to the hour so the same link comes
+#: back on every refresh in that hour and the browser serves the picture from its cache.
+TIMELINE_URL_TTL = 12 * 3600
+_OWN_MEDIA_URL = re.compile(r"/api/v1/media/([0-9a-fA-F-]{36})/content")
+
+
+def _guess_type(url: str) -> str | None:
+    guessed, _ = mimetypes.guess_type(urlparse(url).path)
+    return guessed
+
+
+def _stable_signed_url(base_url: str, asset_id: uuid.UUID, secret: str) -> str:
+    exp = -(-(int(time.time()) + TIMELINE_URL_TTL) // 3600) * 3600
+    return (
+        f"{base_url.rstrip('/')}/api/v1/media/{asset_id}/content"
+        f"?exp={exp}&sig={sign(asset_id, exp, secret)}"
+    )
+
+
+async def browser_items(
+    session: AsyncSession, messages: list, *, base_url: str, secret: str
+) -> dict[uuid.UUID, list[dict]]:
+    """Per message, its attachments as ``{url, content_type, size_bytes}`` for the inbox.
+
+    A stored copy (inbound re-hosted, or our own outbound upload) gets a fresh signed link
+    and its real type; anything else falls back to the original link with a type guessed
+    from its extension. ONE query for the whole page. The session's org scope applies, so a
+    link naming another workspace's asset id simply finds nothing.
+    """
+    message_ids: list[uuid.UUID] = []
+    own_ids: set[uuid.UUID] = set()
+    for message in messages:
+        if not message.media:
+            continue
+        message_ids.append(message.id)
+        for raw in message.media:
+            match = _OWN_MEDIA_URL.search(_media_url(raw))
+            if match:
+                own_ids.add(uuid.UUID(match.group(1)))
+    if not message_ids:
+        return {}
+
+    conditions = [MediaAsset.message_id.in_(message_ids)]
+    if own_ids:
+        conditions.append(MediaAsset.id.in_(own_ids))
+    assets = (
+        (await session.execute(sa.select(MediaAsset).where(sa.or_(*conditions))))
+        .scalars()
+        .all()
+    )
+    by_id = {asset.id: asset for asset in assets}
+    by_source = {
+        (asset.message_id, asset.source_url): asset for asset in assets if asset.message_id
+    }
+
+    out: dict[uuid.UUID, list[dict]] = {}
+    for message in messages:
+        items: list[dict] = []
+        for raw in message.media or []:
+            url = _media_url(raw)
+            if not url:
+                continue
+            match = _OWN_MEDIA_URL.search(url)
+            asset = (
+                by_id.get(uuid.UUID(match.group(1))) if match else by_source.get((message.id, url))
+            )
+            if asset is not None and asset.status == "stored" and asset.storage_key:
+                content_type = asset.content_type
+                if not content_type or content_type == "application/octet-stream":
+                    content_type = _guess_type(asset.source_url or url) or content_type
+                items.append(
+                    {
+                        "url": _stable_signed_url(base_url, asset.id, secret),
+                        "content_type": content_type,
+                        "size_bytes": asset.size_bytes,
+                    }
+                )
+            else:
+                items.append({"url": url, "content_type": _guess_type(url), "size_bytes": None})
+        if items:
+            out[message.id] = items
+    return out
+
+
+def _media_url(raw: object) -> str:
+    """A stored media entry is normally a URL string; tolerate a ``{"url": ...}`` map."""
+    if isinstance(raw, dict):
+        return str(raw.get("url") or "")
+    return str(raw or "")
 
 
 # --------------------------------------------------------------------------------------
@@ -273,8 +370,9 @@ async def _fetch_one(
         return _fail(f"{type(exc).__name__}: {exc}")
 
     asset.storage_key = storage_key(asset.org_id, asset.id)
-    await store.put(asset.storage_key, data, asset.content_type or "application/octet-stream")
-    asset.content_type = asset.content_type or "application/octet-stream"
+    # The carrier's own (allowlisted) type, so the inbox knows a photo from a PDF or video.
+    asset.content_type = content_type
+    await store.put(asset.storage_key, data, asset.content_type)
     asset.size_bytes = len(data)
     asset.sha256 = hashlib.sha256(data).hexdigest()
     # 2.13: inbound MMS never expired once re-hosted here - same retention convention

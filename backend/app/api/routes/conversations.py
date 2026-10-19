@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from app.api.routes.inbox import _get_thread
 from app.api.routes.numbers import to_e164
 from app.auth.deps import OrgContext, require_permission
+from app.config import get_active_settings
 from app.errors import NotFoundError, ValidationFailedError
 from app.models import (
     AgentProfile,
@@ -40,6 +41,7 @@ from app.services import contacts as contacts_svc
 from app.services import inbox_access as inbox_access_svc
 from app.services import inbox_sla as inbox_sla_svc
 from app.services import links as links_svc
+from app.services import media as media_svc
 from app.services import notifications as notifications_svc
 from app.services import phone_region
 
@@ -146,6 +148,12 @@ class TrackedLinkOut(BaseModel):
     clicks: int
 
 
+class MediaItemOut(BaseModel):
+    url: str
+    content_type: str | None = None
+    size_bytes: int | None = None
+
+
 class MessageTimelineEvent(BaseModel):
     kind: Literal["message"] = "message"
     id: uuid.UUID
@@ -163,6 +171,10 @@ class MessageTimelineEvent(BaseModel):
     scheduled_for: datetime | None = None
     clicks: int = 0
     links: list[TrackedLinkOut] = []
+    # Browser-ready attachments: a fresh signed link to OUR stored copy plus its type, so
+    # the inbox can preview photos, videos and PDFs. ``media`` stays the raw carrier/link
+    # list for older clients (the Android app reads it).
+    media_items: list[MediaItemOut] = []
 
 
 class CallRecordingOut(BaseModel):
@@ -1394,6 +1406,14 @@ async def conversation_timeline(
     links_by_message = await links_svc.links_for_messages(
         ctx.session, [msg.id for msg in messages]
     )
+    # ONE query for every attachment on the page: signed links to our stored copies.
+    settings = get_active_settings()
+    media_by_message = await media_svc.browser_items(
+        ctx.session,
+        messages,
+        base_url=settings.public_base_url or "",
+        secret=settings.jwt_secret.get_secret_value(),
+    )
 
     for msg in messages:
         timeline_items.append(
@@ -1403,6 +1423,7 @@ async def conversation_timeline(
                 "direction": msg.direction,
                 "body": msg.body,
                 "media": msg.media,
+                "media_items": media_by_message.get(msg.id, []),
                 "status": msg.status,
                 "occurred_at": msg.created_at,
                 "error_code": msg.error_code,

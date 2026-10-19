@@ -16,6 +16,7 @@ import { isTerminalCallStatus, useCalls } from "@/api/hooks";
 import { dispositionOf, type CallDisposition } from "@/api/calls";
 import { DispositionPicker } from "@/components/calls/DispositionPicker";
 import { AiCallCard } from "@/components/conversations/AiCallCard";
+import { MessageMedia, type MediaItem } from "@/components/conversations/MessageMedia";
 import {
   fetchConversationTimeline,
   type CallTimelineItem,
@@ -34,6 +35,14 @@ import { cn } from "@/lib/utils";
  * immediate refetch the moment a `message.received` event for THIS pair arrives over
  * the realtime socket. */
 const TIMELINE_POLL_MS = 3000;
+
+/** Attachments for a bubble: the server's signed `media_items`, else the raw links. */
+function timelineMedia(item: MessageTimelineItem): MediaItem[] {
+  if (item.media_items && item.media_items.length > 0) return item.media_items;
+  return (item.media ?? []).map((media) =>
+    typeof media === "string" ? { url: media } : media,
+  );
+}
 
 function formatDuration(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);
@@ -144,18 +153,7 @@ function MessageTimelineItemView({
             Scheduled for {new Date(scheduledFor).toLocaleString()}
           </p>
         )}
-        {item.media && item.media.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {item.media.map((media) => (
-              <img
-                key={media.url}
-                src={media.url}
-                alt="Attachment"
-                className="h-24 w-32 rounded object-cover"
-              />
-            ))}
-          </div>
-        )}
+        <MessageMedia items={timelineMedia(item)} outbound={outbound && !scheduled} />
         {item.body && <p className="whitespace-pre-wrap break-words">{item.body}</p>}
         {item.failure_reason_public && (
           <p role="alert" className="text-xs text-destructive">
