@@ -42,6 +42,23 @@ redis:
   # `rsync --delete`. Empty CSAAS_REDIS_PASSWORD renders `password: ""`, which livekit
   # treats as no auth - matching main-stack redis's own passwordless-by-default behavior.
   password: "${CSAAS_REDIS_PASSWORD}"
+# Built-in TURN relay (owner order 2026-10-20) for callers whose internet delays or drops
+# direct UDP (e.g. Pakistan -> US). Browsers only use it when the direct route fails, or
+# when Ops turns on the workspace feature "Relay call audio" (web phone forces relay).
+# TLS on 5349 reuses nginx's ringlite.io Let's Encrypt cert (mounted read-only); a renewal
+# needs a livekit restart - the certbot deploy hook queues one for 04:00 Central.
+# relay_range is the relay's own sockets; 53000-53999 was verified unused on the box.
+# Firewall: ufw allows 5349/tcp and 3478/udp.
+turn:
+  enabled: true
+  domain: ringlite.io
+  tls_port: 5349
+  udp_port: 3478
+  external_tls: false
+  cert_file: /etc/letsencrypt/live/ringlite.io/fullchain.pem
+  key_file: /etc/letsencrypt/live/ringlite.io/privkey.pem
+  relay_range_start: 53000
+  relay_range_end: 53999
 logging:
   level: info
   json: true

@@ -95,6 +95,16 @@ CATALOG: dict[str, Feature] = {
         None,
         "Transfer calls to outside numbers (billed as outbound minutes)",
     ),
+    # Ops switch for people on poor or UDP-throttled connections: the web phone sends call
+    # audio only through LiveKit's built-in TURN relay (TLS on 5349). Free, off by default.
+    "turn_relay": Feature(
+        "turn_relay",
+        "Relay call audio",
+        "Calling",
+        False,
+        None,
+        "Send call audio through the secure relay (for weak or throttled internet)",
+    ),
     "call_queues": Feature(
         "call_queues", "Call queues", "Calling", True, None, "Queue callers for agents"
     ),

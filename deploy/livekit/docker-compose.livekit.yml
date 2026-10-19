@@ -57,6 +57,9 @@ services:
       # Path is relative to the FIRST -f file's directory (deploy/), per compose
       # multi-file resolution — NOT this file's directory.
       - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+      # TURN/TLS uses the host's ringlite.io certificate (live/ symlinks into archive/,
+      # so the whole tree is mounted, read-only).
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     environment:
       # Key id is the FIXED string "csaas-media"; only the secret is secret.
       LIVEKIT_KEYS: "csaas-media: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}"

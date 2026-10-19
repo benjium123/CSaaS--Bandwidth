@@ -26,6 +26,7 @@ import {
 } from "livekit-client";
 import { useAuth } from "@/auth/AuthContext";
 import { ApiError } from "@/api/client";
+import { useCapabilities } from "@/api/capabilities";
 import { isTerminalCallStatus, type CallDetailOut } from "@/api/hooks";
 
 /** How long an incoming-ring card is allowed to survive a WS reconnect gap before it's
@@ -208,6 +209,11 @@ async function ignoreAlreadyHungUp(promise: Promise<unknown>): Promise<void> {
 export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const { api, me, orgId } = useAuth();
   const queryClient = useQueryClient();
+  // Ops "Relay call audio" switch: send audio only via LiveKit's TURN relay (TLS), for
+  // people whose internet drops or delays direct UDP. A ref, so joinRoom stays stable.
+  const capabilities = useCapabilities(api);
+  const forceRelayRef = React.useRef(false);
+  forceRelayRef.current = capabilities.data?.features?.turn_relay === true;
 
   const [status, setStatus] = React.useState<SoftphoneStatus>("idle");
   const [activeCall, setActiveCall] = React.useState<ActiveCall | null>(null);
@@ -403,7 +409,11 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       setMutedState(false);
       setDeviceError(null);
       try {
-        await room.connect(url, token);
+        await room.connect(
+          url,
+          token,
+          forceRelayRef.current ? { rtcConfig: { iceTransportPolicy: "relay" } } : undefined,
+        );
       } catch (err) {
         // Hung up or replaced while still connecting - that room is already torn down.
         if (roomRef.current !== room) return;
